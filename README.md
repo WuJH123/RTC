@@ -1,18 +1,16 @@
 # Wuhan RTC
 
-A clean-slate research codebase for **state-adaptive real-time control (RTC) of a large urban drainage system** using `wuhan_v8_storage_retrofit.inp`.
+Clean-slate research code for **state-adaptive real-time control (RTC) of a large urban drainage system** using `wuhan_v8_storage_retrofit.inp`.
 
 ## Scientific goal
 
-The controller must **not** depend on rainfall-event IDs, rainfall-specific control schedules, a fixed actuator subset, or a pre-enumerated finite action library. At every control update it should:
+The controller must not depend on rainfall-event IDs, rainfall-specific schedules, a fixed actuator subset, or a pre-enumerated action library. At every update it should:
 
 1. reconstruct the current network-wide hydraulic state from sparse observations;
 2. predict future hydraulics under causal rainfall information and proposed continuous actuator settings;
-3. protect the eight observed real-world priority ponding locations from material deterioration relative to the fallback operation;
-4. minimize system-wide total flood volume (TFV) among safe actions;
-5. execute only the first control move, verify readback, then re-observe and re-optimize.
-
-## Core architecture
+3. protect each of the eight observed real-world priority ponding locations from material deterioration relative to the fallback operation;
+4. minimise system-wide total flood volume (TFV) among safe controls;
+5. execute only the first move, verify readback, then re-observe and re-optimise.
 
 ```text
 Sparse sensors + realised rainfall + actuator readback
@@ -30,84 +28,99 @@ Sparse sensors + realised rainfall + actuator readback
       setting -> facility flow -> network state
                     |
                     v
- Step 3: continuous, receding-horizon MPC
-   all writable actuators are eligible at runtime
+ Step 3: continuous receding-horizon MPC
+       all writable actuators eligible
                     |
-       priority-site safety admission
+          site-wise priority safety
                     |
-        minimise risk-adjusted TFV
+         minimise risk-adjusted TFV
                     |
                     v
         execute first move + readback
                     |
-                    +---- repeat at next update
+                    +---- repeat
 ```
 
 ## Deliberate departures from the previous Project6 design
 
 - **No Engineering36 / fixed active actuator list.** Actuators are discovered from the INP (`PUMPS`, `ORIFICES`, `WEIRS`, `OUTLETS`).
-- **No binary pump assumption.** SWMM settings are modelled as continuous controls in `[0, 1]`; no code path hard-binarises pumps.
-- **No rainfall-ID policy.** Rainfall event names are metadata only, never policy inputs.
-- **No direct `state + action -> PFV/TFV` primary surrogate.** PFV/TFV are derived from predicted hydraulic trajectories.
-- **No fixed K/Top-K control constraint.** Runtime actionability should emerge from hydraulic state and the differentiable model, not a preselected subset.
-- **The eight priority locations remain first-class safety sites** because they originate from observed ponding information, not model convenience.
-- **Time horizons are configuration parameters to be identified from hydraulic-response experiments**, not immutable scientific constants.
-
-## Priority ponding nodes
-
-The migrated eight observed priority locations are stored in `data/priority_nodes.txt`.
+- **No binary pump assumption.** SWMM settings are represented continuously in `[0, 1]`; no code path hard-binarises pumps.
+- **No rainfall-ID policy.** Event names are metadata only, never policy features.
+- **No direct `state + action -> PFV/TFV` primary surrogate.** Flood objectives are derived from predicted hydraulic trajectories.
+- **No fixed K/Top-K control constraint.** Runtime actionability emerges from hydraulic state and the differentiable model.
+- **The eight priority locations remain first-class safety sites** because they come from observed ponding information.
+- **Priority safety is site-wise.** Improvement at one priority location cannot compensate large deterioration at another.
+- **Time horizons are experiment-derived configuration**, not immutable scientific constants.
 
 ## Safety / optimisation contract
 
-The default policy is lexicographic:
+The policy is lexicographic:
 
-1. all settings must be physically executable and remain within their continuous bounds;
-2. an upper confidence bound on deterioration at the eight priority sites must remain within independently calibrated tolerances relative to the fallback operation;
-3. optional risk-transfer protection prevents creation of material new flooding outside the eight priority sites;
-4. among safe controls, minimise rainfall-ensemble risk-adjusted TFV (CVaR is supported conceptually by the contract);
-5. if controls are practically equivalent in flood performance, prefer the smaller control movement as a tie-breaker.
+1. actuator settings must be physically executable;
+2. independently calibrated one-sided bounds on flood-volume and depth deterioration must pass at **each** observed priority site relative to the fallback trajectory;
+3. optional risk-transfer protection may prevent material new flooding elsewhere;
+4. among safe controls, minimise rainfall-ensemble risk-adjusted TFV;
+5. use control movement/energy only as a tie-breaker when flood performance is practically equivalent.
 
-The safety tolerances are **not hard-coded scientific constants**. They must be frozen from an independent calibration set before formal evaluation.
+Safety tolerances are frozen from independent calibration and/or justified engineering tolerances; they are not hard-coded scientific constants.
 
 ## Data strategy
 
-The codebase is designed around four information-efficient datasets instead of one huge candidate bank:
-
-- **D0/D1 hydraulic-state trajectories:** diverse rainfall and hydraulic regimes for Step 1 and uncontrolled/base dynamics.
-- **D2 independent actuator probes:** each actuator is perturbed from the *same checkpoint* while all other settings are held fixed; this learns actionability and `setting -> flow` without sequential-pulse contamination.
-- **D3 multi-actuator rollouts:** full-horizon trajectories for interaction and multi-step hydraulic propagation.
-- **D4 active-learning additions:** new SWMM runs only where the current model is uncertain, near thresholds, or has poor rollout / gradient fidelity.
+- **D0/D1 hydraulic-state trajectories:** diverse rainfall/hydraulic regimes for Step 1 and base dynamics.
+- **D2 independent actuator probes:** each actuator is perturbed from the *same checkpoint* while all others remain fixed. This prevents the sequential-pulse contamination found in the previous project.
+- **D3 multi-actuator rollouts:** full-horizon trajectories for interactions and network propagation.
+- **D4 active learning:** add SWMM simulations only where the current model is uncertain, near thresholds, or has poor rollout/gradient fidelity.
 
 ## Quick start
 
-The large Wuhan INP is intentionally not duplicated in this repository. Place or reference the frozen file locally, for example:
+The large Wuhan INP is intentionally not duplicated here. Reference the frozen file locally, for example:
 
 ```text
 data/wuhan_v8_storage_retrofit.inp
 ```
 
-Install:
+Install the core package:
 
 ```bash
 python -m pip install -e .[dev]
 ```
 
+For authoritative local SWMM data generation also install:
+
+```bash
+python -m pip install -e .[swmm]
+```
+
 Audit the INP and automatically discover all writable actuators:
 
 ```bash
-rtc-audit-inp --inp data/wuhan_v8_storage_retrofit.inp --priority data/priority_nodes.txt
+rtc-audit-inp \
+  --inp data/wuhan_v8_storage_retrofit.inp \
+  --priority data/priority_nodes.txt
 ```
 
-Create an independent single-actuator probe design (manifest only; no SWMM is run):
+Prepare a checkpoint CSV with `checkpoint_id`, `checkpoint_minutes`, optional event/rainfall metadata, and one column `setting:<actuator_id>` for every discovered actuator. Then create independent single-actuator probe branches:
 
 ```bash
 rtc-design-probes \
   --inp data/wuhan_v8_storage_retrofit.inp \
-  --checkpoints checkpoint_ids.txt \
+  --checkpoints checkpoint_settings.csv \
   --out outputs/probe_manifest.csv
 ```
 
-Run tests:
+Run a small authoritative SWMM probe batch locally:
+
+```bash
+rtc-run-probes \
+  --manifest outputs/probe_manifest.csv \
+  --inp data/wuhan_v8_storage_retrofit.inp \
+  --out-dir outputs/d2_probe_runs \
+  --limit 10
+```
+
+Each SWMM branch starts a fresh simulation, replays the same native prefix without Python overrides, records the pre-action checkpoint, applies the complete continuous action setting, and records node depth/head/flooding/volume plus actuator target/current setting and flow.
+
+Run unit tests:
 
 ```bash
 pytest -q
@@ -115,4 +128,4 @@ pytest -q
 
 ## Status
 
-This repository starts a new V1 scientific contract and intentionally does not import the old Project6 training artifacts as authority. Old assets may later be used only after explicit compatibility and leakage audits.
+V1 intentionally does not import old Project6 training artefacts as authority. Old assets may only be reused after explicit physical-lineage, compatibility and leakage audits.

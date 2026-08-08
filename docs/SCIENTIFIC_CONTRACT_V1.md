@@ -16,34 +16,30 @@ All physically writable SWMM control links discovered from `[PUMPS]`, `[ORIFICES
 
 - No fixed Engineering36 or other manually selected active subset is part of the scientific contract.
 - No pump is hard-coded as binary.
-- The default normalized target setting is continuous in `[0, 1]` for every discovered actuator. Device-specific physical bounds may narrow this interval if demonstrated by the frozen model or engineering metadata.
+- The default normalized target setting is continuous in `[0, 1]` for every discovered actuator. Device-specific physical bounds may narrow this interval only when demonstrated by the frozen model or engineering metadata.
 - The optimizer may learn that an actuator is hydraulically inactive at a given state; inactivity is state-dependent and must not be confused with permanent exclusion.
 
 ## 4. Priority-site safety
 
-The eight priority nodes in `data/priority_nodes.txt` originate from observed ponding locations and therefore remain first-class safety sites.
+The eight priority nodes in `data/priority_nodes.txt` originate from observed ponding locations and remain first-class safety sites.
 
 For each decision time, compare a proposed control trajectory with an operational fallback trajectory starting from the same reconstructed state and using the same causal rainfall ensemble.
 
-Define priority flood volume:
+Safety is **site-wise**: an improvement at one observed ponding location must not compensate for a large deterioration at another. For every priority node `j`, the controller must satisfy independently calibrated one-sided uncertainty limits for:
 
-`PFV8 = sum(priority-node flooding volume over the prediction horizon)`.
+- flooding-volume deterioration `V_flood,cand,j - V_flood,fallback,j`; and
+- maximum-depth deterioration over the prediction horizon.
 
-A candidate is admissible only when independently calibrated one-sided uncertainty bounds show that deterioration at the priority sites remains within frozen tolerances. The contract supports both:
+An optional aggregate priority-flood-volume limit may be added, but it never replaces the per-site limits. An optional risk-transfer constraint may also prevent material new flooding outside the eight priority sites.
 
-- priority flood-volume deterioration; and
-- maximum priority-depth deterioration.
-
-The tolerance values are calibration outputs, not arbitrary constants embedded in the model code.
-
-An optional risk-transfer constraint may also prevent material new flooding outside the priority set.
+The numerical tolerances are calibration/engineering outputs, not arbitrary constants embedded in model code.
 
 ## 5. Optimisation objective
 
-The optimisation is lexicographic rather than a manually weighted soup of objectives:
+The optimisation is lexicographic:
 
 1. satisfy actuator bounds and runtime executability;
-2. satisfy priority-site safety constraints;
+2. satisfy all eight site-wise safety constraints;
 3. satisfy the optional new-flood risk-transfer constraint;
 4. minimise system-wide TFV over the prediction horizon; with rainfall ensembles, minimise a frozen risk statistic such as CVaR of TFV;
 5. use control movement / energy only as a tie-breaker when flood performance is practically equivalent.
@@ -59,11 +55,7 @@ Input at decision time `t`:
 - actuator setting/readback history;
 - frozen network topology and static attributes.
 
-Output:
-
-- reconstructed network-wide hydraulic state required by Step 2, including node depth/head and, where supervised, edge/actuator flow, storage state and flooding state.
-
-Step 1 does not learn the control policy.
+Output is the reconstructed network-wide hydraulic state required by Step 2, including node depth/head and, where supervised, edge/actuator flow, storage state and flooding state. Step 1 does not learn the control policy.
 
 ## 7. Step 2: differentiable hydraulic world model
 
@@ -77,9 +69,7 @@ followed by
 
 `state_k + actuator-flow injections + rainfall/runoff_k + graph -> state_(k+1)`.
 
-The transition is rolled forward to the prediction horizon. PFV8 and TFV are derived from predicted hydraulic trajectories; a direct KPI head may be auxiliary but never the sole primary world model.
-
-Training must include same-state counterfactual supervision so that control effects are not drowned by between-event severity.
+The transition is rolled forward to the prediction horizon. Priority flooding and TFV are derived from predicted hydraulic trajectories; a direct KPI head may be auxiliary but never the sole primary world model. Training must include same-state counterfactual supervision so that control effects are not drowned by between-event severity.
 
 ## 8. Step 3: online MPC
 
@@ -99,7 +89,7 @@ Historical experience may provide warm starts but must never restrict the optimi
 
 ## 9. Time-scale contract
 
-Sampling interval, setting duration, control horizon and prediction horizon are configuration parameters. Before formal training, use hydraulic-response experiments to identify suitable values from the Wuhan network. The initial configuration may use engineering starting values, but they are not immutable scientific constants.
+Sampling interval, setting duration, control horizon and prediction horizon are configuration parameters. Before formal training, use hydraulic-response experiments to identify suitable values from the Wuhan network. Initial engineering values may be used for pilot runs but are not immutable scientific constants.
 
 ## 10. Data programme
 
@@ -111,12 +101,7 @@ Generate diverse rainfall and initial-condition trajectories that cover meaningf
 
 Every probe must start from the same authoritative checkpoint as its controls. Perturb exactly one actuator while holding all other actuator settings fixed. Never use sequential pulse experiments where one actuator inherits the state altered by a preceding pulse.
 
-D2 learns:
-
-- state-dependent actionability;
-- setting-to-flow response;
-- local finite-difference truth;
-- hydraulic response delays and settling times.
+D2 learns state-dependent actionability, setting-to-flow response, local finite-difference truth, and hydraulic response delays/settling times.
 
 ### D3 — multi-actuator rollouts
 
@@ -148,10 +133,4 @@ A failure at one layer blocks downstream claims.
 
 ## 12. Leakage prohibitions
 
-Online Step 2 / Step 3 must not use:
-
-- future authoritative SWMM states;
-- future realised rainfall unavailable at decision time;
-- future outcomes of candidate actions;
-- event IDs as policy features;
-- final/blind data for model fitting, actuator screening, calibration, or hyperparameter selection.
+Online Step 2 / Step 3 must not use future authoritative SWMM states, future realised rainfall unavailable at decision time, future outcomes of candidate actions, event IDs as policy features, or final/blind data for model fitting, actuator screening, calibration or hyperparameter selection.
