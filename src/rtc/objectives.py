@@ -8,14 +8,13 @@ import numpy as np
 @dataclass(frozen=True)
 class SafetyResult:
     admissible: bool
-    priority_flood_deterioration_ucb_m3: float
-    priority_depth_deterioration_ucb_m: float
+    worst_site_flood_deterioration_ucb_m3: float
+    aggregate_priority_flood_deterioration_ucb_m3: float
+    worst_site_depth_deterioration_ucb_m: float
     nonpriority_new_flood_ucb_m3: float | None
 
 
 def integrate_rate(rate_m3s: np.ndarray, dt_seconds: float) -> np.ndarray:
-    """Integrate a non-negative flooding-rate trajectory along the time axis (-2)."""
-
     rate = np.asarray(rate_m3s, dtype=float)
     if rate.ndim < 2:
         raise ValueError("expected at least [time, node]")
@@ -34,16 +33,13 @@ def priority_flood_volume(
 
 
 def cvar(values: np.ndarray, alpha: float = 0.9) -> float:
-    """Upper-tail empirical CVaR: lower is better for a loss such as TFV."""
-
     x = np.asarray(values, dtype=float).reshape(-1)
     if x.size == 0:
         raise ValueError("cannot compute CVaR of an empty sample")
     if not 0.0 < alpha < 1.0:
         raise ValueError("alpha must lie in (0, 1)")
     threshold = np.quantile(x, alpha)
-    tail = x[x >= threshold]
-    return float(tail.mean())
+    return float(x[x >= threshold].mean())
 
 
 def one_sided_ucb(values: np.ndarray, quantile: float = 0.95) -> float:
@@ -61,42 +57,44 @@ def assess_priority_safety(
     fallback_depth: np.ndarray,
     priority_indices: np.ndarray,
     dt_seconds: float,
-    priority_flood_budget_m3: float,
-    priority_depth_budget_m: float,
+    per_site_flood_budget_m3: float,
+    per_site_depth_budget_m: float,
+    aggregate_priority_flood_budget_m3: float | None = None,
     quantile: float = 0.95,
     nonpriority_new_flood_budget_m3: float | None = None,
 ) -> SafetyResult:
-    """Scenario/ensemble safety admission relative to the operational fallback.
-
-    Arrays may include a leading ensemble/scenario dimension. The same fallback and
-    rainfall scenarios must be used for the counterfactual comparison.
-    """
+    """Hard safety admission with no compensation between priority locations."""
 
     p = np.asarray(priority_indices, dtype=int)
-    cand_pfv = priority_flood_volume(candidate_flood_rate, p, dt_seconds)
-    base_pfv = priority_flood_volume(fallback_flood_rate, p, dt_seconds)
-    pfv_ucb = one_sided_ucb(cand_pfv - base_pfv, quantile)
+    cand_v = integrate_rate(candidate_flood_rate, dt_seconds)
+    base_v = integrate_rate(fallback_flood_rate, dt_seconds)
+    site_delta = cand_v[..., p] - base_v[..., p]
+    # Ensemble/scenario axis is assumed to be the leading axis.
+    site_ucb = np.quantile(site_delta, quantile, axis=0)
+    worst_site_flood_ucb = float(np.max(site_ucb))
+    aggregate_ucb = one_sided_ucb(site_delta.sum(axis=-1), quantile)
 
     cand_depth = np.asarray(candidate_depth, dtype=float)[..., p]
     base_depth = np.asarray(fallback_depth, dtype=float)[..., p]
-    # Max deterioration at any priority location/time per scenario.
-    depth_delta = (cand_depth - base_depth).max(axis=(-2, -1))
-    depth_ucb = one_sided_ucb(depth_delta, quantile)
+    # Per scenario and site, compare the worst time-local depth deterioration.
+    depth_delta = (cand_depth - base_depth).max(axis=-2)
+    depth_site_ucb = np.quantile(depth_delta, quantile, axis=0)
+    worst_site_depth_ucb = float(np.max(depth_site_ucb))
 
     new_flood_ucb: float | None = None
     if nonpriority_new_flood_budget_m3 is not None:
-        node_count = np.asarray(candidate_flood_rate).shape[-1]
-        mask = np.ones(node_count, dtype=bool)
+        mask = np.ones(cand_v.shape[-1], dtype=bool)
         mask[p] = False
-        cand_v = integrate_rate(candidate_flood_rate, dt_seconds)[..., mask]
-        base_v = integrate_rate(fallback_flood_rate, dt_seconds)[..., mask]
-        # Only newly transferred/additional flooding is penalised.
-        added = np.clip(cand_v - base_v, 0.0, None).sum(axis=-1)
+        added = np.clip(cand_v[..., mask] - base_v[..., mask], 0.0, None).sum(axis=-1)
         new_flood_ucb = one_sided_ucb(added, quantile)
 
     admissible = (
-        pfv_ucb <= priority_flood_budget_m3
-        and depth_ucb <= priority_depth_budget_m
+        worst_site_flood_ucb <= per_site_flood_budget_m3
+        and worst_site_depth_ucb <= per_site_depth_budget_m
+        and (
+            aggregate_priority_flood_budget_m3 is None
+            or aggregate_ucb <= aggregate_priority_flood_budget_m3
+        )
         and (
             new_flood_ucb is None
             or new_flood_ucb <= float(nonpriority_new_flood_budget_m3)
@@ -104,7 +102,8 @@ def assess_priority_safety(
     )
     return SafetyResult(
         admissible=bool(admissible),
-        priority_flood_deterioration_ucb_m3=pfv_ucb,
-        priority_depth_deterioration_ucb_m=depth_ucb,
+        worst_site_flood_deterioration_ucb_m3=worst_site_flood_ucb,
+        aggregate_priority_flood_deterioration_ucb_m3=aggregate_ucb,
+        worst_site_depth_deterioration_ucb_m=worst_site_depth_ucb,
         nonpriority_new_flood_ucb_m3=new_flood_ucb,
     )
