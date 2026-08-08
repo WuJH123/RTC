@@ -1,0 +1,43 @@
+project:
+  contract: WUHAN_RTC_ACTUATOR_AGNOSTIC_V1
+  authoritative_inp: data/wuhan_v8_storage_retrofit.inp
+  priority_nodes: data/priority_nodes.txt
+
+actuators:
+  discovery_sections: [PUMPS, ORIFICES, WEIRS, OUTLETS]
+  fixed_active_subset: null
+  default_min_setting: 0.0
+  default_max_setting: 1.0
+  hard_binary_devices: []
+
+# Starting values only. Phase-0 hydraulic response experiments must confirm or revise them
+# before the formal data programme is frozen.
+time:
+  model_step_minutes: 10
+  control_update_minutes: 10
+  prediction_horizon_minutes: 120
+  control_block_minutes: [10, 10, 10, 30, 60]
+  identify_from_hydraulic_response: true
+
+fallback:
+  policy: native_swmm_rules
+
+safety:
+  priority_mode: observed_ponding_sites
+  priority_flood_budget_m3: null       # supplied by independent calibration
+  priority_depth_budget_m: null        # supplied by independent calibration
+  nonpriority_new_flood_budget_m3: null
+  one_sided_quantile: 0.95
+
+objective:
+  primary: TFV
+  rainfall_risk: CVaR
+  cvar_alpha: 0.90
+  control_movement: tie_breaker_only
+
+data:
+  prohibit_event_id_as_model_feature: true
+  require_rainfall_group_split: true
+  d2_same_checkpoint_counterfactuals: true
+  prohibit_sequential_actuator_pulses: true
+  active_learning_after_initial_model: true
