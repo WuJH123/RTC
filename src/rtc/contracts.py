@@ -30,15 +30,17 @@ class TimeScaleConfig:
 
 @dataclass(frozen=True)
 class PrioritySafetyContract:
-    """Safety configuration for the eight observed ponding sites.
+    """Safety contract for observed real-world ponding locations.
 
-    Budgets are deliberately supplied from an independent calibration artefact rather
-    than embedded as scientific constants in model code.
+    Safety is site-wise so an improvement at one priority location cannot compensate for
+    a large deterioration at another. Budgets must be frozen from independent calibration
+    and/or an explicitly justified engineering tolerance; they are not model constants.
     """
 
     priority_nodes: tuple[str, ...]
-    priority_flood_budget_m3: float
-    priority_depth_budget_m: float
+    per_site_flood_budget_m3: float
+    per_site_depth_budget_m: float
+    aggregate_priority_flood_budget_m3: float | None = None
     nonpriority_new_flood_budget_m3: float | None = None
     quantile: float = 0.95
 
@@ -47,11 +49,14 @@ class PrioritySafetyContract:
             raise ValueError("at least one priority node is required")
         if len(set(self.priority_nodes)) != len(self.priority_nodes):
             raise ValueError("priority node IDs must be unique")
-        if self.priority_flood_budget_m3 < 0 or self.priority_depth_budget_m < 0:
+        if self.per_site_flood_budget_m3 < 0 or self.per_site_depth_budget_m < 0:
             raise ValueError("calibrated safety budgets must be non-negative")
-        if self.nonpriority_new_flood_budget_m3 is not None:
-            if self.nonpriority_new_flood_budget_m3 < 0:
-                raise ValueError("new-flood budget must be non-negative")
+        for value, name in (
+            (self.aggregate_priority_flood_budget_m3, "aggregate priority flood budget"),
+            (self.nonpriority_new_flood_budget_m3, "new-flood budget"),
+        ):
+            if value is not None and value < 0:
+                raise ValueError(f"{name} must be non-negative")
         if not 0.5 < self.quantile < 1.0:
             raise ValueError("one-sided safety quantile must lie in (0.5, 1)")
 
