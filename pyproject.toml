@@ -21,6 +21,7 @@ swmm = ["pyswmm>=2.0"]
 [project.scripts]
 rtc-audit-inp = "rtc.cli:audit_inp_main"
 rtc-design-probes = "rtc.cli:design_probes_main"
+rtc-run-probes = "rtc.cli:run_probes_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
