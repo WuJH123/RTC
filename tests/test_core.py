@@ -64,15 +64,15 @@ def test_probe_design_uses_same_checkpoint_and_one_actuator(tmp_path: Path) -> N
     assert manifest["checkpoint_id"].nunique() == 1
     assert manifest["same_checkpoint_required"].all()
     assert manifest["all_other_actuators_fixed"].all()
-    assert len(manifest) == 12  # three settings per actuator
+    assert len(manifest) == 12
     assert set(np.round(manifest["requested_setting"], 6)) == {0.3, 0.5, 0.7}
 
 
-def test_priority_safety_is_relative_to_fallback() -> None:
+def test_priority_safety_is_sitewise_and_relative_to_fallback() -> None:
     # [scenario, time, node]
     fallback_flood = np.zeros((3, 2, 3), dtype=float)
     candidate_flood = fallback_flood.copy()
-    candidate_flood[:, :, 0] = 0.01
+    candidate_flood[:, :, 0] = 0.01  # 12 m3 added at priority site 0
     fallback_depth = np.ones((3, 2, 3), dtype=float)
     candidate_depth = fallback_depth.copy()
     candidate_depth[:, :, 0] += 0.02
@@ -81,14 +81,27 @@ def test_priority_safety_is_relative_to_fallback() -> None:
         fallback_flood_rate=fallback_flood,
         candidate_depth=candidate_depth,
         fallback_depth=fallback_depth,
-        priority_indices=np.array([0]),
+        priority_indices=np.array([0, 1]),
         dt_seconds=600,
-        priority_flood_budget_m3=20.0,
-        priority_depth_budget_m=0.05,
+        per_site_flood_budget_m3=20.0,
+        per_site_depth_budget_m=0.05,
     )
     assert result.admissible
-    assert np.isclose(result.priority_flood_deterioration_ucb_m3, 12.0)
+    assert np.isclose(result.worst_site_flood_deterioration_ucb_m3, 12.0)
     assert np.isclose(total_flood_volume(candidate_flood, 600), 12.0).all()
+
+    # Tighten the site-wise budget: an unaffected second priority site cannot compensate.
+    rejected = assess_priority_safety(
+        candidate_flood_rate=candidate_flood,
+        fallback_flood_rate=fallback_flood,
+        candidate_depth=candidate_depth,
+        fallback_depth=fallback_depth,
+        priority_indices=np.array([0, 1]),
+        dt_seconds=600,
+        per_site_flood_budget_m3=10.0,
+        per_site_depth_budget_m=0.05,
+    )
+    assert not rejected.admissible
 
 
 def test_world_model_is_differentiable_wrt_continuous_settings() -> None:
