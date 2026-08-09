@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
+from rtc.checkpoint_design import _eligible_checkpoint_mask
 from rtc.phase0_design import design_phase0_events
 from rtc.timing_freeze import freeze_phase0_timing
 
@@ -54,6 +56,18 @@ def test_phase0_selector_can_fallback_without_descriptors() -> None:
     assert selected["rainfall_group"].nunique() == 4
     assert summary["forcing_descriptor_columns"] == []
     assert summary["selection_mode"] == "SEEDED_GROUP_ONLY_FALLBACK_NO_FORCING_DESCRIPTORS"
+
+
+def test_checkpoint_selection_reserves_the_requested_future_tail() -> None:
+    elapsed = np.array([0, 1800, 3600, 5400, 7200, 9000], dtype=int)
+
+    eligible = _eligible_checkpoint_mask(
+        elapsed,
+        minimum_elapsed_minutes=30,
+        minimum_tail_minutes=60,
+    )
+
+    assert elapsed[eligible].tolist() == [1800, 3600, 5400]
 
 
 def _phase0_summary(path: Path, *, censored: bool) -> Path:
