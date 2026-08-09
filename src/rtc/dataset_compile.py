@@ -24,15 +24,37 @@ class BranchTensors:
     action_or_sequence_sha256: str
     exact_node_flood_volume_m3: np.ndarray | None = None
 
+    @property
+    def model_step_seconds(self) -> int:
+        dt = np.diff(self.elapsed_seconds.astype(np.int64))
+        if not dt.size or np.any(dt <= 0) or not np.all(dt == dt[0]):
+            raise ValueError("Step2 branch requires one regular positive time step")
+        return int(dt[0])
 
-def _pivot(frame: pd.DataFrame, *, times: np.ndarray, ids: tuple[str, ...], id_col: str, value_col: str) -> np.ndarray:
-    table = frame.pivot(index="elapsed_seconds", columns=id_col, values=value_col).reindex(index=times, columns=list(ids))
+    @property
+    def horizon_steps(self) -> int:
+        return int(self.settings.shape[0])
+
+
+def _pivot(
+    frame: pd.DataFrame,
+    *,
+    times: np.ndarray,
+    ids: tuple[str, ...],
+    id_col: str,
+    value_col: str,
+) -> np.ndarray:
+    table = frame.pivot(index="elapsed_seconds", columns=id_col, values=value_col).reindex(
+        index=times, columns=list(ids)
+    )
     if table.isna().any().any():
         raise ValueError(f"missing values while pivoting {value_col}")
     return table.to_numpy(dtype=float)
 
 
-def _exact_node_flood(meta_path: Path, meta: dict[str, object], node_ids: tuple[str, ...]) -> np.ndarray | None:
+def _exact_node_flood(
+    meta_path: Path, meta: dict[str, object], node_ids: tuple[str, ...]
+) -> np.ndarray | None:
     name = meta.get("node_statistics_file")
     if not name:
         return None
@@ -47,29 +69,33 @@ def _exact_node_flood(meta_path: Path, meta: dict[str, object], node_ids: tuple[
 
 
 def _compile_compact(meta_path: Path, meta: dict[str, object]) -> BranchTensors:
-    raw = np.load(meta_path.parent / str(meta["compact_file"]), allow_pickle=False)
-    times = raw["elapsed_seconds"].astype(np.int64)
-    if times.size < 2 or np.any(np.diff(times) <= 0):
-        raise ValueError("compact branch requires strictly increasing checkpoint+horizon samples")
-    state = raw["state_si"].astype(np.float32)
-    rainfall_all = raw["rainfall_mmhr"].astype(np.float32)
-    flow = raw["actuator_flow_m3s"].astype(np.float32)
-    node_ids = tuple(raw["node_ids"].astype(str).tolist())
-    actuator_ids = tuple(raw["actuator_ids"].astype(str).tolist())
-    if state.shape[0] != times.size or rainfall_all.shape[0] != times.size or flow.shape[0] != times.size:
-        raise ValueError("compact branch time dimensions do not align")
+    with np.load(meta_path.parent / str(meta["compact_file"]), allow_pickle=False) as raw:
+        times = raw["elapsed_seconds"].astype(np.int64)
+        if times.size < 2 or np.any(np.diff(times) <= 0):
+            raise ValueError("compact branch requires strictly increasing checkpoint+horizon samples")
+        state = raw["state_si"].astype(np.float32)
+        rainfall_all = raw["rainfall_mmhr"].astype(np.float32)
+        flow = raw["actuator_flow_m3s"].astype(np.float32)
+        node_ids = tuple(raw["node_ids"].astype(str).tolist())
+        actuator_ids = tuple(raw["actuator_ids"].astype(str).tolist())
+        if (
+            state.shape[0] != times.size
+            or rainfall_all.shape[0] != times.size
+            or flow.shape[0] != times.size
+        ):
+            raise ValueError("compact branch time dimensions do not align")
 
-    if "candidate_setting" in raw.files:
-        candidate = raw["candidate_setting"].astype(np.float32)
-        settings = np.repeat(candidate[None, :], times.size - 1, axis=0)
-        action_sha = str(meta["candidate_action_sha256"])
-    elif "commanded_setting" in raw.files:
-        settings = raw["commanded_setting"][:-1].astype(np.float32)
-        action_sha = str(meta["sequence_sha256"])
-    else:
-        raise ValueError("compact branch lacks candidate/commanded setting")
+        if "candidate_setting" in raw.files:
+            candidate = raw["candidate_setting"].astype(np.float32)
+            settings = np.repeat(candidate[None, :], times.size - 1, axis=0)
+            action_sha = str(meta["candidate_action_sha256"])
+        elif "commanded_setting" in raw.files:
+            settings = raw["commanded_setting"][:-1].astype(np.float32)
+            action_sha = str(meta["sequence_sha256"])
+        else:
+            raise ValueError("compact branch lacks candidate/commanded setting")
 
-    return BranchTensors(
+    branch = BranchTensors(
         initial_state=state[0],
         rainfall=rainfall_all[:-1],
         settings=settings,
@@ -82,9 +108,13 @@ def _compile_compact(meta_path: Path, meta: dict[str, object]) -> BranchTensors:
         action_or_sequence_sha256=action_sha,
         exact_node_flood_volume_m3=_exact_node_flood(meta_path, meta, node_ids),
     )
+    _ = branch.model_step_seconds
+    return branch
 
 
-def _resolve_outlet(sid: str, connection: dict[str, tuple[int, str]], valid_nodes: set[str]) -> str | None:
+def _resolve_outlet(
+    sid: str, connection: dict[str, tuple[int, str]], valid_nodes: set[str]
+) -> str | None:
     seen: set[str] = set()
     current = sid
     while current not in seen:
@@ -98,7 +128,13 @@ def _resolve_outlet(sid: str, connection: dict[str, tuple[int, str]], valid_node
     return None
 
 
-def _node_rainfall(sub: pd.DataFrame, *, times: np.ndarray, node_ids: tuple[str, ...], system_units: str) -> np.ndarray:
+def _node_rainfall(
+    sub: pd.DataFrame,
+    *,
+    times: np.ndarray,
+    node_ids: tuple[str, ...],
+    system_units: str,
+) -> np.ndarray:
     node_index = {nid: i for i, nid in enumerate(node_ids)}
     valid_nodes = set(node_ids)
     first = sub.sort_values("elapsed_seconds").groupby("subcatchment_id", sort=False).first()
@@ -133,37 +169,79 @@ def _compile_legacy_raw(meta_path: Path, meta: dict[str, object]) -> BranchTenso
     times = np.array(sorted(node["elapsed_seconds"].unique()), dtype=int)
     if times.size < 2 or np.any(np.diff(times) <= 0):
         raise ValueError("legacy branch time grid invalid")
-    depth = length_to_m(_pivot(node, times=times, ids=node_ids, id_col="node_id", value_col="depth"), system_units)
-    head = length_to_m(_pivot(node, times=times, ids=node_ids, id_col="node_id", value_col="head"), system_units)
-    flooding = flow_rate_to_m3s(_pivot(node, times=times, ids=node_ids, id_col="node_id", value_col="flooding"), flow_units)
-    volume = volume_to_m3(_pivot(node, times=times, ids=node_ids, id_col="node_id", value_col="volume"), system_units)
+    depth = length_to_m(
+        _pivot(node, times=times, ids=node_ids, id_col="node_id", value_col="depth"),
+        system_units,
+    )
+    head = length_to_m(
+        _pivot(node, times=times, ids=node_ids, id_col="node_id", value_col="head"),
+        system_units,
+    )
+    flooding = flow_rate_to_m3s(
+        _pivot(node, times=times, ids=node_ids, id_col="node_id", value_col="flooding"),
+        flow_units,
+    )
+    volume = volume_to_m3(
+        _pivot(node, times=times, ids=node_ids, id_col="node_id", value_col="volume"),
+        system_units,
+    )
     extras = []
     for name in ("total_inflow", "total_outflow"):
         if name in node.columns:
-            extras.append(flow_rate_to_m3s(_pivot(node, times=times, ids=node_ids, id_col="node_id", value_col=name), flow_units))
+            extras.append(
+                flow_rate_to_m3s(
+                    _pivot(node, times=times, ids=node_ids, id_col="node_id", value_col=name),
+                    flow_units,
+                )
+            )
     state = np.stack([depth, head, flooding, volume, *extras], axis=-1).astype(np.float32)
-    flow = flow_rate_to_m3s(_pivot(act, times=times, ids=actuator_ids, id_col="actuator_id", value_col="flow"), flow_units).astype(np.float32)
+    flow = flow_rate_to_m3s(
+        _pivot(act, times=times, ids=actuator_ids, id_col="actuator_id", value_col="flow"),
+        flow_units,
+    ).astype(np.float32)
     if "candidate_settings" in meta:
-        setting = np.array([float(meta["candidate_settings"][aid]) for aid in actuator_ids], dtype=np.float32)  # type: ignore[index]
+        setting = np.array(
+            [float(meta["candidate_settings"][aid]) for aid in actuator_ids], dtype=np.float32  # type: ignore[index]
+        )
         settings = np.repeat(setting[None, :], times.size - 1, axis=0)
         action_sha = str(meta["candidate_action_sha256"])
     else:
         sequence = meta["settings_sequence"]
         block = int(meta["control_block_seconds"])
         checkpoint_seconds = int(meta["checkpoint_minutes"]) * 60
-        settings = np.asarray([
-            [float(sequence[min(max((int(t)-checkpoint_seconds)//block, 0), len(sequence)-1)][aid]) for aid in actuator_ids]  # type: ignore[index]
-            for t in times[:-1]
-        ], dtype=np.float32)
+        settings = np.asarray(
+            [
+                [
+                    float(
+                        sequence[
+                            min(max((int(t) - checkpoint_seconds) // block, 0), len(sequence) - 1)
+                        ][aid]
+                    )
+                    for aid in actuator_ids
+                ]
+                for t in times[:-1]
+            ],
+            dtype=np.float32,
+        )
         action_sha = str(meta["sequence_sha256"])
-    rainfall = _node_rainfall(sub, times=times[:-1], node_ids=node_ids, system_units=system_units)
-    return BranchTensors(
-        initial_state=state[0], rainfall=rainfall, settings=settings,
-        previous_actuator_flow=flow[0], target_states=state[1:], target_actuator_flows=flow[1:],
-        elapsed_seconds=times, node_ids=node_ids, actuator_ids=actuator_ids,
+    rainfall = _node_rainfall(
+        sub, times=times[:-1], node_ids=node_ids, system_units=system_units
+    )
+    branch = BranchTensors(
+        initial_state=state[0],
+        rainfall=rainfall,
+        settings=settings,
+        previous_actuator_flow=flow[0],
+        target_states=state[1:],
+        target_actuator_flows=flow[1:],
+        elapsed_seconds=times,
+        node_ids=node_ids,
+        actuator_ids=actuator_ids,
         action_or_sequence_sha256=action_sha,
         exact_node_flood_volume_m3=_exact_node_flood(meta_path, meta, node_ids),
     )
+    _ = branch.model_step_seconds
+    return branch
 
 
 def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
@@ -186,12 +264,19 @@ def compile_branches_to_npz(
     if provenance is not None and len(provenance) != len(branches):
         raise ValueError("provenance rows must align one-for-one with metadata paths")
     node_ids, actuator_ids = branches[0].node_ids, branches[0].actuator_ids
-    horizon, state_dim = branches[0].settings.shape[0], branches[0].target_states.shape[-1]
+    horizon = branches[0].horizon_steps
+    state_dim = branches[0].target_states.shape[-1]
+    model_step_seconds = branches[0].model_step_seconds
     for branch in branches[1:]:
         if branch.node_ids != node_ids or branch.actuator_ids != actuator_ids:
             raise ValueError("branch topology/actuator ordering mismatch")
-        if branch.settings.shape[0] != horizon or branch.target_states.shape[-1] != state_dim:
+        if branch.horizon_steps != horizon or branch.target_states.shape[-1] != state_dim:
             raise ValueError("branch horizon/state schema mismatch")
+        if branch.model_step_seconds != model_step_seconds:
+            raise ValueError(
+                "Step2 branch time-step mismatch: Phase-0/high-frequency and production branches "
+                "must never be mixed in one surrogate dataset"
+            )
     payload: dict[str, np.ndarray] = {
         "initial_state": np.stack([b.initial_state for b in branches]),
         "rainfall": np.stack([b.rainfall for b in branches]),
@@ -202,17 +287,33 @@ def compile_branches_to_npz(
         "elapsed_seconds": np.stack([b.elapsed_seconds for b in branches]),
         "node_ids": np.asarray(node_ids),
         "actuator_ids": np.asarray(actuator_ids),
-        "action_or_sequence_sha256": np.asarray([b.action_or_sequence_sha256 for b in branches]),
+        "action_or_sequence_sha256": np.asarray(
+            [b.action_or_sequence_sha256 for b in branches]
+        ),
+        "model_step_seconds": np.asarray(model_step_seconds, dtype=np.int64),
+        "horizon_steps": np.asarray(horizon, dtype=np.int64),
     }
     if all(b.exact_node_flood_volume_m3 is not None for b in branches):
-        payload["exact_node_flood_volume_m3"] = np.stack([
-            b.exact_node_flood_volume_m3 for b in branches if b.exact_node_flood_volume_m3 is not None
-        ])
+        payload["exact_node_flood_volume_m3"] = np.stack(
+            [
+                b.exact_node_flood_volume_m3
+                for b in branches
+                if b.exact_node_flood_volume_m3 is not None
+            ]
+        )
     if provenance is not None:
         for column in (
-            "event_id", "rainfall_group", "scientific_split", "development_fold",
-            "data_role", "checkpoint_id", "actuator_id", "base_setting",
-            "requested_setting", "base_action_sha256",
+            "event_id",
+            "rainfall_group",
+            "scientific_split",
+            "development_fold",
+            "data_role",
+            "checkpoint_id",
+            "actuator_id",
+            "base_setting",
+            "requested_setting",
+            "base_action_sha256",
+            "source_kind",
         ):
             if column in provenance.columns:
                 payload[column] = provenance[column].fillna("").astype(str).to_numpy()
