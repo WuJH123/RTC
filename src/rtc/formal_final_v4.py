@@ -43,6 +43,11 @@ def _verified_lock(path: str | Path) -> dict[str, object]:
     causal_timing = lock.get("causal_timing")
     if not isinstance(causal_timing, dict) or causal_timing.get("initial_observation_elapsed_seconds") != 0:
         raise ValueError("Final requires the t=0-included causal timing contract")
+    model_contracts = lock.get("model_contracts")
+    if not isinstance(model_contracts, dict) or not str(
+        model_contracts.get("swmm_engine_version", "")
+    ).strip():
+        raise ValueError("Policy Lock lacks the trained SWMM engine identity")
     return lock
 
 
@@ -60,7 +65,9 @@ def compile_final_v4(
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, pd.DataFrame]]:
     lock = _verified_lock(policy_lock_path)
     artefacts = lock["artefacts"]
-    assert isinstance(artefacts, dict)
+    hashes = lock["sha256"]
+    model_contracts = lock["model_contracts"]
+    assert isinstance(artefacts, dict) and isinstance(hashes, dict) and isinstance(model_contracts, dict)
     physical_sha = physical_contract_sha256(str(artefacts["frozen_inp"]))
     priority = load_priority_nodes(str(artefacts["priority_nodes"]))
     plan = _json(str(artefacts["baseline_plan"]))
@@ -79,6 +86,11 @@ def compile_final_v4(
     controller = _json(str(artefacts["controller_config"]))
     model_step = int(controller["model_step_seconds"])
     control_update = int(controller["control_update_seconds"])
+    locked_engine = str(model_contracts["swmm_engine_version"])
+    proposed_hashes = {
+        name: str(hashes[name])
+        for name in ("controller_config", "graph_schema", "step1_model", "step2_model")
+    }
 
     split = pd.read_csv(str(artefacts["split_registry"]))
     required_split = {"event_id", "rainfall_group", "inp_path", "scientific_split"}
@@ -136,7 +148,6 @@ def compile_final_v4(
             raise ValueError(f"Final event {event} maps to multiple rainfall groups")
 
     rows: list[dict[str, object]] = []
-    common_engine: str | None = None
     for _, item in index.iterrows():
         eid = str(item["event_id"])
         result = verify_formal_run_v4(
@@ -146,16 +157,13 @@ def compile_final_v4(
             model_step_seconds=model_step,
             control_update_seconds=control_update,
             expected_event_sha256=event_sha[eid],
-            expected_swmm_engine_version=common_engine,
+            expected_swmm_engine_version=locked_engine,
+            expected_proposed_artifact_sha256=proposed_hashes,
         )
-        if common_engine is None:
-            common_engine = str(result["swmm_engine_version"])
         for key in ("event_id", "rainfall_group", "strategy"):
             if str(result[key]) != str(item[key]):
                 raise ValueError(f"Final index {key} differs from bound formal run")
         rows.append(result)
-    if not common_engine:
-        raise ValueError("Final contains no SWMM engine identity")
 
     detail = pd.DataFrame(rows)
     metric_cols = [
@@ -174,7 +182,7 @@ def compile_final_v4(
     )
     summary["independent_rainfall_groups"] = int(grouped["rainfall_group"].nunique())
     summary["final_events"] = int(len(expected_events))
-    summary["swmm_engine_version"] = common_engine
+    summary["swmm_engine_version"] = locked_engine
     summary["aggregation"] = "equal_weight_per_rainfall_group"
 
     pairs: dict[str, pd.DataFrame] = {}
@@ -206,7 +214,7 @@ def compile_final_v4(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Compile complete event-bound rainfall-group-balanced TFV-first Formal Final"
+        description="Compile complete event/model/strategy-bound rainfall-balanced Formal Final"
     )
     parser.add_argument("--policy-lock", required=True)
     parser.add_argument("--run-index", required=True)
@@ -242,6 +250,8 @@ def main() -> None:
                 "priority_pfv_is_hard_gate": False,
                 "complete_locked_final_event_set": True,
                 "event_forcing_bound": True,
+                "strategy_execution_bound": True,
+                "proposed_locked_artifacts_bound": True,
                 "detail": str(out / "formal_final_detail.csv"),
                 "group_detail": str(out / "formal_final_group_detail.csv"),
                 "summary": str(out / "formal_final_summary.csv"),
