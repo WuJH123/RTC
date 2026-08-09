@@ -18,7 +18,6 @@ def audit_inp_main() -> None:
     parser.add_argument("--priority", required=True)
     parser.add_argument("--out")
     args = parser.parse_args()
-
     catalog = discover_actuators(args.inp)
     nodes = discover_nodes(args.inp)
     priority = load_priority_nodes(args.priority)
@@ -43,23 +42,17 @@ def audit_inp_main() -> None:
 
 
 def design_probes_main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Design same-checkpoint, single-actuator D2 counterfactual probes"
-    )
+    parser = argparse.ArgumentParser(description="Design same-checkpoint, single-actuator D2 counterfactual probes")
     parser.add_argument("--inp", required=True)
     parser.add_argument("--checkpoints", required=True, help="CSV with checkpoint_id and setting:<id>")
     parser.add_argument("--out", required=True)
     parser.add_argument("--epsilon", type=float, default=0.15)
     parser.add_argument("--no-center", action="store_true")
     args = parser.parse_args()
-
     catalog = discover_actuators(args.inp)
     checkpoints = pd.read_csv(args.checkpoints)
     manifest = design_independent_actuator_probes(
-        checkpoints,
-        catalog,
-        epsilon=args.epsilon,
-        include_center=not args.no_center,
+        checkpoints, catalog, epsilon=args.epsilon, include_center=not args.no_center
     )
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -71,11 +64,7 @@ def design_probes_main() -> None:
 
 
 def run_probes_main() -> None:
-    """Execute a probe manifest locally with PySWMM.
-
-    Candidate SHA duplicates (typically the shared centre action) are run once. Every
-    branch creates a fresh Simulation and independently replays the native prefix.
-    """
+    """Execute independent D2 branches with resumable provenance in RUN_SUMMARY.csv."""
 
     from .swmm_data import run_independent_control_branch
 
@@ -87,13 +76,11 @@ def run_probes_main() -> None:
     parser.add_argument("--stride-seconds", type=int, default=300)
     parser.add_argument("--limit", type=int)
     args = parser.parse_args()
-
     manifest = pd.read_csv(args.manifest)
     required = {"candidate_action_sha256", "candidate_settings_json", "checkpoint_minutes"}
     missing = sorted(required - set(manifest.columns))
     if missing:
         raise ValueError(f"manifest missing required columns: {missing}")
-    # Same action from the same event/checkpoint is one physical branch.
     dedup_cols = ["candidate_action_sha256", "checkpoint_minutes"]
     for optional in ("event_id", "rainfall_group", "inp_path"):
         if optional in manifest.columns:
@@ -109,10 +96,11 @@ def run_probes_main() -> None:
             inp = args.inp
         if not inp:
             raise ValueError("an INP is required via --inp or manifest inp_path")
-        branch_id = str(row["candidate_action_sha256"])[:16]
+        action_sha = str(row["candidate_action_sha256"])
         event = str(row.get("event_id", "event"))
+        rainfall_group = str(row.get("rainfall_group", ""))
         checkpoint = int(row["checkpoint_minutes"])
-        branch_id = f"{event}__t{checkpoint:04d}__{branch_id}"
+        branch_id = f"{event}__t{checkpoint:04d}__{action_sha[:16]}"
         settings = json.loads(str(row["candidate_settings_json"]))
         result = run_independent_control_branch(
             inp_path=inp,
@@ -127,6 +115,11 @@ def run_probes_main() -> None:
             {
                 "branch_id": result.branch_id,
                 "metadata_path": result.metadata_path,
+                "candidate_action_sha256": action_sha,
+                "checkpoint_minutes": checkpoint,
+                "checkpoint_id": str(row.get("checkpoint_id", f"{event}:t{checkpoint}")),
+                "event_id": event,
+                "rainfall_group": rainfall_group,
                 "flow_routing_error_pct": result.flow_routing_error_pct,
             }
         )
