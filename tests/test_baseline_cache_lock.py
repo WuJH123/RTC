@@ -40,6 +40,7 @@ def _lock(tmp_path: Path, source: Path) -> Path:
                 "record_stride_seconds": 300,
                 "control_start_minutes": 60,
                 "exact_global_peak": False,
+                "controller": {"history_steps": 13, "horizon_steps": 24},
             }
         ),
         encoding="utf-8",
@@ -48,25 +49,25 @@ def _lock(tmp_path: Path, source: Path) -> Path:
     plan.write_text(
         json.dumps(
             {
+                "contract": "FORMAL_BASELINE_PLAN_V4_NO_DUPLICATE_HOLD",
                 "strategies": [
                     "proposed",
                     "no_control",
                     "internal_rtc",
-                    "hold",
                     "all_open",
                     "all_closed",
-                ]
+                ],
             }
         ),
         encoding="utf-8",
     )
     split = tmp_path / "split.csv"
-    pd.DataFrame(
-        [
-            {"rainfall_group": "g_dev", "scientific_split": "development"},
-            {"rainfall_group": "g_final", "scientific_split": "final"},
-        ]
-    ).to_csv(split, index=False)
+    rows = [{"rainfall_group": "g_dev", "scientific_split": "development"}]
+    rows.extend(
+        {"rainfall_group": f"g_final_{i:02d}", "scientific_split": "final"}
+        for i in range(24)
+    )
+    pd.DataFrame(rows).to_csv(split, index=False)
     artefacts = {
         "controller_config": str(controller),
         "baseline_plan": str(plan),
@@ -76,7 +77,7 @@ def _lock(tmp_path: Path, source: Path) -> Path:
     lock.write_text(
         json.dumps(
             {
-                "contract": "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V2",
+                "contract": "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V3_CAUSAL_FRESH_DATA",
                 "physical_network_sha256": physical_contract_sha256(source),
                 "artefacts": artefacts,
                 "sha256": {name: sha256_file(path) for name, path in artefacts.items()},
@@ -95,37 +96,38 @@ def test_final_baseline_registry_must_match_locked_split_and_physics(tmp_path: P
     assert strategies == (
         "no_control",
         "internal_rtc",
-        "hold",
         "all_open",
         "all_closed",
     )
-    assert groups == frozenset({"g_final"})
+    assert len(groups) == 24
 
-    registry = pd.DataFrame(
-        [
-            {
-                "event_id": "e_dev",
-                "rainfall_group": "g_dev",
-                "inp_path": str(source),
-                "scientific_split": "development",
-            },
-            {
-                "event_id": "e_final",
-                "rainfall_group": "g_final",
-                "inp_path": str(source),
-                "scientific_split": "final",
-            },
-        ]
+    registry_rows = [
+        {
+            "event_id": "e_dev",
+            "rainfall_group": "g_dev",
+            "inp_path": str(source),
+            "scientific_split": "development",
+        }
+    ]
+    registry_rows.extend(
+        {
+            "event_id": f"e_final_{i:02d}",
+            "rainfall_group": f"g_final_{i:02d}",
+            "inp_path": str(source),
+            "scientific_split": "final",
+        }
+        for i in range(24)
     )
+    registry = pd.DataFrame(registry_rows)
     checked = validate_final_event_registry(
         registry,
         locked_physical_sha256=physical,
         locked_final_groups=groups,
     )
-    assert len(checked) == 2
+    assert len(checked) == 25
 
     wrong_group = registry.copy()
-    wrong_group.loc[wrong_group["scientific_split"] == "final", "rainfall_group"] = "g_other"
+    wrong_group.loc[wrong_group.index[-1], "rainfall_group"] = "g_other"
     with pytest.raises(ValueError, match="differ from Policy Lock"):
         validate_final_event_registry(
             wrong_group,
@@ -135,7 +137,7 @@ def test_final_baseline_registry_must_match_locked_split_and_physics(tmp_path: P
 
     wrong_source = _inp(tmp_path / "wrong.inp", diameter=2.0)
     wrong_physics = registry.copy()
-    wrong_physics.loc[wrong_physics["scientific_split"] == "final", "inp_path"] = str(wrong_source)
+    wrong_physics.loc[wrong_physics.index[-1], "inp_path"] = str(wrong_source)
     with pytest.raises(ValueError, match="physical network differs"):
         validate_final_event_registry(
             wrong_physics,
