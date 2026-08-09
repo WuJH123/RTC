@@ -16,6 +16,29 @@ def _load_meta(path: str | Path) -> tuple[dict[str, object], Path]:
     return json.loads(p.read_text(encoding="utf-8")), p.parent
 
 
+def _source_event_inp(item: pd.Series, meta: dict[str, object]) -> str:
+    """Recover the original event INP when a No-control baseline cache sidecar exists."""
+
+    raw_sidecar = item.get("sidecar_path", "")
+    sidecar_text = "" if pd.isna(raw_sidecar) else str(raw_sidecar).strip()
+    if sidecar_text:
+        sidecar_path = Path(sidecar_text)
+        if sidecar_path.is_file():
+            sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            if (
+                sidecar.get("contract") == "FIXED_BASELINE_CACHE_V1"
+                and sidecar.get("strategy") == "no_control"
+            ):
+                source = Path(str(sidecar.get("source_inp", "")))
+                if not source.is_file():
+                    raise ValueError(f"baseline cache original event INP disappeared: {source}")
+                return str(source)
+    runtime = Path(str(meta.get("inp_path", "")))
+    if not runtime.is_file():
+        raise ValueError(f"checkpoint source INP disappeared: {runtime}")
+    return str(runtime)
+
+
 def _assert_replayable_no_control_prefix(meta: dict[str, object], metadata_path: str | Path) -> None:
     """D2/D3 fresh branches require a no-write, controls-disabled prefix.
 
@@ -138,6 +161,7 @@ def design_checkpoints(
         metadata_path = str(item["metadata_path"])
         state, actuator_ids, settings_by_time, meta = _state_table(metadata_path)
         _assert_replayable_no_control_prefix(meta, metadata_path)
+        source_event_inp = _source_event_inp(item, meta)
         keep = state["elapsed_seconds"].to_numpy(dtype=int) >= minimum_elapsed_minutes * 60
         state = state.loc[keep].copy()
         settings_by_time = settings_by_time[keep]
@@ -177,7 +201,7 @@ def design_checkpoints(
                 "rainfall_group": str(item["rainfall_group"]),
                 "scientific_split": split,
                 "development_fold": str(item.get("development_fold", "")),
-                "inp_path": str(meta["inp_path"]),
+                "inp_path": source_event_inp,
                 "trajectory_metadata_path": metadata_path,
                 "network_max_depth_m": float(row["network_max_depth_m"]),
                 "network_total_flood_rate_m3s": float(row["network_total_flood_rate_m3s"]),
