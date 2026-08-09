@@ -40,7 +40,7 @@ def test_cached_no_control_baseline_is_replayable(tmp_path: Path) -> None:
     [
         (
             {"data_contract": "CLOSED_LOOP_COMPACT_V2", "controller_present": True},
-            "Python control decisions",
+            "Python.*decisions",
         ),
         (
             {
@@ -48,7 +48,7 @@ def test_cached_no_control_baseline_is_replayable(tmp_path: Path) -> None:
                 "python_actuator_writes": False,
                 "native_controls_enabled": True,
             },
-            "Internal-RTC controls enabled",
+            "native controls enabled",
         ),
         (
             {
@@ -56,7 +56,7 @@ def test_cached_no_control_baseline_is_replayable(tmp_path: Path) -> None:
                 "python_actuator_writes": True,
                 "native_controls_enabled": False,
             },
-            "Python actuator writes",
+            "Python writes",
         ),
     ],
 )
