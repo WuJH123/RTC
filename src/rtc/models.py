@@ -43,9 +43,11 @@ class SparseStateEstimator(nn.Module):
         hidden_dim: int = 128,
         graph_layers: int = 3,
         context_dim: int = 0,
+        **runtime_metadata,
     ):
         super().__init__()
         self.context_dim = int(context_dim)
+        self.runtime_metadata = dict(runtime_metadata)
         self.temporal = nn.GRU(observed_dim * 2 + static_dim + self.context_dim, hidden_dim, batch_first=True)
         self.graph = nn.ModuleList(GraphMessageBlock(hidden_dim) for _ in range(graph_layers))
         self.head = nn.Linear(hidden_dim, state_dim)
