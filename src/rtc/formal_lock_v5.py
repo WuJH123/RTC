@@ -9,16 +9,36 @@ import numpy as np
 import pandas as pd
 
 from .causal_timing import timing_from_controller_config
+from .fresh_workspace import load_fresh_workspace, require_path_inside_workspace
 from .inp_lineage import physical_contract_sha256
 from .tfv_pipeline import TFVPipelineLedger, sha256_file
 
 
 _REQUIRED = {
+    "fresh_workspace_manifest",
     "inp_preflight", "frozen_inp", "priority_nodes", "sensor_layout", "time_scale_config",
     "step1_model", "step2_model", "graph_schema", "state_schema", "actuator_catalog",
     "split_registry", "model_acceptance_contract", "step1_acceptance", "step2_acceptance",
     "gradient_acceptance", "candidate_ranking_acceptance", "controller_config",
     "rainfall_forecast_config", "fallback_policy", "baseline_plan", "runtime_acceptance",
+}
+
+_WORKSPACE_OUTPUT_ARTIFACTS = {
+    "inp_preflight",
+    "time_scale_config",
+    "step1_model",
+    "step2_model",
+    "graph_schema",
+    "state_schema",
+    "actuator_catalog",
+    "split_registry",
+    "step1_acceptance",
+    "step2_acceptance",
+    "gradient_acceptance",
+    "candidate_ranking_acceptance",
+    "controller_config",
+    "rainfall_forecast_config",
+    "runtime_acceptance",
 }
 
 FORMAL_MIN_RAINFALL_GROUPS = 160
@@ -181,6 +201,25 @@ def _verify_runtime_acceptance(
     return evidence
 
 
+def _verify_fresh_workspace(artefacts: dict[str, str]) -> dict[str, object]:
+    workspace = load_fresh_workspace(artefacts["fresh_workspace_manifest"])
+    root = Path(str(workspace["output_root"]))
+    for name in sorted(_WORKSPACE_OUTPUT_ARTIFACTS):
+        require_path_inside_workspace(artefacts[name], root)
+    # The split registry used by Formal must be the exact event-registry identity bound when
+    # the fresh workspace was initialized. This prevents silently swapping in an old split.
+    inputs = workspace.get("inputs")
+    if not isinstance(inputs, dict) or not isinstance(inputs.get("event_registry"), dict):
+        raise ValueError("fresh workspace lacks bound event_registry identity")
+    event_identity = inputs["event_registry"]
+    assert isinstance(event_identity, dict)
+    if sha256_file(artefacts["split_registry"]) != str(event_identity.get("sha256", "")):
+        raise ValueError(
+            "Policy Lock split_registry is not the exact event registry bound to the fresh workspace"
+        )
+    return workspace
+
+
 def create_formal_policy_lock_v5(
     *, ledger_path: str | Path, artefacts_path: str | Path, output_path: str | Path
 ) -> dict[str, object]:
@@ -195,6 +234,7 @@ def create_formal_policy_lock_v5(
         if not Path(path).is_file():
             raise ValueError(f"Policy Lock artifact missing: {name}: {path}")
 
+    fresh_workspace = _verify_fresh_workspace(artefacts)
     preflight = _json(artefacts["inp_preflight"])
     if preflight.get("contract") != "LARGE_SWMM_INP_PREFLIGHT_V3_CAUSAL_RTC":
         raise ValueError("locked INP must pass causal large-network preflight V3")
@@ -292,7 +332,8 @@ def create_formal_policy_lock_v5(
         "no_control_contract": no_control,
         "runtime_acceptance": runtime_acceptance,
         "formal_strategy_matrix": list(strategies),
-        "fresh_data_requirement": "all hydraulic trajectories, D1/D2/D3 branches, trained models and closed-loop evidence are regenerated under this repository contract; historical RTC outputs/models are not admissible",
+        "fresh_workspace": fresh_workspace,
+        "fresh_data_requirement": "all hydraulic trajectories, D1/D2/D3 branches, trained models and closed-loop evidence are generated under the bound fresh workspace; historical RTC outputs/models are not admissible",
         "artefacts": artefacts,
         "sha256": hashes,
     }
