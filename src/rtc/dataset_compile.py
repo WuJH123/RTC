@@ -22,6 +22,7 @@ class BranchTensors:
     node_ids: tuple[str, ...]
     actuator_ids: tuple[str, ...]
     action_or_sequence_sha256: str
+    swmm_engine_version: str
     exact_node_flood_volume_m3: np.ndarray | None = None
 
     @property
@@ -68,6 +69,13 @@ def _exact_node_flood(
     return table.reindex(node_ids)["delta_flooding_volume_m3"].to_numpy(dtype=np.float32)
 
 
+def _engine(meta: dict[str, object], meta_path: Path) -> str:
+    value = str(meta.get("swmm_engine_version", "")).strip()
+    if not value:
+        raise ValueError(f"Formal Step2 branch lacks SWMM engine version: {meta_path}")
+    return value
+
+
 def _compile_compact(meta_path: Path, meta: dict[str, object]) -> BranchTensors:
     with np.load(meta_path.parent / str(meta["compact_file"]), allow_pickle=False) as raw:
         times = raw["elapsed_seconds"].astype(np.int64)
@@ -106,6 +114,7 @@ def _compile_compact(meta_path: Path, meta: dict[str, object]) -> BranchTensors:
         node_ids=node_ids,
         actuator_ids=actuator_ids,
         action_or_sequence_sha256=action_sha,
+        swmm_engine_version=_engine(meta, meta_path),
         exact_node_flood_volume_m3=_exact_node_flood(meta_path, meta, node_ids),
     )
     _ = branch.model_step_seconds
@@ -238,6 +247,7 @@ def _compile_legacy_raw(meta_path: Path, meta: dict[str, object]) -> BranchTenso
         node_ids=node_ids,
         actuator_ids=actuator_ids,
         action_or_sequence_sha256=action_sha,
+        swmm_engine_version=_engine(meta, meta_path),
         exact_node_flood_volume_m3=_exact_node_flood(meta_path, meta, node_ids),
     )
     _ = branch.model_step_seconds
@@ -267,6 +277,7 @@ def compile_branches_to_npz(
     horizon = branches[0].horizon_steps
     state_dim = branches[0].target_states.shape[-1]
     model_step_seconds = branches[0].model_step_seconds
+    swmm_engine_version = branches[0].swmm_engine_version
     for branch in branches[1:]:
         if branch.node_ids != node_ids or branch.actuator_ids != actuator_ids:
             raise ValueError("branch topology/actuator ordering mismatch")
@@ -276,6 +287,11 @@ def compile_branches_to_npz(
             raise ValueError(
                 "Step2 branch time-step mismatch: Phase-0/high-frequency and production branches "
                 "must never be mixed in one surrogate dataset"
+            )
+        if branch.swmm_engine_version != swmm_engine_version:
+            raise ValueError(
+                "Step2 branches from different SWMM engine versions cannot be mixed: "
+                f"{branch.swmm_engine_version} != {swmm_engine_version}"
             )
     payload: dict[str, np.ndarray] = {
         "initial_state": np.stack([b.initial_state for b in branches]),
@@ -292,6 +308,7 @@ def compile_branches_to_npz(
         ),
         "model_step_seconds": np.asarray(model_step_seconds, dtype=np.int64),
         "horizon_steps": np.asarray(horizon, dtype=np.int64),
+        "swmm_engine_version": np.asarray(swmm_engine_version),
     }
     if all(b.exact_node_flood_volume_m3 is not None for b in branches):
         payload["exact_node_flood_volume_m3"] = np.stack(
