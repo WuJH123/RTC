@@ -7,21 +7,28 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .code_contract import rtc_source_tree_sha256
 from .contracts import load_priority_nodes
 from .formal_final_v3 import _json, _verify_formal_run
 from .inp_lineage import physical_contract_sha256
 from .tfv_pipeline import sha256_file
 
 
-POLICY_LOCK_CONTRACT = "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V3_CAUSAL_FRESH_DATA"
+POLICY_LOCK_CONTRACT = "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V4_CODE_TIME_DATA_BOUND"
 
 
 def _verified_lock(path: str | Path) -> dict[str, object]:
     lock = _json(path)
     if lock.get("contract") != POLICY_LOCK_CONTRACT:
-        raise ValueError("TFV-first Final requires causal fresh-data Policy Lock V3")
+        raise ValueError("TFV-first Final requires code/time/data-bound Policy Lock V4")
+    if lock.get("rtc_source_tree_sha256") != rtc_source_tree_sha256():
+        raise ValueError(
+            "current source tree differs from Policy Lock; Final compilation is forbidden"
+        )
     if lock.get("priority_is_hard_constraint") is not False:
         raise ValueError("Policy Lock violates TFV-first soft-priority contract")
+    if lock.get("formal_metric_aggregation") != "equal_weight_per_independent_rainfall_group":
+        raise ValueError("Policy Lock lacks the frozen rainfall-group-balanced metric contract")
     artefacts, hashes = lock.get("artefacts"), lock.get("sha256")
     if not isinstance(artefacts, dict) or not isinstance(hashes, dict):
         raise ValueError("Policy Lock lacks artefact/hash maps")
@@ -179,7 +186,7 @@ def compile_final_v4(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Compile rainfall-group-balanced causal TFV-first Formal Final"
+        description="Compile code-bound rainfall-group-balanced TFV-first Formal Final"
     )
     parser.add_argument("--policy-lock", required=True)
     parser.add_argument("--run-index", required=True)
@@ -212,6 +219,7 @@ def main() -> None:
                     detail["rainfall_group"].nunique()
                 ),
                 "aggregation": "equal_weight_per_rainfall_group",
+                "rtc_source_tree_sha256": rtc_source_tree_sha256(),
                 "strategies": sorted(detail["strategy"].unique().tolist()),
                 "priority_pfv_is_hard_gate": False,
                 "detail": str(out / "formal_final_detail.csv"),
