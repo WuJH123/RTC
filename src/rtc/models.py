@@ -32,11 +32,12 @@ class GraphMessageBlock(nn.Module):
 
 
 class SparseStateEstimator(nn.Module):
-    """Step 1: reconstruct network state from causal sparse histories.
+    """Step 1: reconstruct network state from strictly causal sparse histories.
 
-    Missing observations are represented explicitly by a mask; the model never receives
-    future truth. A GRU extracts temporal information independently at every node before
-    topology-aware message passing reconstructs the network-wide state.
+    ``context_history`` is the explicit causal path for realised rainfall and actuator
+    requested/readback history promised by the scientific contract. It is global by
+    default (``[B,T,C]``) and is broadcast to nodes; node-specific context
+    (``[B,T,N,C]``) is also accepted. Future realised rainfall/state is never an input.
     """
 
     def __init__(
@@ -46,9 +47,14 @@ class SparseStateEstimator(nn.Module):
         state_dim: int,
         hidden_dim: int = 128,
         graph_layers: int = 3,
+        context_dim: int = 0,
     ):
         super().__init__()
-        self.temporal = nn.GRU(observed_dim * 2 + static_dim, hidden_dim, batch_first=True)
+        self.context_dim = int(context_dim)
+        if self.context_dim < 0:
+            raise ValueError("context_dim must be non-negative")
+        in_dim = observed_dim * 2 + static_dim + self.context_dim
+        self.temporal = nn.GRU(in_dim, hidden_dim, batch_first=True)
         self.graph = nn.ModuleList(GraphMessageBlock(hidden_dim) for _ in range(graph_layers))
         self.head = nn.Linear(hidden_dim, state_dim)
 
@@ -58,16 +64,37 @@ class SparseStateEstimator(nn.Module):
         observation_mask: torch.Tensor,
         static_node_features: torch.Tensor,
         edge_index: torch.Tensor,
+        context_history: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        # histories: [B, T, N, F]; static: [N, S] or [B, N, S]
+        # histories: [B,T,N,F]; static: [N,S] or [B,N,S]
+        if observed_history.shape != observation_mask.shape:
+            raise ValueError("observed_history and observation_mask must have identical shape")
         b, t, n, _ = observed_history.shape
         if static_node_features.dim() == 2:
             static_node_features = static_node_features.unsqueeze(0).expand(b, -1, -1)
+        if static_node_features.shape[:2] != (b, n):
+            raise ValueError("static node features must align with batch/node dimensions")
         static = static_node_features[:, None].expand(-1, t, -1, -1)
-        temporal_input = torch.cat(
-            [observed_history * observation_mask, observation_mask, static], dim=-1
-        )
-        # GRU over time for each node.
+
+        parts = [observed_history * observation_mask, observation_mask, static]
+        if self.context_dim:
+            if context_history is None:
+                raise ValueError("context_history is required when context_dim > 0")
+            if context_history.dim() == 3:
+                if context_history.shape[:2] != (b, t) or context_history.shape[-1] != self.context_dim:
+                    raise ValueError("global context must have shape [B,T,context_dim]")
+                context = context_history[:, :, None, :].expand(-1, -1, n, -1)
+            elif context_history.dim() == 4:
+                if context_history.shape != (b, t, n, self.context_dim):
+                    raise ValueError("node context must have shape [B,T,N,context_dim]")
+                context = context_history
+            else:
+                raise ValueError("context_history must be rank 3 or 4")
+            parts.append(context)
+        elif context_history is not None:
+            raise ValueError("context_history was supplied but model context_dim is zero")
+
+        temporal_input = torch.cat(parts, dim=-1)
         node_sequences = temporal_input.permute(0, 2, 1, 3).reshape(b * n, t, -1)
         _, hidden = self.temporal(node_sequences)
         x = hidden[-1].reshape(b, n, -1)
@@ -84,7 +111,7 @@ class ActuatorFlowModel(nn.Module):
 
     def __init__(self, state_dim: int, physics_dim: int, hidden_dim: int = 128):
         super().__init__()
-        in_dim = state_dim * 2 + physics_dim + 2  # upstream/downstream, setting, previous flow
+        in_dim = state_dim * 2 + physics_dim + 2
         self.encoder = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.SiLU(),
@@ -114,7 +141,7 @@ class ActuatorFlowModel(nn.Module):
 
 
 class HydraulicTransition(nn.Module):
-    """Step 2B: node state + rainfall + actuator flow injection -> next node state."""
+    """Step 2B: node state + causal rainfall + actuator flow injection -> next node state."""
 
     def __init__(
         self,
@@ -184,6 +211,8 @@ class DifferentiableHydraulicWorldModel(nn.Module):
         edge_index: torch.Tensor,
     ) -> Rollout:
         # rainfall [B,H,N,R], settings [B,H,A]
+        if rainfall.shape[0] != settings.shape[0] or rainfall.shape[1] != settings.shape[1]:
+            raise ValueError("rainfall/settings batch and horizon dimensions must match")
         state = initial_state
         flow = previous_actuator_flow
         states, flows, responses = [], [], []

@@ -1,0 +1,11 @@
+{
+  "contract": "HYDRAULIC_TIME_SCALE_CONTRACT_V2",
+  "instruction": "Populate only after the Phase-0/D2 response-time pilot. Formal execution is intentionally blocked while placeholders remain.",
+  "model_step_seconds": "REPLACE_AFTER_PHASE0_D2_PILOT",
+  "control_update_seconds": "REPLACE_AFTER_PHASE0_D2_PILOT",
+  "horizon_steps": "REPLACE_AFTER_PHASE0_D2_PILOT",
+  "evidence": {
+    "response_time_report": "REPLACE_WITH_HASHED_EVIDENCE_PATH",
+    "settling_time_report": "REPLACE_WITH_HASHED_EVIDENCE_PATH"
+  }
+}

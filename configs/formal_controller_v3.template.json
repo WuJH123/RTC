@@ -1,0 +1,38 @@
+{
+  "contract": "PRODUCTION_CONTROLLER_CONFIG_V3",
+  "instruction": "Formal main runs MUST keep exact_global_peak=false. Exact Global Peak is computed afterward by rtc.formalize_run using a routing-step replay of the frozen executed decision log.",
+  "model_step_seconds": "REPLACE_AFTER_PHASE0_D2_PILOT",
+  "control_update_seconds": "REPLACE_AFTER_PHASE0_D2_PILOT",
+  "record_stride_seconds": "REPLACE_AFTER_PHASE0_D2_PILOT",
+  "control_start_minutes": "REPLACE_AFTER_HISTORY_READINESS_AUDIT",
+  "exact_global_peak": false,
+  "depth_state_index": 0,
+  "flood_rate_state_index": 2,
+  "flood_budget_m3": {
+    "REPLACE_WITH_EACH_OF_8_PRIORITY_NODES": "REPLACE_AFTER_DEVELOPMENT_ENGINEERING_REVIEW"
+  },
+  "depth_budget_m": {
+    "REPLACE_WITH_EACH_OF_8_PRIORITY_NODES": "REPLACE_AFTER_DEVELOPMENT_ENGINEERING_REVIEW"
+  },
+  "safety": {
+    "forecast_safety_quantile": "REPLACE_BEFORE_FORMAL",
+    "tfv_cvar_alpha": "REPLACE_BEFORE_FORMAL",
+    "safety_penalty": "REPLACE_DEVELOPMENT_ONLY",
+    "movement_tiebreak": "REPLACE_DEVELOPMENT_ONLY"
+  },
+  "forecast": {
+    "decay_per_step": "REPLACE_DEVELOPMENT_ONLY",
+    "scenario_multipliers": ["REPLACE_DEVELOPMENT_ONLY"],
+    "history_steps_for_level": "REPLACE_DEVELOPMENT_ONLY"
+  },
+  "controller": {
+    "history_steps": "REPLACE_AFTER_PHASE0",
+    "horizon_steps": "REPLACE_AFTER_PHASE0_D2_PILOT",
+    "optimizer_iterations": "REPLACE_DEVELOPMENT_ONLY",
+    "optimizer_learning_rate": "REPLACE_DEVELOPMENT_ONLY",
+    "max_setting_delta_per_update": "REPLACE_FROM_ENGINEERING_METADATA_OR_NULL",
+    "readback_target_tolerance": "REPLACE_FROM_ENGINEERING_RUNTIME_TEST",
+    "readback_current_tolerance": "REPLACE_FROM_ENGINEERING_RUNTIME_TEST",
+    "fallback_policy_id": "CAUSAL_HOLD_CURRENT_V1"
+  }
+}

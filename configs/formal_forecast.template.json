@@ -1,0 +1,7 @@
+{
+  "contract": "CAUSAL_RAINFALL_FORECAST_CONFIG_V2",
+  "instruction": "Freeze these values using development-only experiments. Do not tune with calibration, safety-audit or final rainfall groups.",
+  "decay_per_step": "REPLACE_DEVELOPMENT_ONLY",
+  "scenario_multipliers": ["REPLACE_DEVELOPMENT_ONLY"],
+  "history_steps_for_level": "REPLACE_DEVELOPMENT_ONLY"
+}

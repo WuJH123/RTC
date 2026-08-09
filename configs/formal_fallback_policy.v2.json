@@ -1,0 +1,12 @@
+{
+  "contract": "CAUSAL_FALLBACK_POLICY_V2",
+  "policy_id": "CAUSAL_HOLD_CURRENT_V1",
+  "online_semantics": "At a failed/inadmissible decision, hold the actuator current-setting readback available at the decision time across the prediction horizon and execute its first move.",
+  "forbidden": [
+    "future authoritative SWMM trajectory",
+    "future native-rule trajectory queried from SWMM",
+    "future realized rainfall/runoff",
+    "Final/Locked truth"
+  ],
+  "notes": "Native SWMM rules remain an independent evaluation baseline. A future causal rule-emulator fallback is allowed only if separately frozen and validated before Policy Lock."
+}

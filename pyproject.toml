@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wuhan-rtc"
-version = "0.1.0"
+version = "0.2.0"
 description = "Sparse-sensing, actuator-agnostic differentiable MPC for urban drainage networks"
 requires-python = ">=3.10"
 dependencies = [
@@ -22,6 +22,23 @@ swmm = ["pyswmm>=2.0"]
 rtc-audit-inp = "rtc.cli:audit_inp_main"
 rtc-design-probes = "rtc.cli:design_probes_main"
 rtc-run-probes = "rtc.cli:run_probes_main"
+rtc-build-graph = "rtc.pipeline_cli:build_graph_main"
+rtc-make-passive-inp = "rtc.pipeline_cli:make_passive_inp_main"
+rtc-split-groups = "rtc.pipeline_cli:split_groups_main"
+rtc-run-trajectory = "rtc.pipeline_cli:run_trajectory_main"
+rtc-design-d3 = "rtc.pipeline_cli:design_d3_main"
+rtc-run-d3 = "rtc.pipeline_cli:run_d3_main"
+rtc-compile-step1 = "rtc.pipeline_cli:compile_step1_main"
+rtc-compile-step2 = "rtc.model_cli:compile_step2_dataset_main"
+rtc-train-step1 = "rtc.model_cli:train_step1_main"
+rtc-accept-step1 = "rtc.model_cli:accept_step1_main"
+rtc-train-step2 = "rtc.model_cli:train_step2_main"
+rtc-accept-step2 = "rtc.model_cli:accept_step2_main"
+rtc-calibrate-safety = "rtc.evidence_cli:calibrate_safety_main"
+rtc-audit-safety = "rtc.evidence_cli:audit_safety_main"
+rtc-record-stage = "rtc.evidence_cli:record_stage_main"
+rtc-policy-lock = "rtc.evidence_cli:policy_lock_main"
+rtc-compile-final = "rtc.final_cli:compile_final_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
