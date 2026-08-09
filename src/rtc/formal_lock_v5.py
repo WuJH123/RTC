@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .causal_timing import timing_from_controller_config
 from .inp_lineage import physical_contract_sha256
 from .tfv_pipeline import TFVPipelineLedger, sha256_file
 
@@ -20,6 +21,15 @@ _REQUIRED = {
     "rainfall_forecast_config", "fallback_policy", "baseline_plan",
 }
 
+FORMAL_MIN_RAINFALL_GROUPS = 160
+FORMAL_MIN_ROLE_GROUPS = {
+    "development": 96,
+    "calibration": 24,
+    "safety_audit": 16,
+    "final": 24,
+}
+FORMAL_MIN_DEV_VALIDATION_GROUPS = 19
+
 
 def _json(path: str | Path) -> dict[str, object]:
     value = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -30,7 +40,8 @@ def _json(path: str | Path) -> dict[str, object]:
 
 def _lines(path: str | Path) -> tuple[str, ...]:
     return tuple(
-        line.strip() for line in Path(path).read_text(encoding="utf-8").splitlines()
+        line.strip()
+        for line in Path(path).read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     )
 
@@ -47,22 +58,60 @@ def _thresholds(value: object) -> dict[str, dict[str, float]]:
     return result
 
 
-def _verify_splits(path: str | Path) -> None:
+def _verify_splits(path: str | Path) -> dict[str, object]:
     frame = pd.read_csv(path)
-    if not {"rainfall_group", "scientific_split"}.issubset(frame.columns):
-        raise ValueError("split registry lacks rainfall_group/scientific_split")
-    cross = frame.groupby(frame["rainfall_group"].astype(str))["scientific_split"].nunique()
+    required_columns = {"rainfall_group", "scientific_split", "development_fold"}
+    missing_columns = sorted(required_columns - set(frame.columns))
+    if missing_columns:
+        raise ValueError(f"split registry lacks columns: {missing_columns}")
+    frame = frame.copy()
+    frame["rainfall_group"] = frame["rainfall_group"].astype(str)
+    frame["scientific_split"] = frame["scientific_split"].astype(str)
+    cross = frame.groupby("rainfall_group")["scientific_split"].nunique()
     if (cross != 1).any():
         raise ValueError("rainfall-group leakage exists across scientific splits")
-    required = {"development", "calibration", "safety_audit", "final"}
-    present = set(frame["scientific_split"].astype(str))
-    if not required.issubset(present):
-        raise ValueError(f"split registry missing roles: {sorted(required-present)}")
-    dev = frame[frame["scientific_split"].astype(str) == "development"]
-    if "development_fold" not in dev.columns or set(dev["development_fold"].astype(str)) != {"train", "validation"}:
+    total_groups = int(frame["rainfall_group"].nunique())
+    if total_groups < FORMAL_MIN_RAINFALL_GROUPS:
+        raise ValueError(
+            f"Formal fresh-data design requires at least {FORMAL_MIN_RAINFALL_GROUPS} "
+            f"independent rainfall groups; got {total_groups}"
+        )
+    role_counts = (
+        frame[["rainfall_group", "scientific_split"]]
+        .drop_duplicates()
+        .groupby("scientific_split")["rainfall_group"]
+        .count()
+        .to_dict()
+    )
+    for role, minimum in FORMAL_MIN_ROLE_GROUPS.items():
+        if int(role_counts.get(role, 0)) < minimum:
+            raise ValueError(
+                f"Formal rainfall split needs at least {minimum} {role} groups; "
+                f"got {role_counts.get(role, 0)}"
+            )
+    dev = frame[frame["scientific_split"] == "development"]
+    if set(dev["development_fold"].astype(str)) != {"train", "validation"}:
         raise ValueError("development split must contain rainfall-group-disjoint train/validation folds")
-    if (dev.groupby(dev["rainfall_group"].astype(str))["development_fold"].nunique() != 1).any():
+    if (dev.groupby("rainfall_group")["development_fold"].nunique() != 1).any():
         raise ValueError("rainfall group crosses development train/validation folds")
+    validation_groups = int(
+        dev.loc[dev["development_fold"].astype(str) == "validation", "rainfall_group"].nunique()
+    )
+    if validation_groups < FORMAL_MIN_DEV_VALIDATION_GROUPS:
+        raise ValueError(
+            f"development validation requires at least {FORMAL_MIN_DEV_VALIDATION_GROUPS} "
+            f"rainfall groups; got {validation_groups}"
+        )
+    non_dev = frame[frame["scientific_split"] != "development"]
+    if (non_dev["development_fold"].fillna("").astype(str) != "").any():
+        raise ValueError("non-development rainfall groups must not carry a development fold")
+    return {
+        "contract": "FORMAL_FRESH_RAINFALL_COHORTS_V1",
+        "minimum_total_groups": FORMAL_MIN_RAINFALL_GROUPS,
+        "total_groups": total_groups,
+        "role_group_counts": {k: int(v) for k, v in role_counts.items()},
+        "development_validation_groups": validation_groups,
+    }
 
 
 def _verify_acceptance(artefacts: dict[str, str]) -> None:
@@ -118,8 +167,12 @@ def create_formal_policy_lock_v5(
             raise ValueError(f"Policy Lock artifact missing: {name}: {path}")
 
     preflight = _json(artefacts["inp_preflight"])
-    if preflight.get("contract") != "LARGE_SWMM_INP_PREFLIGHT_V2":
-        raise ValueError("locked INP was not audited with large-network preflight V2")
+    if preflight.get("contract") != "LARGE_SWMM_INP_PREFLIGHT_V3_CAUSAL_RTC":
+        raise ValueError("locked INP must pass causal large-network preflight V3")
+    no_control = preflight.get("no_control_contract")
+    if not isinstance(no_control, dict) or no_control.get("id") != "NO_SUPERVISORY_RTC_V2":
+        raise ValueError("INP preflight lacks the frozen No-supervisory-RTC contract")
+
     priority = _lines(artefacts["priority_nodes"])
     sensors = _lines(artefacts["sensor_layout"])
     if len(priority) != 8 or len(set(priority)) != 8:
@@ -132,7 +185,7 @@ def create_formal_policy_lock_v5(
     if set(preflight.get("missing_priority_nodes", [])):
         raise ValueError("INP preflight reports unresolved priority nodes")
 
-    _verify_splits(artefacts["split_registry"])
+    rainfall_design = _verify_splits(artefacts["split_registry"])
     _verify_acceptance(artefacts)
     controller = _json(artefacts["controller_config"])
     if controller.get("contract") != "PRODUCTION_CONTROLLER_CONFIG_V4_TFV_FIRST":
@@ -142,52 +195,77 @@ def create_formal_policy_lock_v5(
     if "flood_budget_m3" in controller or "depth_budget_m" in controller:
         raise ValueError("PFV/depth hard budgets are forbidden by the TFV-first scientific contract")
     objective = controller.get("objective")
-    if not isinstance(objective, dict) or objective.get("priority_role") != "soft lexicographic secondary preference within TFV near-optimal set":
+    if (
+        not isinstance(objective, dict)
+        or objective.get("priority_role")
+        != "soft lexicographic secondary preference within TFV near-optimal set"
+    ):
         raise ValueError("controller does not declare the frozen soft-priority TFV-first objective")
+
+    timing = timing_from_controller_config(controller)
+    timing.validate(require_full_history_before_first_control=True)
+    timing_payload = timing.as_dict()
     time_cfg = _json(artefacts["time_scale_config"])
     for key in ("model_step_seconds", "control_update_seconds"):
         if int(controller[key]) != int(time_cfg[key]):
             raise ValueError(f"controller/time-scale mismatch: {key}")
-    if int(controller["control_update_seconds"]) % int(controller["model_step_seconds"]):
-        raise ValueError("control update is not an integer multiple of model step")
+    for key in ("history_steps", "horizon_steps"):
+        if key in time_cfg and int(controller["controller"][key]) != int(time_cfg[key]):  # type: ignore[index]
+            raise ValueError(f"controller/time-scale mismatch: {key}")
 
     plan = _json(artefacts["baseline_plan"])
-    strategies = [str(x) for x in plan.get("strategies", [])]
-    required_strategies = {"proposed", "no_control", "internal_rtc"}
-    if not required_strategies.issubset(strategies):
-        raise ValueError("baseline plan must explicitly separate proposed/no_control/internal_rtc")
-    if "native_rules" in strategies or "passive_no_rtc" in strategies:
-        raise ValueError("legacy ambiguous baseline IDs are forbidden in new Formal evidence")
+    if plan.get("contract") != "FORMAL_BASELINE_PLAN_V4_NO_DUPLICATE_HOLD":
+        raise ValueError("Formal lock requires the non-duplicate baseline plan V4")
+    strategies = tuple(str(x) for x in plan.get("strategies", []))
+    expected_strategies = (
+        "proposed",
+        "no_control",
+        "internal_rtc",
+        "all_open",
+        "all_closed",
+    )
+    if strategies != expected_strategies:
+        raise ValueError(
+            "Formal strategy matrix must be exactly proposed/no_control/internal_rtc/all_open/all_closed"
+        )
+    if "hold" in strategies or "native_rules" in strategies or "passive_no_rtc" in strategies:
+        raise ValueError("duplicate/legacy baseline IDs are forbidden in new Formal evidence")
 
-    # Optional priority calibration can be locked for uncertainty-aware soft ranking, but it
-    # is not a safety veto and no independent PFV-pass gate is required.
     hashes = {name: sha256_file(path) for name, path in sorted(artefacts.items())}
     canonical = json.dumps(hashes, sort_keys=True, separators=(",", ":"))
     policy_sha = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     payload: dict[str, object] = {
-        "contract": "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V2",
+        "contract": "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V3_CAUSAL_FRESH_DATA",
         "policy_sha256": policy_sha,
         "physical_network_sha256": physical_contract_sha256(artefacts["frozen_inp"]),
         "objective_contract": "TFV_PRIMARY__PRIORITY_PFV_SOFT_SECONDARY_V1",
         "priority_is_hard_constraint": False,
         "priority_nodes": list(priority),
         "sensor_nodes": list(sensors),
+        "causal_timing": timing_payload,
+        "rainfall_design": rainfall_design,
+        "no_control_contract": no_control,
+        "formal_strategy_matrix": list(strategies),
+        "fresh_data_requirement": "all hydraulic trajectories, D1/D2/D3 branches, trained models and closed-loop evidence are regenerated under this repository contract; historical RTC outputs/models are not admissible",
         "artefacts": artefacts,
         "sha256": hashes,
     }
-    out = Path(output_path); out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return payload
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Create TFV-first Policy Lock revision 5")
+    parser = argparse.ArgumentParser(description="Create causal fresh-data TFV-first Policy Lock revision 5")
     parser.add_argument("--ledger", required=True)
     parser.add_argument("--artifacts", required=True)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
     payload = create_formal_policy_lock_v5(
-        ledger_path=args.ledger, artefacts_path=args.artifacts, output_path=args.out
+        ledger_path=args.ledger,
+        artefacts_path=args.artifacts,
+        output_path=args.out,
     )
     print(json.dumps(payload, indent=2))
 
