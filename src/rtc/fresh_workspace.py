@@ -133,6 +133,13 @@ def require_path_inside_workspace(path: str | Path, workspace_root: str | Path) 
         raise ValueError(f"RTC-derived output is outside fresh workspace: {candidate}") from exc
 
 
+def _resolve_index_reference(raw: str | Path, index_path: Path) -> Path:
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = index_path.parent / candidate
+    return candidate.resolve()
+
+
 def validate_fresh_run_index(
     *,
     run_index_path: str | Path,
@@ -140,12 +147,7 @@ def validate_fresh_run_index(
     metadata_column: str = "metadata_path",
     reject_final: bool = True,
 ) -> dict[str, object]:
-    """Prove that every RTC branch used for training/acceptance belongs to this fresh run.
-
-    Checking only where the new model checkpoint is written is insufficient: a new checkpoint
-    could otherwise be trained from an old Project6 branch. This gate binds both the run-index
-    file and every referenced branch metadata file to the fresh output root.
-    """
+    """Prove every branch used for training/acceptance belongs to the fresh workspace."""
 
     workspace = load_fresh_workspace(workspace_manifest_path)
     root = _resolve(str(workspace["output_root"]))
@@ -163,7 +165,7 @@ def validate_fresh_run_index(
             raise ValueError("Final rows are forbidden in pre-lock training/acceptance indexes")
     metadata_paths: list[str] = []
     for raw in frame[metadata_column].astype(str):
-        path = _resolve(raw)
+        path = _resolve_index_reference(raw, index_path)
         require_path_inside_workspace(path, root)
         if not path.is_file():
             raise ValueError(f"fresh branch metadata is missing: {path}")
