@@ -16,6 +16,12 @@ def _invariant(group: pd.DataFrame, column: str, *, default: str = "") -> str:
     return values[0]
 
 
+def _series(frame: pd.DataFrame, column: str, default: str = "") -> pd.Series:
+    if column in frame.columns:
+        return frame[column].fillna(default).astype(str)
+    return pd.Series([default] * len(frame), index=frame.index, dtype=str)
+
+
 def build_d2_run_index(manifest: pd.DataFrame, run_summary: pd.DataFrame) -> pd.DataFrame:
     """Create one Step2 row per actually executed unique D2 action branch.
 
@@ -48,11 +54,13 @@ def build_d2_run_index(manifest: pd.DataFrame, run_summary: pd.DataFrame) -> pd.
             if column not in row:
                 row[column] = _invariant(group, column)
             else:
-                # If the column is already a grouping key, still verify any duplicate rows agree.
                 _invariant(group, column, default=str(row[column]))
         row["data_role"] = "D2_SINGLE_ACTUATOR_COUNTERFACTUAL"
         row["manifest_rows_collapsed"] = int(len(group))
-        probe_actuators = sorted(set(group.get("actuator_id", pd.Series(dtype=str)).fillna("").astype(str)) - {""})
+        if "actuator_id" in group.columns:
+            probe_actuators = sorted(set(group["actuator_id"].fillna("").astype(str)) - {""})
+        else:
+            probe_actuators = []
         row["probe_actuator_ids_json"] = json.dumps(probe_actuators, separators=(",", ":"))
         provenance_rows.append(row)
     provenance = pd.DataFrame(provenance_rows)
@@ -69,25 +77,25 @@ def build_d2_run_index(manifest: pd.DataFrame, run_summary: pd.DataFrame) -> pd.
     for column in ("event_id", "rainfall_group", "scientific_split", "development_fold", "checkpoint_id"):
         run_column = f"{column}_run"
         if run_column in joined.columns:
-            left = joined[run_column].fillna("").astype(str)
-            right = joined[column].fillna("").astype(str)
+            left = _series(joined, run_column)
+            right = _series(joined, column)
             mismatch = (left != "") & (right != "") & (left != right)
             if mismatch.any():
                 raise ValueError(f"D2 manifest/run-summary lineage mismatch in {column}")
             joined[column] = right.where(right != "", left)
 
     result = pd.DataFrame({
-        "event_id": joined.get("event_id", "").astype(str),
-        "rainfall_group": joined.get("rainfall_group", "").astype(str),
-        "scientific_split": joined.get("scientific_split", "").astype(str),
-        "development_fold": joined.get("development_fold", "").astype(str),
-        "data_role": joined["data_role"].astype(str),
-        "checkpoint_id": joined["checkpoint_id"].astype(str),
-        "candidate_action_sha256": joined["candidate_action_sha256"].astype(str),
-        "action_or_sequence_sha256": joined["candidate_action_sha256"].astype(str),
-        "metadata_path": joined["metadata_path"].astype(str),
+        "event_id": _series(joined, "event_id"),
+        "rainfall_group": _series(joined, "rainfall_group"),
+        "scientific_split": _series(joined, "scientific_split"),
+        "development_fold": _series(joined, "development_fold"),
+        "data_role": _series(joined, "data_role", "D2_SINGLE_ACTUATOR_COUNTERFACTUAL"),
+        "checkpoint_id": _series(joined, "checkpoint_id"),
+        "candidate_action_sha256": _series(joined, "candidate_action_sha256"),
+        "action_or_sequence_sha256": _series(joined, "candidate_action_sha256"),
+        "metadata_path": _series(joined, "metadata_path"),
         "manifest_rows_collapsed": joined["manifest_rows_collapsed"].astype(int),
-        "probe_actuator_ids_json": joined["probe_actuator_ids_json"].astype(str),
+        "probe_actuator_ids_json": _series(joined, "probe_actuator_ids_json", "[]"),
         "source_kind": "D2",
     })
     if result["metadata_path"].duplicated().any():
@@ -104,15 +112,15 @@ def standardize_d3_run_index(run_summary: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError(f"D3 run summary missing columns: {missing}")
     result = pd.DataFrame({
-        "event_id": run_summary["event_id"].astype(str),
-        "rainfall_group": run_summary["rainfall_group"].astype(str),
-        "scientific_split": run_summary["scientific_split"].astype(str),
-        "development_fold": run_summary["development_fold"].astype(str),
-        "data_role": run_summary.get("data_role", "D3_MULTI_ACTUATOR_SEQUENCE").astype(str),
-        "checkpoint_id": run_summary["checkpoint_id"].astype(str),
+        "event_id": _series(run_summary, "event_id"),
+        "rainfall_group": _series(run_summary, "rainfall_group"),
+        "scientific_split": _series(run_summary, "scientific_split"),
+        "development_fold": _series(run_summary, "development_fold"),
+        "data_role": _series(run_summary, "data_role", "D3_MULTI_ACTUATOR_SEQUENCE"),
+        "checkpoint_id": _series(run_summary, "checkpoint_id"),
         "candidate_action_sha256": "",
-        "action_or_sequence_sha256": run_summary["sequence_sha256"].astype(str),
-        "metadata_path": run_summary["metadata_path"].astype(str),
+        "action_or_sequence_sha256": _series(run_summary, "sequence_sha256"),
+        "metadata_path": _series(run_summary, "metadata_path"),
         "manifest_rows_collapsed": 1,
         "probe_actuator_ids_json": "[]",
         "source_kind": "D3",
