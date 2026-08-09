@@ -40,6 +40,27 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _resolve_external_file(raw: str, *, inp: Path) -> Path:
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = inp.parent / candidate
+    candidate = candidate.resolve()
+    if not candidate.is_file():
+        raise ValueError(f"SWMM event references missing external FILE: {candidate}")
+    return candidate
+
+
+def _canonicalize_file_tokens(line: str, *, inp: Path) -> str:
+    """Replace path spelling with external forcing content identity."""
+
+    def replace(match: re.Match[str]) -> str:
+        raw = next(group for group in match.groups() if group is not None)
+        path = _resolve_external_file(raw, inp=inp)
+        return f"FILE SHA256:{_sha256_file(path)}"
+
+    return _FILE_TOKEN.sub(replace, line)
+
+
 def canonical_physical_contract(path: str | Path) -> dict[str, list[str]]:
     """Return a stable forcing/control-independent physical representation of a SWMM INP."""
 
@@ -55,8 +76,7 @@ def canonical_physical_contract(path: str | Path) -> dict[str, list[str]]:
         line = raw.split(";", 1)[0].strip()
         if not line:
             continue
-        normalized = " ".join(line.split())
-        sections.setdefault(current, []).append(normalized)
+        sections.setdefault(current, []).append(" ".join(line.split()))
     if not sections:
         raise ValueError(f"no physical SWMM sections found in {path}")
     return {name: sections[name] for name in sorted(sections)}
@@ -73,11 +93,17 @@ def physical_contract_sha256(path: str | Path) -> str:
 
 
 def canonical_scientific_event_contract(path: str | Path) -> dict[str, list[str]]:
-    """Return complete event INP content while ignoring policy/runtime-only edits."""
+    """Return event identity while ignoring policy/runtime-only edits.
 
+    ``[CONTROLS]`` and ``THREADS`` are ignored. External ``FILE`` path spellings are
+    replaced by the referenced file SHA-256, so relocating a runtime INP does not change
+    event identity while changing the rainfall/time-series bytes does.
+    """
+
+    inp = Path(path).resolve()
     sections: dict[str, list[str]] = {}
     current = ""
-    for raw in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+    for raw in inp.read_text(encoding="utf-8", errors="replace").splitlines():
         stripped = raw.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
             current = stripped[1:-1].strip().upper()
@@ -90,19 +116,15 @@ def canonical_scientific_event_contract(path: str | Path) -> dict[str, list[str]
         tokens = line.split()
         if current == "OPTIONS" and tokens and tokens[0].upper() == "THREADS":
             continue
-        sections.setdefault(current, []).append(" ".join(tokens))
+        line = _canonicalize_file_tokens(line, inp=inp)
+        sections.setdefault(current, []).append(" ".join(line.split()))
     if not sections:
         raise ValueError(f"no scientific SWMM event content found in {path}")
     return {name: sections[name] for name in sorted(sections)}
 
 
 def external_event_file_hashes(path: str | Path) -> dict[str, str]:
-    """Hash external files referenced by ``FILE`` tokens in the scientific INP.
-
-    Rain gages/time series can be embedded in the INP or delegated to external files. The
-    event identity must follow those bytes as well, otherwise changing an external rainfall
-    file in place would leave an apparently unchanged Final event contract.
-    """
+    """Return auditable resolved external input paths and hashes."""
 
     inp = Path(path).resolve()
     current = ""
@@ -117,26 +139,14 @@ def external_event_file_hashes(path: str | Path) -> dict[str, str]:
             continue
         for match in _FILE_TOKEN.finditer(line):
             token = next(group for group in match.groups() if group is not None)
-            candidate = Path(token).expanduser()
-            if not candidate.is_absolute():
-                candidate = inp.parent / candidate
-            candidate = candidate.resolve()
-            if not candidate.is_file():
-                raise ValueError(f"SWMM event references missing external FILE: {candidate}")
-            try:
-                key = candidate.relative_to(inp.parent).as_posix()
-            except ValueError:
-                key = str(candidate)
-            files[key] = _sha256_file(candidate)
+            candidate = _resolve_external_file(token, inp=inp)
+            files[str(candidate)] = _sha256_file(candidate)
     return dict(sorted(files.items()))
 
 
 def scientific_event_contract_sha256(path: str | Path) -> str:
     payload = json.dumps(
-        {
-            "inp": canonical_scientific_event_contract(path),
-            "external_files": external_event_file_hashes(path),
-        },
+        canonical_scientific_event_contract(path),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
