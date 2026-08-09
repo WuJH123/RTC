@@ -102,6 +102,11 @@ def accept_step1_large_v3_main() -> None:
         raise ValueError("Step1 checkpoint history_steps differs from validation contract")
     if int(runtime.get("model_step_seconds", -1)) != args.model_step_seconds:
         raise ValueError("Step1 checkpoint model_step_seconds differs from validation contract")
+    if str(runtime.get("swmm_engine_version", "")) != base.swmm_engine_version:
+        raise ValueError(
+            "Step1 validation SWMM engine differs from training checkpoint: "
+            f"{base.swmm_engine_version} != {runtime.get('swmm_engine_version')}"
+        )
 
     sensor_idx = np.asarray([graph.node_ids.index(n) for n in sensors], dtype=int)
     unobserved = np.asarray(
@@ -200,12 +205,14 @@ def accept_step1_large_v3_main() -> None:
         metrics["priority_depth_rmse_m"] = mean_finite("priority_depth_rmse_m")
         metrics["priority_depth_nse"] = mean_finite("priority_depth_nse")
     payload = {
-        "contract": "STEP1_HELDOUT_ACCEPTANCE_V3_GROUP_BALANCED_TIME_LOCKED",
+        "contract": "STEP1_HELDOUT_ACCEPTANCE_V4_GROUP_BALANCED_T0_ENGINE_BOUND",
         "rtc_source_tree_sha256": rtc_source_tree_sha256(),
         "model_sha256": _sha(args.model),
         "run_index_sha256": _sha(args.run_index),
         "model_step_seconds": args.model_step_seconds,
         "history_steps": args.history_steps,
+        "swmm_engine_version": base.swmm_engine_version,
+        "initial_observation_elapsed_seconds": 0,
         "validation_windows": len(base),
         "rainfall_groups": len(group_metrics),
         "aggregation": "equal_weight_per_rainfall_group",
