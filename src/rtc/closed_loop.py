@@ -78,18 +78,13 @@ def run_authoritative_closed_loop(
     save_raw_csv: bool = False,
     keep_engine_files: bool = False,
 ) -> ClosedLoopResult:
-    """Run one causally isolated policy with compact SI evidence.
+    """Run one causally isolated SWMM policy and save compact SI evidence.
 
-    The initial hydraulic/rainfall/readback state at ``t=0`` is a legitimate causal
-    observation and is recorded before any supervisory control action. Thereafter observation
-    cadence and control cadence are separate. For a 5-minute observation/model step, 13
-    history frames therefore represent exactly ``t=0,5,...,60 min`` and can support a first
-    60-minute MPC decision without an off-by-one warm-up delay.
-
-    ``Simulation.step_advance`` only controls when Python regains control; the internal SWMM
-    routing step remains the INP routing step. Formal main runs keep ``exact_global_peak=False``
-    and compute the routing-step synchronous global peak later by replaying the frozen
-    decision log. Cumulative TFV/PFV truth always comes from SWMM node statistics.
+    The initial state at ``t=0`` is observed and recorded before any supervisory write.
+    Thus 13 frames on a 5-minute grid are exactly ``0,5,...,60 min``. Python callback
+    cadence is separate from SWMM's internal routing step. Formal main runs keep
+    ``exact_global_peak=False`` and obtain routing-step Global Peak by frozen-decision replay.
+    Authoritative PFV/TFV always come from cumulative SWMM node statistics.
     """
 
     try:
@@ -103,10 +98,8 @@ def run_authoritative_closed_loop(
     if control_update_seconds % observation_update_seconds:
         raise ValueError("control_update_seconds must be a multiple of observation_update_seconds")
     control_start_seconds = int(control_start_minutes * 60)
-    if control_start_seconds < 0:
-        raise ValueError("control_start_minutes must be non-negative")
-    if control_start_seconds % observation_update_seconds:
-        raise ValueError("control_start_minutes must align with observation_update_seconds")
+    if control_start_seconds < 0 or control_start_seconds % observation_update_seconds:
+        raise ValueError("control start must be non-negative and align with observation cadence")
 
     inp = Path(inp_path)
     out = Path(output_dir)
@@ -126,10 +119,8 @@ def run_authoritative_closed_loop(
     metadata_path = out / f"{run_id}.json"
     report_path = out / f"{run_id}.rpt"
     engine_output_path = out / f"{run_id}.out"
+
     next_observation = observation_update_seconds
-    # A positive control start is an absolute event-clock epoch. If zero is requested, the
-    # first supervisory write is deferred until one observation interval; Proposed Formal
-    # configs are required separately to provide sufficient history before their first write.
     next_decision = control_start_seconds if control_start_seconds > 0 else observation_update_seconds
     next_record = record_stride_seconds
     decision_count = 0
@@ -177,9 +168,7 @@ def run_authoritative_closed_loop(
 
         def observed_rainfall() -> np.ndarray:
             if rainfall_observer is None:
-                return current_node_rainfall_mmhr(
-                    sub_obj, resolved_outlets, all_nodes, system_units
-                )
+                return current_node_rainfall_mmhr(sub_obj, resolved_outlets, all_nodes, system_units)
             rain = np.asarray(rainfall_observer(sim.current_time, all_nodes), dtype=float).reshape(-1)
             if rain.size == 1:
                 rain = np.repeat(rain, len(all_nodes))
@@ -187,8 +176,7 @@ def run_authoritative_closed_loop(
                 raise ValueError("rainfall_observer must return finite non-negative scalar/node vector")
             return rain.astype(np.float32)
 
-        def build_observation(elapsed: int, rain: np.ndarray | None = None) -> CausalObservation:
-            rainfall_mmhr = observed_rainfall() if rain is None else rain
+        def build_observation(elapsed: int, rain: np.ndarray) -> CausalObservation:
             return CausalObservation(
                 elapsed_seconds=elapsed,
                 current_time=sim.current_time,
@@ -200,29 +188,19 @@ def run_authoritative_closed_loop(
                     np.array([sensor_obj[n].head for n in sensor_nodes], dtype=float), system_units
                 ),
                 actuator_ids=actuator_ids,
-                actuator_target_setting=np.array(
-                    [link_obj[a].target_setting for a in actuator_ids], dtype=float
-                ),
-                actuator_current_setting=np.array(
-                    [link_obj[a].current_setting for a in actuator_ids], dtype=float
-                ),
+                actuator_target_setting=np.array([link_obj[a].target_setting for a in actuator_ids], dtype=float),
+                actuator_current_setting=np.array([link_obj[a].current_setting for a in actuator_ids], dtype=float),
                 actuator_flow_m3s=flow_rate_to_m3s(
                     np.array([link_obj[a].flow for a in actuator_ids], dtype=float), flow_units
                 ),
                 rainfall_node_ids=all_nodes,
-                observed_rainfall_mmhr=rainfall_mmhr,
+                observed_rainfall_mmhr=rain,
             )
 
         def append_record(elapsed: int, rain: np.ndarray, phase: str, source: str) -> None:
-            state = _node_state_si(
-                node_obj, all_nodes, system_units=system_units, flow_units=flow_units
-            )
-            target = np.array(
-                [link_obj[a].target_setting for a in actuator_ids], dtype=np.float32
-            )
-            current = np.array(
-                [link_obj[a].current_setting for a in actuator_ids], dtype=np.float32
-            )
+            state = _node_state_si(node_obj, all_nodes, system_units=system_units, flow_units=flow_units)
+            target = np.array([link_obj[a].target_setting for a in actuator_ids], dtype=np.float32)
+            current = np.array([link_obj[a].current_setting for a in actuator_ids], dtype=np.float32)
             flow = flow_rate_to_m3s(
                 np.array([link_obj[a].flow for a in actuator_ids], dtype=float), flow_units
             ).astype(np.float32)
@@ -242,8 +220,7 @@ def run_authoritative_closed_loop(
                         [elapsed, phase, aid, requested, target[ai], current[ai], flow[ai], source]
                     )
 
-        # Initial conditions are part of the causal information set. Record/observe them
-        # before advancing SWMM or writing any supervisory command.
+        # t=0 belongs to the causal information set. No supervisory command has yet been sent.
         rain_zero = observed_rainfall()
         if controller is not None and hasattr(controller, "observe"):
             controller.observe(build_observation(0, rain_zero))  # type: ignore[attr-defined]
@@ -289,11 +266,7 @@ def run_authoritative_closed_loop(
                         f"controller must return every actuator; missing={sorted(expected-supplied)}, extra={sorted(supplied-expected)}"
                     )
                 held_settings = {aid: float(action.settings[aid]) for aid in actuator_ids}
-                bad = {
-                    aid: value
-                    for aid, value in held_settings.items()
-                    if not 0.0 <= value <= 1.0
-                }
+                bad = {aid: v for aid, v in held_settings.items() if not 0.0 <= v <= 1.0}
                 if bad:
                     raise ValueError(f"controller settings outside [0,1]: {bad}")
                 for aid, value in held_settings.items():
@@ -311,8 +284,7 @@ def run_authoritative_closed_loop(
                             "diagnostics": dict(action.diagnostics or {}),
                         },
                         sort_keys=True,
-                    )
-                    + "\n"
+                    ) + "\n"
                 )
             elif held_settings is not None:
                 for aid, value in held_settings.items():
@@ -321,10 +293,8 @@ def run_authoritative_closed_loop(
             if elapsed >= next_record:
                 rain_record = rain_now if rain_now is not None else observed_rainfall()
                 phase = "DECISION" if action is not None else "OBSERVATION"
-                source = (
-                    action.source
-                    if action is not None
-                    else ("HELD" if held_settings is not None else "NATIVE")
+                source = action.source if action is not None else (
+                    "HELD" if held_settings is not None else "NATIVE"
                 )
                 append_record(elapsed, rain_record, phase, source)
                 while next_record <= elapsed:
@@ -333,22 +303,20 @@ def run_authoritative_closed_loop(
         end_statistics = snapshot_node_statistics(node_obj)
         flow_error = float(sim.flow_routing_error)
 
-    if record_times:
-        np.savez_compressed(
-            compact_path,
-            schema_version=np.asarray("RTC_COMPACT_CLOSED_LOOP_V3_T0_CAUSAL"),
-            elapsed_seconds=np.asarray(record_times, dtype=np.int64),
-            node_ids=np.asarray(all_nodes),
-            state_si=np.stack(state_values).astype(np.float32),
-            state_channels=np.asarray(STATE_CHANNELS),
-            rainfall_mmhr=np.stack(rainfall_values).astype(np.float32),
-            actuator_ids=np.asarray(actuator_ids),
-            target_setting=np.stack(target_values).astype(np.float32),
-            current_setting=np.stack(current_values).astype(np.float32),
-            actuator_flow_m3s=np.stack(flow_values).astype(np.float32),
-        )
-    else:
-        raise RuntimeError("closed-loop run produced no compact record samples")
+    np.savez_compressed(
+        compact_path,
+        # V2 tensor names/shapes remain backward compatible; only the time grid now includes t=0.
+        schema_version=np.asarray("RTC_COMPACT_CLOSED_LOOP_V2_T0_CAUSAL"),
+        elapsed_seconds=np.asarray(record_times, dtype=np.int64),
+        node_ids=np.asarray(all_nodes),
+        state_si=np.stack(state_values).astype(np.float32),
+        state_channels=np.asarray(STATE_CHANNELS),
+        rainfall_mmhr=np.stack(rainfall_values).astype(np.float32),
+        actuator_ids=np.asarray(actuator_ids),
+        target_setting=np.stack(target_values).astype(np.float32),
+        current_setting=np.stack(current_values).astype(np.float32),
+        actuator_flow_m3s=np.stack(flow_values).astype(np.float32),
+    )
     write_node_statistics(
         statistics_path,
         end_statistics=end_statistics,
@@ -361,7 +329,9 @@ def run_authoritative_closed_loop(
 
     metadata = {
         "run_id": run_id,
-        "data_contract": "CLOSED_LOOP_COMPACT_V3_T0_CAUSAL",
+        # Keep the established metadata contract so baseline/checkpoint readers remain compatible.
+        "data_contract": "CLOSED_LOOP_COMPACT_V2",
+        "causal_timing_revision": "T0_INCLUDED_V1",
         "inp_path": str(inp.resolve()),
         "inp_sha256": sha256_file(inp),
         "controller_present": controller is not None,
@@ -377,12 +347,7 @@ def run_authoritative_closed_loop(
         "global_peak_flood_rate_m3s": float(global_peak_m3s),
         "flow_units": flow_units,
         "system_units": system_units,
-        "controller_units": {
-            "depth": "m",
-            "head": "m",
-            "flow": "m3/s",
-            "rainfall": "mm/h",
-        },
+        "controller_units": {"depth": "m", "head": "m", "flow": "m3/s", "rainfall": "mm/h"},
         "swmm_engine_version": engine_version,
         "flow_routing_error_pct": flow_error,
         "decisions": decision_count,
@@ -393,9 +358,7 @@ def run_authoritative_closed_loop(
         "node_file": node_path.name if save_raw_csv else None,
         "actuator_file": actuator_path.name if save_raw_csv else None,
     }
-    metadata_path.write_text(
-        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return ClosedLoopResult(
         metadata_path=str(metadata_path),
         compact_path=str(compact_path),
