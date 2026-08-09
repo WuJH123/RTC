@@ -20,5 +20,6 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.priority_resolver  # noqa: F401
     import rtc.replay_peak  # noqa: F401
     import rtc.step2_shards  # noqa: F401
+    import rtc.step2_train_v2  # noqa: F401
     import rtc.tfv_mpc  # noqa: F401
     import rtc.tfv_pipeline  # noqa: F401
