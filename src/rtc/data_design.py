@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict
-from typing import Iterable
 
 import numpy as np
 import pandas as pd
@@ -18,6 +16,15 @@ def canonical_action_sha(settings: dict[str, float]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def canonical_sequence_sha(sequence: list[dict[str, float]]) -> str:
+    payload = [
+        {k: float(step[k]) for k in sorted(step)}
+        for step in sequence
+    ]
+    text = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def design_independent_actuator_probes(
     checkpoint_settings: pd.DataFrame,
     catalog: ActuatorCatalog,
@@ -25,18 +32,7 @@ def design_independent_actuator_probes(
     epsilon: float = 0.15,
     include_center: bool = True,
 ) -> pd.DataFrame:
-    """Create D2 single-actuator counterfactual experiments.
-
-    Every generated branch starts from an explicit checkpoint and changes exactly one
-    actuator. This prevents the sequential-pulse contamination that invalidates causal
-    facility attribution when later pulses inherit earlier hydraulic disturbances.
-
-    Required columns:
-      - checkpoint_id
-      - setting:<actuator_id> for every actuator in the catalog
-
-    Extra columns (event/rainfall/split/...) are copied into the output as provenance.
-    """
+    """Create D2 same-checkpoint single-actuator counterfactual experiments."""
 
     if epsilon <= 0:
         raise ValueError("epsilon must be positive")
@@ -48,9 +44,7 @@ def design_independent_actuator_probes(
     if missing:
         raise ValueError(f"checkpoint settings missing {len(missing)} actuator columns")
 
-    metadata_columns = [
-        c for c in checkpoint_settings.columns if c not in set(setting_columns.values())
-    ]
+    metadata_columns = [c for c in checkpoint_settings.columns if c not in set(setting_columns.values())]
     records: list[dict[str, object]] = []
     for _, row in checkpoint_settings.iterrows():
         base = {aid: float(row[col]) for aid, col in setting_columns.items()}
@@ -87,6 +81,127 @@ def design_independent_actuator_probes(
                 )
                 records.append(rec)
     return pd.DataFrame.from_records(records)
+
+
+def design_multi_actuator_rollouts(
+    checkpoint_settings: pd.DataFrame,
+    catalog: ActuatorCatalog,
+    *,
+    horizon_steps: int,
+    sequences_per_checkpoint: int = 8,
+    perturbation_std: float = 0.20,
+    change_probability: float = 0.25,
+    seed: int = 42,
+    include_hold: bool = True,
+) -> pd.DataFrame:
+    """Create D3 state-dependent multi-actuator continuous action sequences.
+
+    Every discovered actuator is eligible in every sequence. There is no Engineering-N,
+    fixed Top-K, or preselected active subset. Sparsity is stochastic data coverage only,
+    not an online control restriction.
+    """
+
+    if horizon_steps <= 0 or sequences_per_checkpoint <= 0:
+        raise ValueError("horizon_steps and sequences_per_checkpoint must be positive")
+    if perturbation_std <= 0 or not 0.0 < change_probability <= 1.0:
+        raise ValueError("invalid perturbation_std/change_probability")
+    setting_columns = {a.actuator_id: f"setting:{a.actuator_id}" for a in catalog.actuators}
+    missing = [c for c in setting_columns.values() if c not in checkpoint_settings.columns]
+    if "checkpoint_id" not in checkpoint_settings.columns or missing:
+        raise ValueError("checkpoint_id and every setting:<actuator> column are required")
+    metadata_columns = [c for c in checkpoint_settings.columns if c not in set(setting_columns.values())]
+    rng = np.random.default_rng(seed)
+    records: list[dict[str, object]] = []
+    ids = list(catalog.ids)
+    lows = np.array([catalog.by_id(a).min_setting for a in ids], dtype=float)
+    highs = np.array([catalog.by_id(a).max_setting for a in ids], dtype=float)
+
+    for _, row in checkpoint_settings.iterrows():
+        base = np.array([float(row[setting_columns[a]]) for a in ids], dtype=float)
+        count = sequences_per_checkpoint + int(include_hold)
+        for seq_idx in range(count):
+            current = base.copy()
+            sequence: list[dict[str, float]] = []
+            if include_hold and seq_idx == 0:
+                sequence = [{aid: float(base[i]) for i, aid in enumerate(ids)} for _ in range(horizon_steps)]
+                role = "D3_HOLD_REFERENCE"
+            else:
+                for _step in range(horizon_steps):
+                    change = rng.random(len(ids)) < change_probability
+                    if not change.any():
+                        change[int(rng.integers(0, len(ids)))] = True
+                    proposal = current + rng.normal(0.0, perturbation_std, len(ids)) * change
+                    current = np.clip(proposal, lows, highs)
+                    sequence.append({aid: float(current[i]) for i, aid in enumerate(ids)})
+                role = "D3_MULTI_ACTUATOR_ROLLOUT"
+            rec: dict[str, object] = {c: row[c] for c in metadata_columns}
+            rec.update(
+                {
+                    "data_role": role,
+                    "sequence_index": seq_idx,
+                    "horizon_steps": horizon_steps,
+                    "sequence_sha256": canonical_sequence_sha(sequence),
+                    "settings_sequence_json": json.dumps(sequence, sort_keys=True),
+                    "all_actuators_eligible": True,
+                    "fixed_active_subset": False,
+                }
+            )
+            records.append(rec)
+    return pd.DataFrame.from_records(records)
+
+
+def select_active_learning_cases(
+    candidates: pd.DataFrame,
+    *,
+    budget: int,
+    uncertainty_col: str = "model_uncertainty",
+    threshold_distance_col: str = "safety_threshold_distance",
+    rollout_error_col: str = "rollout_error",
+    gradient_disagreement_col: str = "gradient_disagreement",
+    rainfall_group_col: str = "rainfall_group",
+) -> pd.DataFrame:
+    """D4: prioritise uncertain/near-boundary/poor-gradient cases with group diversity."""
+
+    if budget <= 0:
+        raise ValueError("budget must be positive")
+    required = {
+        uncertainty_col,
+        threshold_distance_col,
+        rollout_error_col,
+        gradient_disagreement_col,
+        rainfall_group_col,
+    }
+    missing = sorted(required - set(candidates.columns))
+    if missing:
+        raise ValueError(f"active-learning candidates missing columns: {missing}")
+    frame = candidates.copy()
+    def robust_z(series: pd.Series) -> pd.Series:
+        x = series.astype(float)
+        med = float(x.median())
+        scale = float((x - med).abs().median())
+        if scale <= 1e-12:
+            scale = float(x.std()) or 1.0
+        return (x - med) / scale
+    # Near zero threshold distance is informative; the other three are high-is-informative.
+    frame["_active_score"] = (
+        robust_z(frame[uncertainty_col])
+        + robust_z(frame[rollout_error_col])
+        + robust_z(frame[gradient_disagreement_col])
+        - robust_z(frame[threshold_distance_col].abs())
+    )
+    frame = frame.sort_values("_active_score", ascending=False)
+    selected: list[int] = []
+    # First pass gives each available rainfall group one high-value case.
+    for _, group in frame.groupby(rainfall_group_col, sort=False):
+        if len(selected) >= budget:
+            break
+        selected.append(int(group.index[0]))
+    for idx in frame.index:
+        if len(selected) >= budget:
+            break
+        if int(idx) not in selected:
+            selected.append(int(idx))
+    return frame.loc[selected].drop(columns=["_active_score"]).reset_index(drop=True)
 
 
 def summarise_probe_design(manifest: pd.DataFrame) -> dict[str, object]:
