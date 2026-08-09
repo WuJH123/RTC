@@ -8,6 +8,7 @@ from typing import Callable
 
 import pandas as pd
 
+from .code_contract import rtc_source_tree_sha256
 from .fresh_workspace import (
     load_fresh_workspace,
     require_path_inside_workspace,
@@ -33,7 +34,22 @@ def _require_output_inside(path: str, root: Path) -> None:
     require_path_inside_workspace(Path(path).resolve(), root)
 
 
-def _validate_shard_manifest(manifest_path: str, workspace_manifest: str) -> dict[str, object]:
+def _stamp_metrics(path: str | Path) -> None:
+    out = Path(path)
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("acceptance metrics must be a JSON object")
+    payload["rtc_source_tree_sha256"] = rtc_source_tree_sha256()
+    tmp = out.with_suffix(out.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    tmp.replace(out)
+
+
+def _validate_shard_manifest(
+    manifest_path: str, workspace_manifest: str
+) -> dict[str, object]:
     root = _workspace_root(workspace_manifest)
     manifest_file = Path(manifest_path).expanduser().resolve()
     require_path_inside_workspace(manifest_file, root)
@@ -71,6 +87,8 @@ def _guard_step1(delegate: Callable[[], None], *, acceptance: bool) -> None:
         require_path_inside_workspace(known.model, root)
     _strip_option("--workspace-manifest")
     delegate()
+    if acceptance:
+        _stamp_metrics(known.out)
 
 
 def train_step1_main() -> None:
@@ -156,6 +174,8 @@ def _guard_step2(delegate: Callable[[], None], *, acceptance: bool) -> None:
         require_path_inside_workspace(known.model, root)
     _strip_option("--workspace-manifest")
     delegate()
+    if acceptance:
+        _stamp_metrics(known.out)
 
 
 def train_step2_main() -> None:
