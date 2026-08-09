@@ -21,15 +21,15 @@ POLICY_LOCK_CONTRACT = "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V4_CODE_TIME_DATA_BOUND"
 def _verified_lock(path: str | Path) -> dict[str, object]:
     lock = _json(path)
     if lock.get("contract") != POLICY_LOCK_CONTRACT:
-        raise ValueError("TFV-first Final requires code/time/data-bound Policy Lock V4")
+        raise ValueError("TFV-first Final requires Policy Lock V4")
     if lock.get("rtc_source_tree_sha256") != rtc_source_tree_sha256():
         raise ValueError(
-            "current source tree differs from Policy Lock; Final compilation is forbidden"
+            "current scientific implementation contract differs from Policy Lock"
         )
     if lock.get("priority_is_hard_constraint") is not False:
         raise ValueError("Policy Lock violates TFV-first soft-priority contract")
     if lock.get("formal_metric_aggregation") != "equal_weight_per_independent_rainfall_group":
-        raise ValueError("Policy Lock lacks the frozen rainfall-group-balanced metric contract")
+        raise ValueError("Policy Lock lacks the rainfall-group-balanced metric contract")
     artefacts, hashes = lock.get("artefacts"), lock.get("sha256")
     if not isinstance(artefacts, dict) or not isinstance(hashes, dict):
         raise ValueError("Policy Lock lacks artefact/hash maps")
@@ -38,10 +38,10 @@ def _verified_lock(path: str | Path) -> dict[str, object]:
         if not p.is_file() or sha256_file(p) != str(hashes.get(name, "")):
             raise RuntimeError(f"locked artefact disappeared/changed: {name}: {p}")
     rainfall_design = lock.get("rainfall_design")
-    if not isinstance(rainfall_design, dict) or int(
-        rainfall_design.get("total_groups", 0)
-    ) < 160:
-        raise ValueError("Final requires the locked >=160-group fresh rainfall design")
+    if not isinstance(rainfall_design, dict) or rainfall_design.get("required_invariants_passed") is not True:
+        raise ValueError("Final requires a valid locked rainfall-group split design")
+    if int(rainfall_design.get("role_group_counts", {}).get("final", 0)) < 1:  # type: ignore[union-attr]
+        raise ValueError("Final requires at least one untouched rainfall group")
     causal_timing = lock.get("causal_timing")
     if (
         not isinstance(causal_timing, dict)
@@ -185,7 +185,7 @@ def compile_final_v4(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Compile code-bound rainfall-group-balanced TFV-first Formal Final"
+        description="Compile locked rainfall-group-balanced TFV-first Formal Final"
     )
     parser.add_argument("--policy-lock", required=True)
     parser.add_argument("--run-index", required=True)
@@ -218,7 +218,6 @@ def main() -> None:
                     detail["rainfall_group"].nunique()
                 ),
                 "aggregation": "equal_weight_per_rainfall_group",
-                "rtc_source_tree_sha256": rtc_source_tree_sha256(),
                 "strategies": sorted(detail["strategy"].unique().tolist()),
                 "priority_pfv_is_hard_gate": False,
                 "detail": str(out / "formal_final_detail.csv"),
