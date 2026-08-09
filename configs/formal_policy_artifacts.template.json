@@ -1,0 +1,23 @@
+{
+  "frozen_inp": "REPLACE_PATH",
+  "priority_nodes": "REPLACE_PATH",
+  "sensor_layout": "REPLACE_PATH",
+  "time_scale_config": "REPLACE_PATH",
+  "step1_model": "REPLACE_PATH",
+  "step2_model": "REPLACE_PATH",
+  "graph_schema": "REPLACE_PATH",
+  "state_schema": "REPLACE_PATH",
+  "actuator_catalog": "REPLACE_PATH",
+  "split_registry": "REPLACE_PATH",
+  "model_acceptance_contract": "REPLACE_PATH",
+  "step1_acceptance": "REPLACE_PATH",
+  "step2_acceptance": "REPLACE_PATH",
+  "gradient_acceptance": "REPLACE_PATH",
+  "candidate_ranking_acceptance": "REPLACE_PATH",
+  "safety_calibration": "REPLACE_PATH",
+  "safety_audit": "REPLACE_PATH",
+  "controller_config": "REPLACE_PATH",
+  "rainfall_forecast_config": "REPLACE_PATH",
+  "fallback_policy": "REPLACE_PATH",
+  "baseline_plan": "REPLACE_PATH"
+}
