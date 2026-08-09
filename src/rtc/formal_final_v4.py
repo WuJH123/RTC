@@ -13,10 +13,13 @@ from .inp_lineage import physical_contract_sha256
 from .tfv_pipeline import sha256_file
 
 
+POLICY_LOCK_CONTRACT = "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V3_CAUSAL_FRESH_DATA"
+
+
 def _verified_lock(path: str | Path) -> dict[str, object]:
     lock = _json(path)
-    if lock.get("contract") != "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V2":
-        raise ValueError("TFV-first Final requires WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V2")
+    if lock.get("contract") != POLICY_LOCK_CONTRACT:
+        raise ValueError("TFV-first Final requires causal fresh-data Policy Lock V3")
     if lock.get("priority_is_hard_constraint") is not False:
         raise ValueError("Policy Lock violates TFV-first soft-priority contract")
     artefacts, hashes = lock.get("artefacts"), lock.get("sha256")
@@ -26,6 +29,12 @@ def _verified_lock(path: str | Path) -> dict[str, object]:
         p = Path(str(raw))
         if not p.is_file() or sha256_file(p) != str(hashes.get(name, "")):
             raise RuntimeError(f"locked artefact disappeared/changed: {name}: {p}")
+    rainfall_design = lock.get("rainfall_design")
+    if not isinstance(rainfall_design, dict) or int(rainfall_design.get("total_groups", 0)) < 160:
+        raise ValueError("Final requires the locked >=160-group fresh rainfall design")
+    causal_timing = lock.get("causal_timing")
+    if not isinstance(causal_timing, dict) or causal_timing.get("initial_observation_elapsed_seconds") != 0:
+        raise ValueError("Final requires the t=0-included causal timing contract")
     return lock
 
 
@@ -39,9 +48,13 @@ def compile_final_v4(
     priority = load_priority_nodes(str(artefacts["priority_nodes"]))
     plan = _json(str(artefacts["baseline_plan"]))
     strategies = tuple(str(x) for x in plan.get("strategies", []))
-    required = {"proposed", "no_control", "internal_rtc"}
-    if not required.issubset(strategies) or len(set(strategies)) != len(strategies):
-        raise ValueError("Formal baseline plan must uniquely separate proposed/no_control/internal_rtc")
+    expected_strategies = (
+        "proposed", "no_control", "internal_rtc", "all_open", "all_closed"
+    )
+    if strategies != expected_strategies:
+        raise ValueError(
+            "Formal baseline plan must be exactly proposed/no_control/internal_rtc/all_open/all_closed"
+        )
     controller = _json(str(artefacts["controller_config"]))
     model_step = int(controller["model_step_seconds"])
     control_update = int(controller["control_update_seconds"])
@@ -73,8 +86,11 @@ def compile_final_v4(
     rows: list[dict[str, object]] = []
     for _, item in index.iterrows():
         result = _verify_formal_run(
-            str(item["formal_manifest_path"]), priority=priority, physical_sha=physical_sha,
-            model_step_seconds=model_step, control_update_seconds=control_update,
+            str(item["formal_manifest_path"]),
+            priority=priority,
+            physical_sha=physical_sha,
+            model_step_seconds=model_step,
+            control_update_seconds=control_update,
         )
         for key in ("event_id", "rainfall_group", "strategy"):
             if str(result[key]) != str(item[key]):
@@ -95,30 +111,48 @@ def compile_final_v4(
         base = detail[detail["strategy"] == reference].set_index("event_id")
         if set(proposed.index) != set(base.index):
             raise ValueError(f"unpaired Final events for proposed vs {reference}")
-        records=[]
+        records: list[dict[str, object]] = []
         for event in sorted(proposed.index):
-            row={"event_id":event,"reference":reference}
-            for metric in ("tfv_m3","priority_flood_volume_m3","global_peak_flood_rate_m3s"):
-                p=float(proposed.loc[event,metric]); b=float(base.loc[event,metric])
-                row[f"delta_{metric}"]=p-b
-                row[f"reduction_{metric}_pct"]=100.0*(b-p)/b if abs(b)>1e-12 else np.nan
+            row: dict[str, object] = {"event_id": event, "reference": reference}
+            for metric in ("tfv_m3", "priority_flood_volume_m3", "global_peak_flood_rate_m3s"):
+                p = float(proposed.loc[event, metric])
+                b = float(base.loc[event, metric])
+                row[f"delta_{metric}"] = p - b
+                row[f"reduction_{metric}_pct"] = 100.0 * (b - p) / b if abs(b) > 1e-12 else np.nan
             records.append(row)
-        pairs[reference]=pd.DataFrame(records)
+        pairs[reference] = pd.DataFrame(records)
     return detail, summary, pairs
 
 
 def main() -> None:
-    parser=argparse.ArgumentParser(description="Compile TFV-first Formal Final V4")
-    parser.add_argument("--policy-lock",required=True); parser.add_argument("--run-index",required=True); parser.add_argument("--out-dir",required=True)
-    args=parser.parse_args(); detail,summary,pairs=compile_final_v4(policy_lock_path=args.policy_lock,run_index_path=args.run_index)
-    out=Path(args.out_dir); out.mkdir(parents=True,exist_ok=True)
-    detail.to_csv(out/"formal_final_detail.csv",index=False); summary.to_csv(out/"formal_final_summary.csv",index=False)
-    for reference,frame in pairs.items(): frame.to_csv(out/f"proposed_vs_{reference}.csv",index=False)
-    print(json.dumps({
-        "contract":"TFV_PRIMARY__PRIORITY_PFV_SOFT_SECONDARY_V1",
-        "events":int(detail["event_id"].nunique()),"strategies":sorted(detail["strategy"].unique().tolist()),
-        "priority_pfv_is_hard_gate":False,"detail":str(out/"formal_final_detail.csv"),"summary":str(out/"formal_final_summary.csv")
-    },indent=2))
+    parser = argparse.ArgumentParser(description="Compile causal fresh-data TFV-first Formal Final V4")
+    parser.add_argument("--policy-lock", required=True)
+    parser.add_argument("--run-index", required=True)
+    parser.add_argument("--out-dir", required=True)
+    args = parser.parse_args()
+    detail, summary, pairs = compile_final_v4(
+        policy_lock_path=args.policy_lock, run_index_path=args.run_index
+    )
+    out = Path(args.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    detail.to_csv(out / "formal_final_detail.csv", index=False)
+    summary.to_csv(out / "formal_final_summary.csv", index=False)
+    for reference, frame in pairs.items():
+        frame.to_csv(out / f"proposed_vs_{reference}.csv", index=False)
+    print(
+        json.dumps(
+            {
+                "contract": "TFV_PRIMARY__PRIORITY_PFV_SOFT_SECONDARY_V1",
+                "events": int(detail["event_id"].nunique()),
+                "strategies": sorted(detail["strategy"].unique().tolist()),
+                "priority_pfv_is_hard_gate": False,
+                "detail": str(out / "formal_final_detail.csv"),
+                "summary": str(out / "formal_final_summary.csv"),
+            },
+            indent=2,
+        )
+    )
 
 
-if __name__=="__main__": main()
+if __name__ == "__main__":
+    main()
