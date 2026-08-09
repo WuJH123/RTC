@@ -9,7 +9,8 @@ import pandas as pd
 
 from .code_contract import rtc_source_tree_sha256
 from .contracts import load_priority_nodes
-from .formal_final_v3 import _json, _verify_formal_run
+from .formal_run_verify import read_json as _json
+from .formal_run_verify import verify_formal_run_v4
 from .inp_lineage import physical_contract_sha256
 from .tfv_pipeline import sha256_file
 
@@ -51,8 +52,6 @@ def _verified_lock(path: str | Path) -> dict[str, object]:
 
 
 def _group_detail(detail: pd.DataFrame, metric_cols: list[str]) -> pd.DataFrame:
-    """Collapse event variants inside one independent rainfall group before statistics."""
-
     return (
         detail.groupby(["rainfall_group", "strategy"], as_index=False)[metric_cols]
         .mean(numeric_only=True)
@@ -119,7 +118,7 @@ def compile_final_v4(
 
     rows: list[dict[str, object]] = []
     for _, item in index.iterrows():
-        result = _verify_formal_run(
+        result = verify_formal_run_v4(
             str(item["formal_manifest_path"]),
             priority=priority,
             physical_sha=physical_sha,
