@@ -28,31 +28,38 @@ def build_gradient_truth(
     development_fold: str = "validation",
     device_name: str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
-    """Compare Step2 autograd with authoritative SWMM finite differences.
+    """Compare Step2 autograd with exact SWMM finite differences by rainfall group.
 
-    Interior settings use a central finite difference. At 0/1 bounds the exact design only
-    has a feasible one-sided perturbation, so forward/backward differences are valid Formal
-    truth instead of silently discarding those actuators (especially pumps that are OFF in
-    No-control prefixes).
+    Interior settings use central differences; exact 0/1 bounds use the feasible one-sided
+    difference. Formal metrics are computed within each independent rainfall group first and
+    then averaged equally so a group with more checkpoints/actuators cannot dominate the
+    evidence merely because more D2 branches were generated from it.
     """
 
     merged = join_manifest_runs(pd.read_csv(manifest_path), pd.read_csv(run_summary_path))
-    if "scientific_split" in merged.columns:
-        merged = merged[merged["scientific_split"].astype(str) == split]
-    if split == "development" and "development_fold" in merged.columns:
-        merged = merged[merged["development_fold"].astype(str) == development_fold]
+    if "scientific_split" not in merged.columns or "rainfall_group" not in merged.columns:
+        raise ValueError("gradient evidence requires scientific_split and rainfall_group lineage")
+    merged = merged[merged["scientific_split"].astype(str) == split].copy()
+    if split == "development":
+        if "development_fold" not in merged.columns:
+            raise ValueError("development gradient evidence requires development_fold")
+        merged = merged[
+            merged["development_fold"].astype(str) == development_fold
+        ].copy()
     if merged.empty:
         raise ValueError("no held-out D2 branches remain after split filtering")
 
-    device = torch.device(device_name or ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = torch.device(
+        device_name or ("cuda" if torch.cuda.is_available() else "cpu")
+    )
     graph = _load_graph(graph_path)
     model = _load_step2(step2_path, device)
     actuator_index = {aid: i for i, aid in enumerate(graph.actuator_ids)}
     exact_cache: dict[str, np.ndarray] = {}
     rows: list[dict[str, object]] = []
-    group_cols = ["checkpoint_id", "actuator_id"]
+    group_cols = ["rainfall_group", "checkpoint_id", "actuator_id"]
     if "event_id" in merged.columns:
-        group_cols.insert(0, "event_id")
+        group_cols.insert(1, "event_id")
 
     for _, group in merged.groupby(group_cols, sort=False):
         group = group.copy()
@@ -62,8 +69,12 @@ def build_gradient_truth(
         if center.empty:
             continue
         mid = center.iloc[0]
-        below = group[group["requested_setting"] < base_setting].sort_values("requested_setting")
-        above = group[group["requested_setting"] > base_setting].sort_values("requested_setting")
+        below = group[group["requested_setting"] < base_setting].sort_values(
+            "requested_setting"
+        )
+        above = group[group["requested_setting"] > base_setting].sort_values(
+            "requested_setting"
+        )
 
         def exact(row: pd.Series) -> np.ndarray:
             path = str(row["metadata_path"])
@@ -104,29 +115,55 @@ def build_gradient_truth(
         )
         if pred_grad is None:
             raise RuntimeError("autograd helper did not return a TFV gradient")
-        rows.append({
-            "event_id": str(mid.get("event_id", "")),
-            "checkpoint_id": str(mid["checkpoint_id"]),
-            "actuator_id": aid,
-            "base_setting": base_setting,
-            "finite_difference_method": method,
-            "pred_tfv_gradient_m3_per_setting": float(pred_grad),
-            "true_tfv_gradient_m3_per_setting": true_grad,
-        })
+        rows.append(
+            {
+                "rainfall_group": str(mid["rainfall_group"]),
+                "event_id": str(mid.get("event_id", "")),
+                "checkpoint_id": str(mid["checkpoint_id"]),
+                "actuator_id": aid,
+                "base_setting": base_setting,
+                "finite_difference_method": method,
+                "pred_tfv_gradient_m3_per_setting": float(pred_grad),
+                "true_tfv_gradient_m3_per_setting": true_grad,
+            }
+        )
 
     detail = pd.DataFrame(rows)
     if detail.empty:
         raise ValueError("no held-out D2 finite-difference cases were available")
-    agreement = compare_gradient_vectors(
-        detail["pred_tfv_gradient_m3_per_setting"],
-        detail["true_tfv_gradient_m3_per_setting"],
-    )
+
+    group_metrics: list[dict[str, float | str]] = []
+    for rainfall_group, group in detail.groupby("rainfall_group", sort=True):
+        agreement = compare_gradient_vectors(
+            group["pred_tfv_gradient_m3_per_setting"],
+            group["true_tfv_gradient_m3_per_setting"],
+        )
+        group_metrics.append(
+            {
+                "rainfall_group": str(rainfall_group),
+                "tfv_gradient_sign_accuracy": agreement.sign_accuracy,
+                "tfv_gradient_cosine_similarity": agreement.cosine_similarity,
+                "tfv_gradient_mae": agreement.magnitude_mae,
+                "gradient_cases": float(len(group)),
+            }
+        )
+
+    def finite_mean(name: str) -> float:
+        values = np.asarray([float(row[name]) for row in group_metrics], dtype=float)
+        values = values[np.isfinite(values)]
+        if not values.size:
+            raise ValueError(f"no finite rainfall-group values for gradient metric {name}")
+        return float(values.mean())
+
     counts = detail["finite_difference_method"].value_counts().to_dict()
     metrics = {
-        "tfv_gradient_sign_accuracy": agreement.sign_accuracy,
-        "tfv_gradient_cosine_similarity": agreement.cosine_similarity,
-        "tfv_gradient_mae": agreement.magnitude_mae,
+        "tfv_gradient_sign_accuracy": finite_mean("tfv_gradient_sign_accuracy"),
+        "tfv_gradient_cosine_similarity": finite_mean(
+            "tfv_gradient_cosine_similarity"
+        ),
+        "tfv_gradient_mae": finite_mean("tfv_gradient_mae"),
         "gradient_cases": float(len(detail)),
+        "gradient_rainfall_groups": float(len(group_metrics)),
         "gradient_central_cases": float(counts.get("central", 0)),
         "gradient_forward_bound_cases": float(counts.get("forward_bound", 0)),
         "gradient_backward_bound_cases": float(counts.get("backward_bound", 0)),
@@ -135,7 +172,9 @@ def build_gradient_truth(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build held-out SWMM TFV gradient truth with bound-aware finite differences")
+    parser = argparse.ArgumentParser(
+        description="Build rainfall-group-balanced held-out SWMM TFV gradient truth"
+    )
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--run-summary", required=True)
     parser.add_argument("--graph", required=True)
@@ -158,8 +197,9 @@ def main() -> None:
     Path(args.detail_out).parent.mkdir(parents=True, exist_ok=True)
     detail.to_csv(args.detail_out, index=False)
     payload = {
-        "contract": "D2_SWMM_TFV_GRADIENT_METRICS_V3_BOUND_AWARE",
+        "contract": "D2_SWMM_TFV_GRADIENT_METRICS_V4_BOUND_AWARE_GROUP_BALANCED",
         "metrics": metrics,
+        "aggregation": "equal_weight_per_rainfall_group",
         "step2_sha256": _sha(args.step2),
         "manifest_sha256": _sha(args.manifest),
         "run_summary_sha256": _sha(args.run_summary),
@@ -167,7 +207,9 @@ def main() -> None:
         "prediction_volume_integration": "trapezoid_current_plus_future_flooding_rate",
     }
     Path(args.metrics_out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.metrics_out).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    Path(args.metrics_out).write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(json.dumps(payload, indent=2))
 
 
