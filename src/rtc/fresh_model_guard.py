@@ -9,11 +9,7 @@ from typing import Callable
 import pandas as pd
 
 from .code_contract import rtc_source_tree_sha256
-from .fresh_workspace import (
-    load_fresh_workspace,
-    require_path_inside_workspace,
-    validate_fresh_run_index,
-)
+from .fresh_workspace import load_fresh_workspace, validate_fresh_run_index
 from .step2_shards import compile_step2_shards, load_shard_manifest
 
 
@@ -23,15 +19,6 @@ def _strip_option(name: str) -> None:
         if idx + 1 >= len(sys.argv):
             raise ValueError(f"{name} requires a value")
         del sys.argv[idx : idx + 2]
-
-
-def _workspace_root(manifest_path: str) -> Path:
-    workspace = load_fresh_workspace(manifest_path)
-    return Path(str(workspace["output_root"])).resolve()
-
-
-def _require_output_inside(path: str, root: Path) -> None:
-    require_path_inside_workspace(Path(path).resolve(), root)
 
 
 def _stamp_metrics(path: str | Path) -> None:
@@ -50,18 +37,17 @@ def _stamp_metrics(path: str | Path) -> None:
 def _validate_shard_manifest(
     manifest_path: str, workspace_manifest: str
 ) -> dict[str, object]:
-    root = _workspace_root(workspace_manifest)
+    # The workspace binds the canonical event/split design; the data itself may live on a
+    # different disk/volume. Scientific validity comes from shard/data hashes and lineage.
+    load_fresh_workspace(workspace_manifest)
     manifest_file = Path(manifest_path).expanduser().resolve()
-    require_path_inside_workspace(manifest_file, root)
     manifest = load_shard_manifest(manifest_file)
     for item in manifest["shards"]:
         shard = Path(str(item["path"])).expanduser()
         if not shard.is_absolute():
             shard = manifest_file.parent / shard
-        shard = shard.resolve()
-        require_path_inside_workspace(shard, root)
-        if not shard.is_file():
-            raise ValueError(f"fresh Step2 shard is missing: {shard}")
+        if not shard.resolve().is_file():
+            raise ValueError(f"Step2 shard is missing: {shard.resolve()}")
     return manifest
 
 
@@ -79,12 +65,8 @@ def _guard_step1(delegate: Callable[[], None], *, acceptance: bool) -> None:
         workspace_manifest_path=known.workspace_manifest,
         reject_final=True,
     )
-    root = _workspace_root(known.workspace_manifest)
-    _require_output_inside(known.out, root)
-    if known.resume_state:
-        _require_output_inside(known.resume_state, root)
-    if acceptance:
-        require_path_inside_workspace(known.model, root)
+    if acceptance and not Path(known.model).is_file():
+        raise ValueError(f"Step1 model is missing: {known.model}")
     _strip_option("--workspace-manifest")
     delegate()
     if acceptance:
@@ -105,7 +87,7 @@ def accept_step1_main() -> None:
 
 def compile_step2_shards_main() -> None:
     parser = argparse.ArgumentParser(
-        description="Compile current-code D2/D3 branches into one frozen-time Step2 shard set"
+        description="Compile lineage-valid D2/D3 branches into one frozen-time Step2 shard set"
     )
     parser.add_argument("--workspace-manifest", required=True)
     parser.add_argument("--run-index", required=True)
@@ -123,8 +105,6 @@ def compile_step2_shards_main() -> None:
         workspace_manifest_path=args.workspace_manifest,
         reject_final=True,
     )
-    root = _workspace_root(args.workspace_manifest)
-    _require_output_inside(args.out_dir, root)
     frame = pd.read_csv(args.run_index)
     if "scientific_split" not in frame.columns:
         raise ValueError("Step2 run index requires scientific_split")
@@ -166,12 +146,8 @@ def _guard_step2(delegate: Callable[[], None], *, acceptance: bool) -> None:
         parser.add_argument("--model", required=True)
     known, _ = parser.parse_known_args()
     _validate_shard_manifest(known.manifest, known.workspace_manifest)
-    root = _workspace_root(known.workspace_manifest)
-    _require_output_inside(known.out, root)
-    if known.resume_state:
-        _require_output_inside(known.resume_state, root)
-    if acceptance:
-        require_path_inside_workspace(known.model, root)
+    if acceptance and not Path(known.model).is_file():
+        raise ValueError(f"Step2 model is missing: {known.model}")
     _strip_option("--workspace-manifest")
     delegate()
     if acceptance:
@@ -192,7 +168,7 @@ def accept_step2_main() -> None:
 
 def validate_index_main() -> None:
     parser = argparse.ArgumentParser(
-        description="Validate every branch in a run index against current Fresh Workspace code"
+        description="Validate run-index scientific lineage against the study workspace contract"
     )
     parser.add_argument("--workspace-manifest", required=True)
     parser.add_argument("--run-index", required=True)
@@ -205,8 +181,6 @@ def validate_index_main() -> None:
     )
     if args.out:
         out = Path(args.out)
-        root = _workspace_root(args.workspace_manifest)
-        require_path_inside_workspace(out.resolve(), root)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
