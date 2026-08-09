@@ -73,7 +73,7 @@ def run_hydraulic_trajectory(
         link_obj = {aid: links[aid] for aid in actuator_ids}
         node_obj = {nid: nodes[nid] for nid in node_ids}
         sub_obj = {obj.subcatchmentid: obj for obj in subcatchments}
-        connection = {sid: tuple(obj.connection) for sid, obj in sub_obj.items()}
+        connection = {sid: obj.connection for sid, obj in sub_obj.items()}
         resolved = resolve_subcatchment_outlets(connection, node_ids)
 
         def append_frame(elapsed: int) -> None:

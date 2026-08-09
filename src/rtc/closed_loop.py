@@ -163,7 +163,7 @@ def run_authoritative_closed_loop(
         node_obj = {nid: nodes[nid] for nid in all_nodes}
         sensor_obj = {nid: node_obj[nid] for nid in sensor_nodes}
         sub_obj = {obj.subcatchmentid: obj for obj in subcatchments}
-        connection = {sid: tuple(obj.connection) for sid, obj in sub_obj.items()}
+        connection = {sid: obj.connection for sid, obj in sub_obj.items()}
         resolved_outlets = resolve_subcatchment_outlets(connection, all_nodes)
 
         def observed_rainfall() -> np.ndarray:
