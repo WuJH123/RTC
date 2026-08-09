@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,9 +19,15 @@ class ReplayCheckpointReference:
     source_metadata_path: str
 
 
-def load_checkpoint_reference(
-    metadata_path: str | Path, *, elapsed_seconds: int
-) -> ReplayCheckpointReference:
+def _sha256(path: str | Path) -> str:
+    h = hashlib.sha256()
+    with Path(path).open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def reference_trajectory_lineage(metadata_path: str | Path) -> dict[str, str]:
     meta_path = Path(metadata_path)
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     if not isinstance(meta, dict):
@@ -28,10 +35,28 @@ def load_checkpoint_reference(
     compact_name = meta.get("compact_file")
     if not compact_name:
         raise ValueError("checkpoint reference requires compact trajectory evidence")
-    engine_version = str(meta.get("swmm_engine_version", "")).strip()
-    if not engine_version:
-        raise ValueError("checkpoint reference lacks SWMM engine version")
     compact = meta_path.parent / str(compact_name)
+    if not compact.is_file():
+        raise ValueError(f"checkpoint reference compact file is missing: {compact}")
+    engine = str(meta.get("swmm_engine_version", "")).strip()
+    if not engine:
+        raise ValueError("checkpoint reference lacks SWMM engine version")
+    return {
+        "reference_metadata_path": str(meta_path.resolve()),
+        "reference_metadata_sha256": _sha256(meta_path),
+        "reference_compact_path": str(compact.resolve()),
+        "reference_compact_sha256": _sha256(compact),
+        "reference_swmm_engine_version": engine,
+    }
+
+
+def load_checkpoint_reference(
+    metadata_path: str | Path, *, elapsed_seconds: int
+) -> ReplayCheckpointReference:
+    lineage = reference_trajectory_lineage(metadata_path)
+    meta_path = Path(metadata_path)
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    compact = Path(lineage["reference_compact_path"])
     with np.load(compact, allow_pickle=False) as raw:
         times = raw["elapsed_seconds"].astype(np.int64)
         matches = np.flatnonzero(times == int(elapsed_seconds))
@@ -46,7 +71,7 @@ def load_checkpoint_reference(
             actuator_ids=tuple(raw["actuator_ids"].astype(str).tolist()),
             state_si=raw["state_si"][i].astype(np.float64),
             current_setting=raw["current_setting"][i].astype(np.float64),
-            swmm_engine_version=engine_version,
+            swmm_engine_version=str(meta["swmm_engine_version"]),
             source_metadata_path=str(meta_path.resolve()),
         )
 
@@ -63,13 +88,7 @@ def verify_replayed_checkpoint(
     state_atol: float = 1e-5,
     setting_atol: float = 1e-7,
 ) -> dict[str, float | int | str | bool]:
-    """Verify that a counterfactual branch truly reaches its saved No-control prefix state.
-
-    A same-prefix action experiment is meaningful only when the branch reaches the same
-    hydraulic state *before* the candidate is written. We compare the complete compact
-    six-channel state and complete actuator readback vector, rather than relying on event
-    names or a few network summary statistics.
-    """
+    """Verify the complete No-control hydraulic/readback prefix before any candidate write."""
 
     if state_atol <= 0 or setting_atol <= 0:
         raise ValueError("replay tolerances must be positive")
