@@ -1,33 +1,27 @@
 # Formal Pipeline — Wuhan large-system TFV-first contract (latest)
 
-This document supersedes every earlier V1/V2/V3 pipeline note for **new Formal evidence**.
-The target system is a large Dynamic-Wave SWMM network. The scientific objective is:
+This document supersedes every earlier V1/V2/V3 workflow for **new Formal evidence**.
+The target is a large Dynamic-Wave SWMM network controlled online without rainfall-event
+lookup, a fixed active actuator subset, or binary-pump assumptions.
 
-> reconstruct the current network state from sparse causal observations, learn the
-> continuous hydraulic consequences of every writable actuator, and at each control update
-> decide online which facilities to move, by how much, and when — without rainfall-ID
-> lookup, a fixed active subset, or binary-pump assumptions.
+## 1. Frozen scientific objective
 
-## Frozen scientific objective
-
-1. **Primary optimization objective:** minimise cumulative system-wide TFV over the causal
-   prediction horizon (risk-adjusted across causal rainfall scenarios when used).
-2. **Eight observed ponding locations:** retained as site-wise PFV/max-depth diagnostics and
-   a **soft secondary preference** among TFV-near-optimal controls. PFV is **not** a hard
-   admission/veto condition. A priority site may worsen if this is necessary for a
-   meaningful system-wide TFV improvement.
-3. **Hard runtime conditions:** finite numerics, continuous setting bounds, engineering
-   projection, write/readback and strict causality. Failure here falls back; PFV alone does
-   not.
+1. **Primary objective:** minimise cumulative system-wide TFV over the causal prediction
+   horizon, optionally risk-adjusted across causal rainfall scenarios.
+2. **Eight observed ponding sites:** retain site-wise cumulative PFV and maximum depth as
+   important diagnostics and a **soft secondary preference** among TFV-near-optimal controls.
+   PFV is not a hard admission/veto condition; limited PFV deterioration may be accepted
+   when necessary for a meaningful system-wide TFV improvement.
+3. **Hard runtime conditions only:** finite numerics, continuous setting bounds, engineering
+   projection, target write/readback, frozen schema/lineage and strict causality.
 4. **No-control and Internal-RTC are different policies:**
-   - `no_control`: same physical network/forcing, native `[CONTROLS]` disabled, no Python
-     writes;
-   - `internal_rtc`: original event INP with native `[CONTROLS]` enabled, no Python writes.
-5. Proposed, Hold, D1, D2, D3, all-open and all-closed run on a **controls-disabled** copy
-   from simulation start. This prevents SWMM native rules from overwriting Python actions
-   between control callbacks.
+   - `no_control`: same physical network/forcing, native `[CONTROLS]` disabled, no Python writes;
+   - `internal_rtc`: original event INP, native `[CONTROLS]` enabled, no Python writes.
+5. Proposed, Hold, D1, D2, D3, all-open and all-closed execute on a controls-disabled copy
+   from simulation start. This prevents fast native rules from changing Python actions
+   between RTC callbacks.
 
-## Mandatory preflight before expensive SWMM
+## 2. Mandatory preflight
 
 ```powershell
 rtc-inp-audit-v2 `
@@ -36,8 +30,8 @@ rtc-inp-audit-v2 `
   --out outputs/preflight/inp_audit.json
 ```
 
-The command fails if a supplied priority node does not exist. Never substitute a visually
-similar node ID. If the eight observed sites are available as coordinates, map them with:
+A supplied priority ID absent from the INP is a hard blocker. Never substitute a similar
+string. If the eight observed sites are available as coordinates, create an auditable map:
 
 ```powershell
 rtc-resolve-priority `
@@ -47,51 +41,48 @@ rtc-resolve-priority `
   --out-nodes data/priority_nodes.txt
 ```
 
-`priority_points.csv` columns are `priority_id,x,y`. Review mapping distances before Formal
-use.
+Review nearest-node distances and duplicate mappings before Formal use.
 
-## Hardware contract for a 16-CPU / RTX 4060 8GB workstation
+## 3. Hardware and storage contract
 
-- SWMM data generation: independent **processes**, normally `--workers 16` with
-  `--swmm-threads-per-process 1`. Do not run 16 processes × `THREADS=2` and oversubscribe
-  the CPU.
-- GPU training: run after SWMM generation. Step1 default micro-batch 4 / gradient
-  accumulation 4; Step2 default micro-batch 2 / accumulation 4; AMP enabled on CUDA.
-- Do not run the CPU-heavy 16-process SWMM pool concurrently with GPU training unless a
-  measured resource audit proves it is beneficial.
+For a workstation with 16 CPU workers and an RTX 4060 8GB:
 
-## Storage contract
+- SWMM data generation: independent processes, normally
+  `--workers 16 --swmm-threads-per-process 1`;
+- do not run 16 processes while retaining source-INP `THREADS=2`, which would oversubscribe
+  the CPU;
+- run GPU training as a separate phase; default large-model commands use AMP, small
+  micro-batches and gradient accumulation;
+- successful SWMM `.out/.rpt` files are deleted by default;
+- raw node/actuator CSV is debug-only;
+- D0/D1 and D2/D3 save compact compressed SI arrays plus exact node statistics and JSON
+  lineage;
+- Step1 windows are sliced lazily and never duplicated on disk;
+- Step2 is compiled into bounded-size shards rather than one monolithic dataset;
+- runners resume only branches whose metadata, compact file and exact-statistics evidence
+  are complete.
 
-New Formal data uses compact compressed arrays, not repeated row-wise hydraulic CSVs:
-
-- D0/D1: one `*.compact.npz` trajectory + exact cumulative node statistics + JSON lineage;
-- D2/D3: one compact branch + exact cumulative node statistics + JSON lineage;
-- raw node/actuator CSV and SWMM `.out/.rpt` are debug-only and off by default;
-- Step1 windows are sliced lazily from trajectories and are **not materialized**;
-- Step2 is compiled to bounded-size shards, not one monolithic dataset;
-- successful SWMM engine `.out/.rpt` files are deleted by default;
-- data runners resume from content-complete hashed branch evidence.
-
-The compact state schema is SI:
+Compact hydraulic state:
 
 `depth_m, head_m, flooding_m3s, volume_m3, total_inflow_m3s, total_outflow_m3s`.
 
-`Node.flooding` is an instantaneous rate. It is never called PFV/TFV by itself.
-Authoritative PFV/TFV use SWMM cumulative `Node.statistics.flooding_volume` over the exact
-specified horizon/event. Sampled rate integration is surrogate/diagnostic only.
+`Node.flooding` is an instantaneous rate, not PFV/TFV. Authoritative PFV/TFV use cumulative
+SWMM node flooding volume over the exact event/horizon. The surrogate converts predicted
+rates to volume with trapezoidal integration using the **current** rate plus all future
+predicted rates; Step2 training/acceptance additionally uses exact cumulative SWMM volume.
 
-## Stage A — rainfall-group split
+## 4. Stage A — rainfall-group split
 
-Assign whole rainfall groups to mutually exclusive:
+Assign entire rainfall groups to mutually exclusive:
 
 `development / calibration / safety_audit / final`
 
-and split development again by rainfall group into `train / validation`. Final is untouched
-until after Policy Lock.
+and split development again by rainfall group into `train / validation`. Final remains
+untouched until Policy Lock.
 
-## Stage B — D0 state coverage
+## 5. Stage B — replayable D0 state coverage
 
-For No-control D0, each event is automatically converted to a controls-disabled runtime INP:
+Generate No-control D0 with native controls disabled from time zero:
 
 ```powershell
 rtc-run-d0-batch `
@@ -103,43 +94,48 @@ rtc-run-d0-batch `
   --swmm-threads-per-process 1
 ```
 
-Internal-RTC is generated separately with:
+Generate Internal-RTC separately:
 
 ```powershell
 rtc-run-d0-batch ... --strategy internal_rtc
 ```
 
-Do not merge their policy semantics.
+Never merge their policy semantics.
 
-## Stage C — optional development-only D1 controlled coverage
-
-D1 gives Step1 controlled-state coverage without defining a runtime policy lookup:
+## 6. Stage C — optional D1 controlled-state coverage for Step1 only
 
 ```powershell
 rtc-run-d1-exploration ...
 ```
 
-All writable facilities remain eligible; the random mask is a data-sampling device only.
-D1 is development/train only.
+D1 is development/train only and exists to expose Step1 to hydraulically reachable
+controlled states. Every writable actuator remains eligible.
 
-## Stage D — checkpoint design
+**D1 trajectories are NOT D2/D3 checkpoint sources in the current pipeline.** A D1 state
+contains the effects of its entire preceding exploration-action history. A fresh D2 branch
+that simply replays a No-control prefix to the same clock time is therefore not the same
+hydraulic state. D1 may become a D2 source only after an explicit prefix-action replay or
+verified hot-start lineage is implemented and validated.
 
-Never hand-pick states after seeing outcomes. Build stratified, history-ready checkpoints
-from compact D0/D1 trajectories:
+## 7. Stage D — D2/D3 checkpoint design from No-control D0 only
+
+Use only controls-disabled, no-Python-write D0 trajectories, because their prefix can be
+reproduced exactly by every fresh D2/D3 branch:
 
 ```powershell
 rtc-design-checkpoints `
-  --run-index outputs/d0_d1_run_index.csv `
+  --run-index outputs/d0_no_control/D0_no_control_RUN_INDEX.csv `
   --out outputs/checkpoints/checkpoint_settings.csv `
   --checkpoints-per-event 8 `
   --minimum-elapsed-minutes <HISTORY_READINESS_MINUTES>
 ```
 
-Final groups are automatically excluded.
+The command rejects D1 controlled trajectories, Internal-RTC trajectories and Final groups.
+It records `prefix_contract=CONTROLS_DISABLED_NO_CONTROL_FROM_T0`.
 
-## Stage E — D2 same-checkpoint actuator truth
+## 8. Stage E — D2 same-checkpoint actuator truth
 
-Design `u-epsilon / u / u+epsilon` branches, then run compact D2:
+Design `u-epsilon / u / u+epsilon`, then run compact D2:
 
 ```powershell
 rtc-design-probes ...
@@ -152,16 +148,23 @@ rtc-run-probes `
   --swmm-threads-per-process 1
 ```
 
-Every branch is run on the same-prefix **controls-disabled** base. Native Internal-RTC rules
-must never contaminate action-effect labels.
+Every branch starts from the same replayable controls-disabled prefix. Exact horizon TFV/PFV
+labels come from the difference in cumulative SWMM node statistics between checkpoint and
+aligned horizon endpoint.
 
-## Stage F — Phase-0 hydraulic time scale
+## 9. Stage F — empirical hydraulic time scale
 
-Run `python -m rtc.phase0_timescale` on D2 compact branches. Inspect response onset, peak and
-90%-mass distributions. Freeze model step, control update and horizon only after this
-review plus development sensitivity. Do not inherit Project6 5/10/120 minutes by default.
+Use compact D2 response evidence:
 
-## Stage G — frozen graph/assets
+```powershell
+python -m rtc.phase0_timescale ...
+```
+
+Review response onset, peak-effect time and 90%-response-mass distributions. Freeze model
+step, control update and horizon only after this development evidence and sensitivity
+analysis. Do not automatically inherit Project6 5/10/120 minutes.
+
+## 10. Stage G — frozen graph and schemas
 
 Only after the eight observed sites are correctly mapped:
 
@@ -173,44 +176,39 @@ python -m rtc.formal_assets_v2 `
   --out-dir outputs/formal_assets
 ```
 
-The graph stores SI node geometry plus actuator type, pump-curve capacity/range,
-orifice/weir geometry and a stable actuator ordering. Step2 also learns a locked
-actuator-identity embedding. No Engineering36/fixed subset is created.
+The graph stores SI node geometry and device-specific pump-curve/orifice/weir features.
+Step2 also learns a stable actuator-identity embedding. No Engineering36 or fixed active
+subset is created.
 
-## Stage H — Step1 training/acceptance (RTX 4060 path)
+## 11. Stage H — Step1 large-model path
 
-Do **not** use the legacy materialized-window pipeline for this model.
+Do not materialise repeated 13-frame windows for this network.
 
 ```powershell
 rtc-train-step1-large `
-  --run-index outputs/d0_d1_run_index.csv `
+  --run-index outputs/d0_d1_step1_run_index.csv `
   --graph outputs/formal_assets/graph_schema.npz `
   --sensors data/sensor_nodes.txt `
   --history-steps <FROZEN_HISTORY_STEPS> `
   --model-step-seconds <FROZEN_MODEL_STEP> `
   --batch-size 4 --grad-accum 4 `
   --out outputs/models/step1.pt
-
-rtc-accept-step1-large ... --out outputs/evidence/step1_metrics.json
-rtc-accept-gate `
-  --metrics outputs/evidence/step1_metrics.json `
-  --contract configs/model_acceptance_contract_v3.json `
-  --section step1 `
-  --out outputs/evidence/step1_acceptance.json
 ```
 
-Step1 context is topology-local: realised node rainfall + incoming/outgoing actuator
-setting/flow summaries. The full 109-actuator vector is not broadcast to every node.
+Step1 reads sparse depth/head history plus topology-local causal context: realised node
+rainfall and incoming/outgoing actuator setting/flow summaries. The full 109-actuator
+vector is not broadcast to every node. Use development/validation for acceptance and apply
+the preregistered `step1` threshold section with `rtc-accept-gate`.
 
-## Stage I — D3 interactions and Step2 shards
+## 12. Stage I — D3 interactions and Step2 shards
 
-Generate D3 on controls-disabled bases with the parallel runner:
+Generate D3 on controls-disabled replayable prefixes:
 
 ```powershell
 rtc-run-d3-batch ... --workers 16 --swmm-threads-per-process 1
 ```
 
-Merge D2/D3 run metadata into one lineage-preserving run index and compile shards:
+Merge D2/D3 metadata into a lineage-preserving run index and compile bounded shards:
 
 ```powershell
 rtc-compile-step2-shards `
@@ -220,7 +218,7 @@ rtc-compile-step2-shards `
   --shard-size 128
 ```
 
-## Stage J — Step2 training/acceptance (RTX 4060 path)
+## 13. Stage J — Step2 large-model path
 
 ```powershell
 rtc-train-step2-large `
@@ -230,20 +228,18 @@ rtc-train-step2-large `
   --out outputs/models/step2.pt
 ```
 
-Compile a separate development/validation shard manifest and run
-`rtc-accept-step2-large`. TFV/PFV KPI acceptance uses exact cumulative SWMM node-statistic
-volume, not sampled-rate labels. Then apply the frozen `step2` threshold section with
-`rtc-accept-gate`.
+Formal Step2 training supervises full state trajectories, actuator flow and exact cumulative
+SWMM node flooding volume. Build a separate development/validation shard manifest and run
+`rtc-accept-step2-large`; then apply the frozen `step2` thresholds using `rtc-accept-gate`.
 
-## Stage K — gradient and candidate-ranking truth
+## 14. Stage K — gradient and candidate-ranking truth
 
-Before gradient MPC is Formal-eligible, held-out D2 must verify SWMM finite-difference TFV
-gradient direction/magnitude and candidate TFV ranking/regret. Priority-PFV gradient may be
-reported but cannot veto a TFV-valid policy.
+Before gradient MPC is Formal-eligible, held-out D2 must verify TFV gradient
+sign/direction/magnitude against authoritative SWMM finite differences and verify candidate
+TFV ranking/top-1 regret. Predicted cumulative volume uses the same trapezoid contract as
+MPC/training. Priority-PFV gradient may be reported but does not veto TFV-valid control.
 
-## Stage L — development closed loop
-
-Run:
+## 15. Stage L — development closed loop
 
 ```powershell
 rtc-run-policy `
@@ -258,10 +254,10 @@ rtc-run-policy `
   ...
 ```
 
-The runner creates a controls-disabled runtime copy. Internal-RTC is run separately with
-`--strategy internal_rtc`; No-control separately with `--strategy no_control`.
+The runner uses a cached controls-disabled runtime INP for Proposed/No-control/Hold and
+other Python policies. Internal-RTC always uses the original event INP.
 
-## Stage M — TFV-first Policy Lock
+## 16. Stage M — TFV-first Policy Lock
 
 Start from:
 
@@ -269,7 +265,7 @@ Start from:
 - `configs/model_acceptance_contract_v3.template.json`
 - `configs/formal_baseline_plan.v3.json`
 
-Freeze numerical development choices, then use:
+Then freeze with:
 
 ```powershell
 rtc-policy-lock-v5 `
@@ -278,14 +274,14 @@ rtc-policy-lock-v5 `
   --out outputs/policy_lock/policy_lock.json
 ```
 
-PFV calibration may be locked to support uncertainty-aware **soft** priority ranking and
-reporting, but it is not a mandatory safety-pass gate.
+Priority calibration may be locked for uncertainty-aware soft ranking/reporting, but PFV is
+not a mandatory safety-pass gate.
 
-## Stage N — untouched Final
+## 17. Stage N — untouched Final
 
-For each locked Final event, run the complete strategy matrix. Formal main runs set
-`exact_global_peak=false`; afterward bind a routing-step replay with `rtc-formalize-run`.
-Compile only with:
+Run the complete locked strategy matrix on untouched Final groups. Main closed-loop runs
+keep `exact_global_peak=false`; afterward use frozen-decision routing-step replay through
+`rtc-formalize-run`. Compile only with:
 
 ```powershell
 rtc-compile-final-v4 `
@@ -300,7 +296,7 @@ Formal conclusions use:
 - PFV: cumulative SWMM flooding volume at the eight verified observed-site nodes;
 - Global Peak: synchronous network flooding-rate peak from frozen-decision routing replay;
 - priority max depth: site-wise diagnostic;
-- event-balanced paired comparisons against No-control and Internal-RTC separately.
+- paired, event-balanced comparisons against No-control and Internal-RTC separately.
 
-No Final truth may be used for fitting, threshold selection, priority mapping, sensor
-selection, time-scale selection or hyperparameter tuning.
+Final truth may not be used for fitting, threshold selection, priority mapping, sensor
+selection, time-scale selection, uncertainty calibration or hyperparameter tuning.
