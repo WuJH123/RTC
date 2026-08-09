@@ -27,6 +27,7 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.production_guard  # noqa: F401
     import rtc.rainfall_design  # noqa: F401
     import rtc.replay_peak  # noqa: F401
+    import rtc.runtime_acceptance  # noqa: F401
     import rtc.step2_shards  # noqa: F401
     import rtc.step2_train_v2  # noqa: F401
     import rtc.tfv_mpc  # noqa: F401
