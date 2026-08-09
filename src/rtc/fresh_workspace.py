@@ -12,7 +12,7 @@ from .inp_runtime import sha256_file
 from .rainfall_design import validate_formal_rainfall_design
 
 
-WORKSPACE_CONTRACT = "RTC_FRESH_WORKSPACE_V1_NO_HISTORICAL_OUTPUT_REUSE"
+WORKSPACE_CONTRACT = "RTC_FRESH_WORKSPACE_V2_LINEAGE_NOT_PATH_BOUND"
 
 
 def _resolve(path: str | Path) -> Path:
@@ -26,7 +26,7 @@ def initialize_fresh_workspace(
     priority_nodes: str | Path,
     event_registry: str | Path,
 ) -> dict[str, object]:
-    """Create a clean output root after validating the fresh rainfall/event design."""
+    """Create an initially clean study root and bind the scientific input identities."""
 
     root_path = _resolve(root)
     manifest_path = root_path / "FRESH_WORKSPACE_MANIFEST.json"
@@ -75,19 +75,16 @@ def initialize_fresh_workspace(
         "canonical_event_registry": str(locked_registry.resolve()),
         "rainfall_design": rainfall_design,
         "inputs": inputs,
-        "admissible_preexisting_data": [
-            "frozen physical INP",
-            "priority/sensor observation metadata",
-            "rainfall/event forcing definitions used to build the fresh event registry",
-        ],
+        "reuse_rule": (
+            "RTC-derived artefacts may live on any local volume. Reuse is decided by scientific "
+            "split/lineage, implementation-contract identity, exact numerical input/config keys and "
+            "generated-artifact hashes, never by directory location or file existence alone."
+        ),
         "forbidden_reuse": [
-            "historical RTC hydraulic trajectories",
-            "historical baseline outcomes",
-            "historical D1/D2/D3/candidate branches",
-            "historical Step1/Step2 checkpoints",
-            "historical calibration/acceptance/Policy-Lock/Final evidence",
+            "artifacts with incompatible scientific/data contracts",
+            "Final rows in pre-lock training/acceptance",
+            "branches whose declared generated-artifact hashes no longer verify",
         ],
-        "generation_rule": "all RTC-derived outputs for this study must be created under output_root by the current code contract",
     }
     manifest_path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -99,36 +96,38 @@ def load_fresh_workspace(path: str | Path) -> dict[str, object]:
     manifest_path = _resolve(path)
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("contract") != WORKSPACE_CONTRACT:
-        raise ValueError("not a valid fresh RTC workspace manifest")
+        raise ValueError("not a valid RTC v0.6 study workspace manifest")
     root = _resolve(str(payload.get("output_root", "")))
     if not root.is_dir() or manifest_path.parent != root:
-        raise ValueError("fresh workspace manifest/output_root mismatch")
+        raise ValueError("workspace manifest/output_root mismatch")
     inputs = payload.get("inputs")
     if not isinstance(inputs, dict):
-        raise ValueError("fresh workspace manifest lacks input identities")
+        raise ValueError("workspace manifest lacks input identities")
     for name, raw in inputs.items():
         if not isinstance(raw, dict):
-            raise ValueError(f"invalid fresh workspace input entry: {name}")
+            raise ValueError(f"invalid workspace input entry: {name}")
         p = _resolve(str(raw.get("path", "")))
         if not p.is_file() or sha256_file(p) != str(raw.get("sha256", "")):
-            raise ValueError(f"fresh workspace input disappeared/changed: {name}: {p}")
+            raise ValueError(f"workspace input disappeared/changed: {name}: {p}")
     canonical = _resolve(str(payload.get("canonical_event_registry", "")))
     require_path_inside_workspace(canonical, root)
     if not canonical.is_file():
-        raise ValueError("canonical fresh event registry is missing")
+        raise ValueError("canonical event registry is missing")
     rainfall = payload.get("rainfall_design")
-    if not isinstance(rainfall, dict) or int(rainfall.get("rainfall_groups", 0)) < 160:
-        raise ValueError("fresh workspace lacks the validated >=160-group rainfall design")
+    if not isinstance(rainfall, dict) or rainfall.get("required_invariants_passed") is not True:
+        raise ValueError("workspace lacks a valid rainfall-group split design")
     return payload
 
 
 def require_path_inside_workspace(path: str | Path, workspace_root: str | Path) -> None:
+    """Optional organization helper; scientific validity does not depend on this path check."""
+
     candidate = _resolve(path)
     root = _resolve(workspace_root)
     try:
         candidate.relative_to(root)
     except ValueError as exc:
-        raise ValueError(f"RTC-derived output is outside fresh workspace: {candidate}") from exc
+        raise ValueError(f"path is outside study workspace: {candidate}") from exc
 
 
 def _resolve_index_reference(raw: str | Path, index_path: Path) -> Path:
@@ -138,12 +137,12 @@ def _resolve_index_reference(raw: str | Path, index_path: Path) -> Path:
     return candidate.resolve()
 
 
-def _verify_metadata_generation(meta_path: Path, current_code_sha: str) -> None:
+def _verify_metadata_generation(meta_path: Path, implementation_sha: str) -> None:
     payload = json.loads(meta_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"branch metadata is not a JSON object: {meta_path}")
-    if payload.get("rtc_source_tree_sha256") != current_code_sha:
-        raise ValueError(f"branch was generated by a different RTC source tree: {meta_path}")
+    if payload.get("rtc_source_tree_sha256") != implementation_sha:
+        raise ValueError(f"branch implementation contract is incompatible: {meta_path}")
     if not payload.get("generation_key_sha256"):
         raise ValueError(f"branch lacks a generation key: {meta_path}")
     hashes = payload.get("generated_artifact_sha256")
@@ -159,13 +158,13 @@ def _verify_metadata_generation(meta_path: Path, current_code_sha: str) -> None:
 
 
 def _verify_baseline_sidecar(
-    sidecar_path: Path, *, current_code_sha: str, metadata_path: Path
+    sidecar_path: Path, *, implementation_sha: str, metadata_path: Path
 ) -> None:
     payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("contract") != "FIXED_BASELINE_CACHE_V2_CODE_BOUND":
         raise ValueError(f"baseline sidecar is not current V2 evidence: {sidecar_path}")
-    if payload.get("rtc_source_tree_sha256") != current_code_sha:
-        raise ValueError(f"baseline sidecar was generated by a different RTC source tree: {sidecar_path}")
+    if payload.get("rtc_source_tree_sha256") != implementation_sha:
+        raise ValueError(f"baseline implementation contract is incompatible: {sidecar_path}")
     if Path(str(payload.get("main_metadata_path", ""))).resolve() != metadata_path:
         raise ValueError("baseline sidecar/main metadata mismatch")
     if sha256_file(metadata_path) != str(payload.get("main_metadata_sha256", "")):
@@ -191,58 +190,62 @@ def validate_fresh_run_index(
     metadata_column: str = "metadata_path",
     reject_final: bool = True,
 ) -> dict[str, object]:
-    """Prove every training/acceptance branch is inside the workspace and current-code bound."""
+    """Validate branch scientific lineage without requiring one physical output directory."""
 
     workspace = load_fresh_workspace(workspace_manifest_path)
     root = _resolve(str(workspace["output_root"]))
     index_path = _resolve(run_index_path)
-    require_path_inside_workspace(index_path, root)
     if not index_path.is_file():
-        raise ValueError(f"fresh run index is missing: {index_path}")
+        raise ValueError(f"run index is missing: {index_path}")
     frame = pd.read_csv(index_path)
     if metadata_column not in frame.columns or frame.empty:
-        raise ValueError(f"fresh run index requires non-empty {metadata_column}")
+        raise ValueError(f"run index requires non-empty {metadata_column}")
     if reject_final:
         if "scientific_split" not in frame.columns:
-            raise ValueError("fresh training/acceptance index requires scientific_split")
+            raise ValueError("training/acceptance index requires scientific_split")
         if (frame["scientific_split"].astype(str) == "final").any():
             raise ValueError("Final rows are forbidden in pre-lock training/acceptance indexes")
-    _, current_code_sha = generation_key("code_probe", {})
+    _, implementation_sha = generation_key("code_probe", {})
     metadata_paths: list[str] = []
+    inside_count = 0
     for _, row in frame.iterrows():
         path = _resolve_index_reference(str(row[metadata_column]), index_path)
-        require_path_inside_workspace(path, root)
         if not path.is_file():
-            raise ValueError(f"fresh branch metadata is missing: {path}")
+            raise ValueError(f"branch metadata is missing: {path}")
+        try:
+            path.relative_to(root)
+            inside_count += 1
+        except ValueError:
+            pass
         sidecar_raw = str(row.get("sidecar_path", "")).strip()
         if sidecar_raw and sidecar_raw.lower() != "nan":
             sidecar = _resolve_index_reference(sidecar_raw, index_path)
-            require_path_inside_workspace(sidecar, root)
             if not sidecar.is_file():
                 raise ValueError(f"baseline cache sidecar is missing: {sidecar}")
             _verify_baseline_sidecar(
-                sidecar, current_code_sha=current_code_sha, metadata_path=path
+                sidecar, implementation_sha=implementation_sha, metadata_path=path
             )
         else:
-            _verify_metadata_generation(path, current_code_sha)
+            _verify_metadata_generation(path, implementation_sha)
         metadata_paths.append(str(path))
     return {
-        "contract": "FRESH_RUN_INDEX_PROVENANCE_V2_CODE_BOUND",
+        "contract": "RUN_INDEX_PROVENANCE_V3_LINEAGE_BOUND",
         "workspace_manifest_sha256": sha256_file(workspace_manifest_path),
         "run_index": str(index_path),
         "run_index_sha256": sha256_file(index_path),
-        "rtc_source_tree_sha256": current_code_sha,
+        "rtc_source_tree_sha256": implementation_sha,
         "rows": int(len(frame)),
         "unique_metadata_paths": int(len(set(metadata_paths))),
-        "all_metadata_inside_workspace": True,
-        "all_rows_current_code_bound": True,
+        "metadata_inside_workspace": int(inside_count),
+        "metadata_outside_workspace": int(len(frame) - inside_count),
+        "all_rows_lineage_valid": True,
         "final_rows_rejected": bool(reject_final),
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Validate rainfall design and initialize an empty no-historical-output-reuse Formal RTC workspace"
+        description="Validate rainfall-group split and initialize a clean RTC study workspace"
     )
     parser.add_argument("--root", required=True)
     parser.add_argument("--inp", required=True)
