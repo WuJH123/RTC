@@ -26,7 +26,9 @@ def _device(device: str | torch.device | None) -> torch.device:
 
 
 def _tensor(value: np.ndarray | torch.Tensor, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
-    return value.detach().cpu() if isinstance(value, torch.Tensor) else torch.as_tensor(value, dtype=dtype)
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().to(dtype=dtype)
+    return torch.as_tensor(value, dtype=dtype)
 
 
 def train_step1(
@@ -44,12 +46,7 @@ def train_step1(
     learning_rate: float = 1e-3,
     device: str | torch.device | None = None,
 ) -> TrainingHistory:
-    """Train Step1 on development-only causal windows.
-
-    Split construction is deliberately external: callers must pass only the development
-    rainfall partition here. Calibration, safety-audit and final samples must never enter
-    this function.
-    """
+    """Train Step1 on development-only causal windows."""
 
     dev = _device(device)
     obs = _tensor(observed_history)
@@ -126,7 +123,18 @@ def train_step2(
     """
 
     dev = _device(device)
-    tensors = [_tensor(x) for x in (initial_state, rainfall, settings, previous_actuator_flow, actuator_physics, target_states, target_actuator_flows)]
+    tensors = [
+        _tensor(x)
+        for x in (
+            initial_state,
+            rainfall,
+            settings,
+            previous_actuator_flow,
+            actuator_physics,
+            target_states,
+            target_actuator_flows,
+        )
+    ]
     sample_count = tensors[0].shape[0]
     if any(x.shape[0] != sample_count for x in tensors):
         raise ValueError("Step2 sample dimensions do not align")
