@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Callable, Protocol
@@ -34,6 +35,7 @@ class ControllerConfig:
     max_setting_delta_per_update: float | None = None
     readback_target_tolerance: float = 1e-6
     readback_current_tolerance: float = 0.05
+    decision_runtime_budget_seconds: float | None = None
     fallback_policy_id: str = "CAUSAL_HOLD_CURRENT_V1"
 
     def validate(self) -> None:
@@ -45,6 +47,8 @@ class ControllerConfig:
             raise ValueError("optimizer settings must be positive")
         if self.max_setting_delta_per_update is not None and self.max_setting_delta_per_update < 0:
             raise ValueError("max_setting_delta_per_update must be non-negative")
+        if self.decision_runtime_budget_seconds is not None and self.decision_runtime_budget_seconds <= 0:
+            raise ValueError("decision_runtime_budget_seconds must be positive when supplied")
 
 
 def hold_current_fallback(observation: CausalObservation, horizon_steps: int) -> np.ndarray:
@@ -56,8 +60,10 @@ class TorchMPCController:
     """Step1 -> causal rainfall forecast -> Step2/MPC -> executable first move.
 
     Step1 receives node-local rainfall/actuator context rather than broadcasting the full
-    109-actuator vector to every node. Priority PFV remains a soft optimizer preference;
-    fallback here is reserved for invalid/runtime/readback conditions.
+    actuator vector to every node. Priority PFV remains a soft optimizer preference. Runtime
+    fallback is reserved for history/readback/numerical/deadline failures. The optional wall-
+    clock budget turns the simulation controller into a meaningful real-time implementation
+    contract: a stale optimization result is never executed after its frozen deadline.
     """
 
     def __init__(
@@ -190,8 +196,11 @@ class TorchMPCController:
                 },
             )
 
+        started = time.perf_counter()
         try:
-            static = torch.as_tensor(self.graph.static_node_features, dtype=torch.float32, device=self.device)
+            static = torch.as_tensor(
+                self.graph.static_node_features, dtype=torch.float32, device=self.device
+            )
             edges = torch.as_tensor(self.graph.edge_index, dtype=torch.long, device=self.device)
             with torch.no_grad():
                 initial_state = self.step1(
@@ -206,13 +215,23 @@ class TorchMPCController:
             )
             result = self.mpc.optimize(
                 initial_state=initial_state,
-                rainfall_scenarios=torch.as_tensor(rainfall_scenarios, dtype=torch.float32, device=self.device),
+                rainfall_scenarios=torch.as_tensor(
+                    rainfall_scenarios, dtype=torch.float32, device=self.device
+                ),
                 current_settings=torch.as_tensor(current, dtype=torch.float32, device=self.device),
                 fallback_settings=torch.as_tensor(fallback[None], dtype=torch.float32, device=self.device),
-                previous_actuator_flow=torch.as_tensor(obs.actuator_flow_m3s[None], dtype=torch.float32, device=self.device),
-                actuator_upstream=torch.as_tensor(self.graph.actuator_upstream, dtype=torch.long, device=self.device),
-                actuator_downstream=torch.as_tensor(self.graph.actuator_downstream, dtype=torch.long, device=self.device),
-                actuator_physics=torch.as_tensor(self.graph.actuator_physics[None], dtype=torch.float32, device=self.device),
+                previous_actuator_flow=torch.as_tensor(
+                    obs.actuator_flow_m3s[None], dtype=torch.float32, device=self.device
+                ),
+                actuator_upstream=torch.as_tensor(
+                    self.graph.actuator_upstream, dtype=torch.long, device=self.device
+                ),
+                actuator_downstream=torch.as_tensor(
+                    self.graph.actuator_downstream, dtype=torch.long, device=self.device
+                ),
+                actuator_physics=torch.as_tensor(
+                    self.graph.actuator_physics[None], dtype=torch.float32, device=self.device
+                ),
                 static_node_features=static,
                 edge_index=edges,
                 iterations=self.config.optimizer_iterations,
@@ -231,6 +250,19 @@ class TorchMPCController:
                 max_settings=1.0,
                 max_delta_per_update=self.config.max_setting_delta_per_update,
             )
+            runtime_seconds = float(time.perf_counter() - started)
+            budget = self.config.decision_runtime_budget_seconds
+            if budget is not None and runtime_seconds > budget:
+                self.last_requested = fallback[0].copy()
+                return ControllerAction(
+                    settings=dict(zip(self.graph.actuator_ids, fallback[0], strict=True)),
+                    source="FALLBACK_COMPUTE_DEADLINE",
+                    diagnostics={
+                        "fallback_policy": self.config.fallback_policy_id,
+                        "decision_runtime_seconds": runtime_seconds,
+                        "decision_runtime_budget_seconds": float(budget),
+                    },
+                )
             self.last_requested = decision.requested.copy()
             diagnostics: dict[str, float | int | bool | str] = {
                 "fallback_policy": self.config.fallback_policy_id,
@@ -238,6 +270,8 @@ class TorchMPCController:
                 "candidate_valid": candidate_valid,
                 "tfv_risk_m3": float(result.tfv_risk_m3),
                 "projected_first_move": decision.projected,
+                "decision_runtime_seconds": runtime_seconds,
+                "decision_runtime_budget_seconds": float(budget) if budget is not None else -1.0,
             }
             for name in (
                 "primary_tfv_reference_m3",
@@ -254,12 +288,14 @@ class TorchMPCController:
                 diagnostics=diagnostics,
             )
         except Exception as exc:
+            runtime_seconds = float(time.perf_counter() - started)
             self.last_requested = fallback[0].copy()
             return ControllerAction(
                 settings=dict(zip(self.graph.actuator_ids, fallback[0], strict=True)),
                 source="FALLBACK_RUNTIME_ERROR",
                 diagnostics={
                     "fallback_policy": self.config.fallback_policy_id,
+                    "decision_runtime_seconds": runtime_seconds,
                     "error_type": type(exc).__name__,
                     "error": str(exc)[:1000],
                 },
