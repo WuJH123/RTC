@@ -10,6 +10,7 @@ import pandas as pd
 import torch
 
 from .acceptance import apply_metric_thresholds, rank_correlation
+from .code_contract import rtc_source_tree_sha256
 from .contracts import load_priority_nodes
 from .d2_eval import exact_node_volumes, join_manifest_runs, model_metrics
 from .production_cli import _load_graph, _load_step2
@@ -248,6 +249,7 @@ def run_ranking_gate(
         "metrics": result.metrics,
         "thresholds": {"minimum": minimum, "maximum": maximum},
         "aggregation": "checkpoint_metrics_then_equal_weight_per_rainfall_group",
+        "rtc_source_tree_sha256": rtc_source_tree_sha256(),
         "split": split,
         "development_fold": development_fold if split == "development" else "",
         "step2_sha256": _sha(step2_path),
