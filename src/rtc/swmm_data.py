@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .data_design import canonical_action_sha
 from .inp import discover_actuators, discover_nodes
+from .swmm_stats import snapshot_node_statistics, write_node_statistics
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,7 @@ class BranchResult:
     node_path: str
     actuator_path: str
     subcatchment_path: str
+    node_statistics_path: str
     metadata_path: str
     flow_routing_error_pct: float
 
@@ -38,17 +40,11 @@ def run_independent_control_branch(
     branch_id: str,
     python_intervention_seconds: int = 300,
 ) -> BranchResult:
-    """Run one authoritative same-prefix SWMM counterfactual branch.
-
-    Each branch creates a fresh Simulation, replays the native prefix without Python
-    overrides, records the exact pre-action checkpoint, then commands the complete
-    continuous action and records target/current readback, node hydraulics, and realised
-    subcatchment rainfall/runoff. ``step_advance`` changes only the Python callback stride.
-    """
+    """Run one authoritative same-prefix single-action SWMM counterfactual branch."""
 
     try:
         from pyswmm import Links, Nodes, Simulation, Subcatchments
-    except ImportError as exc:  # pragma: no cover - optional dependency
+    except ImportError as exc:  # pragma: no cover
         raise RuntimeError("install the SWMM extra: pip install -e '.[swmm]'") from exc
 
     inp_path = Path(inp_path)
@@ -59,24 +55,25 @@ def run_independent_control_branch(
     expected = set(catalog.ids)
     supplied = set(candidate_settings)
     if supplied != expected:
-        missing, extra = sorted(expected - supplied), sorted(supplied - expected)
-        raise ValueError(f"candidate must specify every actuator; missing={missing}, extra={extra}")
+        raise ValueError(
+            f"candidate must specify every actuator; missing={sorted(expected-supplied)}, extra={sorted(supplied-expected)}"
+        )
     for aid, value in candidate_settings.items():
         if not 0.0 <= float(value) <= 1.0:
             raise ValueError(f"{aid} setting outside [0,1]: {value}")
     if checkpoint_minutes <= 0 or horizon_minutes <= 0:
         raise ValueError("checkpoint and horizon must be positive")
-    if python_intervention_seconds <= 0:
-        raise ValueError("python intervention stride must be positive")
-    if (checkpoint_minutes * 60) % python_intervention_seconds:
-        raise ValueError("checkpoint must align with the Python intervention stride")
+    if python_intervention_seconds <= 0 or (checkpoint_minutes * 60) % python_intervention_seconds:
+        raise ValueError("checkpoint must align with a positive Python intervention stride")
 
     node_path = out / f"{branch_id}.nodes.csv.gz"
     actuator_path = out / f"{branch_id}.actuators.csv.gz"
     subcatchment_path = out / f"{branch_id}.subcatchments.csv.gz"
+    statistics_path = out / f"{branch_id}.node_statistics.csv.gz"
     metadata_path = out / f"{branch_id}.json"
     checkpoint_seconds = checkpoint_minutes * 60
     stop_seconds = (checkpoint_minutes + horizon_minutes) * 60
+    start_statistics: dict[str, dict[str, float]] | None = None
 
     with Simulation(str(inp_path)) as sim, gzip.open(
         node_path, "wt", encoding="utf-8", newline=""
@@ -89,42 +86,20 @@ def run_independent_control_branch(
         flow_units = str(sim.flow_units)
         system_units = str(sim.system_units)
         engine_version = str(sim.engine_version)
-        links = Links(sim)
-        nodes = Nodes(sim)
-        subcatchments = Subcatchments(sim)
+        links, nodes, subcatchments = Links(sim), Nodes(sim), Subcatchments(sim)
         link_obj = {aid: links[aid] for aid in catalog.ids}
         node_obj = {nid: nodes[nid] for nid in node_ids}
         sub_obj = {obj.subcatchmentid: obj for obj in subcatchments}
         sub_connection = {sid: tuple(obj.connection) for sid, obj in sub_obj.items()}
-        node_writer = csv.writer(node_fh)
-        act_writer = csv.writer(act_fh)
-        sub_writer = csv.writer(sub_fh)
+        node_writer, act_writer, sub_writer = csv.writer(node_fh), csv.writer(act_fh), csv.writer(sub_fh)
         node_writer.writerow(
             ["elapsed_seconds", "datetime", "phase", "node_id", "depth", "head", "flooding", "volume"]
         )
         act_writer.writerow(
-            [
-                "elapsed_seconds",
-                "datetime",
-                "phase",
-                "actuator_id",
-                "requested_setting",
-                "target_setting",
-                "current_setting",
-                "flow",
-            ]
+            ["elapsed_seconds", "datetime", "phase", "actuator_id", "requested_setting", "target_setting", "current_setting", "flow"]
         )
         sub_writer.writerow(
-            [
-                "elapsed_seconds",
-                "datetime",
-                "phase",
-                "subcatchment_id",
-                "outlet_connection_type",
-                "outlet_id",
-                "rainfall",
-                "runoff",
-            ]
+            ["elapsed_seconds", "datetime", "phase", "subcatchment_id", "outlet_connection_type", "outlet_id", "rainfall", "runoff"]
         )
         checkpoint_recorded = False
         for _ in sim:
@@ -134,7 +109,6 @@ def run_independent_control_branch(
             if elapsed > stop_seconds:
                 sim.terminate_simulation()
                 break
-
             phase = "PRE_ACTION_CHECKPOINT" if elapsed == checkpoint_seconds else "POST_ACTION"
             for nid, obj in node_obj.items():
                 node_writer.writerow(
@@ -156,27 +130,26 @@ def run_independent_control_branch(
             for sid, obj in sub_obj.items():
                 connection_type, outlet_id = sub_connection[sid]
                 sub_writer.writerow(
-                    [
-                        elapsed,
-                        sim.current_time.isoformat(),
-                        phase,
-                        sid,
-                        connection_type,
-                        outlet_id,
-                        obj.rainfall,
-                        obj.runoff,
-                    ]
+                    [elapsed, sim.current_time.isoformat(), phase, sid, connection_type, outlet_id, obj.rainfall, obj.runoff]
                 )
-
             if elapsed == checkpoint_seconds and not checkpoint_recorded:
                 checkpoint_recorded = True
+                start_statistics = snapshot_node_statistics(node_obj)
             for aid, value in candidate_settings.items():
                 link_obj[aid].target_setting = float(value)
 
-        if not checkpoint_recorded:
+        if not checkpoint_recorded or start_statistics is None:
             raise RuntimeError("simulation did not reach the requested checkpoint")
+        end_statistics = snapshot_node_statistics(node_obj)
         flow_error = float(sim.flow_routing_error)
 
+    write_node_statistics(
+        statistics_path,
+        start_statistics=start_statistics,
+        end_statistics=end_statistics,
+        system_units=system_units,
+        flow_units=flow_units,
+    )
     metadata = {
         "branch_id": branch_id,
         "candidate_action_sha256": canonical_action_sha(candidate_settings),
@@ -197,6 +170,8 @@ def run_independent_control_branch(
         "node_file": node_path.name,
         "actuator_file": actuator_path.name,
         "subcatchment_file": subcatchment_path.name,
+        "node_statistics_file": statistics_path.name,
+        "post_action_flood_volume_truth": "SWMM_node_statistics_delta",
     }
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return BranchResult(
@@ -204,6 +179,7 @@ def run_independent_control_branch(
         node_path=str(node_path),
         actuator_path=str(actuator_path),
         subcatchment_path=str(subcatchment_path),
+        node_statistics_path=str(statistics_path),
         metadata_path=str(metadata_path),
         flow_routing_error_pct=flow_error,
     )
