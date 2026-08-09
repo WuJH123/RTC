@@ -53,7 +53,7 @@ rtc-run-policy = "rtc.production_guard:main"
 rtc-accept-runtime = "rtc.runtime_acceptance:main"
 rtc-record-pipeline-stage = "rtc.pipeline_ledger_cli:main"
 rtc-build-policy-artifacts = "rtc.policy_artifacts_cli:main"
-rtc-policy-lock-v5 = "rtc.policy_lock:main"
+rtc-policy-lock-v5 = "rtc.policy_lock_v6:main"
 rtc-formalize-run = "rtc.formalize_run_v2:main"
 rtc-compile-final-v4 = "rtc.formal_final_v5:main"
 
