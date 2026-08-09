@@ -34,6 +34,10 @@ rtc-train-step1 = "rtc.model_cli:train_step1_main"
 rtc-accept-step1 = "rtc.model_cli:accept_step1_main"
 rtc-train-step2 = "rtc.model_cli:train_step2_main"
 rtc-accept-step2 = "rtc.model_cli:accept_step2_main"
+rtc-calibrate-safety = "rtc.evidence_cli:calibrate_safety_main"
+rtc-audit-safety = "rtc.evidence_cli:audit_safety_main"
+rtc-record-stage = "rtc.evidence_cli:record_stage_main"
+rtc-policy-lock = "rtc.evidence_cli:policy_lock_main"
 rtc-compile-final = "rtc.pipeline_cli:compile_final_main"
 
 [tool.setuptools.packages.find]
