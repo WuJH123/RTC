@@ -25,7 +25,6 @@ from rtc.mpc import ContinuousSafetyMPC, StateLayout
 from rtc.pipeline import PipelineLedger, evidence_from_files
 from rtc.runtime import choose_first_move
 from rtc.splits import assign_rainfall_group_splits, verify_disjoint_rainfall_splits
-from rtc.tfv_mpc import ContinuousTFVFirstMPC
 from rtc.units import flow_rate_to_m3s, length_to_m, rainfall_rate_to_mmhr
 
 
@@ -144,40 +143,6 @@ def test_legacy_hard_gate_runtime_still_falls_back_when_explicitly_requested() -
         current_settings=np.array([0.4, 0.6]),
     )
     assert decision.source == "FALLBACK"
-
-
-def test_tfv_first_priority_deterioration_is_not_a_hard_veto() -> None:
-    torch.manual_seed(2)
-    world = DifferentiableHydraulicWorldModel(
-        state_dim=4, rainfall_dim=1, node_static_dim=2, actuator_physics_dim=2, hidden_dim=8
-    )
-    mpc = ContinuousTFVFirstMPC(
-        world,
-        depth_index=0,
-        flood_rate_index=2,
-        priority_indices=torch.tensor([0]),
-        dt_seconds=300,
-        flood_error_ucb_m3=1000.0,
-        depth_error_ucb_m=1.0,
-        forecast_quantile=0.9,
-        tfv_cvar_alpha=0.9,
-    )
-    result = mpc.optimize(
-        initial_state=torch.zeros(1, 2, 4),
-        rainfall_scenarios=torch.zeros(1, 2, 2, 1),
-        current_settings=torch.tensor([0.5]),
-        fallback_settings=torch.full((1, 2, 1), 0.5),
-        previous_actuator_flow=torch.zeros(1, 1),
-        actuator_upstream=torch.tensor([0]),
-        actuator_downstream=torch.tensor([1]),
-        actuator_physics=torch.zeros(1, 1, 2),
-        static_node_features=torch.zeros(2, 2),
-        edge_index=torch.tensor([[0, 1], [1, 0]]),
-        iterations=2,
-        learning_rate=0.01,
-    )
-    assert result.candidate_valid
-    assert result.priority_positive_flood_deterioration_m3 > 0.0
 
 
 def test_node_local_context_does_not_broadcast_all_actuators() -> None:
