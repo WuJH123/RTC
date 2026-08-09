@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wuhan-rtc"
-version = "0.6.2"
+version = "0.6.3"
 description = "Sparse-sensing, actuator-agnostic differentiable MPC for large urban drainage networks"
 requires-python = ">=3.10"
 dependencies = [
@@ -34,7 +34,9 @@ rtc-run-d1-exploration = "rtc.d1_exploration:main"
 rtc-build-step1-index = "rtc.step1_index:main"
 rtc-design-checkpoints = "rtc.checkpoint_design:main"
 rtc-design-probes = "rtc.cli:design_probes_main"
+rtc-design-probes-efficient = "rtc.efficient_probe_design:main"
 rtc-run-probes = "rtc.d2_runner:main"
+rtc-control-leverage-audit = "rtc.control_leverage:main"
 rtc-phase0-timescale = "rtc.phase0_timescale:main"
 rtc-design-d3 = "rtc.d3_design_cli:main"
 rtc-run-d3-batch = "rtc.d3_runner_guard:main"
