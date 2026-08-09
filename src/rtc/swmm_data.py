@@ -42,9 +42,8 @@ def run_independent_control_branch(
 
     Each branch creates a fresh Simulation, replays the native prefix without Python
     overrides, records the exact pre-action checkpoint, then commands the complete
-    continuous action and records target/current readback, node hydraulics, and the
-    realised rainfall/runoff available from SWMM at each sampled time. ``step_advance``
-    changes only the Python intervention/output stride, never SWMM's routing timestep.
+    continuous action and records target/current readback, node hydraulics, and realised
+    subcatchment rainfall/runoff. ``step_advance`` changes only the Python callback stride.
     """
 
     try:
@@ -96,6 +95,7 @@ def run_independent_control_branch(
         link_obj = {aid: links[aid] for aid in catalog.ids}
         node_obj = {nid: nodes[nid] for nid in node_ids}
         sub_obj = {obj.subcatchmentid: obj for obj in subcatchments}
+        sub_connection = {sid: tuple(obj.connection) for sid, obj in sub_obj.items()}
         node_writer = csv.writer(node_fh)
         act_writer = csv.writer(act_fh)
         sub_writer = csv.writer(sub_fh)
@@ -115,7 +115,16 @@ def run_independent_control_branch(
             ]
         )
         sub_writer.writerow(
-            ["elapsed_seconds", "datetime", "phase", "subcatchment_id", "rainfall", "runoff"]
+            [
+                "elapsed_seconds",
+                "datetime",
+                "phase",
+                "subcatchment_id",
+                "outlet_connection_type",
+                "outlet_id",
+                "rainfall",
+                "runoff",
+            ]
         )
         checkpoint_recorded = False
         for _ in sim:
@@ -145,8 +154,18 @@ def run_independent_control_branch(
                     ]
                 )
             for sid, obj in sub_obj.items():
+                connection_type, outlet_id = sub_connection[sid]
                 sub_writer.writerow(
-                    [elapsed, sim.current_time.isoformat(), phase, sid, obj.rainfall, obj.runoff]
+                    [
+                        elapsed,
+                        sim.current_time.isoformat(),
+                        phase,
+                        sid,
+                        connection_type,
+                        outlet_id,
+                        obj.rainfall,
+                        obj.runoff,
+                    ]
                 )
 
             if elapsed == checkpoint_seconds and not checkpoint_recorded:
