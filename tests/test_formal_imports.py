@@ -8,6 +8,7 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.context_features  # noqa: F401
     import rtc.d1_exploration  # noqa: F401
     import rtc.d2_eval  # noqa: F401
+    import rtc.d2_runner  # noqa: F401
     import rtc.data_index  # noqa: F401
     import rtc.formal_assets_v2  # noqa: F401
     import rtc.formal_final_v4  # noqa: F401
@@ -15,10 +16,13 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.formal_gradient_v2  # noqa: F401
     import rtc.formal_lock_v5  # noqa: F401
     import rtc.formal_ranking  # noqa: F401
+    import rtc.formal_run_verify  # noqa: F401
     import rtc.formalize_run  # noqa: F401
     import rtc.forcing  # noqa: F401
     import rtc.fresh_model_guard  # noqa: F401
     import rtc.fresh_workspace  # noqa: F401
+    import rtc.generation_contract  # noqa: F401
+    import rtc.gradient_guard  # noqa: F401
     import rtc.inp_audit_v2  # noqa: F401
     import rtc.inp_runtime  # noqa: F401
     import rtc.large_data_cli  # noqa: F401
@@ -28,9 +32,13 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.priority_resolver  # noqa: F401
     import rtc.production_guard  # noqa: F401
     import rtc.rainfall_design  # noqa: F401
+    import rtc.ranking_guard  # noqa: F401
     import rtc.replay_peak  # noqa: F401
     import rtc.runtime_acceptance  # noqa: F401
+    import rtc.step1_accept_v3  # noqa: F401
+    import rtc.step1_train_v2  # noqa: F401
     import rtc.step2_shards  # noqa: F401
     import rtc.step2_train_v2  # noqa: F401
     import rtc.tfv_mpc  # noqa: F401
     import rtc.tfv_pipeline  # noqa: F401
+    import rtc.train_state  # noqa: F401
