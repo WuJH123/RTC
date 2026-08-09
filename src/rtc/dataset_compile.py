@@ -13,7 +13,7 @@ from .units import flow_rate_to_m3s, length_to_m, rainfall_rate_to_mmhr, volume_
 @dataclass(frozen=True)
 class BranchTensors:
     initial_state: np.ndarray
-    rainfall_runoff: np.ndarray
+    rainfall: np.ndarray
     settings: np.ndarray
     previous_actuator_flow: np.ndarray
     target_states: np.ndarray
@@ -51,13 +51,47 @@ def _settings_for_intervals(meta: dict[str, object], times: np.ndarray, actuator
     raise ValueError("metadata has neither candidate_settings nor settings_sequence")
 
 
-def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
-    """Compile one authoritative D2/D3 branch to SI free-rollout training arrays.
+def _node_rainfall(
+    sub: pd.DataFrame,
+    *,
+    times: np.ndarray,
+    node_ids: tuple[str, ...],
+    system_units: str,
+) -> np.ndarray:
+    """Map realised rainfall at the interval start to receiving nodes.
 
-    State layout is ``[depth_m, head_m, flooding_m3s, volume_m3]``. Exogenous forcing is
-    node-local ``[rainfall_mmhr, runoff_m3s]``; subcatchment runoff is accumulated at its
-    SWMM outlet node. The pre-action checkpoint is the initial state and only later samples
-    are targets, preserving action causality.
+    SWMM runoff is deliberately not returned: it remains useful diagnostic truth but is
+    not an online feature because future runoff would not be available causally.
+    """
+
+    node_index = {nid: i for i, nid in enumerate(node_ids)}
+    forcing = np.zeros((times.size, len(node_ids), 1), dtype=float)
+    for ti, elapsed in enumerate(times):
+        rows = sub[sub["elapsed_seconds"] == elapsed]
+        if rows.empty:
+            raise ValueError(f"missing subcatchment rainfall at elapsed={elapsed}")
+        rainfall_by_node: dict[str, list[float]] = {}
+        for _, row in rows.iterrows():
+            # PySWMM Subcatchment.connection: type 2 is a node, type 1 another subcatchment.
+            if int(row["outlet_connection_type"]) != 2:
+                continue
+            outlet = str(row["outlet_id"])
+            if outlet in node_index:
+                rainfall_by_node.setdefault(outlet, []).append(float(row["rainfall"]))
+        for outlet, values in rainfall_by_node.items():
+            forcing[ti, node_index[outlet], 0] = float(
+                rainfall_rate_to_mmhr(np.mean(values), system_units)
+            )
+    return forcing
+
+
+def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
+    """Compile one authoritative D2/D3 branch to causal SI Step2 arrays.
+
+    State layout is ``[depth_m, head_m, flooding_m3s, volume_m3]``. The only exogenous
+    formal forcing is rainfall observed/forecast causally; authoritative SWMM runoff is
+    retained in the raw branch evidence for diagnostics but excluded from model inputs.
+    The pre-action checkpoint is the initial state and only later samples are targets.
     """
 
     meta_path = Path(metadata_path)
@@ -85,32 +119,12 @@ def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
 
     flow = flow_rate_to_m3s(_pivot(act, times=times, ids=actuator_ids, id_col="actuator_id", value_col="flow"), flow_units)
     settings, action_sha = _settings_for_intervals(meta, times, actuator_ids)
-
-    node_index = {nid: i for i, nid in enumerate(node_ids)}
-    forcing = np.zeros((times.size - 1, len(node_ids), 2), dtype=float)
-    post_times = times[1:]
-    for ti, elapsed in enumerate(post_times):
-        rows = sub[sub["elapsed_seconds"] == elapsed]
-        if rows.empty:
-            raise ValueError(f"missing subcatchment forcing at elapsed={elapsed}")
-        rainfall_by_node: dict[str, list[float]] = {}
-        runoff_by_node: dict[str, float] = {}
-        for _, row in rows.iterrows():
-            if int(row["outlet_connection_type"]) != 2:
-                continue
-            outlet = str(row["outlet_id"])
-            if outlet not in node_index:
-                continue
-            rainfall_by_node.setdefault(outlet, []).append(float(row["rainfall"]))
-            runoff_by_node[outlet] = runoff_by_node.get(outlet, 0.0) + float(row["runoff"])
-        for outlet, values in rainfall_by_node.items():
-            forcing[ti, node_index[outlet], 0] = float(rainfall_rate_to_mmhr(np.mean(values), system_units))
-        for outlet, value in runoff_by_node.items():
-            forcing[ti, node_index[outlet], 1] = float(flow_rate_to_m3s(value, flow_units))
+    # Transition k uses rainfall available at state time k, never the realised sample at k+1.
+    rainfall = _node_rainfall(sub, times=times[:-1], node_ids=node_ids, system_units=system_units)
 
     return BranchTensors(
         initial_state=state[0],
-        rainfall_runoff=forcing,
+        rainfall=rainfall,
         settings=settings,
         previous_actuator_flow=flow[0],
         target_states=state[1:],
@@ -141,7 +155,7 @@ def compile_branches_to_npz(metadata_paths: list[str | Path], output_path: str |
     np.savez_compressed(
         out,
         initial_state=np.stack([b.initial_state for b in branches]),
-        rainfall=np.stack([b.rainfall_runoff for b in branches]),
+        rainfall=np.stack([b.rainfall for b in branches]),
         settings=np.stack([b.settings for b in branches]),
         previous_actuator_flow=np.stack([b.previous_actuator_flow for b in branches]),
         target_states=np.stack([b.target_states for b in branches]),
