@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from rtc.baseline_cache_cli import locked_final_contract, validate_final_event_registry
+from rtc.code_contract import rtc_source_tree_sha256
 from rtc.inp_lineage import physical_contract_sha256
 from rtc.inp_runtime import sha256_file
 
@@ -77,7 +78,8 @@ def _lock(tmp_path: Path, source: Path) -> Path:
     lock.write_text(
         json.dumps(
             {
-                "contract": "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V3_CAUSAL_FRESH_DATA",
+                "contract": "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V4_CODE_TIME_DATA_BOUND",
+                "rtc_source_tree_sha256": rtc_source_tree_sha256(),
                 "physical_network_sha256": physical_contract_sha256(source),
                 "artefacts": artefacts,
                 "sha256": {name: sha256_file(path) for name, path in artefacts.items()},
@@ -151,6 +153,8 @@ def test_locked_baseline_plan_hash_is_enforced(tmp_path: Path) -> None:
     lock = _lock(tmp_path, source)
     payload = json.loads(lock.read_text(encoding="utf-8"))
     plan = Path(payload["artefacts"]["baseline_plan"])
-    plan.write_text(json.dumps({"strategies": ["proposed", "no_control"]}), encoding="utf-8")
+    plan.write_text(
+        json.dumps({"strategies": ["proposed", "no_control"]}), encoding="utf-8"
+    )
     with pytest.raises(ValueError, match="artifact changed: baseline_plan"):
         locked_final_contract(lock)
