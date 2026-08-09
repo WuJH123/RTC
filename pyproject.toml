@@ -38,7 +38,7 @@ rtc-calibrate-safety = "rtc.evidence_cli:calibrate_safety_main"
 rtc-audit-safety = "rtc.evidence_cli:audit_safety_main"
 rtc-record-stage = "rtc.evidence_cli:record_stage_main"
 rtc-policy-lock = "rtc.evidence_cli:policy_lock_main"
-rtc-compile-final = "rtc.pipeline_cli:compile_final_main"
+rtc-compile-final = "rtc.final_cli:compile_final_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
