@@ -12,6 +12,7 @@ import numpy as np
 
 from .inp import discover_actuators, discover_nodes
 from .swmm_data import sha256_file
+from .units import flow_rate_to_m3s, length_to_m, rainfall_rate_to_mmhr
 
 
 @dataclass(frozen=True)
@@ -19,13 +20,14 @@ class CausalObservation:
     elapsed_seconds: int
     current_time: datetime
     sensor_ids: tuple[str, ...]
-    sensor_depth: np.ndarray
-    sensor_head: np.ndarray
+    sensor_depth_m: np.ndarray
+    sensor_head_m: np.ndarray
     actuator_ids: tuple[str, ...]
     actuator_target_setting: np.ndarray
     actuator_current_setting: np.ndarray
-    actuator_flow: np.ndarray
-    observed_rainfall: np.ndarray
+    actuator_flow_m3s: np.ndarray
+    rainfall_node_ids: tuple[str, ...]
+    observed_rainfall_mmhr: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -46,13 +48,50 @@ class ClosedLoopResult:
 
 
 Controller = Callable[[CausalObservation], ControllerAction | Mapping[str, float]]
-RainfallObserver = Callable[[datetime], np.ndarray]
+RainfallObserver = Callable[[datetime, tuple[str, ...]], np.ndarray]
 
 
 def _normalize_action(action: ControllerAction | Mapping[str, float]) -> ControllerAction:
     if isinstance(action, ControllerAction):
         return action
     return ControllerAction(settings=action)
+
+
+def _resolve_subcatchment_outlet(
+    sid: str,
+    connection: dict[str, tuple[int, str]],
+    node_ids: set[str],
+) -> str | None:
+    seen: set[str] = set()
+    current = sid
+    while current not in seen:
+        seen.add(current)
+        kind, target = connection[current]
+        if int(kind) == 2:
+            return target if target in node_ids else None
+        if int(kind) != 1 or target not in connection:
+            return None
+        current = target
+    raise ValueError(f"subcatchment outlet cycle detected at {sid}")
+
+
+def _current_node_rainfall_mmhr(
+    sub_obj: dict[str, object],
+    connection: dict[str, tuple[int, str]],
+    node_ids: tuple[str, ...],
+    system_units: str,
+) -> np.ndarray:
+    node_index = {nid: i for i, nid in enumerate(node_ids)}
+    groups: dict[str, list[float]] = {}
+    valid_nodes = set(node_ids)
+    for sid, obj in sub_obj.items():
+        outlet = _resolve_subcatchment_outlet(sid, connection, valid_nodes)
+        if outlet is not None:
+            groups.setdefault(outlet, []).append(float(obj.rainfall))
+    result = np.zeros(len(node_ids), dtype=float)
+    for node, values in groups.items():
+        result[node_index[node]] = float(rainfall_rate_to_mmhr(np.mean(values), system_units))
+    return result
 
 
 def run_authoritative_closed_loop(
@@ -69,14 +108,14 @@ def run_authoritative_closed_loop(
 ) -> ClosedLoopResult:
     """Run one causally isolated closed-loop policy inside authoritative PySWMM.
 
-    The controller receives *only* sparse sensor hydraulics, actuator readback and rainfall
-    observed up to the current callback time. Full-network SWMM truth is written only to
-    evaluation files and is never included in ``CausalObservation``. If ``controller`` is
-    ``None``, native SWMM rules run untouched with no Python setting writes.
+    The controller receives only sparse hydraulic sensors, actuator readback and realised
+    rainfall at the current time. These controller-facing quantities are converted to SI
+    (m, m3/s, mm/h) before use. Full-network SWMM hydraulics remain evaluation-only files.
+    ``controller=None`` leaves native SWMM rules untouched with no Python setting writes.
     """
 
     try:
-        from pyswmm import Links, Nodes, Simulation
+        from pyswmm import Links, Nodes, Simulation, Subcatchments
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("install the SWMM extra: pip install -e '.[swmm]'") from exc
 
@@ -112,9 +151,12 @@ def run_authoritative_closed_loop(
         engine_version = str(sim.engine_version)
         links = Links(sim)
         nodes = Nodes(sim)
+        subcatchments = Subcatchments(sim)
         link_obj = {aid: links[aid] for aid in catalog.ids}
         node_obj = {nid: nodes[nid] for nid in all_nodes}
         sensor_obj = {nid: node_obj[nid] for nid in sensor_nodes}
+        sub_obj = {obj.subcatchmentid: obj for obj in subcatchments}
+        sub_connection = {sid: tuple(obj.connection) for sid, obj in sub_obj.items()}
         node_writer = csv.writer(node_fh)
         act_writer = csv.writer(act_fh)
         node_writer.writerow(
@@ -139,7 +181,6 @@ def run_authoritative_closed_loop(
             is_decision = controller is not None and elapsed >= next_decision
             phase = "DECISION" if is_decision else "OBSERVATION"
 
-            # Record authoritative truth first. This file is evaluation evidence only.
             for nid, obj in node_obj.items():
                 node_writer.writerow(
                     [elapsed, sim.current_time.isoformat(), phase, nid, obj.depth, obj.head, obj.flooding, obj.volume]
@@ -147,22 +188,46 @@ def run_authoritative_closed_loop(
 
             action: ControllerAction | None = None
             if is_decision:
-                rainfall = (
-                    np.asarray(rainfall_observer(sim.current_time), dtype=float)
-                    if rainfall_observer is not None
-                    else np.zeros(1, dtype=float)
-                )
+                if rainfall_observer is None:
+                    rainfall_mmhr = _current_node_rainfall_mmhr(
+                        sub_obj, sub_connection, all_nodes, system_units
+                    )
+                else:
+                    rainfall_mmhr = np.asarray(
+                        rainfall_observer(sim.current_time, tuple(all_nodes)), dtype=float
+                    ).reshape(-1)
+                    if rainfall_mmhr.size == 1:
+                        rainfall_mmhr = np.repeat(rainfall_mmhr, len(all_nodes))
+                    if rainfall_mmhr.size != len(all_nodes):
+                        raise ValueError("rainfall_observer must return scalar or one value per node")
+                    if np.any(rainfall_mmhr < 0) or not np.isfinite(rainfall_mmhr).all():
+                        raise ValueError("observed rainfall must be finite and non-negative")
+
                 observation = CausalObservation(
                     elapsed_seconds=elapsed,
                     current_time=sim.current_time,
                     sensor_ids=tuple(sensor_nodes),
-                    sensor_depth=np.array([sensor_obj[n].depth for n in sensor_nodes], dtype=float),
-                    sensor_head=np.array([sensor_obj[n].head for n in sensor_nodes], dtype=float),
+                    sensor_depth_m=length_to_m(
+                        np.array([sensor_obj[n].depth for n in sensor_nodes], dtype=float),
+                        system_units,
+                    ),
+                    sensor_head_m=length_to_m(
+                        np.array([sensor_obj[n].head for n in sensor_nodes], dtype=float),
+                        system_units,
+                    ),
                     actuator_ids=tuple(catalog.ids),
-                    actuator_target_setting=np.array([link_obj[a].target_setting for a in catalog.ids], dtype=float),
-                    actuator_current_setting=np.array([link_obj[a].current_setting for a in catalog.ids], dtype=float),
-                    actuator_flow=np.array([link_obj[a].flow for a in catalog.ids], dtype=float),
-                    observed_rainfall=rainfall,
+                    actuator_target_setting=np.array(
+                        [link_obj[a].target_setting for a in catalog.ids], dtype=float
+                    ),
+                    actuator_current_setting=np.array(
+                        [link_obj[a].current_setting for a in catalog.ids], dtype=float
+                    ),
+                    actuator_flow_m3s=flow_rate_to_m3s(
+                        np.array([link_obj[a].flow for a in catalog.ids], dtype=float),
+                        flow_units,
+                    ),
+                    rainfall_node_ids=tuple(all_nodes),
+                    observed_rainfall_mmhr=rainfall_mmhr,
                 )
                 action = _normalize_action(controller(observation))
                 supplied = set(action.settings)
@@ -193,8 +258,6 @@ def run_authoritative_closed_loop(
                     + "\n"
                 )
             elif held_settings is not None:
-                # Reapply the held first move at every Python callback so native rules do
-                # not silently replace the selected action between control updates.
                 for aid, value in held_settings.items():
                     link_obj[aid].target_setting = value
 
@@ -222,7 +285,7 @@ def run_authoritative_closed_loop(
         "inp_path": str(inp.resolve()),
         "inp_sha256": sha256_file(inp),
         "controller_present": controller is not None,
-        "causal_controller_observation": "sparse_sensors+actuator_readback+observed_rainfall_only",
+        "causal_controller_observation": "sparse_SI_hydraulics+SI_actuator_readback+realised_rainfall_only",
         "sensor_nodes": list(sensor_nodes),
         "actuator_ids": list(catalog.ids),
         "control_start_minutes": int(control_start_minutes),
@@ -230,6 +293,7 @@ def run_authoritative_closed_loop(
         "record_stride_seconds": int(record_stride_seconds),
         "flow_units": flow_units,
         "system_units": system_units,
+        "controller_units": {"depth": "m", "head": "m", "flow": "m3/s", "rainfall": "mm/h"},
         "swmm_engine_version": engine_version,
         "flow_routing_error_pct": flow_error,
         "decisions": decision_count,
