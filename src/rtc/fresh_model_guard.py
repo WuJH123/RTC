@@ -15,8 +15,6 @@ from .step2_shards import load_shard_manifest
 
 
 def _strip_option(name: str) -> None:
-    """Remove one `--name value` pair before delegating to the established CLI parser."""
-
     while name in sys.argv:
         idx = sys.argv.index(name)
         if idx + 1 >= len(sys.argv):
@@ -35,10 +33,17 @@ def _require_output_inside(path: str, root: Path) -> None:
 
 def _validate_shard_manifest(manifest_path: str, workspace_manifest: str) -> None:
     root = _workspace_root(workspace_manifest)
-    require_path_inside_workspace(manifest_path, root)
-    manifest = load_shard_manifest(manifest_path)
+    manifest_file = Path(manifest_path).expanduser().resolve()
+    require_path_inside_workspace(manifest_file, root)
+    manifest = load_shard_manifest(manifest_file)
     for item in manifest["shards"]:
-        require_path_inside_workspace(str(item["path"]), root)
+        shard = Path(str(item["path"])).expanduser()
+        if not shard.is_absolute():
+            shard = manifest_file.parent / shard
+        shard = shard.resolve()
+        require_path_inside_workspace(shard, root)
+        if not shard.is_file():
+            raise ValueError(f"fresh Step2 shard is missing: {shard}")
 
 
 def _guard_step1(delegate: Callable[[], None], *, acceptance: bool) -> None:
