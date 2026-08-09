@@ -47,13 +47,11 @@ def hold_current_fallback(observation: CausalObservation, horizon_steps: int) ->
 
 
 class TorchMPCController:
-    """Production adapter for Step1 -> causal forecast -> Step2/MPC -> first move.
+    """Step1 -> causal rainfall forecast -> Step2/MPC -> executable first move.
 
-    No full-network SWMM state or future realised forcing enters this class. The only
-    runtime object accepted is ``CausalObservation`` from ``run_authoritative_closed_loop``.
-    Model failures, history warm-up, safety rejection and readback failures all fail closed
-    to the configured causal fallback sequence. ``control_block_steps`` is frozen so the
-    surrogate assumes the same action-hold duration that the runtime actually executes.
+    ``observe`` is called every frozen model step so the Step1 history cadence matches
+    training. ``decide`` is called only every control update; an action block therefore
+    may span several model steps without reducing sensing frequency.
     """
 
     def __init__(
@@ -88,6 +86,7 @@ class TorchMPCController:
         self.mask_history: deque[np.ndarray] = deque(maxlen=config.history_steps)
         self.context_history: deque[np.ndarray] = deque(maxlen=config.history_steps)
         self.rainfall_history: deque[np.ndarray] = deque(maxlen=config.history_steps)
+        self.last_observed_elapsed_seconds: int | None = None
         self.last_requested: np.ndarray | None = None
         self.step1.to(self.device).eval()
         self.mpc.model.to(self.device).eval()
@@ -104,7 +103,14 @@ class TorchMPCController:
         if len(obs.observed_rainfall_mmhr) != len(self.graph.node_ids):
             raise ValueError("rainfall observation length mismatch")
 
-    def _append_history(self, obs: CausalObservation) -> None:
+    def observe(self, obs: CausalObservation) -> None:
+        """Append one causal model-step observation exactly once."""
+
+        self._validate_observation(obs)
+        if self.last_observed_elapsed_seconds == obs.elapsed_seconds:
+            return
+        if self.last_observed_elapsed_seconds is not None and obs.elapsed_seconds <= self.last_observed_elapsed_seconds:
+            raise ValueError("controller observations must be strictly increasing in time")
         n = len(self.graph.node_ids)
         observed = np.zeros((n, 2), dtype=np.float32)
         mask = np.zeros((n, 2), dtype=np.float32)
@@ -124,6 +130,7 @@ class TorchMPCController:
         self.mask_history.append(mask)
         self.context_history.append(context)
         self.rainfall_history.append(rain)
+        self.last_observed_elapsed_seconds = obs.elapsed_seconds
 
     def _fallback(self, obs: CausalObservation) -> np.ndarray:
         sequence = np.asarray(
@@ -136,9 +143,13 @@ class TorchMPCController:
             raise ValueError("fallback sequence contains invalid settings")
         return sequence
 
-    def __call__(self, obs: CausalObservation) -> ControllerAction:
-        self._validate_observation(obs)
-        self._append_history(obs)
+    def decide(self, obs: CausalObservation, *, observation_already_recorded: bool = False) -> ControllerAction:
+        if not observation_already_recorded:
+            self.observe(obs)
+        else:
+            self._validate_observation(obs)
+            if self.last_observed_elapsed_seconds != obs.elapsed_seconds:
+                raise ValueError("decision observation was not recorded at this model step")
         fallback = self._fallback(obs)
         current = np.asarray(obs.actuator_current_setting, dtype=float).reshape(-1)
 
@@ -176,56 +187,28 @@ class TorchMPCController:
             )
 
         try:
-            observed = torch.as_tensor(
-                np.stack(self.observed_history)[None], dtype=torch.float32, device=self.device
-            )
-            mask = torch.as_tensor(
-                np.stack(self.mask_history)[None], dtype=torch.float32, device=self.device
-            )
-            context = torch.as_tensor(
-                np.stack(self.context_history)[None], dtype=torch.float32, device=self.device
-            )
-            static = torch.as_tensor(
-                self.graph.static_node_features, dtype=torch.float32, device=self.device
-            )
+            static = torch.as_tensor(self.graph.static_node_features, dtype=torch.float32, device=self.device)
             edges = torch.as_tensor(self.graph.edge_index, dtype=torch.long, device=self.device)
             with torch.no_grad():
-                initial_state = self.step1(observed, mask, static, edges, context)
-
-            rain_history = np.stack(self.rainfall_history)
+                initial_state = self.step1(
+                    torch.as_tensor(np.stack(self.observed_history)[None], dtype=torch.float32, device=self.device),
+                    torch.as_tensor(np.stack(self.mask_history)[None], dtype=torch.float32, device=self.device),
+                    static,
+                    edges,
+                    torch.as_tensor(np.stack(self.context_history)[None], dtype=torch.float32, device=self.device),
+                )
             rainfall_scenarios = self.forecast.forecast(
-                rain_history, horizon_steps=self.config.horizon_steps
-            )
-            rainfall_tensor = torch.as_tensor(
-                rainfall_scenarios, dtype=torch.float32, device=self.device
-            )
-            current_tensor = torch.as_tensor(current, dtype=torch.float32, device=self.device)
-            fallback_tensor = torch.as_tensor(
-                fallback[None], dtype=torch.float32, device=self.device
-            )
-            previous_flow = torch.as_tensor(
-                np.asarray(obs.actuator_flow_m3s, dtype=float)[None],
-                dtype=torch.float32,
-                device=self.device,
-            )
-            up = torch.as_tensor(
-                self.graph.actuator_upstream, dtype=torch.long, device=self.device
-            )
-            down = torch.as_tensor(
-                self.graph.actuator_downstream, dtype=torch.long, device=self.device
-            )
-            physics = torch.as_tensor(
-                self.graph.actuator_physics[None], dtype=torch.float32, device=self.device
+                np.stack(self.rainfall_history), horizon_steps=self.config.horizon_steps
             )
             result = self.mpc.optimize(
                 initial_state=initial_state,
-                rainfall_scenarios=rainfall_tensor,
-                current_settings=current_tensor,
-                fallback_settings=fallback_tensor,
-                previous_actuator_flow=previous_flow,
-                actuator_upstream=up,
-                actuator_downstream=down,
-                actuator_physics=physics,
+                rainfall_scenarios=torch.as_tensor(rainfall_scenarios, dtype=torch.float32, device=self.device),
+                current_settings=torch.as_tensor(current, dtype=torch.float32, device=self.device),
+                fallback_settings=torch.as_tensor(fallback[None], dtype=torch.float32, device=self.device),
+                previous_actuator_flow=torch.as_tensor(obs.actuator_flow_m3s[None], dtype=torch.float32, device=self.device),
+                actuator_upstream=torch.as_tensor(self.graph.actuator_upstream, dtype=torch.long, device=self.device),
+                actuator_downstream=torch.as_tensor(self.graph.actuator_downstream, dtype=torch.long, device=self.device),
+                actuator_physics=torch.as_tensor(self.graph.actuator_physics[None], dtype=torch.float32, device=self.device),
                 static_node_features=static,
                 edge_index=edges,
                 iterations=self.config.optimizer_iterations,
@@ -268,3 +251,6 @@ class TorchMPCController:
                     "error": str(exc)[:1000],
                 },
             )
+
+    def __call__(self, obs: CausalObservation) -> ControllerAction:
+        return self.decide(obs)
