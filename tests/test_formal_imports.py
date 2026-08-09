@@ -9,8 +9,11 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.d1_exploration  # noqa: F401
     import rtc.d2_eval  # noqa: F401
     import rtc.d2_runner  # noqa: F401
+    import rtc.d3_design_cli  # noqa: F401
+    import rtc.d3_runner_guard  # noqa: F401
     import rtc.data_index  # noqa: F401
     import rtc.formal_assets_v2  # noqa: F401
+    import rtc.formal_assets_v3  # noqa: F401
     import rtc.formal_final_v4  # noqa: F401
     import rtc.formal_gradient  # noqa: F401
     import rtc.formal_gradient_v2  # noqa: F401
@@ -29,6 +32,8 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.large_model_cli  # noqa: F401
     import rtc.lazy_step1  # noqa: F401
     import rtc.phase0_timescale  # noqa: F401
+    import rtc.pipeline_ledger_cli  # noqa: F401
+    import rtc.policy_artifacts_cli  # noqa: F401
     import rtc.priority_resolver  # noqa: F401
     import rtc.production_guard  # noqa: F401
     import rtc.rainfall_design  # noqa: F401

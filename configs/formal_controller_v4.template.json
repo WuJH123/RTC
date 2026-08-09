@@ -1,6 +1,6 @@
 {
   "contract": "PRODUCTION_CONTROLLER_CONFIG_V4_TFV_FIRST",
-  "instruction": "PFV/priority depth are soft diagnostics/secondary preferences, never hard MPC admission constraints. Formal main runs keep exact_global_peak=false; exact peak is replayed afterward. The candidate production cadence is 300 s observation/model + 600 s control, but it must be frozen only after <=60 s Phase0 D2 response/readback audit and runtime benchmarking.",
+  "instruction": "PFV means Priority Flood Volume and priority depth/PFV are soft diagnostics/secondary preferences, never hard MPC admission constraints. Formal main runs keep exact_global_peak=false; exact peak is replayed afterward. The candidate production cadence is 300 s observation/model + 600 s control, but it must be frozen only after <=60 s Phase0 D2 response/readback audit and runtime benchmarking. For Formal D3 joint-sequence evidence, horizon_steps * model_step_seconds must contain an integer number of control_update_seconds blocks; rtc-design-d3 derives that control-block count from this resolved config.",
   "model_step_seconds": "REPLACE_AFTER_HIGH_FREQUENCY_PHASE0_D2_PILOT",
   "control_update_seconds": "REPLACE_AFTER_HIGH_FREQUENCY_PHASE0_D2_PILOT",
   "record_stride_seconds": "REPLACE_AFTER_HIGH_FREQUENCY_PHASE0_D2_PILOT",

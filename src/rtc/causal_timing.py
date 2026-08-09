@@ -29,6 +29,25 @@ class CausalTimingContract:
     def control_block_steps(self) -> int:
         return self.control_update_seconds // self.model_step_seconds
 
+    @property
+    def d3_control_blocks(self) -> int:
+        """Return the exact number of full control blocks spanning the model horizon.
+
+        D3 stores one setting vector per supervisory control block but Step2 stores one state
+        transition per model step.  Mixing those two notions of ``horizon_steps`` previously
+        allowed a 24-step, 5-min model horizon to be misread as 24 ten-minute control blocks.
+        Formal D3 therefore requires the frozen model horizon to contain an integer number of
+        complete control blocks.
+        """
+
+        block_steps = self.control_block_steps
+        if self.horizon_steps % block_steps:
+            raise ValueError(
+                "D3 requires the model horizon to be an integer number of control blocks: "
+                f"horizon_steps={self.horizon_steps}, control_block_steps={block_steps}"
+            )
+        return self.horizon_steps // block_steps
+
     def validate(self, *, require_full_history_before_first_control: bool = True) -> None:
         if min(
             self.model_step_seconds,
@@ -58,7 +77,7 @@ class CausalTimingContract:
 
     def as_dict(self) -> dict[str, int | str]:
         self.validate()
-        return {
+        payload: dict[str, int | str] = {
             "contract": "CAUSAL_RTC_TIMING_V1_T0_INCLUDED",
             "model_step_seconds": self.model_step_seconds,
             "control_update_seconds": self.control_update_seconds,
@@ -73,6 +92,9 @@ class CausalTimingContract:
             "initial_observation_elapsed_seconds": 0,
             "timeline": "observe current state -> reconstruct -> forecast causally -> optimize -> write target -> hold until next control epoch -> verify readback at next decision",
         }
+        if self.horizon_steps % self.control_block_steps == 0:
+            payload["d3_control_blocks"] = self.d3_control_blocks
+        return payload
 
 
 def timing_from_controller_config(config: dict[str, object]) -> CausalTimingContract:
