@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from .closed_loop import CausalObservation, ControllerAction
+from .context_features import build_node_context
 from .forecast import PersistenceDecayForecast
 from .graph import GraphSchema
 from .models import SparseStateEstimator
@@ -54,11 +55,9 @@ def hold_current_fallback(observation: CausalObservation, horizon_steps: int) ->
 class TorchMPCController:
     """Step1 -> causal rainfall forecast -> Step2/MPC -> executable first move.
 
-    ``observe`` is called every frozen model step so history cadence matches training.
-    ``decide`` is called only on control updates. Priority PFV is not a hard runtime gate:
-    the TFV-first optimizer may use it as a soft secondary preference, while fallback here
-    is reserved for invalid numerics, insufficient history, write/readback or runtime
-    failures.
+    Step1 receives node-local rainfall/actuator context rather than broadcasting the full
+    109-actuator vector to every node. Priority PFV remains a soft optimizer preference;
+    fallback here is reserved for invalid/runtime/readback conditions.
     """
 
     def __init__(
@@ -123,13 +122,13 @@ class TorchMPCController:
         observed[self.sensor_index, 1] = np.asarray(obs.sensor_head_m, dtype=np.float32)
         mask[self.sensor_index, :] = 1.0
         rain = np.asarray(obs.observed_rainfall_mmhr, dtype=np.float32).reshape(n, 1)
-        context = np.concatenate(
-            [
-                np.array([float(rain.mean()), float(rain.max())], dtype=np.float32),
-                np.asarray(obs.actuator_target_setting, dtype=np.float32),
-                np.asarray(obs.actuator_current_setting, dtype=np.float32),
-                np.asarray(obs.actuator_flow_m3s, dtype=np.float32),
-            ]
+        context = build_node_context(
+            rainfall_mmhr=rain,
+            actuator_setting=np.asarray(obs.actuator_current_setting, dtype=np.float32),
+            actuator_flow_m3s=np.asarray(obs.actuator_flow_m3s, dtype=np.float32),
+            actuator_upstream=self.graph.actuator_upstream,
+            actuator_downstream=self.graph.actuator_downstream,
+            node_count=n,
         )
         self.observed_history.append(observed)
         self.mask_history.append(mask)
