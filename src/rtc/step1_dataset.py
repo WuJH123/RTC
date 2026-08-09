@@ -61,26 +61,21 @@ def _load_trajectory(metadata_path: str | Path) -> tuple[np.ndarray, np.ndarray,
     )
 
     rainfall_mean = np.zeros(times.size, dtype=float)
-    runoff_total = np.zeros(times.size, dtype=float)
-    for i, elapsed in enumerate(times):
-        rows = sub[sub["elapsed_seconds"] == elapsed]
-        if rows.empty:
-            raise ValueError(f"missing subcatchment forcing at elapsed={elapsed}")
-        rainfall_mean[i] = float(rainfall_rate_to_mmhr(rows["rainfall"].astype(float).mean(), system_units))
-        runoff_total[i] = float(flow_rate_to_m3s(rows["runoff"].astype(float).sum(), flow_units))
-
-    # A second rainfall statistic helps distinguish spatially concentrated forcing without
-    # leaking event identity. It is still fully causal at the sampled time.
     rainfall_max = np.zeros(times.size, dtype=float)
     for i, elapsed in enumerate(times):
         rows = sub[sub["elapsed_seconds"] == elapsed]
+        if rows.empty:
+            raise ValueError(f"missing subcatchment rainfall at elapsed={elapsed}")
+        rainfall_mean[i] = float(rainfall_rate_to_mmhr(rows["rainfall"].astype(float).mean(), system_units))
         rainfall_max[i] = float(rainfall_rate_to_mmhr(rows["rainfall"].astype(float).max(), system_units))
 
+    # Formal Step1 context contains only information available at decision time:
+    # observed rainfall and actuator target/current/flow readback. SWMM runoff is retained
+    # in authoritative files for diagnostics but is deliberately excluded from model input.
     context = np.concatenate(
         [
             rainfall_mean[:, None],
             rainfall_max[:, None],
-            runoff_total[:, None],
             target_setting,
             current_setting,
             actuator_flow,
@@ -90,7 +85,6 @@ def _load_trajectory(metadata_path: str | Path) -> tuple[np.ndarray, np.ndarray,
     feature_names = (
         "rainfall_mean_mmhr",
         "rainfall_max_mmhr",
-        "runoff_total_m3s",
         *(f"target_setting:{aid}" for aid in actuator_ids),
         *(f"current_setting:{aid}" for aid in actuator_ids),
         *(f"actuator_flow_m3s:{aid}" for aid in actuator_ids),
@@ -108,9 +102,9 @@ def compile_step1_windows(
     """Build causal Step1 examples from D0/D1 full-event authoritative trajectories.
 
     ``run_index`` must provide ``metadata_path``, ``event_id``, ``rainfall_group`` and
-    ``scientific_split``. The target is the *same current time* as the final history frame,
-    not a future state. Only listed sensors are visible in ``observed_history``; all other
-    node observations are zero-masked. Full-network truth exists only in ``target_state``.
+    ``scientific_split``. The target is the same current time as the final history frame,
+    not a future state. Only listed sensors are visible in ``observed_history``; full
+    network SWMM truth appears only in the supervised ``target_state``.
     """
 
     required = {"metadata_path", "event_id", "rainfall_group", "scientific_split"}
