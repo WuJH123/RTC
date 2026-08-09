@@ -5,7 +5,7 @@ import json
 
 
 IMPLEMENTATION_CONTRACT = {
-    "release": "WUHAN_RTC_V064_RULE_BASELINES_IMPLEMENTATION_V1",
+    "release": "WUHAN_RTC_V065_PHASE0_BOOTSTRAP_IMPLEMENTATION_V1",
     "causal_observation": "T0_INCLUDED_ALL_TRAJECTORIES_V2",
     "no_control": "NO_SUPERVISORY_RTC_V2",
     "hydraulic_truth": "SWMM_CUMULATIVE_NODE_FLOOD_VOLUME_V1",
@@ -23,6 +23,8 @@ IMPLEMENTATION_CONTRACT = {
     "action_effect_validation": "D2_LOCAL_PLUS_D3_JOINT_SEQUENCE_V1",
     "efficient_d2_sampling": "ROTATING_ALL_ACTUATOR_COVERAGE_BUDGET_V1",
     "pretraining_viability": "EXACT_SWMM_CONTROL_LEVERAGE_PILOT_V1",
+    "phase0_group_selection": "FORCING_ONLY_DIVERSE_DEVELOPMENT_GROUPS_V1",
+    "phase0_timing_freeze": "NON_CENSORED_EVIDENCE_BOUND_TIMING_V1",
     "formal_aggregation": "EQUAL_WEIGHT_PER_RAINFALL_GROUP_V1",
     "resume_semantics": "INPUT_CONFIG_ARTIFACT_HASH_BOUND_V1",
 }
