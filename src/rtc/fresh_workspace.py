@@ -25,13 +25,7 @@ def initialize_fresh_workspace(
     priority_nodes: str | Path,
     event_registry: str | Path,
 ) -> dict[str, object]:
-    """Create a clean output root after validating the fresh rainfall/event design.
-
-    The physical model, observation metadata and rainfall/event definitions are scientific
-    inputs. The validated event registry is copied into the fresh root and becomes the
-    canonical split registry. All hydraulic trajectories, counterfactual branches, model
-    checkpoints, closed-loop runs and Formal evidence must subsequently be generated there.
-    """
+    """Create a clean output root after validating the fresh rainfall/event design."""
 
     root_path = _resolve(root)
     manifest_path = root_path / "FRESH_WORKSPACE_MANIFEST.json"
@@ -46,8 +40,6 @@ def initialize_fresh_workspace(
         if not path.is_file():
             raise ValueError(f"fresh workspace input is missing: {name}: {path}")
 
-    # Validate before creating the output root. A bad event design must not leave behind a
-    # half-initialized directory that later looks like a valid fresh study.
     rainfall_design = validate_formal_rainfall_design(pd.read_csv(source_registry))
 
     if root_path.exists():
@@ -139,6 +131,53 @@ def require_path_inside_workspace(path: str | Path, workspace_root: str | Path) 
         candidate.relative_to(root)
     except ValueError as exc:
         raise ValueError(f"RTC-derived output is outside fresh workspace: {candidate}") from exc
+
+
+def validate_fresh_run_index(
+    *,
+    run_index_path: str | Path,
+    workspace_manifest_path: str | Path,
+    metadata_column: str = "metadata_path",
+    reject_final: bool = True,
+) -> dict[str, object]:
+    """Prove that every RTC branch used for training/acceptance belongs to this fresh run.
+
+    Checking only where the new model checkpoint is written is insufficient: a new checkpoint
+    could otherwise be trained from an old Project6 branch. This gate binds both the run-index
+    file and every referenced branch metadata file to the fresh output root.
+    """
+
+    workspace = load_fresh_workspace(workspace_manifest_path)
+    root = _resolve(str(workspace["output_root"]))
+    index_path = _resolve(run_index_path)
+    require_path_inside_workspace(index_path, root)
+    if not index_path.is_file():
+        raise ValueError(f"fresh run index is missing: {index_path}")
+    frame = pd.read_csv(index_path)
+    if metadata_column not in frame.columns or frame.empty:
+        raise ValueError(f"fresh run index requires non-empty {metadata_column}")
+    if reject_final:
+        if "scientific_split" not in frame.columns:
+            raise ValueError("fresh training/acceptance index requires scientific_split")
+        if (frame["scientific_split"].astype(str) == "final").any():
+            raise ValueError("Final rows are forbidden in pre-lock training/acceptance indexes")
+    metadata_paths: list[str] = []
+    for raw in frame[metadata_column].astype(str):
+        path = _resolve(raw)
+        require_path_inside_workspace(path, root)
+        if not path.is_file():
+            raise ValueError(f"fresh branch metadata is missing: {path}")
+        metadata_paths.append(str(path))
+    return {
+        "contract": "FRESH_RUN_INDEX_PROVENANCE_V1",
+        "workspace_manifest_sha256": sha256_file(workspace_manifest_path),
+        "run_index": str(index_path),
+        "run_index_sha256": sha256_file(index_path),
+        "rows": int(len(frame)),
+        "unique_metadata_paths": int(len(set(metadata_paths))),
+        "all_metadata_inside_workspace": True,
+        "final_rows_rejected": bool(reject_final),
+    }
 
 
 def main() -> None:
