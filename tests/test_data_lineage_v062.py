@@ -10,6 +10,7 @@ import pytest
 from rtc.data_design import design_multi_actuator_rollouts
 from rtc.inp import Actuator, ActuatorCatalog
 from rtc.inp_lineage import scientific_event_contract_sha256
+from rtc.inp_runtime import build_runtime_inp
 from rtc.replay_prefix import load_checkpoint_reference, verify_replayed_checkpoint
 
 
@@ -60,6 +61,26 @@ def test_event_contract_hashes_external_file_bytes(tmp_path: Path) -> None:
     first = scientific_event_contract_sha256(inp)
     rain.write_text("2020-01-01 00:00 2\n", encoding="utf-8")
     assert scientific_event_contract_sha256(inp) != first
+
+
+def test_runtime_relocation_preserves_relative_external_forcing(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rain = source_dir / "rain series.dat"
+    rain.write_text("2020-01-01 00:00 1\n", encoding="utf-8")
+    inp = source_dir / "event.inp"
+    inp.write_text(
+        "[OPTIONS]\nFLOW_UNITS CMS\nTHREADS 2\n"
+        "[TIMESERIES]\nR1 FILE \"rain series.dat\"\n"
+        "[CONTROLS]\nRULE X\n",
+        encoding="utf-8",
+    )
+    expected = scientific_event_contract_sha256(inp)
+    runtime = tmp_path / "elsewhere" / "runtime.inp"
+    build_runtime_inp(inp, runtime, native_controls=False, swmm_threads=1)
+    text = runtime.read_text(encoding="utf-8")
+    assert str(rain.resolve()) in text
+    assert scientific_event_contract_sha256(runtime) == expected
 
 
 def test_replay_prefix_verifies_complete_state_and_readback(tmp_path: Path) -> None:
