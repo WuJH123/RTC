@@ -15,6 +15,7 @@ from .contracts import load_priority_nodes
 from .controller import ControllerConfig, TorchMPCController
 from .forecast import PersistenceDecayForecast
 from .graph import GraphSchema
+from .inp_runtime import sha256_file
 from .models import DifferentiableHydraulicWorldModel, SparseStateEstimator
 from .tfv_mpc import ContinuousTFVFirstMPC
 
@@ -127,6 +128,17 @@ def _priority_and_calibration(
     )
 
 
+def _controls_disabled_runtime(
+    *, source_inp: Path, cache_dir: Path, swmm_threads: int
+) -> Path:
+    source_sha = sha256_file(source_inp)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    runtime = cache_dir / f"{source_sha[:24]}.controls_disabled.t{swmm_threads}.inp"
+    if not runtime.is_file():
+        write_no_control_inp(source_inp, runtime, swmm_threads=swmm_threads)
+    return runtime
+
+
 def run_policy_main() -> None:
     parser = argparse.ArgumentParser(
         description="Run TFV-first Proposed RTC or an explicitly separated authoritative baseline"
@@ -149,6 +161,7 @@ def run_policy_main() -> None:
     parser.add_argument("--step1")
     parser.add_argument("--step2")
     parser.add_argument("--calibration")
+    parser.add_argument("--runtime-inp-cache-dir", help="shared cache for controls-disabled INPs; defaults to <out-dir>/_runtime_inp")
     parser.add_argument("--device")
     args = parser.parse_args()
 
@@ -166,13 +179,11 @@ def run_policy_main() -> None:
     source_inp = Path(args.inp)
     inp_for_run = source_inp
 
-    # Only Internal-RTC is allowed to execute the original [CONTROLS]. Every Python policy
-    # and No-control use a controls-disabled physical copy from simulation start.
     if strategy != "internal_rtc":
-        inp_for_run = Path(args.out_dir) / f"{args.run_id}.controls_disabled.inp"
-        write_no_control_inp(
-            source_inp,
-            inp_for_run,
+        cache_dir = Path(args.runtime_inp_cache_dir) if args.runtime_inp_cache_dir else Path(args.out_dir) / "_runtime_inp"
+        inp_for_run = _controls_disabled_runtime(
+            source_inp=source_inp,
+            cache_dir=cache_dir,
             swmm_threads=int(cfg.get("swmm_threads", 1)),
         )
 
@@ -236,7 +247,6 @@ def run_policy_main() -> None:
         controller = _constant_controller(1.0)
     elif strategy == "all_closed":
         controller = _constant_controller(0.0)
-    # internal_rtc and no_control deliberately have controller=None.
 
     result = run_authoritative_closed_loop(
         inp_path=inp_for_run,
@@ -250,7 +260,7 @@ def run_policy_main() -> None:
         record_stride_seconds=record_stride_seconds,
         exact_global_peak=bool(cfg.get("exact_global_peak", False)),
     )
-    payload = {
+    print(json.dumps({
         "strategy": strategy,
         "source_inp": str(source_inp.resolve()),
         "runtime_inp": str(inp_for_run.resolve()),
@@ -260,5 +270,4 @@ def run_policy_main() -> None:
         "decisions": result.decisions,
         "global_peak_flood_rate_m3s": result.global_peak_flood_rate_m3s,
         "flow_routing_error_pct": result.flow_routing_error_pct,
-    }
-    print(json.dumps(payload, indent=2))
+    }, indent=2))
