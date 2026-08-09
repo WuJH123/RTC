@@ -1,0 +1,23 @@
+{
+  "contract": "FORMAL_BASELINE_PLAN_V3",
+  "strategies": [
+    "proposed",
+    "no_control",
+    "internal_rtc",
+    "hold",
+    "all_open",
+    "all_closed"
+  ],
+  "notes": {
+    "proposed": "TFV-first sparse-state + differentiable continuous MPC. Runs on the controls-disabled physical base; priority PFV is soft/diagnostic, never a hard admission gate.",
+    "no_control": "Same physical network and forcing with [CONTROLS] disabled and no Python setting writes. This is NOT all-open.",
+    "internal_rtc": "Original frozen event INP with native [CONTROLS] enabled and no Python setting writes.",
+    "hold": "Controls-disabled base; freeze actuator readback at the first control decision.",
+    "all_open": "Diagnostic controls-disabled run with every eligible continuous setting fixed at 1.0.",
+    "all_closed": "Diagnostic controls-disabled run with every eligible continuous setting fixed at 0.0."
+  },
+  "policy_isolation": {
+    "internal_rtc_native_controls": true,
+    "all_other_strategies_native_controls": false
+  }
+}
