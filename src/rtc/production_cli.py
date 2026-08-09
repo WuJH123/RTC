@@ -11,6 +11,7 @@ import torch
 from .baselines import write_no_control_inp
 from .calibration import SafetyCalibration
 from .closed_loop import CausalObservation, ControllerAction, run_authoritative_closed_loop
+from .code_contract import rtc_source_tree_sha256
 from .contracts import load_priority_nodes
 from .controller import ControllerConfig, TorchMPCController
 from .forecast import PersistenceDecayForecast
@@ -57,13 +58,44 @@ def _load_graph(path: str | Path) -> GraphSchema:
         )
 
 
-def _load_step1(path: str | Path, device: torch.device) -> SparseStateEstimator:
-    payload = torch.load(path, map_location=device)
+def _require_current_checkpoint(payload: object, *, model_name: str) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        raise ValueError(f"{model_name} checkpoint payload must be a dictionary")
+    if payload.get("checkpoint_contract") != "RTC_TORCH_CHECKPOINT_V2_CODE_BOUND":
+        raise ValueError(
+            f"{model_name} checkpoint predates the current code-bound checkpoint contract; retrain it"
+        )
+    current_code = rtc_source_tree_sha256()
+    if payload.get("rtc_source_tree_sha256") != current_code:
+        raise ValueError(
+            f"{model_name} checkpoint was trained by a different RTC source tree; retrain after final code freeze"
+        )
     if payload.get("scientific_split") != "development":
-        raise ValueError("Step1 checkpoint was not trained under development-only lineage")
-    cfg = dict(payload["model_config"])
+        raise ValueError(
+            f"{model_name} checkpoint was not trained under development-only lineage"
+        )
+    return payload
+
+
+def _load_step1(path: str | Path, device: torch.device) -> SparseStateEstimator:
+    payload = _require_current_checkpoint(
+        torch.load(path, map_location=device), model_name="Step1"
+    )
+    raw_config = payload.get("model_config")
+    if not isinstance(raw_config, dict):
+        raise ValueError("Step1 checkpoint lacks model_config")
+    cfg = dict(raw_config)
     cfg.pop("state_weights", None)
+    training_contract = cfg.pop("training_contract_sha256", None)
+    runtime_metadata = {
+        "history_steps": int(cfg.get("history_steps", -1)),
+        "model_step_seconds": int(cfg.get("model_step_seconds", -1)),
+        "context_contract": str(cfg.get("context_contract", "")),
+        "training_contract_sha256": training_contract,
+        "rtc_source_tree_sha256": str(payload["rtc_source_tree_sha256"]),
+    }
     model = SparseStateEstimator(**cfg)
+    model.runtime_metadata = runtime_metadata  # type: ignore[attr-defined]
     model.load_state_dict(payload["state_dict"])
     return model.to(device).eval()
 
@@ -71,10 +103,13 @@ def _load_step1(path: str | Path, device: torch.device) -> SparseStateEstimator:
 def _load_step2(
     path: str | Path, device: torch.device
 ) -> DifferentiableHydraulicWorldModel:
-    payload = torch.load(path, map_location=device)
-    if payload.get("scientific_split") != "development":
-        raise ValueError("Step2 checkpoint was not trained under development-only lineage")
-    cfg = dict(payload["model_config"])
+    payload = _require_current_checkpoint(
+        torch.load(path, map_location=device), model_name="Step2"
+    )
+    raw_config = payload.get("model_config")
+    if not isinstance(raw_config, dict):
+        raise ValueError("Step2 checkpoint lacks model_config")
+    cfg = dict(raw_config)
     cfg.pop("state_weights", None)
     cfg.pop("flow_loss_weight", None)
     runtime_metadata = {
@@ -87,6 +122,9 @@ def _load_step2(
         )
         if key in cfg
     }
+    runtime_metadata["rtc_source_tree_sha256"] = str(
+        payload["rtc_source_tree_sha256"]
+    )
     if runtime_metadata.get("time_contract") != "STEP2_FIXED_DISCRETE_TIME_V1":
         raise ValueError("Step2 checkpoint lacks the frozen discrete-time contract")
     model = DifferentiableHydraulicWorldModel(**cfg)
@@ -117,6 +155,11 @@ def _validate_model_time_contracts(
     horizon_steps = int(controller_cfg["horizon_steps"])
     step1_meta = dict(getattr(step1, "runtime_metadata", {}))
     step2_meta = dict(getattr(step2, "runtime_metadata", {}))
+    current_code = rtc_source_tree_sha256()
+    if step1_meta.get("rtc_source_tree_sha256") != current_code:
+        raise ValueError("Step1 source-tree contract differs from production runtime")
+    if step2_meta.get("rtc_source_tree_sha256") != current_code:
+        raise ValueError("Step2 source-tree contract differs from production runtime")
     if int(step1_meta.get("model_step_seconds", -1)) != model_step_seconds:
         raise ValueError("Step1 checkpoint model step differs from production controller")
     if int(step1_meta.get("history_steps", -1)) != history_steps:
@@ -217,7 +260,9 @@ def run_policy_main() -> None:
         raise ValueError("controller config must be a JSON object")
     model_step_seconds = int(cfg["model_step_seconds"])
     control_update_seconds = int(cfg["control_update_seconds"])
-    record_stride_seconds = int(cfg.get("record_stride_seconds", model_step_seconds))
+    record_stride_seconds = int(
+        cfg.get("record_stride_seconds", model_step_seconds)
+    )
     if model_step_seconds <= 0 or control_update_seconds % model_step_seconds:
         raise ValueError(
             "control_update_seconds must be a positive integer multiple of model_step_seconds"
@@ -252,13 +297,17 @@ def run_policy_main() -> None:
             if not value:
                 raise ValueError(f"--{name} is required for proposed")
         if not args.priority:
-            raise ValueError("--priority with the verified eight nodes is required for Proposed")
+            raise ValueError(
+                "--priority with the verified eight nodes is required for Proposed"
+            )
         device = torch.device(
             args.device or ("cuda" if torch.cuda.is_available() else "cpu")
         )
         graph = _load_graph(args.graph)
         if not set(sensors).issubset(graph.node_ids):
-            raise ValueError("sensor nodes are not all present in the frozen graph schema")
+            raise ValueError(
+                "sensor nodes are not all present in the frozen graph schema"
+            )
         step1 = _load_step1(args.step1, device)
         step2 = _load_step2(args.step2, device)
         controller_cfg_raw = cfg.get("controller", {})
@@ -287,7 +336,9 @@ def run_policy_main() -> None:
             dt_seconds=model_step_seconds,
             flood_error_ucb_m3=flood_ucb,
             depth_error_ucb_m=depth_ucb,
-            forecast_quantile=float(objective_cfg.get("forecast_quantile", 0.95)),
+            forecast_quantile=float(
+                objective_cfg.get("forecast_quantile", 0.95)
+            ),
             tfv_cvar_alpha=float(objective_cfg.get("tfv_cvar_alpha", 0.90)),
             tfv_near_opt_relative=float(
                 objective_cfg.get("tfv_near_opt_relative", 0.01)
@@ -305,9 +356,13 @@ def run_policy_main() -> None:
             decay_per_step=float(forecast_cfg.get("decay_per_step", 0.92)),
             scenario_multipliers=tuple(
                 float(x)
-                for x in forecast_cfg.get("scenario_multipliers", [0.75, 1.0, 1.25])
+                for x in forecast_cfg.get(
+                    "scenario_multipliers", [0.75, 1.0, 1.25]
+                )
             ),
-            history_steps_for_level=int(forecast_cfg.get("history_steps_for_level", 3)),
+            history_steps_for_level=int(
+                forecast_cfg.get("history_steps_for_level", 3)
+            ),
         )
         controller = TorchMPCController(
             step1=step1,
