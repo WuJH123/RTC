@@ -1,0 +1,37 @@
+{
+  "contract": "PRODUCTION_CONTROLLER_CONFIG_V4_TFV_FIRST",
+  "instruction": "PFV/priority depth are soft diagnostics/secondary preferences, never hard MPC admission constraints. Formal main runs keep exact_global_peak=false; exact peak is replayed afterward.",
+  "model_step_seconds": "REPLACE_AFTER_PHASE0_D2_PILOT",
+  "control_update_seconds": "REPLACE_AFTER_PHASE0_D2_PILOT",
+  "record_stride_seconds": "REPLACE_AFTER_PHASE0_D2_PILOT",
+  "control_start_minutes": "REPLACE_AFTER_HISTORY_READINESS_AUDIT",
+  "swmm_threads": 1,
+  "exact_global_peak": false,
+  "depth_state_index": 0,
+  "flood_rate_state_index": 2,
+  "objective": {
+    "primary": "minimize rainfall-ensemble risk-adjusted cumulative TFV",
+    "priority_role": "soft lexicographic secondary preference within TFV near-optimal set",
+    "forecast_quantile": "REPLACE_DEVELOPMENT_ONLY",
+    "tfv_cvar_alpha": "REPLACE_DEVELOPMENT_ONLY",
+    "tfv_near_opt_relative": "REPLACE_DEVELOPMENT_ONLY",
+    "tfv_near_opt_absolute_m3": "REPLACE_DEVELOPMENT_ONLY",
+    "near_opt_penalty": "REPLACE_DEVELOPMENT_ONLY",
+    "movement_tiebreak": "REPLACE_DEVELOPMENT_ONLY"
+  },
+  "forecast": {
+    "decay_per_step": "REPLACE_DEVELOPMENT_ONLY",
+    "scenario_multipliers": ["REPLACE_DEVELOPMENT_ONLY"],
+    "history_steps_for_level": "REPLACE_DEVELOPMENT_ONLY"
+  },
+  "controller": {
+    "history_steps": "REPLACE_AFTER_PHASE0",
+    "horizon_steps": "REPLACE_AFTER_PHASE0_D2_PILOT",
+    "optimizer_iterations": "REPLACE_DEVELOPMENT_ONLY",
+    "optimizer_learning_rate": "REPLACE_DEVELOPMENT_ONLY",
+    "max_setting_delta_per_update": "REPLACE_FROM_ENGINEERING_METADATA_OR_NULL",
+    "readback_target_tolerance": "REPLACE_FROM_ENGINEERING_RUNTIME_TEST",
+    "readback_current_tolerance": "REPLACE_FROM_ENGINEERING_RUNTIME_TEST",
+    "fallback_policy_id": "CAUSAL_HOLD_CURRENT_V1"
+  }
+}
