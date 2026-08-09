@@ -39,19 +39,19 @@ BASELINES = {
     ),
     "hold": BaselineDefinition(
         "hold",
-        "Controls-disabled base; hold actuator readback observed at the first control decision",
+        "Controls-disabled base; hold actuator readback observed at the first common control decision",
         True,
         False,
     ),
     "all_open": BaselineDefinition(
         "all_open",
-        "Diagnostic only on controls-disabled base: command every eligible setting to 1.0 from t=0",
+        "Diagnostic controls-disabled policy: command every eligible setting to 1.0 from the first common control decision",
         True,
         False,
     ),
     "all_closed": BaselineDefinition(
         "all_closed",
-        "Diagnostic only on controls-disabled base: command every eligible setting to 0.0 from t=0",
+        "Diagnostic controls-disabled policy: command every eligible setting to 0.0 from the first common control decision",
         True,
         False,
     ),
@@ -131,9 +131,9 @@ def frozen_hold_controller() -> Callable[[CausalObservation], ControllerAction]:
 def fixed_baseline_controller(strategy: str):
     """Return the deterministic Python controller for a fixed baseline.
 
-    ``None`` means the SWMM runtime itself is the policy: this is correct for No-control
-    and Internal-RTC. All-open/all-closed additionally require a t=0 initial write; the
-    baseline cache supplies that through ``run_authoritative_closed_loop(initial_settings)``.
+    ``None`` means the SWMM runtime itself is the policy, which is correct for No-control
+    and Internal-RTC. Static diagnostic policies start at the same configured control epoch
+    as Proposed so full-event comparisons share the same uncontrolled history prefix.
     """
 
     strategy = canonical_baseline_id(strategy)
@@ -145,15 +145,4 @@ def fixed_baseline_controller(strategy: str):
         return constant_setting_controller(1.0, "ALL_OPEN")
     if strategy == "all_closed":
         return constant_setting_controller(0.0, "ALL_CLOSED")
-    raise ValueError(f"not a fixed baseline strategy: {strategy}")
-
-
-def fixed_baseline_initial_setting(strategy: str) -> float | None:
-    strategy = canonical_baseline_id(strategy)
-    if strategy == "all_open":
-        return 1.0
-    if strategy == "all_closed":
-        return 0.0
-    if strategy in {"no_control", "internal_rtc", "hold"}:
-        return None
     raise ValueError(f"not a fixed baseline strategy: {strategy}")
