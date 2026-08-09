@@ -27,32 +27,37 @@ def assign_rainfall_group_splits(
     rainfall_group_col: str = "rainfall_group",
     seed: int = 42,
     fractions: SplitFractions = SplitFractions(),
+    development_validation_fraction: float = 0.20,
 ) -> pd.DataFrame:
-    """Assign entire rainfall groups to mutually exclusive scientific roles.
+    """Assign rainfall groups to scientific roles with a held-out dev-validation fold.
 
-    Rows from the same rainfall group can never cross development, calibration,
-    independent safety-audit, or untouched final partitions.
+    Top-level roles are mutually exclusive ``development``, ``calibration``,
+    ``safety_audit`` and ``final``. Development groups are then split, again by whole
+    rainfall group, into ``train`` and ``validation`` via ``development_fold``. This lets
+    model acceptance remain independent of fitting without consuming calibration data.
     """
 
     fractions.validate()
+    if not 0.0 < development_validation_fraction < 1.0:
+        raise ValueError("development_validation_fraction must lie in (0,1)")
     if rainfall_group_col not in frame.columns:
         raise ValueError(f"missing rainfall group column: {rainfall_group_col}")
     groups = pd.Series(frame[rainfall_group_col].dropna().astype(str).unique())
-    if len(groups) < 4:
-        raise ValueError("at least four rainfall groups are required")
+    if len(groups) < 5:
+        raise ValueError("at least five rainfall groups are required")
     rng = np.random.default_rng(seed)
     shuffled = groups.to_numpy(copy=True)
     rng.shuffle(shuffled)
 
     n = len(shuffled)
-    # Largest-remainder allocation with at least one group per role.
     raw = np.array(
         [fractions.development, fractions.calibration, fractions.safety_audit, fractions.final]
     ) * n
     counts = np.floor(raw).astype(int)
     counts = np.maximum(counts, 1)
     while counts.sum() > n:
-        idx = int(np.argmax(counts - 1))
+        reducible = np.where(counts > 1, counts, -1)
+        idx = int(np.argmax(reducible))
         counts[idx] -= 1
     while counts.sum() < n:
         remainder = raw - counts
@@ -66,11 +71,28 @@ def assign_rainfall_group_splits(
             mapping[str(group)] = role
         start += count
 
+    development_groups = [g for g in shuffled if mapping[str(g)] == "development"]
+    if len(development_groups) < 2:
+        raise ValueError("development split needs at least two rainfall groups for train/validation")
+    dev_rng = np.random.default_rng(seed + 1)
+    dev_shuffled = np.asarray(development_groups, dtype=object)
+    dev_rng.shuffle(dev_shuffled)
+    n_validation = max(1, int(round(len(dev_shuffled) * development_validation_fraction)))
+    n_validation = min(n_validation, len(dev_shuffled) - 1)
+    validation_groups = {str(g) for g in dev_shuffled[:n_validation]}
+
     out = frame.copy()
-    out["scientific_split"] = out[rainfall_group_col].astype(str).map(mapping)
+    group_text = out[rainfall_group_col].astype(str)
+    out["scientific_split"] = group_text.map(mapping)
     if out["scientific_split"].isna().any():
         raise ValueError("null/unknown rainfall groups cannot be assigned")
+    out["development_fold"] = ""
+    is_dev = out["scientific_split"] == "development"
+    out.loc[is_dev, "development_fold"] = np.where(
+        group_text[is_dev].isin(validation_groups), "validation", "train"
+    )
     verify_disjoint_rainfall_splits(out, rainfall_group_col=rainfall_group_col)
+    verify_development_folds(out, rainfall_group_col=rainfall_group_col)
     return out
 
 
@@ -91,3 +113,23 @@ def verify_disjoint_rainfall_splits(
     missing = sorted(required - present)
     if missing:
         raise ValueError(f"missing scientific split roles: {missing}")
+
+
+def verify_development_folds(
+    frame: pd.DataFrame,
+    *,
+    rainfall_group_col: str = "rainfall_group",
+) -> None:
+    if "development_fold" not in frame.columns:
+        raise ValueError("development_fold is required")
+    dev = frame[frame["scientific_split"] == "development"]
+    present = set(dev["development_fold"].astype(str))
+    if present != {"train", "validation"}:
+        raise ValueError(f"development folds must be train/validation, got {sorted(present)}")
+    cross = dev.groupby(rainfall_group_col)["development_fold"].nunique()
+    bad = cross[cross != 1]
+    if not bad.empty:
+        raise ValueError(f"rainfall-group leakage across development folds: {bad.index.tolist()[:10]}")
+    non_dev = frame[frame["scientific_split"] != "development"]
+    if (non_dev["development_fold"].astype(str) != "").any():
+        raise ValueError("non-development rows must not carry a development fold")
