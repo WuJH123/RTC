@@ -22,6 +22,7 @@ FallbackSequenceProvider = Callable[[CausalObservation, int], np.ndarray]
 class ControllerConfig:
     history_steps: int = 13
     horizon_steps: int = 12
+    control_block_steps: int = 1
     optimizer_iterations: int = 120
     optimizer_learning_rate: float = 0.04
     max_setting_delta_per_update: float | None = None
@@ -32,6 +33,8 @@ class ControllerConfig:
     def validate(self) -> None:
         if self.history_steps < 2 or self.horizon_steps <= 0:
             raise ValueError("history_steps must be >=2 and horizon_steps positive")
+        if self.control_block_steps <= 0:
+            raise ValueError("control_block_steps must be positive")
         if self.optimizer_iterations <= 0 or self.optimizer_learning_rate <= 0:
             raise ValueError("optimizer settings must be positive")
         if self.max_setting_delta_per_update is not None and self.max_setting_delta_per_update < 0:
@@ -49,7 +52,8 @@ class TorchMPCController:
     No full-network SWMM state or future realised forcing enters this class. The only
     runtime object accepted is ``CausalObservation`` from ``run_authoritative_closed_loop``.
     Model failures, history warm-up, safety rejection and readback failures all fail closed
-    to the configured causal fallback sequence.
+    to the configured causal fallback sequence. ``control_block_steps`` is frozen so the
+    surrogate assumes the same action-hold duration that the runtime actually executes.
     """
 
     def __init__(
@@ -226,6 +230,7 @@ class TorchMPCController:
                 edge_index=edges,
                 iterations=self.config.optimizer_iterations,
                 learning_rate=self.config.optimizer_learning_rate,
+                control_block_steps=self.config.control_block_steps,
             )
             decision = choose_first_move(
                 optimized_sequence=result.settings.detach().cpu().numpy(),
@@ -242,6 +247,7 @@ class TorchMPCController:
                 source=decision.source,
                 diagnostics={
                     "fallback_policy": self.config.fallback_policy_id,
+                    "control_block_steps": self.config.control_block_steps,
                     "surrogate_admissible": result.admissible,
                     "tfv_risk_m3": result.tfv_risk_m3,
                     "worst_site_flood_deterioration_m3": result.worst_site_flood_deterioration_m3,
@@ -252,8 +258,6 @@ class TorchMPCController:
                 },
             )
         except Exception as exc:
-            # Formal runtime fails closed. The error is preserved in the decision log so a
-            # failed controller cannot silently masquerade as a valid MPC decision.
             self.last_requested = fallback[0].copy()
             return ControllerAction(
                 settings=dict(zip(self.graph.actuator_ids, fallback[0], strict=True)),
