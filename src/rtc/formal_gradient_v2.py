@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from .code_contract import rtc_source_tree_sha256
 from .d2_eval import exact_node_volumes, join_manifest_runs, model_metrics
 from .gradient_truth import compare_gradient_vectors
 from .production_cli import _load_graph, _load_step2
@@ -200,6 +201,7 @@ def main() -> None:
         "contract": "D2_SWMM_TFV_GRADIENT_METRICS_V4_BOUND_AWARE_GROUP_BALANCED",
         "metrics": metrics,
         "aggregation": "equal_weight_per_rainfall_group",
+        "rtc_source_tree_sha256": rtc_source_tree_sha256(),
         "step2_sha256": _sha(args.step2),
         "manifest_sha256": _sha(args.manifest),
         "run_summary_sha256": _sha(args.run_summary),
