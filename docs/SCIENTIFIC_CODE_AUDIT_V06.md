@@ -2,134 +2,79 @@
 
 ## Audit question
 
-Does the repository actually implement a large-network, causal, sparse-sensing, differentiable-world-model, continuous rolling-MPC framework that can determine online which facilities are hydraulically useful, how much to operate them and when to change them, with cumulative system TFV as the primary objective?
+Does the repository implement a large-network, causal, sparse-sensing, differentiable-world-model, continuous rolling-MPC framework that can decide online which facilities are hydraulically useful, how much to operate them and when to change them, with cumulative system TFV as the primary objective?
 
-## Overall conclusion after v0.6 corrections
+## Final conclusion after v0.6 corrections
 
-The architecture is scientifically coherent **provided that the new v0.6 fail-closed contracts are used from a new Fresh Workspace and all model/data/acceptance gates pass**. The code no longer relies on Engineering36, a fixed controlled subset, a runtime Top-K mask, event ID, future realised SWMM truth, or artificial binary pump actions.
+The architecture is scientifically coherent for a **SWMM-authoritative RTC experiment** provided that the v0.6 data/model/acceptance sequence is used and all Formal gates pass.
 
-The pre-v0.6 implementation, however, still contained several logic/reuse problems serious enough to invalidate a Formal run if left uncorrected. They are documented below because they explain why old RTC-derived outputs are intentionally not reusable.
+The final controller no longer relies on Engineering36, a fixed controlled subset, runtime Top-K masking, event ID, future realised SWMM truth or artificial binary pump actions.
+
+The principal pre-v0.6 problems and their final corrections are recorded below.
 
 ## P0-1 — unsafe cache/resume semantics
 
-### Problem
+**Problem:** file existence or a partial key could be mistaken for valid reusable hydraulic evidence.
 
-File existence or a partial scientific key was insufficient to prove that a cached D0/D2/D3/baseline branch came from the current implementation. A source-code change could therefore leave apparently reusable hydraulic evidence that was generated under different semantics.
+**Correction:** D0/D1/D2/D3 and baseline reuse now require a compatible scientific implementation fingerprint, exact event/runtime/timing/action/config lineage and verified generated-artifact hashes. The implementation fingerprint represents stable scientific semantics rather than byte-hashing every Python file, so unrelated documentation/reporting edits do not invalidate expensive computation.
 
-### Correction
+## P0-2 — Step2 temporal-discretisation ambiguity
 
-v0.6 introduces source-tree-bound generation keys. Baseline sidecars and D0/D1/D2/D3 metadata bind code, event/runtime INP, action/sequence, timing and generated-artifact hashes. Resume occurs only when all declared evidence verifies.
+**Problem:** the world model does not receive `dt` as an online input, so mixing 60 s and 300 s transitions creates an ill-defined learned operator.
 
-### Scientific effect
-
-A code change can no longer silently mix old and new hydraulic labels inside one trained model.
-
-## P0-2 — Step2 temporal-discretisation mismatch
-
-### Problem
-
-The world model does not receive `dt` as an online input, so a 60 s transition and a 300 s transition are different learned operators. Earlier data plumbing could compile branches without a single frozen model-step contract, risking Phase-0 and production data being mixed.
-
-### Correction
-
-Every production Step2 branch/shard/model now carries one `model_step_seconds` and one `horizon_steps`. Mixed temporal grids fail during dataset compilation/sharding, model acceptance and production loading.
-
-### Scientific effect
-
-Step2 is now a well-defined discrete-time hydraulic transition model instead of an ambiguous mixture of different transition horizons.
+**Correction:** every production Step2 branch/shard/model carries one `model_step_seconds` and one `horizon_steps`; mixed time grids are rejected during sharding, validation and production loading.
 
 ## P0-3 — boundary actuator optimisation
 
-### Problem
+**Problem:** `sigmoid(logit(current_setting))` makes gradients nearly vanish near exact 0/1, potentially preventing an OFF pump from being activated by MPC.
 
-Using `sigmoid(logit(current_setting))` as the MPC parameterisation makes the derivative effectively vanish near exact 0 or 1. The Wuhan source model contains many pumps initially at OFF/0, so this can make an actuator that should be opened practically unoptimisable.
-
-### Correction
-
-v0.6 optimises direct continuous setting variables and projects them after every optimiser step to `[0,1]`. If a rate limit is frozen, every future control block is projected sequentially relative to the preceding block/current readback.
-
-### Scientific effect
-
-The MPC can move inward from both exact bounds and all future planned settings remain numerically executable. Online facility selection therefore truly remains available over the full actuator catalogue.
+**Correction:** v0.6 optimizes direct continuous settings and projects them after every optimizer step to `[0,1]`. Optional setting-rate constraints are projected sequentially across all future control blocks.
 
 ## P0-4 — future MPC feasibility
 
-### Problem
+**Problem:** constraining only the first executed move allows the surrogate objective to exploit infeasible future setting jumps.
 
-A rate limit applied only to the first executed move leaves the surrogate objective free to evaluate physically impossible future setting jumps, which can bias the first move itself.
+**Correction:** setting-rate feasibility is enforced throughout the optimized future sequence, not only during first-move post-processing.
 
-### Correction
+## P0-5 — single-actuator validation did not prove joint MPC behavior
 
-The setting-rate constraint is now part of projected optimisation for every future control block, not merely post-processing of the first move.
+**Problem:** D2 local perturbations alone cannot demonstrate that Step2 ranks joint multi-actuator/multi-step sequences correctly.
 
-## P0-5 — local D2 validation did not prove joint MPC ranking
+**Correction:** Formal action-effect acceptance includes both D2 local/boundary gradient/ranking evidence and D3 joint-sequence ordering/top-1/regret evidence.
 
-### Problem
+## P0-6 — interrupted training wasted GPU work
 
-Single-actuator D2 perturbations are ideal for local action-effect/gradient truth, but online MPC searches a joint multi-actuator, multi-step space. Good D2 ranking alone cannot prove that Step2 ranks joint action sequences correctly.
+**Problem:** only final model checkpoints were canonical.
 
-### Correction
+**Correction:** Step1 and Step2 save atomic per-epoch states containing model, optimizer, scaler/RNG state and completed epoch. Resume is accepted only for the same compatible data/time/model/training experiment.
 
-Formal candidate-ranking acceptance now requires both:
+## P0-7 — rainfall-group statistical overweighting
 
-- D2 local/single-actuator ordering;
-- D3 joint multi-actuator, multi-step sequence ordering/top-1/regret.
+**Problem:** long events or groups with more windows/checkpoints/candidates could dominate metrics merely because more rows were generated.
 
-## P0-6 — training interruption could waste GPU work
+**Correction:** Formal Step1, Step2, gradient/ranking and Final statistics aggregate within rainfall group first and then give independent rainfall groups equal weight.
 
-### Problem
+## P0-8 — checkpoint-time truncation
 
-Only the final model checkpoint was canonical, so interruption could require training again from epoch 0.
+**Problem:** the current replay interface addresses checkpoints in integer minutes, so a 90 s high-frequency state must not silently become a 1 min prefix.
 
-### Correction
+**Correction:** checkpoint design admits only exact minute-aligned states until replay addressing is upgraded to seconds.
 
-Step1 and Step2 now write atomic per-epoch train states containing model, optimiser, scaler/RNG state and completed epoch. Resume is accepted only for the exact same data/config/code experiment.
+## P0-9 — Global Peak replay semantics
 
-## P0-7 — rainfall-group statistical weighting
+**Problem:** routing-step reporting could accidentally change the target-write cadence and therefore change the trajectory it was meant to measure.
 
-### Problem
+**Correction:** Global Peak replay observes flooding every SWMM routing callback but reasserts actuator targets only on the original main Python callback grid. Run-specific temporary `.rpt/.out` files are removed in `finally`.
 
-Window/branch/event-row metrics can overweight a rainfall group merely because more windows, checkpoints, candidates or event variants were generated from it. This conflicts with `rainfall_group` being the independent evidence unit.
+## P0-10 — evidence-schema/lineage gaps
 
-### Correction
+**Problem:** `passed=true` or a model SHA alone is not enough evidence if raw metrics/models use incompatible scientific semantics or time contracts.
 
-Formal Step1, Step2, gradient/ranking and Final summaries now first aggregate within rainfall group and then give independent rainfall groups equal weight.
+**Correction:** Policy Lock V4 validates stable implementation fingerprints, model checkpoint/time contracts, source metric contracts/aggregation, preregistered thresholds, runtime evidence and direct artifact hashes. The mandatory artifact set is limited to objects that define or prove the scientific experiment; unrelated repository files are not gates.
 
-## P0-8 — checkpoint time truncation
+## Causal data flow
 
-### Problem
-
-The branch replay API addresses checkpoints in integer minutes. A high-frequency Phase-0 state at 90 s must not silently become a 1 min replay prefix.
-
-### Correction
-
-Checkpoint design admits only exact minute-aligned states until the replay API itself is upgraded to second-level addressing.
-
-## P0-9 — Global Peak replay isolation
-
-### Problem
-
-Routing-step replay without unique report/output files can cause collision or large residual SWMM engine files during parallel Final evaluation.
-
-### Correction
-
-Formal Global Peak replay uses run-specific temporary `.rpt/.out` files and removes them in `finally`.
-
-## P0-10 — evidence provenance did not fully bind the implementation
-
-### Problem
-
-A model SHA or `passed=true` is insufficient if the raw metrics/model were generated under older code or a different discrete-time contract.
-
-### Correction
-
-Policy Lock V4 is code/time/data-bound. It verifies current source-tree hashes, model checkpoint contracts, Step1 history/model step, Step2 model step/horizon, raw metric contracts/aggregation, preregistered thresholds, runtime evidence and artifact hashes.
-
-## Causal data flow after correction
-
-### Online information at decision time t
-
-Allowed:
+### Online information allowed at time t
 
 ```text
 sparse depth/head history <= t
@@ -137,7 +82,7 @@ realised rainfall history <= t
 actuator target/current readback <= t
 actuator flow readback <= t
 frozen graph/device features
-causal rainfall forecast constructed from observed history
+causal rainfall forecast derived from observed history
 ```
 
 Forbidden:
@@ -153,43 +98,40 @@ Final truth
 
 ### Step1
 
-Maps the causal sparse history to the **current** full hydraulic state. Its target contains six physical hydraulic state channels; validation focuses on held-out unobserved-node reconstruction and is rainfall-group balanced.
+Maps causal sparse history to the **current** full hydraulic state. Its trajectory grid must equal the frozen model step; held-out validation is rainfall-group balanced.
 
 ### Step2
 
-Learns the frozen discrete-time transition:
+Learns the fixed discrete-time transition:
 
 ```text
 current full state
-+ current/future actuator setting sequence
-+ causal/exogenous rainfall sequence
++ actuator setting sequence
++ exogenous rainfall sequence
 + actuator physics/readback flow
 → future hydraulic trajectory + actuator flow
 ```
 
-Offline training uses realised future rainfall because it is an exogenous ground-truth driver needed to identify the physical transition. Online inference replaces it with causal forecast scenarios; future realised rainfall is never available to the controller.
+Offline training may use realised future rainfall as an exogenous physical driver. Online inference replaces it with causal forecast scenarios; future realised rainfall is never available to the controller.
 
 ### MPC
 
-Optimises all actuator settings continuously. There is no fixed facility set. Facilities whose optimal setting remains equal/near the current setting are naturally inactive; hydraulically useful facilities receive a non-zero setting change. `active_actuator_count_1e4` is reporting only, not a Top-K gate.
+Optimizes every writable actuator continuously. Facilities whose optimum stays near the current setting are naturally inactive; useful facilities receive a setting change. There is no fixed facility set. Diagnostic active-actuator counts do not create a Top-K gate.
 
-Primary objective is risk-adjusted cumulative TFV. Priority-site deterioration is a soft secondary preference within the TFV-near-optimal region.
+Primary objective is risk-adjusted cumulative TFV. Priority-site deterioration is a soft secondary preference inside the TFV-near-optimal region.
 
 ## TFV/PFV truth
 
-Instantaneous `Node.flooding` is a flow rate, not flooding volume.
-
-Authoritative branch/event truth is:
+Instantaneous `Node.flooding` is a rate, not a volume.
 
 ```text
-DeltaV_i = SWMM cumulative flooding_volume_i(end)
-         - SWMM cumulative flooding_volume_i(start)
-
+DeltaV_i = cumulative_SWMM_flooding_volume_i(end)
+         - cumulative_SWMM_flooding_volume_i(start)
 TFV = sum DeltaV_i over all hydraulic nodes
 PFV = sum DeltaV_i over the frozen eight PFV_CORE8 nodes
 ```
 
-The surrogate cannot query future SWMM cumulative statistics online. Its predicted volume is the shared trapezoidal integration of current + future predicted flooding rates.
+The surrogate predicts volume using the shared current+future trapezoidal flooding-rate operator; it never replaces authoritative SWMM cumulative truth in Final reporting.
 
 ## Baseline semantics
 
@@ -203,24 +145,18 @@ all_open
 all_closed
 ```
 
-No-control means no supervisory RTC: `[CONTROLS]` removed, no Python writes, intrinsic pump Startup/Shutoff/local physical behaviour preserved. It is neither All-open nor All-closed.
+No-control removes supervisory `[CONTROLS]` and makes no Python writes while preserving intrinsic pump Startup/Shutoff/local physical behavior. Fixed baselines are generated once and safely resumed by scientific/numerical lineage rather than recomputed by every downstream stage.
 
-Fixed baselines are generated once and reused through a code-bound cache rather than recomputed by later stages.
+## Rainfall study size
 
-## Remaining boundary between simulation research and field deployment
+Leakage-free rainfall-group splitting is mandatory. About 160 independent rainfall groups remains the recommended large-study target, not a hard software gate; pilot and development studies may run with smaller valid cohorts.
 
-The repository now provides a coherent **SWMM-authoritative real-time-control experiment**. Direct field-deployment claims require additional Wuhan SCADA/equipment metadata that cannot be inferred safely from the INP:
+## Simulation-to-field boundary
 
-- whether each facility is remotely writable;
-- discrete versus continuous hardware mode;
-- VFD availability for pumps;
-- true facility-specific ramp/dwell/interlock limits;
-- communication/readback latency and watchdog behaviour;
-- local fail-safe/manual override rules;
-- telemetry availability/reliability for actuator flow/readback channels.
+The repository supports a coherent SWMM-authoritative RTC experiment. Direct physical deployment still requires verified Wuhan facility/SCADA metadata including remotely writable status, discrete/continuous mode, VFD availability, true ramp/dwell/interlock limits, communication/readback latency, watchdog/fail-safe behavior and telemetry reliability.
 
-Until those data are verified, the correct claim is simulation-based RTC feasibility under the frozen SWMM actuator-setting contract, not immediate physical deployment of all 109 facilities.
+Until those data exist, the defensible claim is simulation-based RTC feasibility under the frozen SWMM actuator-setting contract, not immediate field deployment of all 109 facilities.
 
-## Final admissibility rule
+## Final admissibility
 
-No Formal/Final claim should be made until the new v0.6 data are generated from scratch under the final merged source tree and all Step1, Step2, D2 gradient, D3 joint-ranking, runtime and Policy Lock gates pass. Old Project6/earlier-RTC outputs are intentionally invalid for the new evidence chain.
+No Formal/Final performance claim should be made until v0.6 RTC-derived evidence has passed physical/priority preflight, Phase-0 timing, Step1, Step2, D2 gradient, D2+D3 joint ranking, development real-time acceptance, Policy Lock V4 and untouched five-strategy Final SWMM evaluation.
