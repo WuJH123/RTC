@@ -104,12 +104,7 @@ def _node_rainfall(
 
 
 def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
-    """Compile one authoritative D2/D3 branch to causal SI Step2 arrays.
-
-    State layout is ``[depth_m, head_m, flooding_m3s, volume_m3]``. The only exogenous
-    formal forcing is rainfall observed/forecast causally; authoritative SWMM runoff is
-    retained in raw evidence for diagnostics but excluded from model inputs.
-    """
+    """Compile one authoritative D2/D3 branch to causal SI Step2 arrays."""
 
     meta_path = Path(metadata_path)
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -152,10 +147,19 @@ def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
     )
 
 
-def compile_branches_to_npz(metadata_paths: list[str | Path], output_path: str | Path) -> Path:
+def compile_branches_to_npz(
+    metadata_paths: list[str | Path],
+    output_path: str | Path,
+    *,
+    provenance: pd.DataFrame | None = None,
+) -> Path:
+    """Stack same-schema/same-horizon branches and optional row-aligned provenance."""
+
     branches = [compile_branch_tensors(path) for path in metadata_paths]
     if not branches:
         raise ValueError("no branch metadata supplied")
+    if provenance is not None and len(provenance) != len(branches):
+        raise ValueError("provenance rows must align one-for-one with metadata paths")
     node_ids = branches[0].node_ids
     actuator_ids = branches[0].actuator_ids
     horizon = branches[0].settings.shape[0]
@@ -164,18 +168,29 @@ def compile_branches_to_npz(metadata_paths: list[str | Path], output_path: str |
             raise ValueError("branch topology/actuator ordering mismatch")
         if branch.settings.shape[0] != horizon:
             raise ValueError("branch horizons must match before stacking")
+    payload: dict[str, np.ndarray] = {
+        "initial_state": np.stack([b.initial_state for b in branches]),
+        "rainfall": np.stack([b.rainfall for b in branches]),
+        "settings": np.stack([b.settings for b in branches]),
+        "previous_actuator_flow": np.stack([b.previous_actuator_flow for b in branches]),
+        "target_states": np.stack([b.target_states for b in branches]),
+        "target_actuator_flows": np.stack([b.target_actuator_flows for b in branches]),
+        "node_ids": np.asarray(node_ids),
+        "actuator_ids": np.asarray(actuator_ids),
+        "action_or_sequence_sha256": np.asarray([b.action_or_sequence_sha256 for b in branches]),
+    }
+    if provenance is not None:
+        for column in (
+            "event_id",
+            "rainfall_group",
+            "scientific_split",
+            "development_fold",
+            "data_role",
+            "checkpoint_id",
+        ):
+            if column in provenance.columns:
+                payload[column] = provenance[column].fillna("").astype(str).to_numpy()
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        out,
-        initial_state=np.stack([b.initial_state for b in branches]),
-        rainfall=np.stack([b.rainfall for b in branches]),
-        settings=np.stack([b.settings for b in branches]),
-        previous_actuator_flow=np.stack([b.previous_actuator_flow for b in branches]),
-        target_states=np.stack([b.target_states for b in branches]),
-        target_actuator_flows=np.stack([b.target_actuator_flows for b in branches]),
-        node_ids=np.asarray(node_ids),
-        actuator_ids=np.asarray(actuator_ids),
-        action_or_sequence_sha256=np.asarray([b.action_or_sequence_sha256 for b in branches]),
-    )
+    np.savez_compressed(out, **payload)
     return out
