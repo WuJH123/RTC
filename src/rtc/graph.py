@@ -7,11 +7,14 @@ from typing import Iterable
 import numpy as np
 
 from .inp import ActuatorCatalog, discover_actuators, discover_nodes
+from .units import length_to_m
 
 
 _LINK_SECTIONS = {"CONDUITS", "PUMPS", "ORIFICES", "WEIRS", "OUTLETS"}
 _NODE_KIND = {"JUNCTIONS": 0, "OUTFALLS": 1, "STORAGE": 2, "DIVIDERS": 3}
 _ACTUATOR_KIND = {"pump": 0, "orifice": 1, "weir": 2, "outlet": 3}
+_SI_FLOW_UNITS = {"CMS", "LPS", "MLD"}
+_US_FLOW_UNITS = {"CFS", "GPM", "MGD"}
 
 
 @dataclass(frozen=True)
@@ -25,6 +28,7 @@ class GraphSchema:
     actuator_downstream: np.ndarray
     actuator_physics: np.ndarray
     actuator_physics_feature_names: tuple[str, ...]
+    system_units: str
 
 
 def _iter_rows(path: str | Path) -> Iterable[tuple[str, list[str]]]:
@@ -48,19 +52,34 @@ def _float(token: str, default: float = 0.0) -> float:
         return float(default)
 
 
-def build_graph_schema(path: str | Path, *, bidirectional: bool = True) -> GraphSchema:
-    """Compile a stable graph/feature schema directly from the frozen SWMM INP.
+def infer_system_units(path: str | Path) -> str:
+    """Infer SWMM SI/US system units from [OPTIONS] FLOW_UNITS."""
 
-    Dynamic-wave drainage systems can exhibit backwater and flow reversal, so message
-    passing is bidirectional by default even though physical link orientation is retained
-    separately for actuator upstream/downstream indexing.
+    for section, tokens in _iter_rows(path):
+        if section == "OPTIONS" and len(tokens) >= 2 and tokens[0].upper() == "FLOW_UNITS":
+            units = tokens[1].upper()
+            if units in _SI_FLOW_UNITS:
+                return "SI"
+            if units in _US_FLOW_UNITS:
+                return "US"
+            raise ValueError(f"unsupported SWMM FLOW_UNITS: {units}")
+    raise ValueError("[OPTIONS] FLOW_UNITS not found in INP")
+
+
+def build_graph_schema(path: str | Path, *, bidirectional: bool = True) -> GraphSchema:
+    """Compile stable graph/model features directly from the frozen SWMM INP.
+
+    Dynamic-wave systems can exhibit backwater and flow reversal, so message passing is
+    bidirectional by default. Physical actuator orientation is retained separately. All
+    dimensional static node features are converted to SI before entering the models.
     """
 
     node_ids = discover_nodes(path)
     node_index = {node: i for i, node in enumerate(node_ids)}
     catalog: ActuatorCatalog = discover_actuators(path)
+    system_units = infer_system_units(path)
 
-    # [invert_elevation, max_depth, one-hot node type x4]
+    # [invert_elevation_m, max_depth_m, one-hot node type x4]
     static = np.zeros((len(node_ids), 6), dtype=np.float32)
     seen_nodes: set[str] = set()
     physical_edges: list[tuple[int, int]] = []
@@ -69,11 +88,10 @@ def build_graph_schema(path: str | Path, *, bidirectional: bool = True) -> Graph
             nid = tokens[0]
             idx = node_index[nid]
             seen_nodes.add(nid)
-            static[idx, 0] = _float(tokens[1]) if len(tokens) > 1 else 0.0
-            # Junction/storage use token 2 as max depth. For outfalls/dividers where the
-            # layout differs, leave zero rather than guessing a semantic value.
+            raw_elevation = _float(tokens[1]) if len(tokens) > 1 else 0.0
+            static[idx, 0] = float(length_to_m(raw_elevation, system_units))
             if section in {"JUNCTIONS", "STORAGE"} and len(tokens) > 2:
-                static[idx, 1] = _float(tokens[2])
+                static[idx, 1] = float(length_to_m(_float(tokens[2]), system_units))
             static[idx, 2 + _NODE_KIND[section]] = 1.0
         if section in _LINK_SECTIONS and len(tokens) >= 3:
             upstream, downstream = tokens[1], tokens[2]
@@ -91,7 +109,6 @@ def build_graph_schema(path: str | Path, *, bidirectional: bool = True) -> Graph
 
     up = np.array([node_index[a.upstream_node] for a in catalog.actuators], dtype=np.int64)
     down = np.array([node_index[a.downstream_node] for a in catalog.actuators], dtype=np.int64)
-    # One-hot device class + explicit continuous bounds. No binary flag exists.
     physics = np.zeros((len(catalog.actuators), 6), dtype=np.float32)
     for i, actuator in enumerate(catalog.actuators):
         physics[i, _ACTUATOR_KIND[actuator.kind]] = 1.0
@@ -103,8 +120,8 @@ def build_graph_schema(path: str | Path, *, bidirectional: bool = True) -> Graph
         edge_index=edge_index,
         static_node_features=static,
         static_node_feature_names=(
-            "invert_elevation_raw",
-            "max_depth_raw",
+            "invert_elevation_m",
+            "max_depth_m",
             "is_junction",
             "is_outfall",
             "is_storage",
@@ -122,6 +139,7 @@ def build_graph_schema(path: str | Path, *, bidirectional: bool = True) -> Graph
             "min_setting",
             "max_setting",
         ),
+        system_units=system_units,
     )
 
 
@@ -139,5 +157,6 @@ def save_graph_schema(schema: GraphSchema, output_path: str | Path) -> Path:
         actuator_downstream=schema.actuator_downstream,
         actuator_physics=schema.actuator_physics,
         actuator_physics_feature_names=np.asarray(schema.actuator_physics_feature_names),
+        system_units=np.asarray(schema.system_units),
     )
     return out
