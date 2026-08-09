@@ -11,7 +11,7 @@ from .code_contract import rtc_source_tree_sha256
 from .dataset_compile import compile_branches_to_npz
 
 
-SHARD_CONTRACT = "STEP2_SHARDED_DATASET_V3_TIME_LOCKED"
+SHARD_CONTRACT = "STEP2_SHARDED_DATASET_V4_TIME_ENGINE_LOCKED"
 
 
 def sha256_file(path: str | Path) -> str:
@@ -23,7 +23,6 @@ def sha256_file(path: str | Path) -> str:
 
 
 def dataframe_sha256(frame: pd.DataFrame) -> str:
-    # Preserve row order because the manifest start_row references that exact order.
     text = frame.to_csv(index=False, lineterminator="\n")
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -36,7 +35,7 @@ def compile_step2_shards(
     expected_model_step_seconds: int | None = None,
     expected_horizon_steps: int | None = None,
 ) -> Path:
-    """Compile bounded-memory D2/D3 shards under one immutable temporal contract."""
+    """Compile bounded-memory D2/D3 shards under one immutable time/engine contract."""
 
     if shard_size <= 0:
         raise ValueError("shard_size must be positive")
@@ -48,6 +47,7 @@ def compile_step2_shards(
     frame = run_index.reset_index(drop=True)
     global_step: int | None = None
     global_horizon: int | None = None
+    global_engine: str | None = None
     for start in range(0, len(frame), shard_size):
         chunk = frame.iloc[start : start + shard_size].reset_index(drop=True)
         shard = out / f"step2_{start // shard_size:05d}.npz"
@@ -59,11 +59,12 @@ def compile_step2_shards(
         with np.load(shard, allow_pickle=False) as ds:
             step = int(ds["model_step_seconds"].item())
             horizon = int(ds["horizon_steps"].item())
+            engine = str(ds["swmm_engine_version"].item())
         if global_step is None:
-            global_step, global_horizon = step, horizon
-        elif step != global_step or horizon != global_horizon:
+            global_step, global_horizon, global_engine = step, horizon, engine
+        elif step != global_step or horizon != global_horizon or engine != global_engine:
             raise ValueError(
-                "Step2 shards do not share one frozen model_step_seconds/horizon_steps contract"
+                "Step2 shards do not share one frozen model-step/horizon/SWMM-engine contract"
             )
         shards.append(
             {
@@ -73,9 +74,10 @@ def compile_step2_shards(
                 "start_row": int(start),
                 "model_step_seconds": step,
                 "horizon_steps": horizon,
+                "swmm_engine_version": engine,
             }
         )
-    assert global_step is not None and global_horizon is not None
+    assert global_step is not None and global_horizon is not None and global_engine is not None
     if expected_model_step_seconds is not None and global_step != int(expected_model_step_seconds):
         raise ValueError(
             f"Step2 data step {global_step}s differs from frozen production step "
@@ -92,6 +94,7 @@ def compile_step2_shards(
         "shard_size": int(shard_size),
         "model_step_seconds": global_step,
         "horizon_steps": global_horizon,
+        "swmm_engine_version": global_engine,
         "source_run_index_sha256": dataframe_sha256(frame),
         "rtc_source_tree_sha256": rtc_source_tree_sha256(),
         "shards": shards,
@@ -108,11 +111,12 @@ def load_shard_manifest(path: str | Path) -> dict[str, object]:
     if payload.get("contract") != SHARD_CONTRACT:
         raise ValueError(f"not a {SHARD_CONTRACT} manifest")
     if payload.get("rtc_source_tree_sha256") != rtc_source_tree_sha256():
-        raise ValueError("Step2 shard manifest was compiled by a different RTC source tree")
+        raise ValueError("Step2 shard manifest was compiled by a different RTC scientific implementation")
     step = int(payload.get("model_step_seconds", 0))
     horizon = int(payload.get("horizon_steps", 0))
-    if step <= 0 or horizon <= 0:
-        raise ValueError("Step2 shard manifest lacks a valid time contract")
+    engine = str(payload.get("swmm_engine_version", "")).strip()
+    if step <= 0 or horizon <= 0 or not engine:
+        raise ValueError("Step2 shard manifest lacks a valid time/engine contract")
     shards = payload.get("shards")
     if not isinstance(shards, list) or not shards:
         raise ValueError("Step2 shard manifest is empty")
@@ -126,9 +130,13 @@ def load_shard_manifest(path: str | Path) -> dict[str, object]:
             raise ValueError("Step2 shard step differs from manifest")
         if int(item.get("horizon_steps", -1)) != horizon:
             raise ValueError("Step2 shard horizon differs from manifest")
+        if str(item.get("swmm_engine_version", "")) != engine:
+            raise ValueError("Step2 shard SWMM engine differs from manifest")
         with np.load(p, allow_pickle=False) as ds:
             if int(ds["model_step_seconds"].item()) != step:
                 raise ValueError(f"Step2 shard embedded time step differs: {p}")
             if int(ds["horizon_steps"].item()) != horizon:
                 raise ValueError(f"Step2 shard embedded horizon differs: {p}")
+            if str(ds["swmm_engine_version"].item()) != engine:
+                raise ValueError(f"Step2 shard embedded SWMM engine differs: {p}")
     return payload
