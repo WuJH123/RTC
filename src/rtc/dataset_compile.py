@@ -51,11 +51,7 @@ def _settings_for_intervals(meta: dict[str, object], times: np.ndarray, actuator
     raise ValueError("metadata has neither candidate_settings nor settings_sequence")
 
 
-def _resolve_outlet(
-    sid: str,
-    connection: dict[str, tuple[int, str]],
-    valid_nodes: set[str],
-) -> str | None:
+def _resolve_outlet(sid: str, connection: dict[str, tuple[int, str]], valid_nodes: set[str]) -> str | None:
     seen: set[str] = set()
     current = sid
     while current not in seen:
@@ -69,15 +65,7 @@ def _resolve_outlet(
     raise ValueError(f"subcatchment outlet cycle detected at {sid}")
 
 
-def _node_rainfall(
-    sub: pd.DataFrame,
-    *,
-    times: np.ndarray,
-    node_ids: tuple[str, ...],
-    system_units: str,
-) -> np.ndarray:
-    """Map realised rainfall at the interval start to ultimate receiving nodes."""
-
+def _node_rainfall(sub: pd.DataFrame, *, times: np.ndarray, node_ids: tuple[str, ...], system_units: str) -> np.ndarray:
     node_index = {nid: i for i, nid in enumerate(node_ids)}
     valid_nodes = set(node_ids)
     first = sub.sort_values("elapsed_seconds").groupby("subcatchment_id", sort=False).first()
@@ -97,15 +85,11 @@ def _node_rainfall(
             if receiving_node is not None:
                 rainfall_by_node.setdefault(receiving_node, []).append(float(row["rainfall"]))
         for receiving_node, values in rainfall_by_node.items():
-            forcing[ti, node_index[receiving_node], 0] = float(
-                rainfall_rate_to_mmhr(np.mean(values), system_units)
-            )
+            forcing[ti, node_index[receiving_node], 0] = float(rainfall_rate_to_mmhr(np.mean(values), system_units))
     return forcing
 
 
 def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
-    """Compile one authoritative D2/D3 branch to causal SI Step2 arrays."""
-
     meta_path = Path(metadata_path)
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     root = meta_path.parent
@@ -114,7 +98,6 @@ def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
     sub = pd.read_csv(root / meta["subcatchment_file"], compression="infer")
     flow_units = str(meta["flow_units"])
     system_units = str(meta["system_units"])
-
     node_ids = tuple(node["node_id"].astype(str).drop_duplicates().tolist())
     actuator_ids = tuple(act["actuator_id"].astype(str).drop_duplicates().tolist())
     times = np.array(sorted(node["elapsed_seconds"].unique()), dtype=int)
@@ -122,17 +105,14 @@ def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
         raise ValueError("branch needs checkpoint plus at least one post-action sample")
     if node.loc[node["elapsed_seconds"] == times[0], "phase"].iloc[0] != "PRE_ACTION_CHECKPOINT":
         raise ValueError("first branch sample must be PRE_ACTION_CHECKPOINT")
-
     depth = length_to_m(_pivot(node, times=times, ids=node_ids, id_col="node_id", value_col="depth"), system_units)
     head = length_to_m(_pivot(node, times=times, ids=node_ids, id_col="node_id", value_col="head"), system_units)
     flooding = flow_rate_to_m3s(_pivot(node, times=times, ids=node_ids, id_col="node_id", value_col="flooding"), flow_units)
     volume = volume_to_m3(_pivot(node, times=times, ids=node_ids, id_col="node_id", value_col="volume"), system_units)
     state = np.stack([depth, head, flooding, volume], axis=-1)
-
     flow = flow_rate_to_m3s(_pivot(act, times=times, ids=actuator_ids, id_col="actuator_id", value_col="flow"), flow_units)
     settings, action_sha = _settings_for_intervals(meta, times, actuator_ids)
     rainfall = _node_rainfall(sub, times=times[:-1], node_ids=node_ids, system_units=system_units)
-
     return BranchTensors(
         initial_state=state[0],
         rainfall=rainfall,
@@ -153,8 +133,6 @@ def compile_branches_to_npz(
     *,
     provenance: pd.DataFrame | None = None,
 ) -> Path:
-    """Stack same-schema/same-horizon branches and optional row-aligned provenance."""
-
     branches = [compile_branch_tensors(path) for path in metadata_paths]
     if not branches:
         raise ValueError("no branch metadata supplied")
@@ -175,18 +153,16 @@ def compile_branches_to_npz(
         "previous_actuator_flow": np.stack([b.previous_actuator_flow for b in branches]),
         "target_states": np.stack([b.target_states for b in branches]),
         "target_actuator_flows": np.stack([b.target_actuator_flows for b in branches]),
+        "elapsed_seconds": np.stack([b.elapsed_seconds for b in branches]),
         "node_ids": np.asarray(node_ids),
         "actuator_ids": np.asarray(actuator_ids),
         "action_or_sequence_sha256": np.asarray([b.action_or_sequence_sha256 for b in branches]),
     }
     if provenance is not None:
         for column in (
-            "event_id",
-            "rainfall_group",
-            "scientific_split",
-            "development_fold",
-            "data_role",
-            "checkpoint_id",
+            "event_id", "rainfall_group", "scientific_split", "development_fold",
+            "data_role", "checkpoint_id", "actuator_id", "base_setting",
+            "requested_setting", "base_action_sha256",
         ):
             if column in provenance.columns:
                 payload[column] = provenance[column].fillna("").astype(str).to_numpy()
