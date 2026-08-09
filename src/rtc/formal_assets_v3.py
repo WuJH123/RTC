@@ -4,8 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
-from .contracts import load_priority_nodes, require_nodes_exist
 from .context_features import NODE_CONTEXT_FEATURE_NAMES
+from .contracts import load_priority_nodes, require_nodes_exist
 from .graph import build_graph_schema, save_graph_schema
 from .inp import discover_nodes
 from .inp_lineage import physical_contract_sha256, write_physical_contract_manifest
@@ -26,8 +26,9 @@ STATE_SCHEMA = {
     "step1_observed_channels": ["depth", "head"],
     "step1_node_context_channels": list(NODE_CONTEXT_FEATURE_NAMES),
     "step2_exogenous_channels": ["causal_node_rainfall_mm_per_h"],
-    "tfv_pfv_truth": "SWMM cumulative Node.statistics flooding_volume over the defined event/horizon",
-    "instantaneous_flooding_channel": "rate only; never interpreted as TFV/PFV without time integration",
+    "tfv_pfv_truth": "SWMM cumulative Node.statistics flooding_volume over the exact event/horizon",
+    "predicted_volume_contract": "trapezoid integration of current plus future predicted flooding rate",
+    "instantaneous_flooding_channel": "rate only; never PFV/TFV without time integration",
     "forbidden_online_features": [
         "future_realized_SWMM_state",
         "future_realized_SWMM_runoff",
@@ -46,19 +47,19 @@ def _lines(path: str | Path) -> tuple[str, ...]:
     )
 
 
-def compile_assets_v2(
+def compile_assets_v3(
     *, inp_path: str | Path, priority_path: str | Path, sensor_path: str | Path, output_dir: str | Path
 ) -> dict[str, str]:
     inp = Path(inp_path)
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    nodes = discover_nodes(inp)
+    nodes = tuple(discover_nodes(inp))
     priority = load_priority_nodes(priority_path)
     sensors = _lines(sensor_path)
     require_nodes_exist(priority, nodes)
     require_nodes_exist(sensors, nodes)
     if len(priority) != 8 or len(set(priority)) != 8:
-        raise ValueError(f"formal reporting contract requires exactly 8 verified priority-node mappings, got {len(priority)}")
+        raise ValueError(f"Formal Wuhan reporting requires exactly 8 verified priority-node mappings, got {len(priority)}")
     if not sensors or len(set(sensors)) != len(sensors):
         raise ValueError("sensor layout must contain unique sensor node IDs")
 
@@ -67,10 +68,8 @@ def compile_assets_v2(
     physical_path = write_physical_contract_manifest(inp, out / "physical_contract.json")
     state_path = out / "state_schema.json"
     state_path.write_text(json.dumps(STATE_SCHEMA, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    if tuple(x["name"] + ("_m3s" if False else "") for x in []) != ():
-        raise RuntimeError("unreachable schema guard")
     if len(STATE_CHANNELS) != len(STATE_SCHEMA["state_channels"]):
-        raise RuntimeError("runtime compact state channel count differs from Formal state schema")
+        raise RuntimeError("runtime compact state channel count differs from frozen Formal state schema")
 
     type_names = ("PUMP", "ORIFICE", "WEIR", "OUTLET")
     actuators: list[dict[str, object]] = []
@@ -79,10 +78,6 @@ def compile_assets_v2(
         kind = type_names[int(physics[:4].argmax())]
         up_idx = int(graph.actuator_upstream[i])
         down_idx = int(graph.actuator_downstream[i])
-        feature_map = {
-            name: float(physics[j])
-            for j, name in enumerate(graph.actuator_physics_feature_names)
-        }
         actuators.append({
             "actuator_id": actuator_id,
             "kind": kind,
@@ -91,10 +86,14 @@ def compile_assets_v2(
             "min_setting": float(physics[4]),
             "max_setting": float(physics[5]),
             "continuous": True,
-            "physics_features": feature_map,
+            "physics_features": {
+                name: float(physics[j])
+                for j, name in enumerate(graph.actuator_physics_feature_names)
+            },
         })
+
     actuator_path = out / "actuator_catalog.json"
-    actuator_payload = {
+    actuator_path.write_text(json.dumps({
         "contract": "ACTUATOR_AGNOSTIC_CONTINUOUS_CATALOG_V3",
         "source_inp": str(inp.resolve()),
         "source_inp_sha256": sha256_file(inp),
@@ -105,10 +104,10 @@ def compile_assets_v2(
         "physics_feature_names": list(graph.actuator_physics_feature_names),
         "learned_identity_embedding_required": True,
         "actuators": actuators,
-    }
-    actuator_path.write_text(json.dumps(actuator_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
     audit_path = out / "formal_asset_audit.json"
-    audit = {
+    audit_path.write_text(json.dumps({
         "contract": "FORMAL_ASSET_AUDIT_V3_COMPACT_SI",
         "passed": True,
         "frozen_inp": str(inp.resolve()),
@@ -125,8 +124,7 @@ def compile_assets_v2(
         "actuator_catalog": str(actuator_path),
         "state_schema": str(state_path),
         "physical_contract": str(physical_path),
-    }
-    audit_path.write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {
         "graph_schema": str(graph_path),
         "actuator_catalog": str(actuator_path),
@@ -137,13 +135,13 @@ def compile_assets_v2(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Compile compact-SI frozen Formal RTC assets")
+    parser = argparse.ArgumentParser(description="Compile compact-SI frozen Formal RTC assets V3")
     parser.add_argument("--inp", required=True)
     parser.add_argument("--priority", required=True)
     parser.add_argument("--sensors", required=True)
     parser.add_argument("--out-dir", required=True)
     args = parser.parse_args()
-    payload = compile_assets_v2(
+    payload = compile_assets_v3(
         inp_path=args.inp,
         priority_path=args.priority,
         sensor_path=args.sensors,

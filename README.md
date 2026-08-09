@@ -1,131 +1,150 @@
-# Wuhan RTC
+# Wuhan RTC — large-system TFV-first framework
 
-Clean-slate research code for **state-adaptive real-time control (RTC) of a large urban drainage system** using `wuhan_v8_storage_retrofit.inp`.
+Research code for **sparse-sensing, differentiable-surrogate, state-adaptive real-time control of a large SWMM drainage network**.
 
-## Scientific goal
+The controller does **not** use rainfall-event IDs, rainfall-specific lookup schedules, a fixed active actuator subset, a pre-enumerated finite action library, or hard-binary pump assumptions. At each control update it should infer the current hydraulic state and decide online **which facilities are worth controlling, by how much, and when**.
 
-The controller must not depend on rainfall-event IDs, rainfall-specific schedules, a fixed actuator subset, or a pre-enumerated action library. At every update it should:
-
-1. reconstruct the current network-wide hydraulic state from sparse observations;
-2. predict future hydraulics under causal rainfall information and proposed continuous actuator settings;
-3. protect each of the eight observed real-world priority ponding locations from material deterioration relative to the fallback operation;
-4. minimise system-wide total flood volume (TFV) among safe controls;
-5. execute only the first move, verify readback, then re-observe and re-optimise.
+## Current scientific goal
 
 ```text
-Sparse sensors + realised rainfall + actuator readback
-                    |
-                    v
-          Step 1: state estimator
-                    |
-                    v
-       reconstructed hydraulic state
-                    |
-       causal rainfall forecast ensemble
-                    |
-                    v
- Step 2: differentiable hydraulic world model
-      setting -> facility flow -> network state
-                    |
-                    v
- Step 3: continuous receding-horizon MPC
-       all writable actuators eligible
-                    |
-          site-wise priority safety
-                    |
-         minimise risk-adjusted TFV
-                    |
-                    v
-        execute first move + readback
-                    |
-                    +---- repeat
+Sparse hydraulic sensors + realised causal rainfall + actuator readback
+                           |
+                           v
+                 Step 1: state reconstruction
+                           |
+                           v
+                 full current hydraulic state
+                           |
+                 causal rainfall scenarios
+                           |
+                           v
+       Step 2: differentiable hydraulic world model
+       setting -> facility flow -> network trajectory
+                           |
+                           v
+          Step 3: continuous receding-horizon MPC
+          every writable actuator remains eligible
+                           |
+               PRIMARY: minimise cumulative TFV
+                           |
+          SECONDARY: reduce priority-site deterioration
+            within a TFV-near-optimal solution set
+                           |
+                           v
+              execute first block + readback
+                           |
+                           +---- observe and repeat
 ```
 
-## Deliberate departures from the previous Project6 design
+### TFV/PFV contract
 
-- **No Engineering36 / fixed active actuator list.** Actuators are discovered from the INP (`PUMPS`, `ORIFICES`, `WEIRS`, `OUTLETS`).
-- **No binary pump assumption.** SWMM settings are represented continuously in `[0, 1]`; no code path hard-binarises pumps.
-- **No rainfall-ID policy.** Event names are metadata only, never policy features.
-- **No direct `state + action -> PFV/TFV` primary surrogate.** Flood objectives are derived from predicted hydraulic trajectories.
-- **No fixed K/Top-K control constraint.** Runtime actionability emerges from hydraulic state and the differentiable model.
-- **The eight priority locations remain first-class safety sites** because they come from observed ponding information.
-- **Priority safety is site-wise.** Improvement at one priority location cannot compensate large deterioration at another.
-- **Time horizons are experiment-derived configuration**, not immutable scientific constants.
+- **TFV is the primary control objective.** It is cumulative flooding volume over the
+  defined prediction horizon/event, summed over all nodes.
+- **PFV is not a hard admission constraint.** The eight observed ponding locations remain
+  important site-wise diagnostics and a soft lexicographic secondary preference. Some PFV
+  deterioration may be accepted when necessary for a meaningful system-wide TFV reduction.
+- `Node.flooding` is an instantaneous flow rate. It is never labelled PFV/TFV by itself.
+- Formal PFV/TFV truth comes from cumulative SWMM node statistics over the exact
+  event/horizon; sampled-rate integration is surrogate/diagnostic only.
+- Global Peak is reported separately and is not a hard MPC condition.
 
-## Safety / optimisation contract
+## Policy semantics: do not mix these
 
-The policy is lexicographic:
+- **Internal-RTC**: original frozen event INP, native `[CONTROLS]` enabled, **no Python
+  setting writes**.
+- **No-control**: same physical network and forcing, native `[CONTROLS]` disabled, **no
+  Python setting writes**. It is not all-open.
+- **Proposed / Hold / D1 / D2 / D3 / All-open / All-closed**: run from simulation start on
+  the controls-disabled physical base.
 
-1. actuator settings must be physically executable;
-2. independently calibrated one-sided bounds on flood-volume and depth deterioration must pass at **each** observed priority site relative to the fallback trajectory;
-3. optional risk-transfer protection may prevent material new flooding elsewhere;
-4. among safe controls, minimise rainfall-ensemble risk-adjusted TFV;
-5. use control movement/energy only as a tie-breaker when flood performance is practically equivalent.
+This isolation is essential for the uploaded Wuhan V8 model because native rules execute on
+an internal rule step that is much shorter than a normal RTC update; allowing native rules
+to coexist with Python branch actions would contaminate actuator-effect labels.
 
-Safety tolerances are frozen from independent calibration and/or justified engineering tolerances; they are not hard-coded scientific constants.
+## Uploaded Wuhan V8 compatibility audit
 
-## Data strategy
+The user-supplied `wuhan_v8_storage_retrofit(2).inp` was audited directly on 2026-08-09.
+See [`docs/WUHAN_V8_UPLOADED_INP_AUDIT_2026-08-09.md`](docs/WUHAN_V8_UPLOADED_INP_AUDIT_2026-08-09.md).
 
-- **D0/D1 hydraulic-state trajectories:** diverse rainfall/hydraulic regimes for Step 1 and base dynamics.
-- **D2 independent actuator probes:** each actuator is perturbed from the *same checkpoint* while all others remain fixed. This prevents the sequential-pulse contamination found in the previous project.
-- **D3 multi-actuator rollouts:** full-horizon trajectories for interactions and network propagation.
-- **D4 active learning:** add SWMM simulations only where the current model is uncertain, near thresholds, or has poor rollout/gradient fidelity.
+Key facts from that exact file:
 
-## Quick start
+- `FLOW_UNITS = CMS`, `FLOW_ROUTING = DYNWAVE`;
+- 932 hydraulic nodes, 1,167 conduits, 3,731 subcatchments;
+- 57 pumps + 42 orifices + 10 weirs = **109 eligible continuous actuators**;
+- 82/109 actuators are affected by native `[CONTROLS]`, including all 57 pumps;
+- source `ROUTING_STEP = 15 s`, `RULE_STEP = 10 s`, `REPORT/WET_STEP = 5 min`;
+- the eight node IDs currently stored in `data/priority_nodes.txt` are **0/8 present in
+  this uploaded INP**.
 
-The large Wuhan INP is intentionally not duplicated here. Reference the frozen file locally, for example:
+Therefore Formal priority/PFV evidence is blocked until the eight observed ponding sites are
+mapped to valid nodes in this exact model. The code fails fast instead of guessing IDs.
+
+## Data programme
+
+- **D0** — compact No-control / Internal-RTC full-event trajectories for hydraulic-state
+  coverage and baseline dynamics.
+- **D1** — development-only continuous exploration on the controls-disabled network to
+  expose Step1 to controlled states; every actuator remains eligible.
+- **D2** — same-checkpoint `u-epsilon / u / u+epsilon` actuator counterfactuals. Every
+  branch starts from the same prefix and native rules are disabled.
+- **D3** — multi-actuator continuous sequences for interactions and long-horizon rollout.
+- **D4** — active additions only where held-out rollout/gradient/ranking evidence shows a
+  coverage gap.
+
+### Compact storage contract
+
+Formal new data is stored as compressed SI arrays plus exact node statistics and JSON
+lineage. Raw node/actuator CSV and SWMM `.out/.rpt` are debug-only and disabled by default.
+Per-subcatchment realised runoff is not persisted as a formal model input.
+
+Compact state channels are:
+
+`depth_m, head_m, flooding_m3s, volume_m3, total_inflow_m3s, total_outflow_m3s`.
+
+Step1 windows are sliced lazily from compact trajectories instead of materialized to disk.
+Step2 branches are compiled into bounded-size shards. This permits changing causal history
+or batch configuration without rerunning authoritative SWMM.
+
+## Hardware path: 16 CPU workers + RTX 4060 8GB
+
+For SWMM generation use independent processes, normally:
 
 ```text
-data/wuhan_v8_storage_retrofit.inp
+--workers 16 --swmm-threads-per-process 1
 ```
 
-Install the core package:
+The source INP has `THREADS=2`; using 16 SWMM processes without overriding that would
+oversubscribe the CPU. The data runners create a policy-isolated runtime INP with one engine
+thread per process and support content-complete resume.
 
-```bash
-python -m pip install -e .[dev]
+For GPU training use the `*-large` commands. Defaults use AMP, small micro-batches and
+gradient accumulation. Step1 uses lazy trajectory-local batches; Step2 streams shards so
+an 8GB GPU does not require loading the complete Wuhan dataset at once.
+
+## Recommended entry point
+
+Read [`FORMAL_PIPELINE_LATEST.md`](FORMAL_PIPELINE_LATEST.md). It is the only supported
+new-Formal workflow. In particular, do not revive the old materialized-window/monolithic
+Step2 commands for this large model.
+
+Typical beginning:
+
+```powershell
+rtc-inp-audit-v2 `
+  --inp data/wuhan_v8_storage_retrofit.inp `
+  --priority data/priority_nodes.txt `
+  --out outputs/preflight/inp_audit.json
 ```
 
-For authoritative local SWMM data generation also install:
+If the priority audit fails, resolve the observed points before Formal claims. Then proceed
+with rainfall-group splitting, compact D0/D1, stratified checkpoints, compact D2, Phase-0
+time-scale analysis, frozen graph/assets, lazy Step1, D3 + Step2 shards, held-out
+acceptance/gradient/ranking, development closed-loop, Policy Lock V5 and untouched Final V4.
 
-```bash
-python -m pip install -e .[swmm]
-```
+## Evidence boundary
 
-Audit the INP and automatically discover all writable actuators:
-
-```bash
-rtc-audit-inp \
-  --inp data/wuhan_v8_storage_retrofit.inp \
-  --priority data/priority_nodes.txt
-```
-
-Prepare a checkpoint CSV with `checkpoint_id`, `checkpoint_minutes`, optional event/rainfall metadata, and one column `setting:<actuator_id>` for every discovered actuator. Then create independent single-actuator probe branches:
-
-```bash
-rtc-design-probes \
-  --inp data/wuhan_v8_storage_retrofit.inp \
-  --checkpoints checkpoint_settings.csv \
-  --out outputs/probe_manifest.csv
-```
-
-Run a small authoritative SWMM probe batch locally:
-
-```bash
-rtc-run-probes \
-  --manifest outputs/probe_manifest.csv \
-  --inp data/wuhan_v8_storage_retrofit.inp \
-  --out-dir outputs/d2_probe_runs \
-  --limit 10
-```
-
-Each SWMM branch starts a fresh simulation, replays the same native prefix without Python overrides, records the pre-action checkpoint, applies the complete continuous action setting, and records node depth/head/flooding/volume plus actuator target/current setting and flow.
-
-Run unit tests:
-
-```bash
-pytest -q
-```
-
-## Status
-
-V1 intentionally does not import old Project6 training artefacts as authority. Old assets may only be reused after explicit physical-lineage, compatibility and leakage audits.
+Only authoritative SWMM runs can support final PFV/TFV/Global-Peak claims. Surrogate outputs
+are used for state reconstruction, prediction, gradient search and online decision-making;
+they do not replace Final SWMM truth. Final rainfall groups are never used for fitting,
+priority mapping, sensor selection, time-scale selection, uncertainty calibration or
+hyperparameter tuning.

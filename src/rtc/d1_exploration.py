@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .baselines import write_no_control_inp
 from .closed_loop import CausalObservation, ControllerAction, run_authoritative_closed_loop
 
 
@@ -35,10 +36,11 @@ class ContinuousExplorationController:
         if self.current is None:
             self.current = readback.copy()
         eligible = self.rng.random(len(readback)) < self.change_probability
-        # All facilities are independently eligible at every update; the stochastic mask is
-        # data coverage only, never a frozen online active set.
-        delta = self.rng.normal(0.0, self.perturbation_std, size=len(readback))
-        delta = np.clip(delta, -self.max_delta, self.max_delta)
+        delta = np.clip(
+            self.rng.normal(0.0, self.perturbation_std, size=len(readback)),
+            -self.max_delta,
+            self.max_delta,
+        )
         proposed = np.clip(self.current + eligible * delta, 0.0, 1.0)
         self.current = proposed
         return ControllerAction(
@@ -52,8 +54,8 @@ class ContinuousExplorationController:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate development-only controlled D1 full-event trajectory")
-    parser.add_argument("--inp", required=True)
+    parser = argparse.ArgumentParser(description="Generate development-only controlled D1 compact trajectory")
+    parser.add_argument("--inp", required=True, help="frozen source event INP; native controls will be disabled")
     parser.add_argument("--sensors", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--run-id", required=True)
@@ -64,6 +66,7 @@ def main() -> None:
     parser.add_argument("--perturbation-std", type=float, default=0.12)
     parser.add_argument("--change-probability", type=float, default=0.35)
     parser.add_argument("--max-delta", type=float, default=0.20)
+    parser.add_argument("--swmm-threads", type=int, default=1)
     args = parser.parse_args()
     sensors = tuple(
         line.strip()
@@ -72,6 +75,8 @@ def main() -> None:
     )
     if args.control_update_seconds % args.model_step_seconds:
         raise ValueError("control update must be an integer multiple of model step")
+    runtime_inp = Path(args.out_dir) / f"{args.run_id}.controls_disabled.inp"
+    write_no_control_inp(args.inp, runtime_inp, swmm_threads=args.swmm_threads)
     controller = ContinuousExplorationController(
         seed=args.seed,
         perturbation_std=args.perturbation_std,
@@ -79,7 +84,7 @@ def main() -> None:
         max_delta_per_update=args.max_delta,
     )
     result = run_authoritative_closed_loop(
-        inp_path=args.inp,
+        inp_path=runtime_inp,
         output_dir=args.out_dir,
         run_id=args.run_id,
         sensor_nodes=sensors,
@@ -89,11 +94,13 @@ def main() -> None:
         observation_update_seconds=args.model_step_seconds,
         record_stride_seconds=args.model_step_seconds,
         exact_global_peak=False,
+        save_raw_csv=False,
     )
     sidecar = Path(args.out_dir) / f"{args.run_id}.d1_exploration.json"
     payload = {
-        "contract": "D1_DEVELOPMENT_CONTINUOUS_EXPLORATION_V1",
+        "contract": "D1_DEVELOPMENT_CONTINUOUS_EXPLORATION_V2",
         "scientific_split_allowed": "development/train",
+        "native_controls_enabled": False,
         "all_actuators_eligible": True,
         "fixed_active_subset": False,
         "binary_mask": False,
@@ -102,6 +109,7 @@ def main() -> None:
         "change_probability": args.change_probability,
         "max_delta_per_update": args.max_delta,
         "main_metadata_path": result.metadata_path,
+        "compact_path": result.compact_path,
     }
     sidecar.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(payload, indent=2))

@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .units import flow_rate_to_m3s
+from .units import flow_rate_to_m3s, length_to_m
 
 
 @dataclass(frozen=True)
@@ -34,21 +34,22 @@ def compile_event_metrics(
     *,
     priority_nodes: tuple[str, ...],
     flow_units: str,
+    system_units: str = "SI",
     post_action_only: bool = True,
 ) -> EventMetrics:
-    """Derive paper metrics from authoritative sampled SWMM node outputs.
+    """Derive diagnostic metrics from sampled SWMM node outputs.
 
-    The function integrates each node separately to avoid multiplying volume by the
-    number of nodes or mixing duplicate timestamps. Flood rates are explicitly converted
-    from the simulation's configured flow units to m3/s.
+    Authoritative Formal PFV/TFV should prefer cumulative SWMM node statistics. This helper
+    is retained for diagnostics. Global Peak is the maximum over time of the *simultaneous
+    network sum* of flooding rates, not the maximum flooding rate at one individual node.
     """
 
-    required = {"elapsed_seconds", "phase", "node_id", "depth", "flooding"}
+    required = {"elapsed_seconds", "node_id", "depth", "flooding"}
     missing = sorted(required - set(node_frame.columns))
     if missing:
         raise ValueError(f"node frame missing columns: {missing}")
     frame = node_frame.copy()
-    if post_action_only:
+    if post_action_only and "phase" in frame.columns:
         frame = frame[frame["phase"] == "POST_ACTION"]
     if frame.empty:
         raise ValueError("no evaluation samples available")
@@ -60,12 +61,20 @@ def compile_event_metrics(
     tfv = float(sum(volumes.values()))
     priority_set = set(priority_nodes)
     priority_volume = float(sum(v for n, v in volumes.items() if n in priority_set))
-    flooding_m3s = flow_rate_to_m3s(frame["flooding"].to_numpy(dtype=float), flow_units)
-    global_peak = float(np.clip(flooding_m3s, 0.0, None).max(initial=0.0))
+
+    converted = frame[["elapsed_seconds", "flooding"]].copy()
+    converted["flooding_m3s"] = flow_rate_to_m3s(
+        converted["flooding"].to_numpy(dtype=float), flow_units
+    )
+    simultaneous = converted.groupby("elapsed_seconds", sort=True)["flooding_m3s"].sum()
+    global_peak = float(np.clip(simultaneous.to_numpy(dtype=float), 0.0, None).max(initial=0.0))
+
     max_depth: dict[str, float] = {}
     for node in priority_nodes:
         subset = frame.loc[frame["node_id"].astype(str) == node, "depth"]
-        max_depth[node] = float(subset.max()) if not subset.empty else float("nan")
+        max_depth[node] = (
+            float(length_to_m(float(subset.max()), system_units)) if not subset.empty else float("nan")
+        )
     return EventMetrics(
         tfv_m3=tfv,
         priority_flood_volume_m3=priority_volume,

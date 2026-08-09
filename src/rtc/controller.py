@@ -2,17 +2,23 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Protocol
 
 import numpy as np
 import torch
 
 from .closed_loop import CausalObservation, ControllerAction
+from .context_features import build_node_context
 from .forecast import PersistenceDecayForecast
 from .graph import GraphSchema
 from .models import SparseStateEstimator
-from .mpc import ContinuousSafetyMPC
 from .runtime import choose_first_move, verify_setting_readback
+
+
+class MPCProtocol(Protocol):
+    model: torch.nn.Module
+
+    def optimize(self, **kwargs): ...
 
 
 FallbackSequenceProvider = Callable[[CausalObservation, int], np.ndarray]
@@ -49,16 +55,16 @@ def hold_current_fallback(observation: CausalObservation, horizon_steps: int) ->
 class TorchMPCController:
     """Step1 -> causal rainfall forecast -> Step2/MPC -> executable first move.
 
-    ``observe`` is called every frozen model step so the Step1 history cadence matches
-    training. ``decide`` is called only every control update; an action block therefore
-    may span several model steps without reducing sensing frequency.
+    Step1 receives node-local rainfall/actuator context rather than broadcasting the full
+    109-actuator vector to every node. Priority PFV remains a soft optimizer preference;
+    fallback here is reserved for invalid/runtime/readback conditions.
     """
 
     def __init__(
         self,
         *,
         step1: SparseStateEstimator,
-        mpc: ContinuousSafetyMPC,
+        mpc: MPCProtocol,
         graph: GraphSchema,
         sensor_nodes: tuple[str, ...],
         forecast: PersistenceDecayForecast | None = None,
@@ -104,8 +110,6 @@ class TorchMPCController:
             raise ValueError("rainfall observation length mismatch")
 
     def observe(self, obs: CausalObservation) -> None:
-        """Append one causal model-step observation exactly once."""
-
         self._validate_observation(obs)
         if self.last_observed_elapsed_seconds == obs.elapsed_seconds:
             return
@@ -118,13 +122,13 @@ class TorchMPCController:
         observed[self.sensor_index, 1] = np.asarray(obs.sensor_head_m, dtype=np.float32)
         mask[self.sensor_index, :] = 1.0
         rain = np.asarray(obs.observed_rainfall_mmhr, dtype=np.float32).reshape(n, 1)
-        context = np.concatenate(
-            [
-                np.array([float(rain.mean()), float(rain.max())], dtype=np.float32),
-                np.asarray(obs.actuator_target_setting, dtype=np.float32),
-                np.asarray(obs.actuator_current_setting, dtype=np.float32),
-                np.asarray(obs.actuator_flow_m3s, dtype=np.float32),
-            ]
+        context = build_node_context(
+            rainfall_mmhr=rain,
+            actuator_setting=np.asarray(obs.actuator_current_setting, dtype=np.float32),
+            actuator_flow_m3s=np.asarray(obs.actuator_flow_m3s, dtype=np.float32),
+            actuator_upstream=self.graph.actuator_upstream,
+            actuator_downstream=self.graph.actuator_downstream,
+            node_count=n,
         )
         self.observed_history.append(observed)
         self.mask_history.append(mask)
@@ -215,9 +219,12 @@ class TorchMPCController:
                 learning_rate=self.config.optimizer_learning_rate,
                 control_block_steps=self.config.control_block_steps,
             )
+            candidate_valid = bool(
+                getattr(result, "candidate_valid", getattr(result, "admissible", False))
+            )
             decision = choose_first_move(
                 optimized_sequence=result.settings.detach().cpu().numpy(),
-                surrogate_admissible=result.admissible,
+                surrogate_admissible=candidate_valid,
                 fallback_first_move=fallback[0],
                 current_settings=current,
                 min_settings=0.0,
@@ -225,20 +232,26 @@ class TorchMPCController:
                 max_delta_per_update=self.config.max_setting_delta_per_update,
             )
             self.last_requested = decision.requested.copy()
+            diagnostics: dict[str, float | int | bool | str] = {
+                "fallback_policy": self.config.fallback_policy_id,
+                "control_block_steps": self.config.control_block_steps,
+                "candidate_valid": candidate_valid,
+                "tfv_risk_m3": float(result.tfv_risk_m3),
+                "projected_first_move": decision.projected,
+            }
+            for name in (
+                "primary_tfv_reference_m3",
+                "priority_positive_flood_deterioration_m3",
+                "worst_site_flood_deterioration_m3",
+                "worst_site_depth_deterioration_m",
+                "tfv_near_opt_excess_m3",
+            ):
+                if hasattr(result, name):
+                    diagnostics[name] = float(getattr(result, name))
             return ControllerAction(
                 settings=dict(zip(self.graph.actuator_ids, decision.requested, strict=True)),
                 source=decision.source,
-                diagnostics={
-                    "fallback_policy": self.config.fallback_policy_id,
-                    "control_block_steps": self.config.control_block_steps,
-                    "surrogate_admissible": result.admissible,
-                    "tfv_risk_m3": result.tfv_risk_m3,
-                    "worst_site_flood_deterioration_m3": result.worst_site_flood_deterioration_m3,
-                    "worst_site_depth_deterioration_m": result.worst_site_depth_deterioration_m,
-                    "max_site_flood_margin_m3": result.max_site_flood_margin_m3,
-                    "max_site_depth_margin_m": result.max_site_depth_margin_m,
-                    "projected_first_move": decision.projected,
-                },
+                diagnostics=diagnostics,
             )
         except Exception as exc:
             self.last_requested = fallback[0].copy()

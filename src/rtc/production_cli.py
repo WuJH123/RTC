@@ -8,15 +8,16 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .baselines import write_passive_no_rtc_inp
+from .baselines import canonical_baseline_id, write_no_control_inp
 from .calibration import SafetyCalibration
 from .closed_loop import CausalObservation, ControllerAction, run_authoritative_closed_loop
 from .contracts import load_priority_nodes
 from .controller import ControllerConfig, TorchMPCController
 from .forecast import PersistenceDecayForecast
 from .graph import GraphSchema
+from .inp_runtime import sha256_file
 from .models import DifferentiableHydraulicWorldModel, SparseStateEstimator
-from .mpc import ContinuousSafetyMPC, StateLayout
+from .tfv_mpc import ContinuousTFVFirstMPC
 
 
 def _load_lines(path: str | Path) -> tuple[str, ...]:
@@ -66,16 +67,6 @@ def _load_step2(path: str | Path, device: torch.device) -> DifferentiableHydraul
     return model.to(device).eval()
 
 
-def _site_vector(config: dict[str, object], key: str, priority: tuple[str, ...]) -> np.ndarray:
-    raw = config.get(key)
-    if not isinstance(raw, dict):
-        raise ValueError(f"production config requires object {key}")
-    missing = [node for node in priority if node not in raw]
-    if missing:
-        raise ValueError(f"{key} missing priority nodes: {missing}")
-    return np.asarray([float(raw[node]) for node in priority], dtype=np.float32)
-
-
 def _controller_config(raw: dict[str, object], *, control_block_steps: int) -> ControllerConfig:
     allowed = {f.name for f in fields(ControllerConfig)}
     payload = {k: v for k, v in raw.items() if k in allowed}
@@ -106,24 +97,75 @@ def _frozen_hold_controller():
     return controller
 
 
+def _priority_and_calibration(
+    *,
+    priority_path: str | None,
+    calibration_path: str | None,
+    graph: GraphSchema,
+    device: torch.device,
+) -> tuple[torch.Tensor | None, torch.Tensor | float, torch.Tensor | float]:
+    if not priority_path:
+        if calibration_path:
+            raise ValueError("--calibration requires --priority")
+        return None, 0.0, 0.0
+    priority = load_priority_nodes(priority_path)
+    missing = sorted(set(priority) - set(graph.node_ids))
+    if missing:
+        raise ValueError(
+            "priority mapping is incompatible with this INP/graph; do not guess IDs. "
+            f"Missing: {missing}"
+        )
+    pidx = torch.as_tensor([graph.node_ids.index(node) for node in priority], dtype=torch.long, device=device)
+    if not calibration_path:
+        return pidx, 0.0, 0.0
+    calibration = SafetyCalibration.from_json(calibration_path)
+    if calibration.priority_nodes != priority:
+        raise ValueError("calibration priority-node order differs from priority file")
+    return (
+        pidx,
+        torch.as_tensor(calibration.flood_error_ucb_m3, dtype=torch.float32, device=device),
+        torch.as_tensor(calibration.depth_error_ucb_m, dtype=torch.float32, device=device),
+    )
+
+
+def _controls_disabled_runtime(
+    *, source_inp: Path, cache_dir: Path, swmm_threads: int
+) -> Path:
+    source_sha = sha256_file(source_inp)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    runtime = cache_dir / f"{source_sha[:24]}.controls_disabled.t{swmm_threads}.inp"
+    if not runtime.is_file():
+        write_no_control_inp(source_inp, runtime, swmm_threads=swmm_threads)
+    return runtime
+
+
 def run_policy_main() -> None:
-    parser = argparse.ArgumentParser(description="Run proposed RTC or a frozen authoritative baseline")
-    parser.add_argument("--strategy", required=True, choices=[
-        "proposed", "native_rules", "passive_no_rtc", "hold", "all_open", "all_closed"
-    ])
+    parser = argparse.ArgumentParser(
+        description="Run TFV-first Proposed RTC or an explicitly separated authoritative baseline"
+    )
+    parser.add_argument(
+        "--strategy",
+        required=True,
+        choices=[
+            "proposed", "internal_rtc", "no_control", "hold", "all_open", "all_closed",
+            "native_rules", "passive_no_rtc",
+        ],
+    )
     parser.add_argument("--inp", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--sensors", required=True)
-    parser.add_argument("--priority", required=True)
+    parser.add_argument("--priority", help="optional soft-priority node file; Formal use requires a verified mapping")
     parser.add_argument("--config", required=True)
     parser.add_argument("--graph")
     parser.add_argument("--step1")
     parser.add_argument("--step2")
     parser.add_argument("--calibration")
+    parser.add_argument("--runtime-inp-cache-dir", help="shared cache for controls-disabled INPs; defaults to <out-dir>/_runtime_inp")
     parser.add_argument("--device")
     args = parser.parse_args()
 
+    strategy = canonical_baseline_id(args.strategy)
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
     model_step_seconds = int(cfg["model_step_seconds"])
     control_update_seconds = int(cfg["control_update_seconds"])
@@ -133,44 +175,51 @@ def run_policy_main() -> None:
     control_block_steps = control_update_seconds // model_step_seconds
     control_start_minutes = int(cfg.get("control_start_minutes", 0))
     sensors = _load_lines(args.sensors)
-    priority = load_priority_nodes(args.priority)
     controller = None
-    inp_for_run = Path(args.inp)
+    source_inp = Path(args.inp)
+    inp_for_run = source_inp
 
-    if args.strategy == "proposed":
-        for name, value in (("graph", args.graph), ("step1", args.step1), ("step2", args.step2), ("calibration", args.calibration)):
+    if strategy != "internal_rtc":
+        cache_dir = Path(args.runtime_inp_cache_dir) if args.runtime_inp_cache_dir else Path(args.out_dir) / "_runtime_inp"
+        inp_for_run = _controls_disabled_runtime(
+            source_inp=source_inp,
+            cache_dir=cache_dir,
+            swmm_threads=int(cfg.get("swmm_threads", 1)),
+        )
+
+    if strategy == "proposed":
+        for name, value in (("graph", args.graph), ("step1", args.step1), ("step2", args.step2)):
             if not value:
                 raise ValueError(f"--{name} is required for proposed")
         device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
         graph = _load_graph(args.graph)
-        if not set(priority).issubset(graph.node_ids):
-            raise ValueError("priority nodes are not all present in the frozen graph schema")
         if not set(sensors).issubset(graph.node_ids):
             raise ValueError("sensor nodes are not all present in the frozen graph schema")
         step1 = _load_step1(args.step1, device)
         step2 = _load_step2(args.step2, device)
-        calibration = SafetyCalibration.from_json(args.calibration)
-        if calibration.priority_nodes != priority:
-            raise ValueError("calibration priority-node order differs from production priority file")
-        priority_index = torch.as_tensor(
-            [graph.node_ids.index(node) for node in priority], dtype=torch.long, device=device
+        pidx, flood_ucb, depth_ucb = _priority_and_calibration(
+            priority_path=args.priority,
+            calibration_path=args.calibration,
+            graph=graph,
+            device=device,
         )
-        safety_cfg = cfg.get("safety", {})
-        if not isinstance(safety_cfg, dict):
-            raise ValueError("config safety must be an object")
-        mpc = ContinuousSafetyMPC(
+        objective_cfg = cfg.get("objective", {})
+        if not isinstance(objective_cfg, dict):
+            raise ValueError("config objective must be an object")
+        mpc = ContinuousTFVFirstMPC(
             step2,
-            layout=StateLayout(depth_index=int(cfg.get("depth_state_index", 0)), flood_rate_index=int(cfg.get("flood_rate_state_index", 2))),
-            priority_indices=priority_index,
+            depth_index=int(cfg.get("depth_state_index", 0)),
+            flood_rate_index=int(cfg.get("flood_rate_state_index", 2)),
+            priority_indices=pidx,
             dt_seconds=model_step_seconds,
-            per_site_flood_budget_m3=torch.as_tensor(_site_vector(cfg, "flood_budget_m3", priority), device=device),
-            per_site_depth_budget_m=torch.as_tensor(_site_vector(cfg, "depth_budget_m", priority), device=device),
-            flood_error_ucb_m3=torch.as_tensor(calibration.flood_error_ucb_m3, dtype=torch.float32, device=device),
-            depth_error_ucb_m=torch.as_tensor(calibration.depth_error_ucb_m, dtype=torch.float32, device=device),
-            forecast_safety_quantile=float(safety_cfg.get("forecast_safety_quantile", 0.95)),
-            tfv_cvar_alpha=float(safety_cfg.get("tfv_cvar_alpha", 0.90)),
-            safety_penalty=float(safety_cfg.get("safety_penalty", 1e3)),
-            movement_tiebreak=float(safety_cfg.get("movement_tiebreak", 1e-5)),
+            flood_error_ucb_m3=flood_ucb,
+            depth_error_ucb_m=depth_ucb,
+            forecast_quantile=float(objective_cfg.get("forecast_quantile", 0.95)),
+            tfv_cvar_alpha=float(objective_cfg.get("tfv_cvar_alpha", 0.90)),
+            tfv_near_opt_relative=float(objective_cfg.get("tfv_near_opt_relative", 0.01)),
+            tfv_near_opt_absolute_m3=float(objective_cfg.get("tfv_near_opt_absolute_m3", 1.0)),
+            near_opt_penalty=float(objective_cfg.get("near_opt_penalty", 1e4)),
+            movement_tiebreak=float(objective_cfg.get("movement_tiebreak", 1e-6)),
         )
         forecast_cfg = cfg.get("forecast", {})
         if not isinstance(forecast_cfg, dict):
@@ -192,14 +241,11 @@ def run_policy_main() -> None:
             config=_controller_config(controller_cfg_raw, control_block_steps=control_block_steps),
             device=device,
         )
-    elif args.strategy == "passive_no_rtc":
-        inp_for_run = Path(args.out_dir) / f"{args.run_id}.passive_no_rtc.inp"
-        write_passive_no_rtc_inp(args.inp, inp_for_run)
-    elif args.strategy == "hold":
+    elif strategy == "hold":
         controller = _frozen_hold_controller()
-    elif args.strategy == "all_open":
+    elif strategy == "all_open":
         controller = _constant_controller(1.0)
-    elif args.strategy == "all_closed":
+    elif strategy == "all_closed":
         controller = _constant_controller(0.0)
 
     result = run_authoritative_closed_loop(
@@ -212,14 +258,16 @@ def run_policy_main() -> None:
         control_update_seconds=control_update_seconds,
         observation_update_seconds=model_step_seconds,
         record_stride_seconds=record_stride_seconds,
-        exact_global_peak=bool(cfg.get("exact_global_peak", True)),
+        exact_global_peak=bool(cfg.get("exact_global_peak", False)),
     )
-    payload = {
-        "strategy": args.strategy,
+    print(json.dumps({
+        "strategy": strategy,
+        "source_inp": str(source_inp.resolve()),
+        "runtime_inp": str(inp_for_run.resolve()),
+        "native_controls_enabled": strategy == "internal_rtc",
         "metadata_path": result.metadata_path,
         "node_statistics_path": result.node_statistics_path,
         "decisions": result.decisions,
         "global_peak_flood_rate_m3s": result.global_peak_flood_rate_m3s,
         "flow_routing_error_pct": result.flow_routing_error_pct,
-    }
-    print(json.dumps(payload, indent=2))
+    }, indent=2))
