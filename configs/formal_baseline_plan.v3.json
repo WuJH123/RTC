@@ -1,25 +1,36 @@
 {
-  "contract": "FORMAL_BASELINE_PLAN_V4_NO_DUPLICATE_HOLD",
+  "contract": "FORMAL_BASELINE_PLAN_V5_DYNAMIC_RULE_COMPARATORS",
   "strategies": [
     "proposed",
     "no_control",
     "internal_rtc",
+    "auto_rbc",
+    "efd",
     "all_open",
     "all_closed"
   ],
   "notes": {
-    "proposed": "TFV-first sparse-state + differentiable continuous MPC. Runs on the controls-disabled physical base; priority PFV is soft/diagnostic, never a hard admission gate.",
-    "no_control": "No-supervisory-RTC. Remove executable [CONTROLS] and make no Python writes, while preserving physical forcing, pump curves/initial status and intrinsic [PUMPS] Startup/Shutoff level logic. This is neither All-open nor All-closed.",
-    "internal_rtc": "Original frozen event INP with native [CONTROLS] enabled and no Python setting writes.",
-    "all_open": "Extreme diagnostic comparator on the controls-disabled base; from the first common control decision command every eligible continuous setting to 1.0 and hold it there.",
-    "all_closed": "Extreme diagnostic comparator on the controls-disabled base; from the first common control decision command every eligible continuous setting to 0.0 and hold it there."
+    "proposed": "TFV-first sparse-state + differentiable continuous MPC. Priority PFV is soft/diagnostic rather than a hard admission gate.",
+    "no_control": "No-supervisory-RTC: native [CONTROLS] disabled and no Python writes; passive/local device physics remain.",
+    "internal_rtc": "Original event INP with native [CONTROLS] enabled and no Python setting writes.",
+    "auto_rbc": "Causal automatically parameterized local rule-based control. Actuator-adjacent current node depths are normalized by INP design max depth; high upstream filling opens the link and severe downstream filling suppresses discharge. No forecast or event-specific tuning.",
+    "efd": "Storage-aware Equal Filling Degree control. Current storage filling degrees are compared globally; more-filled storages receive stronger outgoing settings so storage utilization is equalized. No forecast or event-specific tuning.",
+    "all_open": "Diagnostic extreme: all eligible settings commanded to 1.0 from the common first control decision.",
+    "all_closed": "Diagnostic extreme: all eligible settings commanded to 0.0 from the common first control decision."
   },
-  "excluded_formal_strategies": {
-    "hold": "Available only for runtime debugging. On a controls-disabled base its frozen first-decision readback can collapse to the same effective policy as No-control, so it is excluded to avoid a duplicate comparator."
+  "aliases": {
+    "auto_rrc": "auto_rbc",
+    "Auto-RRC": "auto_rbc",
+    "Auto-RBC": "auto_rbc",
+    "EFD": "efd"
   },
   "policy_isolation": {
     "internal_rtc_native_controls": true,
     "all_other_formal_strategies_native_controls": false,
-    "common_precontrol_prefix": "Proposed, All-open and All-closed share the same controls-disabled prefix until the frozen control_start_minutes epoch. No-control stays on that no-supervisory-RTC base for the entire event."
+    "rule_baselines_future_information": false,
+    "common_control_cadence": true
+  },
+  "excluded_formal_strategies": {
+    "hold": "Debug-only because a frozen first-decision readback can collapse toward No-control."
   }
 }
