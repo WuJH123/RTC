@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -14,15 +13,12 @@ import pandas as pd
 from .baselines import FIXED_BASELINE_IDS, fixed_baseline_controller
 from .closed_loop import run_authoritative_closed_loop
 from .formalize_run import formalize_run
+from .generation_contract import canonical_json, generation_key
 from .inp_lineage import physical_contract_sha256
 from .inp_runtime import build_runtime_inp, section_has_payload, sha256_file
 
 
-CACHE_CONTRACT = "FIXED_BASELINE_CACHE_V1"
-
-
-def _canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+CACHE_CONTRACT = "FIXED_BASELINE_CACHE_V2_CODE_BOUND"
 
 
 def baseline_cache_key(
@@ -36,19 +32,22 @@ def baseline_cache_key(
     control_start_minutes: int,
     swmm_threads_per_process: int,
 ) -> str:
-    payload = {
-        "contract": CACHE_CONTRACT,
-        "source_inp_sha256": source_inp_sha256,
-        "physical_network_sha256": physical_network_sha256,
-        "strategy": strategy,
-        "model_step_seconds": int(model_step_seconds),
-        "control_update_seconds": int(control_update_seconds),
-        "record_stride_seconds": int(record_stride_seconds),
-        "control_start_minutes": int(control_start_minutes),
-        "swmm_threads_per_process": int(swmm_threads_per_process),
-        "exact_global_peak_in_main": False,
-    }
-    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+    key, _ = generation_key(
+        "fixed_baseline",
+        {
+            "cache_contract": CACHE_CONTRACT,
+            "source_inp_sha256": source_inp_sha256,
+            "physical_network_sha256": physical_network_sha256,
+            "strategy": strategy,
+            "model_step_seconds": int(model_step_seconds),
+            "control_update_seconds": int(control_update_seconds),
+            "record_stride_seconds": int(record_stride_seconds),
+            "control_start_minutes": int(control_start_minutes),
+            "swmm_threads_per_process": int(swmm_threads_per_process),
+            "exact_global_peak_in_main": False,
+        },
+    )
+    return key
 
 
 def _read_json(path: str | Path) -> dict[str, object]:
@@ -56,11 +55,6 @@ def _read_json(path: str | Path) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError(f"JSON must be an object: {path}")
     return value
-
-
-def _hash_if_file(path: str | Path) -> str:
-    p = Path(path)
-    return sha256_file(p) if p.is_file() else ""
 
 
 def _decision_rows(path: str | Path) -> list[dict[str, object]]:
@@ -102,6 +96,7 @@ def validate_fixed_baseline_run(
         if controls or controller_present or decisions:
             raise ValueError("No-control must disable native controls and have no Python writes")
     elif strategy == "hold":
+        # Retained only for engineering/debug regression tests; not a Formal comparator.
         if controls or not controller_present or not decisions:
             raise ValueError("Hold must use Python writes on a controls-disabled runtime")
         first = decisions[0].get("settings")
@@ -148,12 +143,21 @@ def validate_fixed_baseline_run(
     }
 
 
-def _cache_complete(sidecar_path: Path, expected_key: str, *, require_formal: bool) -> dict[str, object] | None:
+def _cache_complete(
+    sidecar_path: Path, expected_key: str, *, require_formal: bool
+) -> dict[str, object] | None:
     if not sidecar_path.is_file():
         return None
     try:
         sidecar = _read_json(sidecar_path)
-        if sidecar.get("contract") != CACHE_CONTRACT or sidecar.get("cache_key_sha256") != expected_key:
+        if sidecar.get("contract") != CACHE_CONTRACT:
+            return None
+        if sidecar.get("cache_key_sha256") != expected_key:
+            return None
+        # Recomputing the current key already binds the installed source tree. The explicit
+        # code hash is also kept in evidence so stale reuse is auditable rather than opaque.
+        _, current_code_sha = generation_key("code_probe", {})
+        if sidecar.get("rtc_source_tree_sha256") != current_code_sha:
             return None
         main = Path(str(sidecar["main_metadata_path"]))
         if not main.is_file() or sha256_file(main) != str(sidecar["main_metadata_sha256"]):
@@ -162,6 +166,7 @@ def _cache_complete(sidecar_path: Path, expected_key: str, *, require_formal: bo
         if not isinstance(evidence, dict):
             return None
         for path_key, hash_key in (
+            ("runtime_inp", "runtime_inp_sha256"),
             ("compact_path", "compact_sha256"),
             ("node_statistics_path", "node_statistics_sha256"),
             ("decision_log_path", "decision_log_sha256"),
@@ -171,7 +176,9 @@ def _cache_complete(sidecar_path: Path, expected_key: str, *, require_formal: bo
                 return None
         if require_formal:
             formal = Path(str(sidecar.get("formal_manifest_path", "")))
-            if not formal.is_file() or sha256_file(formal) != str(sidecar.get("formal_manifest_sha256", "")):
+            if not formal.is_file() or sha256_file(formal) != str(
+                sidecar.get("formal_manifest_sha256", "")
+            ):
                 return None
         return sidecar
     except Exception:
@@ -179,11 +186,7 @@ def _cache_complete(sidecar_path: Path, expected_key: str, *, require_formal: bo
 
 
 def _runtime_inp(
-    *,
-    source: Path,
-    runtime_dir: Path,
-    strategy: str,
-    swmm_threads: int,
+    *, source: Path, runtime_dir: Path, strategy: str, swmm_threads: int
 ) -> Path:
     source_sha = sha256_file(source)
     native = strategy == "internal_rtc"
@@ -233,9 +236,11 @@ def _run_job(job: dict[str, object]) -> dict[str, object]:
         )
         formal_path = str(formal_file.resolve())
         formal_sha = sha256_file(formal_file)
+    _, code_sha = generation_key("code_probe", {})
     sidecar = {
         "contract": CACHE_CONTRACT,
         "cache_key_sha256": str(job["cache_key_sha256"]),
+        "rtc_source_tree_sha256": code_sha,
         "event_id": str(job["event_id"]),
         "rainfall_group": str(job["rainfall_group"]),
         "scientific_split": str(job["scientific_split"]),
@@ -258,7 +263,7 @@ def _run_job(job: dict[str, object]) -> dict[str, object]:
         "formal_manifest_sha256": formal_sha or None,
     }
     sidecar_path = Path(str(job["sidecar_path"]))
-    sidecar_path.write_text(_canonical_json(sidecar) + "\n", encoding="utf-8")
+    sidecar_path.write_text(canonical_json(sidecar) + "\n", encoding="utf-8")
     return {
         "event_id": sidecar["event_id"],
         "rainfall_group": sidecar["rainfall_group"],
@@ -289,25 +294,6 @@ def _parse_strategies(raw: str | None) -> tuple[str, ...]:
     return values
 
 
-def _locked_final_config(policy_lock_path: str | Path) -> tuple[Path, tuple[str, ...]]:
-    lock = _read_json(policy_lock_path)
-    if lock.get("contract") != "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V2":
-        raise ValueError("final baseline generation requires the TFV-first Policy Lock V2")
-    artefacts = lock.get("artefacts")
-    hashes = lock.get("sha256")
-    if not isinstance(artefacts, dict) or not isinstance(hashes, dict):
-        raise ValueError("Policy Lock lacks artefact/hash maps")
-    config = Path(str(artefacts["controller_config"]))
-    if not config.is_file() or sha256_file(config) != str(hashes["controller_config"]):
-        raise ValueError("locked controller config is missing or changed")
-    plan = _read_json(str(artefacts["baseline_plan"]))
-    strategies = tuple(str(x) for x in plan.get("strategies", []) if str(x) != "proposed")
-    invalid = sorted(set(strategies) - set(FIXED_BASELINE_IDS))
-    if invalid:
-        raise ValueError(f"locked baseline plan contains unsupported fixed strategies: {invalid}")
-    return config, strategies
-
-
 def _config_values(path: str | Path) -> dict[str, int]:
     cfg = _read_json(path)
     values = {
@@ -320,8 +306,8 @@ def _config_values(path: str | Path) -> dict[str, int]:
         raise ValueError("model_step_seconds must be positive")
     if values["control_update_seconds"] % values["model_step_seconds"]:
         raise ValueError("control_update_seconds must be an integer multiple of model_step_seconds")
-    if values["record_stride_seconds"] <= 0:
-        raise ValueError("record_stride_seconds must be positive")
+    if values["record_stride_seconds"] != values["model_step_seconds"]:
+        raise ValueError("Formal baseline record stride must equal model step")
     if cfg.get("exact_global_peak") is not False:
         raise ValueError("baseline main runs must set exact_global_peak=false; Formal peak is replayed")
     return values
@@ -398,53 +384,58 @@ def build_baseline_cache(
             event_dir.mkdir(parents=True, exist_ok=True)
             run_id = f"{event_id}__{strategy}"
             sidecar_path = event_dir / f"{run_id}.baseline_cache.json"
-            cached = None if force else _cache_complete(sidecar_path, key, require_formal=formalize_final)
+            cached = None if force else _cache_complete(
+                sidecar_path, key, require_formal=formalize_final
+            )
             if cached is not None:
                 evidence = cached["evidence"]
                 assert isinstance(evidence, dict)
-                results.append({
+                results.append(
+                    {
+                        "event_id": event_id,
+                        "rainfall_group": rainfall_group,
+                        "scientific_split": split,
+                        "development_fold": fold,
+                        "strategy": strategy,
+                        "cache_key_sha256": key,
+                        "metadata_path": str(cached["main_metadata_path"]),
+                        "compact_path": str(evidence["compact_path"]),
+                        "node_statistics_path": str(evidence["node_statistics_path"]),
+                        "decision_log_path": str(evidence["decision_log_path"]),
+                        "formal_manifest_path": str(cached.get("formal_manifest_path") or ""),
+                        "sidecar_path": str(sidecar_path.resolve()),
+                        "flow_routing_error_pct": np.nan,
+                        "status": "resumed",
+                    }
+                )
+                continue
+            jobs.append(
+                {
                     "event_id": event_id,
                     "rainfall_group": rainfall_group,
                     "scientific_split": split,
                     "development_fold": fold,
                     "strategy": strategy,
+                    "source_inp": str(source),
+                    "source_inp_sha256": source_sha,
+                    "physical_network_sha256": physical_sha,
+                    "runtime_inp": str(runtime),
+                    "event_dir": str(event_dir),
+                    "run_id": run_id,
+                    "sidecar_path": str(sidecar_path),
                     "cache_key_sha256": key,
-                    "metadata_path": str(cached["main_metadata_path"]),
-                    "compact_path": str(evidence["compact_path"]),
-                    "node_statistics_path": str(evidence["node_statistics_path"]),
-                    "decision_log_path": str(evidence["decision_log_path"]),
-                    "formal_manifest_path": str(cached.get("formal_manifest_path") or ""),
-                    "sidecar_path": str(sidecar_path.resolve()),
-                    "flow_routing_error_pct": np.nan,
-                    "status": "resumed",
-                })
-                continue
-            jobs.append({
-                "event_id": event_id,
-                "rainfall_group": rainfall_group,
-                "scientific_split": split,
-                "development_fold": fold,
-                "strategy": strategy,
-                "source_inp": str(source),
-                "source_inp_sha256": source_sha,
-                "physical_network_sha256": physical_sha,
-                "runtime_inp": str(runtime),
-                "event_dir": str(event_dir),
-                "run_id": run_id,
-                "sidecar_path": str(sidecar_path),
-                "cache_key_sha256": key,
-                "swmm_threads_per_process": swmm_threads_per_process,
-                "formalize": bool(formalize_final),
-                **cfg,
-            })
+                    "swmm_threads_per_process": swmm_threads_per_process,
+                    "formalize": bool(formalize_final),
+                    **cfg,
+                }
+            )
 
     if jobs:
         with ProcessPoolExecutor(max_workers=min(workers, len(jobs))) as pool:
             futures = [pool.submit(_run_job, job) for job in jobs]
             for future in as_completed(futures):
                 results.append(future.result())
-    result = pd.DataFrame(results).sort_values(["event_id", "strategy"]).reset_index(drop=True)
-    return result
+    return pd.DataFrame(results).sort_values(["event_id", "strategy"]).reset_index(drop=True)
 
 
 def _write_views(frame: pd.DataFrame, output_dir: Path) -> dict[str, str]:
@@ -471,60 +462,30 @@ def _write_views(frame: pd.DataFrame, output_dir: Path) -> dict[str, str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Generate each deterministic baseline once per rainfall event and reuse hashed evidence downstream"
-    )
+    """Debug/compatibility entrypoint; public Formal CLI is baseline_cache_cli.main."""
+
+    parser = argparse.ArgumentParser(description="Build code-bound deterministic baseline cache")
     parser.add_argument("--events", required=True)
     parser.add_argument("--out-dir", required=True)
-    parser.add_argument("--config", help="resolved controller/runtime config; required for prelock")
-    parser.add_argument("--strategies", help="comma-separated fixed baselines; defaults to all")
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--strategies")
     parser.add_argument("--stage", choices=["prelock", "final"], default="prelock")
-    parser.add_argument("--policy-lock", help="required for final; supplies locked config/baseline plan")
     parser.add_argument("--workers", type=int, default=min(16, os.cpu_count() or 1))
     parser.add_argument("--swmm-threads-per-process", type=int, default=1)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
-
-    if args.stage == "final":
-        if not args.policy_lock:
-            raise ValueError("--policy-lock is required for final baseline generation")
-        locked_config, locked_strategies = _locked_final_config(args.policy_lock)
-        if args.config and sha256_file(args.config) != sha256_file(locked_config):
-            raise ValueError("--config differs from the Policy-Locked controller config")
-        config = locked_config
-        strategies = locked_strategies
-        formalize_final = True
-    else:
-        if not args.config:
-            raise ValueError("--config is required for prelock baseline generation")
-        config = Path(args.config)
-        strategies = _parse_strategies(args.strategies)
-        formalize_final = False
-
-    out = Path(args.out_dir)
     frame = build_baseline_cache(
         event_registry=pd.read_csv(args.events),
-        output_dir=out,
-        config_path=config,
-        strategies=strategies,
+        output_dir=args.out_dir,
+        config_path=args.config,
+        strategies=_parse_strategies(args.strategies),
         stage=args.stage,
         workers=args.workers,
         swmm_threads_per_process=args.swmm_threads_per_process,
         force=args.force,
-        formalize_final=formalize_final,
+        formalize_final=False,
     )
-    views = _write_views(frame, out)
-    print(json.dumps({
-        "contract": CACHE_CONTRACT,
-        "stage": args.stage,
-        "rows": int(len(frame)),
-        "events": int(frame["event_id"].nunique()),
-        "strategies": sorted(frame["strategy"].unique().tolist()),
-        "computed": int((frame["status"] == "completed").sum()),
-        "resumed": int((frame["status"] == "resumed").sum()),
-        "workers": min(args.workers, max(1, int((frame["status"] == "completed").sum()))),
-        **views,
-    }, indent=2))
+    print(json.dumps({"contract": CACHE_CONTRACT, "rows": len(frame)}, indent=2))
 
 
 if __name__ == "__main__":
