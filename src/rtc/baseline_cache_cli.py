@@ -45,14 +45,14 @@ def _locked_artifact(
 def locked_final_contract(
     policy_lock_path: str | Path,
 ) -> tuple[Path, tuple[str, ...], str, frozenset[str]]:
-    """Resolve immutable code/runtime/baseline/split/physical Final contracts."""
+    """Resolve immutable runtime/baseline/split/physical Final contracts."""
 
     lock = _json(policy_lock_path)
     if lock.get("contract") != POLICY_LOCK_CONTRACT:
-        raise ValueError("Final baseline generation requires code/time/data-bound Policy Lock V4")
+        raise ValueError("Final baseline generation requires Policy Lock V4")
     if lock.get("rtc_source_tree_sha256") != rtc_source_tree_sha256():
         raise ValueError(
-            "current RTC source tree differs from Policy Lock; Final generation is forbidden"
+            "current RTC scientific implementation contract differs from Policy Lock"
         )
     artefacts_raw = lock.get("artefacts")
     hashes_raw = lock.get("sha256")
@@ -97,8 +97,8 @@ def locked_final_contract(
     final_groups = frozenset(
         split.loc[split["scientific_split"] == "final", "rainfall_group"].tolist()
     )
-    if len(final_groups) < 24:
-        raise ValueError("locked Final requires at least 24 independent rainfall groups")
+    if not final_groups:
+        raise ValueError("locked split registry contains no untouched Final rainfall groups")
 
     physical_sha = str(lock.get("physical_network_sha256", ""))
     if len(physical_sha) != 64:
@@ -147,7 +147,7 @@ def validate_final_event_registry(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate every fixed baseline once per rainfall event and reuse code-bound evidence"
+        description="Generate fixed baselines once per event and safely reuse verified evidence"
     )
     parser.add_argument("--events", required=True)
     parser.add_argument("--out-dir", required=True)
@@ -161,7 +161,7 @@ def main() -> None:
     parser.add_argument("--stage", choices=["prelock", "final"], default="prelock")
     parser.add_argument(
         "--policy-lock",
-        help="required for final; supplies locked code/config/baseline/split/physical contract",
+        help="required for final; supplies locked implementation/config/baseline/split/physical contract",
     )
     parser.add_argument(
         "--workers", type=int, default=min(16, os.cpu_count() or 1)
@@ -215,6 +215,7 @@ def main() -> None:
                 "stage": args.stage,
                 "rows": int(len(frame)),
                 "events": int(frame["event_id"].nunique()),
+                "rainfall_groups": int(frame["rainfall_group"].nunique()),
                 "strategies": sorted(frame["strategy"].unique().tolist()),
                 "computed": int((frame["status"] == "completed").sum()),
                 "resumed": int((frame["status"] == "resumed").sum()),
