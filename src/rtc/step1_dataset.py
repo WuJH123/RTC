@@ -7,7 +7,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .units import flow_rate_to_m3s, length_to_m, rainfall_rate_to_mmhr, volume_to_m3
+from .dataset_compile import _node_rainfall
+from .units import flow_rate_to_m3s, length_to_m, volume_to_m3
 
 
 @dataclass(frozen=True)
@@ -59,19 +60,10 @@ def _load_trajectory(metadata_path: str | Path) -> tuple[np.ndarray, np.ndarray,
     actuator_flow = flow_rate_to_m3s(
         _pivot(act, times=times, ids=actuator_ids, id_col="actuator_id", value_col="flow"), flow_units
     )
+    node_rainfall = _node_rainfall(sub, times=times, node_ids=node_ids, system_units=system_units)[..., 0]
+    rainfall_mean = node_rainfall.mean(axis=1)
+    rainfall_max = node_rainfall.max(axis=1)
 
-    rainfall_mean = np.zeros(times.size, dtype=float)
-    rainfall_max = np.zeros(times.size, dtype=float)
-    for i, elapsed in enumerate(times):
-        rows = sub[sub["elapsed_seconds"] == elapsed]
-        if rows.empty:
-            raise ValueError(f"missing subcatchment rainfall at elapsed={elapsed}")
-        rainfall_mean[i] = float(rainfall_rate_to_mmhr(rows["rainfall"].astype(float).mean(), system_units))
-        rainfall_max[i] = float(rainfall_rate_to_mmhr(rows["rainfall"].astype(float).max(), system_units))
-
-    # Formal Step1 context contains only information available at decision time:
-    # observed rainfall and actuator target/current/flow readback. SWMM runoff is retained
-    # in authoritative files for diagnostics but is deliberately excluded from model input.
     context = np.concatenate(
         [
             rainfall_mean[:, None],
@@ -83,8 +75,8 @@ def _load_trajectory(metadata_path: str | Path) -> tuple[np.ndarray, np.ndarray,
         axis=1,
     )
     feature_names = (
-        "rainfall_mean_mmhr",
-        "rainfall_max_mmhr",
+        "rainfall_node_mean_mmhr",
+        "rainfall_node_max_mmhr",
         *(f"target_setting:{aid}" for aid in actuator_ids),
         *(f"current_setting:{aid}" for aid in actuator_ids),
         *(f"actuator_flow_m3s:{aid}" for aid in actuator_ids),
