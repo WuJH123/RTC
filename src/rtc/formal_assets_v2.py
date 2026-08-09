@@ -5,26 +5,34 @@ import json
 from pathlib import Path
 
 from .contracts import load_priority_nodes, require_nodes_exist
+from .context_features import NODE_CONTEXT_FEATURE_NAMES
 from .graph import build_graph_schema, save_graph_schema
 from .inp import discover_nodes
 from .inp_lineage import physical_contract_sha256, write_physical_contract_manifest
 from .pipeline import sha256_file
+from .swmm_data import STATE_CHANNELS
 
 
 STATE_SCHEMA = {
-    "contract": "RTC_STATE_SCHEMA_V2",
+    "contract": "RTC_STATE_SCHEMA_V3_COMPACT_SI",
     "state_channels": [
         {"index": 0, "name": "depth", "unit": "m"},
         {"index": 1, "name": "head", "unit": "m"},
         {"index": 2, "name": "flooding_rate", "unit": "m3/s"},
         {"index": 3, "name": "node_volume", "unit": "m3"},
+        {"index": 4, "name": "total_inflow", "unit": "m3/s"},
+        {"index": 5, "name": "total_outflow", "unit": "m3/s"},
     ],
     "step1_observed_channels": ["depth", "head"],
+    "step1_node_context_channels": list(NODE_CONTEXT_FEATURE_NAMES),
     "step2_exogenous_channels": ["causal_node_rainfall_mm_per_h"],
+    "tfv_pfv_truth": "SWMM cumulative Node.statistics flooding_volume over the defined event/horizon",
+    "instantaneous_flooding_channel": "rate only; never interpreted as TFV/PFV without time integration",
     "forbidden_online_features": [
         "future_realized_SWMM_state",
         "future_realized_SWMM_runoff",
         "future_realized_flooding",
+        "event_id_as_policy_feature",
         "final_or_locked_truth",
     ],
 }
@@ -50,7 +58,7 @@ def compile_assets_v2(
     require_nodes_exist(priority, nodes)
     require_nodes_exist(sensors, nodes)
     if len(priority) != 8 or len(set(priority)) != 8:
-        raise ValueError(f"formal contract requires exactly 8 unique priority nodes, got {len(priority)}")
+        raise ValueError(f"formal reporting contract requires exactly 8 verified priority-node mappings, got {len(priority)}")
     if not sensors or len(set(sensors)) != len(sensors):
         raise ValueError("sensor layout must contain unique sensor node IDs")
 
@@ -59,50 +67,59 @@ def compile_assets_v2(
     physical_path = write_physical_contract_manifest(inp, out / "physical_contract.json")
     state_path = out / "state_schema.json"
     state_path.write_text(json.dumps(STATE_SCHEMA, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if tuple(x["name"] + ("_m3s" if False else "") for x in []) != ():
+        raise RuntimeError("unreachable schema guard")
+    if len(STATE_CHANNELS) != len(STATE_SCHEMA["state_channels"]):
+        raise RuntimeError("runtime compact state channel count differs from Formal state schema")
 
     type_names = ("PUMP", "ORIFICE", "WEIR", "OUTLET")
     actuators: list[dict[str, object]] = []
     for i, actuator_id in enumerate(graph.actuator_ids):
         physics = graph.actuator_physics[i]
-        one_hot = physics[:4]
-        kind = type_names[int(one_hot.argmax())]
+        kind = type_names[int(physics[:4].argmax())]
         up_idx = int(graph.actuator_upstream[i])
         down_idx = int(graph.actuator_downstream[i])
-        actuators.append(
-            {
-                "actuator_id": actuator_id,
-                "kind": kind,
-                "upstream_node": graph.node_ids[up_idx],
-                "downstream_node": graph.node_ids[down_idx],
-                "min_setting": float(physics[4]),
-                "max_setting": float(physics[5]),
-                "continuous": True,
-            }
-        )
+        feature_map = {
+            name: float(physics[j])
+            for j, name in enumerate(graph.actuator_physics_feature_names)
+        }
+        actuators.append({
+            "actuator_id": actuator_id,
+            "kind": kind,
+            "upstream_node": graph.node_ids[up_idx],
+            "downstream_node": graph.node_ids[down_idx],
+            "min_setting": float(physics[4]),
+            "max_setting": float(physics[5]),
+            "continuous": True,
+            "physics_features": feature_map,
+        })
     actuator_path = out / "actuator_catalog.json"
     actuator_payload = {
-        "contract": "ACTUATOR_AGNOSTIC_CONTINUOUS_CATALOG_V2",
+        "contract": "ACTUATOR_AGNOSTIC_CONTINUOUS_CATALOG_V3",
         "source_inp": str(inp.resolve()),
         "source_inp_sha256": sha256_file(inp),
         "physical_network_sha256": physical_contract_sha256(inp),
         "fixed_active_subset": False,
         "binary_actuator_mask": False,
         "actuator_count": len(actuators),
+        "physics_feature_names": list(graph.actuator_physics_feature_names),
+        "learned_identity_embedding_required": True,
         "actuators": actuators,
     }
-    actuator_path.write_text(
-        json.dumps(actuator_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    actuator_path.write_text(json.dumps(actuator_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     audit_path = out / "formal_asset_audit.json"
     audit = {
-        "contract": "FORMAL_ASSET_AUDIT_V2",
+        "contract": "FORMAL_ASSET_AUDIT_V3_COMPACT_SI",
         "passed": True,
         "frozen_inp": str(inp.resolve()),
         "frozen_inp_sha256": sha256_file(inp),
         "physical_network_sha256": physical_contract_sha256(inp),
         "node_count": len(nodes),
         "actuator_count": len(actuators),
+        "state_dim": len(STATE_SCHEMA["state_channels"]),
+        "state_external_units": "SI",
         "priority_nodes": list(priority),
+        "priority_role": "soft_secondary_diagnostic_not_hard_admission",
         "sensor_nodes": list(sensors),
         "graph_schema": str(graph_path),
         "actuator_catalog": str(actuator_path),
@@ -120,7 +137,7 @@ def compile_assets_v2(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Compile robust frozen Formal RTC assets")
+    parser = argparse.ArgumentParser(description="Compile compact-SI frozen Formal RTC assets")
     parser.add_argument("--inp", required=True)
     parser.add_argument("--priority", required=True)
     parser.add_argument("--sensors", required=True)
