@@ -23,16 +23,28 @@ def verify_formal_run_v4(
     physical_sha: str,
     model_step_seconds: int,
     control_update_seconds: int,
+    expected_event_sha256: str | None = None,
+    expected_swmm_engine_version: str | None = None,
 ) -> dict[str, object]:
     manifest_path = Path(manifest_path)
     run = read_json(manifest_path)
     implementation_sha = rtc_source_tree_sha256()
-    if run.get("contract") != "FORMAL_CLOSED_LOOP_RUN_MANIFEST_V4_CODE_BOUND":
-        raise ValueError(f"not a Formal run V4 manifest: {manifest_path}")
+    if run.get("contract") != "FORMAL_CLOSED_LOOP_RUN_MANIFEST_V5_EVENT_ENGINE_BOUND":
+        raise ValueError(f"not a Formal run V5 event/engine-bound manifest: {manifest_path}")
     if run.get("rtc_source_tree_sha256") != implementation_sha:
         raise ValueError(f"Formal run uses an incompatible implementation contract: {manifest_path}")
     if str(run.get("physical_network_sha256", "")) != physical_sha:
         raise ValueError(f"physical network changed in run: {manifest_path}")
+    event_sha = str(run.get("scientific_event_sha256", ""))
+    if not event_sha:
+        raise ValueError(f"Formal run lacks scientific event identity: {manifest_path}")
+    if expected_event_sha256 is not None and event_sha != str(expected_event_sha256):
+        raise ValueError(f"rainfall/forcing event differs from locked registry: {manifest_path}")
+    engine_version = str(run.get("swmm_engine_version", "")).strip()
+    if not engine_version:
+        raise ValueError(f"Formal run lacks SWMM engine version: {manifest_path}")
+    if expected_swmm_engine_version is not None and engine_version != str(expected_swmm_engine_version):
+        raise ValueError(f"SWMM engine differs across Formal comparison runs: {manifest_path}")
     if int(run.get("model_step_seconds", -1)) != model_step_seconds:
         raise ValueError(f"model-step cadence differs from Policy Lock: {manifest_path}")
     if int(run.get("control_update_seconds", -1)) != control_update_seconds:
@@ -56,6 +68,8 @@ def verify_formal_run_v4(
         "rtc_source_tree_sha256"
     ) != implementation_sha:
         raise ValueError("main policy run uses an incompatible implementation contract")
+    if str(meta.get("swmm_engine_version", "")) != engine_version:
+        raise ValueError("main metadata SWMM engine differs from Formal manifest")
     if sha256_file(str(run["decision_log_path"])) != str(run["decision_log_sha256"]):
         raise RuntimeError("decision log changed after peak replay")
 
@@ -66,6 +80,8 @@ def verify_formal_run_v4(
         )
     if replay.get("rtc_source_tree_sha256") != implementation_sha:
         raise ValueError("Global Peak replay uses an incompatible implementation contract")
+    if str(replay.get("swmm_engine_version", "")) != engine_version:
+        raise ValueError("Global Peak replay SWMM engine differs from main run")
     if replay.get("control_write_cadence_preserved") is not True:
         raise ValueError("Global Peak replay did not preserve the original Python write cadence")
     if replay.get("engine_files_retained") is not False:
@@ -101,6 +117,8 @@ def verify_formal_run_v4(
         "main_flow_routing_error_pct": float(meta["flow_routing_error_pct"]),
         "peak_replay_flow_routing_error_pct": float(replay["flow_routing_error_pct"]),
         "physical_network_sha256": physical_sha,
+        "scientific_event_sha256": event_sha,
+        "swmm_engine_version": engine_version,
         "rtc_source_tree_sha256": implementation_sha,
         "formal_run_manifest_sha256": sha256_file(manifest_path),
         "truth_source_flood_volume": "SWMM_NODE_STATISTICS_CUMULATIVE_MAIN_RUN",
