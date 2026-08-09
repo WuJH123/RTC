@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 
+from .flood_volume import trapezoid_node_flood_volume
 from .models import DifferentiableHydraulicWorldModel, Rollout
 
 
@@ -29,24 +30,13 @@ def _upper_tail_cvar(x: torch.Tensor, alpha: float) -> torch.Tensor:
     return torch.topk(values, k=count, largest=True).values.mean()
 
 
-def _flood_volumes(rollout: Rollout, flood_index: int, dt_seconds: float) -> torch.Tensor:
-    rate = rollout.states[..., flood_index].clamp_min(0.0)
-    return rate.sum(dim=1) * float(dt_seconds)
-
-
 def _expand_blocks(block_settings: torch.Tensor, *, horizon: int, block_steps: int) -> torch.Tensor:
     if block_steps <= 0:
         raise ValueError("control_block_steps must be positive")
     return torch.repeat_interleave(block_settings, repeats=block_steps, dim=1)[:, :horizon]
 
 
-def _site_vector(
-    value: float | torch.Tensor,
-    n: int,
-    *,
-    device: torch.device,
-    dtype: torch.dtype,
-) -> torch.Tensor:
+def _site_vector(value: float | torch.Tensor, n: int, *, device, dtype) -> torch.Tensor:
     tensor = torch.as_tensor(value, device=device, dtype=dtype).reshape(-1)
     if tensor.numel() == 1:
         tensor = tensor.expand(n)
@@ -56,18 +46,11 @@ def _site_vector(
 
 
 class ContinuousTFVFirstMPC:
-    """Continuous all-actuator MPC with TFV as the primary scientific objective.
+    """All-actuator continuous MPC: TFV primary, priority PFV soft secondary.
 
-    Priority-site flooding is *not* a hard admission constraint. Optimization is
-    lexicographic in two passes:
-
-    1. minimise risk-adjusted system TFV;
-    2. from that solution, reduce positive site-wise priority flooding deterioration while
-       penalising departure outside a small, frozen TFV near-optimality tolerance.
-
-    Therefore a priority site may worsen when doing so is necessary for a meaningful
-    system-wide TFV reduction. Hard fallback is reserved for invalid numerics/runtime or
-    executable/readback failures outside this class.
+    Predicted cumulative flood volume is trapezoid-integrated from the *current* flooding
+    rate plus all future predicted rates. This keeps instantaneous rate and cumulative
+    volume semantics distinct and reduces right-endpoint integration bias.
     """
 
     def __init__(
@@ -87,10 +70,8 @@ class ContinuousTFVFirstMPC:
         near_opt_penalty: float = 1e4,
         movement_tiebreak: float = 1e-6,
     ):
-        if not 0.5 < forecast_quantile < 1.0:
-            raise ValueError("forecast_quantile must lie in (0.5,1)")
-        if not 0.5 < tfv_cvar_alpha < 1.0:
-            raise ValueError("tfv_cvar_alpha must lie in (0.5,1)")
+        if not 0.5 < forecast_quantile < 1.0 or not 0.5 < tfv_cvar_alpha < 1.0:
+            raise ValueError("forecast/CVaR quantiles must lie in (0.5,1)")
         if tfv_near_opt_relative < 0 or tfv_near_opt_absolute_m3 < 0:
             raise ValueError("TFV near-optimality tolerances must be non-negative")
         self.model = world_model
@@ -107,18 +88,7 @@ class ContinuousTFVFirstMPC:
         self.near_opt_penalty = float(near_opt_penalty)
         self.movement_tiebreak = float(movement_tiebreak)
 
-    def _rollout(
-        self,
-        initial_state: torch.Tensor,
-        rainfall: torch.Tensor,
-        settings: torch.Tensor,
-        previous_actuator_flow: torch.Tensor,
-        actuator_upstream: torch.Tensor,
-        actuator_downstream: torch.Tensor,
-        actuator_physics: torch.Tensor,
-        static_node_features: torch.Tensor,
-        edge_index: torch.Tensor,
-    ) -> Rollout:
+    def _rollout(self, initial_state, rainfall, settings, previous_actuator_flow, actuator_upstream, actuator_downstream, actuator_physics, static_node_features, edge_index) -> tuple[torch.Tensor, Rollout]:
         scenarios = int(rainfall.shape[0])
         if settings.dim() == 2:
             settings = settings.unsqueeze(0)
@@ -130,20 +100,21 @@ class ContinuousTFVFirstMPC:
             actuator_physics = actuator_physics.expand(scenarios, -1, -1)
         if settings.shape[0] == 1 and scenarios > 1:
             settings = settings.expand(scenarios, -1, -1)
-        return self.model.rollout(
-            initial_state,
-            rainfall,
-            settings,
-            previous_actuator_flow,
-            actuator_upstream,
-            actuator_downstream,
-            actuator_physics,
-            static_node_features,
-            edge_index,
+        return initial_state, self.model.rollout(
+            initial_state, rainfall, settings, previous_actuator_flow,
+            actuator_upstream, actuator_downstream, actuator_physics,
+            static_node_features, edge_index,
+        )
+
+    def _volumes(self, initial_state: torch.Tensor, rollout: Rollout) -> torch.Tensor:
+        return trapezoid_node_flood_volume(
+            initial_state, rollout.states,
+            flood_rate_index=self.flood_rate_index, dt_seconds=self.dt_seconds,
         )
 
     def _priority_deterioration(
         self,
+        initial_state: torch.Tensor,
         rollout: Rollout,
         fallback_volumes: torch.Tensor,
         fallback_depth: torch.Tensor | None,
@@ -152,27 +123,20 @@ class ContinuousTFVFirstMPC:
             zero = fallback_volumes.new_zeros(())
             return zero, zero, zero
         p = self.priority_indices.to(fallback_volumes.device)
-        volumes = _flood_volumes(rollout, self.flood_rate_index, self.dt_seconds)
+        volumes = self._volumes(initial_state, rollout)
         delta_v = volumes[:, p] - fallback_volumes[:, p]
         flood_bound = torch.quantile(delta_v, self.forecast_quantile, dim=0)
         flood_bound = flood_bound + _site_vector(
-            self.flood_error_ucb_m3,
-            p.numel(),
-            device=delta_v.device,
-            dtype=delta_v.dtype,
+            self.flood_error_ucb_m3, p.numel(), device=delta_v.device, dtype=delta_v.dtype
         )
         positive_flood = torch.relu(flood_bound).sum()
-
         depth = rollout.states[..., self.depth_index][..., p]
         if fallback_depth is None:
             raise ValueError("fallback priority depth is required when priority sites are configured")
         delta_h = (depth - fallback_depth).amax(dim=1)
         depth_bound = torch.quantile(delta_h, self.forecast_quantile, dim=0)
         depth_bound = depth_bound + _site_vector(
-            self.depth_error_ucb_m,
-            p.numel(),
-            device=delta_h.device,
-            dtype=delta_h.dtype,
+            self.depth_error_ucb_m, p.numel(), device=delta_h.device, dtype=delta_h.dtype
         )
         return positive_flood, flood_bound.max(), depth_bound.max()
 
@@ -198,24 +162,15 @@ class ContinuousTFVFirstMPC:
         horizon = int(rainfall_scenarios.shape[1])
         blocks = int(math.ceil(horizon / control_block_steps))
         current = current_settings.reshape(-1).clamp(1e-4, 1.0 - 1e-4)
-        logits = nn.Parameter(
-            torch.logit(current).view(1, 1, -1).expand(1, blocks, -1).clone()
-        )
+        logits = nn.Parameter(torch.logit(current).view(1, 1, -1).expand(1, blocks, -1).clone())
         optimiser = torch.optim.Adam([logits], lr=float(learning_rate))
 
         with torch.no_grad():
-            fallback = self._rollout(
-                initial_state,
-                rainfall_scenarios,
-                fallback_settings,
-                previous_actuator_flow,
-                actuator_upstream,
-                actuator_downstream,
-                actuator_physics,
-                static_node_features,
-                edge_index,
+            fallback_initial, fallback = self._rollout(
+                initial_state, rainfall_scenarios, fallback_settings, previous_actuator_flow,
+                actuator_upstream, actuator_downstream, actuator_physics, static_node_features, edge_index,
             )
-            fallback_volumes = _flood_volumes(fallback, self.flood_rate_index, self.dt_seconds)
+            fallback_volumes = self._volumes(fallback_initial, fallback)
             fallback_depth = None
             if self.priority_indices is not None and self.priority_indices.numel():
                 p = self.priority_indices.to(fallback_volumes.device)
@@ -224,114 +179,57 @@ class ContinuousTFVFirstMPC:
         primary_iterations = max(1, int(round(iterations * 0.7)))
         for _ in range(primary_iterations):
             optimiser.zero_grad(set_to_none=True)
-            blocks_value = torch.sigmoid(logits)
-            settings = _expand_blocks(blocks_value, horizon=horizon, block_steps=control_block_steps)
-            rollout = self._rollout(
-                initial_state,
-                rainfall_scenarios,
-                settings,
-                previous_actuator_flow,
-                actuator_upstream,
-                actuator_downstream,
-                actuator_physics,
-                static_node_features,
-                edge_index,
+            block_value = torch.sigmoid(logits)
+            settings = _expand_blocks(block_value, horizon=horizon, block_steps=control_block_steps)
+            candidate_initial, rollout = self._rollout(
+                initial_state, rainfall_scenarios, settings, previous_actuator_flow,
+                actuator_upstream, actuator_downstream, actuator_physics, static_node_features, edge_index,
             )
-            tfv = _flood_volumes(rollout, self.flood_rate_index, self.dt_seconds).sum(dim=-1)
-            movement = (blocks_value[:, 0] - current).square().mean()
-            loss = _upper_tail_cvar(tfv, self.tfv_cvar_alpha) + self.movement_tiebreak * movement
+            tfv = self._volumes(candidate_initial, rollout).sum(dim=-1)
+            loss = _upper_tail_cvar(tfv, self.tfv_cvar_alpha) + self.movement_tiebreak * (block_value[:, 0] - current).square().mean()
             if not torch.isfinite(loss):
                 break
-            loss.backward()
-            optimiser.step()
+            loss.backward(); optimiser.step()
 
         with torch.no_grad():
-            primary_settings = _expand_blocks(
-                torch.sigmoid(logits), horizon=horizon, block_steps=control_block_steps
+            primary_settings = _expand_blocks(torch.sigmoid(logits), horizon=horizon, block_steps=control_block_steps)
+            primary_initial, primary_rollout = self._rollout(
+                initial_state, rainfall_scenarios, primary_settings, previous_actuator_flow,
+                actuator_upstream, actuator_downstream, actuator_physics, static_node_features, edge_index,
             )
-            primary_rollout = self._rollout(
-                initial_state,
-                rainfall_scenarios,
-                primary_settings,
-                previous_actuator_flow,
-                actuator_upstream,
-                actuator_downstream,
-                actuator_physics,
-                static_node_features,
-                edge_index,
-            )
-            primary_tfv = _upper_tail_cvar(
-                _flood_volumes(primary_rollout, self.flood_rate_index, self.dt_seconds).sum(dim=-1),
-                self.tfv_cvar_alpha,
-            )
-            allowed_tfv = (
-                primary_tfv
-                + self.tfv_near_opt_absolute_m3
-                + self.tfv_near_opt_relative * primary_tfv.abs()
-            )
+            primary_tfv = _upper_tail_cvar(self._volumes(primary_initial, primary_rollout).sum(dim=-1), self.tfv_cvar_alpha)
+            allowed_tfv = primary_tfv + self.tfv_near_opt_absolute_m3 + self.tfv_near_opt_relative * primary_tfv.abs()
 
-        secondary_iterations = max(0, iterations - primary_iterations)
-        for _ in range(secondary_iterations):
+        for _ in range(max(0, iterations - primary_iterations)):
             optimiser.zero_grad(set_to_none=True)
-            blocks_value = torch.sigmoid(logits)
-            settings = _expand_blocks(blocks_value, horizon=horizon, block_steps=control_block_steps)
-            rollout = self._rollout(
-                initial_state,
-                rainfall_scenarios,
-                settings,
-                previous_actuator_flow,
-                actuator_upstream,
-                actuator_downstream,
-                actuator_physics,
-                static_node_features,
-                edge_index,
+            block_value = torch.sigmoid(logits)
+            settings = _expand_blocks(block_value, horizon=horizon, block_steps=control_block_steps)
+            candidate_initial, rollout = self._rollout(
+                initial_state, rainfall_scenarios, settings, previous_actuator_flow,
+                actuator_upstream, actuator_downstream, actuator_physics, static_node_features, edge_index,
             )
-            tfv = _upper_tail_cvar(
-                _flood_volumes(rollout, self.flood_rate_index, self.dt_seconds).sum(dim=-1),
-                self.tfv_cvar_alpha,
-            )
-            priority_soft, _, _ = self._priority_deterioration(
-                rollout, fallback_volumes, fallback_depth
-            )
-            near_opt_violation = torch.relu(tfv - allowed_tfv)
-            movement = (blocks_value[:, 0] - current).square().mean()
+            tfv = _upper_tail_cvar(self._volumes(candidate_initial, rollout).sum(dim=-1), self.tfv_cvar_alpha)
+            priority_soft, _, _ = self._priority_deterioration(candidate_initial, rollout, fallback_volumes, fallback_depth)
             loss = (
                 priority_soft
-                + self.near_opt_penalty * near_opt_violation.square()
-                + self.movement_tiebreak * movement
+                + self.near_opt_penalty * torch.relu(tfv - allowed_tfv).square()
+                + self.movement_tiebreak * (block_value[:, 0] - current).square().mean()
             )
             if not torch.isfinite(loss):
                 break
-            loss.backward()
-            optimiser.step()
+            loss.backward(); optimiser.step()
 
         with torch.no_grad():
-            settings = _expand_blocks(
-                torch.sigmoid(logits), horizon=horizon, block_steps=control_block_steps
+            settings = _expand_blocks(torch.sigmoid(logits), horizon=horizon, block_steps=control_block_steps)
+            candidate_initial, rollout = self._rollout(
+                initial_state, rainfall_scenarios, settings, previous_actuator_flow,
+                actuator_upstream, actuator_downstream, actuator_physics, static_node_features, edge_index,
             )
-            rollout = self._rollout(
-                initial_state,
-                rainfall_scenarios,
-                settings,
-                previous_actuator_flow,
-                actuator_upstream,
-                actuator_downstream,
-                actuator_physics,
-                static_node_features,
-                edge_index,
-            )
-            tfv = _upper_tail_cvar(
-                _flood_volumes(rollout, self.flood_rate_index, self.dt_seconds).sum(dim=-1),
-                self.tfv_cvar_alpha,
-            )
+            tfv = _upper_tail_cvar(self._volumes(candidate_initial, rollout).sum(dim=-1), self.tfv_cvar_alpha)
             soft, worst_flood, worst_depth = self._priority_deterioration(
-                rollout, fallback_volumes, fallback_depth
+                candidate_initial, rollout, fallback_volumes, fallback_depth
             )
-            candidate_valid = bool(
-                torch.isfinite(settings).all().item()
-                and torch.isfinite(tfv).item()
-                and torch.isfinite(soft).item()
-            )
+            candidate_valid = bool(torch.isfinite(settings).all().item() and torch.isfinite(tfv).item() and torch.isfinite(soft).item())
             return TFVFirstMPCResult(
                 settings=settings[0].detach(),
                 candidate_valid=candidate_valid,
