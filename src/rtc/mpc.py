@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import torch
@@ -45,16 +46,19 @@ def _site_tensor(value: float | torch.Tensor, n: int, *, device: torch.device, d
     return tensor
 
 
+def _expand_control_blocks(block_settings: torch.Tensor, *, horizon: int, block_steps: int) -> torch.Tensor:
+    if block_steps <= 0:
+        raise ValueError("control_block_steps must be positive")
+    expanded = torch.repeat_interleave(block_settings, repeats=block_steps, dim=1)
+    return expanded[:, :horizon]
+
+
 class ContinuousSafetyMPC:
     """Continuous all-actuator MPC with calibrated, site-wise priority safety.
 
-    Two uncertainty sources are deliberately separated:
-
-    * ``forecast_safety_quantile``: variation across causal rainfall forecast scenarios;
-    * ``*_error_ucb``: frozen one-sided model-error envelope estimated on an independent
-      calibration partition.
-
-    A rainfall-scenario quantile is therefore never mislabeled as surrogate uncertainty.
+    Forecast-scenario risk and independently calibrated model-error UCB are distinct.
+    ``control_block_steps`` makes the optimization assume exactly the same action hold
+    period that the authoritative runtime will execute.
     """
 
     def __init__(
@@ -136,7 +140,6 @@ class ContinuousSafetyMPC:
         site_delta = volumes[:, priority] - fallback_volumes[:, priority]
         priority_depth = rollout.states[..., self.layout.depth_index][..., priority]
         depth_delta = (priority_depth - fallback_priority_depth).amax(dim=1)
-
         flood_scenario_bound = torch.quantile(site_delta, self.forecast_safety_quantile, dim=0)
         depth_scenario_bound = torch.quantile(depth_delta, self.forecast_safety_quantile, dim=0)
         n = priority.numel()
@@ -163,10 +166,14 @@ class ContinuousSafetyMPC:
         edge_index: torch.Tensor,
         iterations: int = 120,
         learning_rate: float = 0.04,
+        control_block_steps: int = 1,
     ) -> MPCResult:
-        horizon = rainfall_scenarios.shape[1]
+        horizon = int(rainfall_scenarios.shape[1])
+        if control_block_steps <= 0:
+            raise ValueError("control_block_steps must be positive")
+        blocks = int(math.ceil(horizon / control_block_steps))
         current = current_settings.reshape(-1).clamp(1e-4, 1.0 - 1e-4)
-        initial_logits = torch.logit(current).view(1, 1, -1).expand(1, horizon, -1).clone()
+        initial_logits = torch.logit(current).view(1, 1, -1).expand(1, blocks, -1).clone()
         logits = nn.Parameter(initial_logits)
         optimizer = torch.optim.Adam([logits], lr=learning_rate)
 
@@ -201,7 +208,10 @@ class ContinuousSafetyMPC:
 
         for _ in range(iterations):
             optimizer.zero_grad(set_to_none=True)
-            settings = torch.sigmoid(logits)
+            block_settings = torch.sigmoid(logits)
+            settings = _expand_control_blocks(
+                block_settings, horizon=horizon, block_steps=control_block_steps
+            )
             rollout = self._rollout(
                 initial_state,
                 rainfall_scenarios,
@@ -221,7 +231,7 @@ class ContinuousSafetyMPC:
             flood_excess = torch.relu(flood_ucb - flood_budget)
             depth_excess = torch.relu(depth_ucb - depth_budget)
             violation = flood_excess.square().mean() + depth_excess.square().mean()
-            movement = (settings[:, 0] - current).square().mean()
+            movement = (block_settings[:, 0] - current).square().mean()
             loss = (
                 _upper_tail_cvar(tfv, self.tfv_cvar_alpha)
                 + self.safety_penalty * violation
@@ -231,7 +241,10 @@ class ContinuousSafetyMPC:
             optimizer.step()
 
         with torch.no_grad():
-            settings = torch.sigmoid(logits)
+            block_settings = torch.sigmoid(logits)
+            settings = _expand_control_blocks(
+                block_settings, horizon=horizon, block_steps=control_block_steps
+            )
             rollout = self._rollout(
                 initial_state,
                 rainfall_scenarios,
