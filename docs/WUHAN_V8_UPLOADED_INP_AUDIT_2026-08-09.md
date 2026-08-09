@@ -1,7 +1,6 @@
 # Uploaded Wuhan V8 INP audit — 2026-08-09
 
-This audit records facts read directly from the user-supplied
-`wuhan_v8_storage_retrofit(2).inp`. The large INP itself is not duplicated in Git.
+This audit records the frozen Wuhan V8 physical lineage and the subsequent reconciliation of the verified observed-site PFV node set. The large INP itself is not duplicated in Git.
 
 ## File lineage
 
@@ -30,69 +29,87 @@ This audit records facts read directly from the user-supplied
 - Orifices: 42
 - Weirs: 10
 - Outlets: 0
-- Eligible continuous actuators total: 109
+- Writable SWMM actuator links total: 109
 - Cross sections: 1,219
 - Curves: 144
 
-All 57 pumps reference `PUMP2` curves. The pump curves are heterogeneous; their encoded
-maximum flow ordinate spans approximately 0.2 to 6.0 CMS. Orifice/weir geometry and
-coefficients are also heterogeneous, which is why Step2 V2 stores physical device features
-and a locked actuator-identity embedding rather than only a device-type one-hot vector.
+All 57 pumps reference `PUMP2` curves. Their encoded maximum flow ordinates are heterogeneous, approximately 0.2–6.0 CMS. Orifice/weir geometry and coefficients are also heterogeneous. Step2 therefore stores physical device features and a locked actuator identity instead of treating all links of one type as interchangeable.
 
-## Native Internal-RTC
+## Verified observed-site PFV_CORE8 reconciliation
 
-`[CONTROLS]` contains 536 executable/non-comment lines. Parsing action lines shows native
-rules can manipulate **82 of the 109 eligible actuators**:
+The earlier repository copy of `data/priority_nodes.txt` contained eight stale IDs that did not belong to this exact Wuhan V8 lineage. A later recovery of the historical Project4/5 facility-leverage/PFV evidence tied to the **same physical INP SHA-256 above**, the same 932-node network and the same 109-actuator catalogue identified the frozen waterlogging-matched PFV core as:
+
+```text
+MSLBZW001
+HS1316314
+YS2530050
+HS2529198
+MH0200773
+HS1330349
+HS2529139
+HS2529052
+```
+
+The historical definition was `project5_waterlogging_matched_hydraulic_active_pfv_core`; sentinel nodes were a separate diagnostic set and are not substituted into PFV_CORE8.
+
+`data/priority_nodes.txt` has now been overwritten with exactly these eight IDs. New Formal preflight remains fail-closed: all eight must be present in the frozen INP/graph at execution time, so the recovered definition cannot bypass current-model membership checking.
+
+## Native Internal-RTC versus No-supervisory-RTC
+
+`[CONTROLS]` contains 536 executable/non-comment lines. Parsing action lines shows native rules can manipulate 82 of the 109 actuator links:
 
 - pumps: 57 / 57
 - orifices: 16 / 42
 - weirs: 9 / 10
 
-Because `RULE_STEP = 10 s`, a Python controller that writes settings only every few minutes
-must not share the same runtime with native rules. New policy isolation therefore uses:
+Because `RULE_STEP = 10 s`, a Python controller writing every few minutes must not compete with native supervisory rules in the same runtime.
 
-- **Internal-RTC:** original event INP, native `[CONTROLS]` enabled, no Python setting writes;
-- **No-control:** same physical network/forcing, executable `[CONTROLS]` removed, no Python
-  writes;
-- **Proposed/D1/D2/D3/Hold/diagnostics:** controls-disabled base from simulation start.
+Formal semantics are therefore:
 
-A direct text audit of the controls-disabled copy preserved counts for junctions, outfalls,
-storage, conduits, pumps, orifices, weirs, cross sections, subcatchments, gages and time
-series while reducing executable `[CONTROLS]` lines from 536 to 0.
+- **Internal-RTC:** original event INP, native `[CONTROLS]` enabled, no Python writes;
+- **No-control / No-supervisory-RTC:** same physical network/forcing, executable `[CONTROLS]` removed, no Python writes;
+- **Proposed/D1/D2/D3/All-open/All-closed:** controls-disabled base from simulation start; Python writes only where the strategy requires them.
+
+Removing `[CONTROLS]` does **not** mean erasing all local equipment behaviour. Pump Startup/Shutoff depth fields live in `[PUMPS]` and are preserved, together with pump curves, initial status and regulator physics. The current `rtc-inp-audit-v2` reports all nonzero intrinsic pump Startup/Shutoff settings explicitly under contract `NO_SUPERVISORY_RTC_V2`.
+
+A controls-disabled runtime must preserve the physical-network hash and forcing while reducing executable supervisory `[CONTROLS]` to zero.
+
+## Timing interpretation
+
+The 15 s `ROUTING_STEP` is the Dynamic-Wave hydraulic integration scale. A Python `step_advance` callback does not replace that routing scale.
+
+Production 5-min observation/model and 10-min supervisory-control cadences are **candidate higher-level clocks**, not values inferred from `REPORT_STEP`/`WET_STEP`. They must be frozen only after <=60 s Phase-0 response/readback experiments and runtime-latency acceptance.
+
+If 300 s observation + 600 s control is accepted, the corrected t=0-inclusive causal history permits:
+
+```text
+0,5,10,...,60 min = 13 frames
+first real MPC at 60 min
+then 70,80,... min
+```
 
 ## Units and flood metrics
 
 With `FLOW_UNITS = CMS`:
 
-- instantaneous `Node.flooding` is a **flow rate in m3/s**;
+- instantaneous `Node.flooding` is a flow rate in m3/s;
 - it is not PFV or TFV;
-- authoritative event/horizon TFV is the sum of cumulative SWMM node flooding volume over
-  all nodes;
-- authoritative PFV is the sum of cumulative SWMM node flooding volume over the verified
-  priority-site nodes;
-- branch-level D2/D3 truth subtracts the cumulative statistic at the exact checkpoint from
-  the statistic at the exact aligned horizon endpoint;
-- Global Peak is the maximum over routing time of the simultaneous network sum of flooding
-  rates.
+- authoritative event/horizon TFV is the sum of cumulative SWMM node flooding-volume change over all hydraulic nodes;
+- authoritative PFV is the same cumulative-volume change restricted to the verified eight PFV_CORE8 nodes;
+- D2/D3 horizon truth subtracts cumulative statistics at the exact checkpoint from the exact aligned horizon endpoint;
+- Global Peak is the maximum over routing time of the simultaneous network sum of positive flooding rates.
 
-## Priority-site blocker
+## Continuous SWMM command versus field hardware
 
-The current repository `data/priority_nodes.txt` contains:
+SWMM permits fractional pump/orifice/weir settings. For non-Type5 pumps, the pump setting scales the pump-curve flow; this makes continuous-setting optimisation a valid SWMM experiment even though the physical pump curve is Type2.
 
-`JYS0814052`, `PS010004`, `HMT136`, `JPQM12306`, `GZLT_CFDP`, `MW5`, `GCLC_CFDP`, `LWS054702`.
+This does not prove that every physical Wuhan pump has a VFD or that every regulator is continuously remotely actuated. A field-deployment claim additionally requires a per-facility SCADA/operability catalogue covering discrete/continuous mode, remote command availability, ramps/rates, dwell, interlocks, readback/communications latency, local fail-safe and manual override. Those properties must not be guessed from the INP.
 
-**None of these eight IDs exists in this uploaded INP (0/8).** They must not be silently
-reused or replaced by guessed IDs. Formal priority/PFV evidence is blocked until the eight
-observed ponding locations are mapped to nodes in this exact INP. `rtc-resolve-priority`
-provides an auditable coordinate-to-nearest-node mapping when observed-point coordinates are
-available and reports mapping distance/duplicates for manual review.
+## Compute/storage recommendation
 
-## Local hardware execution recommendation
+For 16 concurrent CPU workers plus an RTX 4060 8GB GPU:
 
-For a workstation capable of 16 concurrent CPU workers plus an RTX 4060 8GB GPU:
-
-- SWMM data generation: 16 independent Python processes, normally one SWMM engine thread per
-  process (`--workers 16 --swmm-threads-per-process 1`) to avoid 32-thread oversubscription;
-- GPU model training: separate phase, AMP enabled, small micro-batches plus gradient
-  accumulation;
-- compact/resumable evidence prevents interrupted runs from forcing full regeneration.
+- SWMM generation: independent Python processes, normally `--workers 16 --swmm-threads-per-process 1`;
+- GPU training: separate phase, AMP enabled, small micro-batches plus gradient accumulation;
+- all new RTC-derived outputs belong inside the new Fresh Workspace;
+- compact/resumable evidence is preferred; successful `.rpt/.out` and raw row-wise CSV remain debug-only by default.
