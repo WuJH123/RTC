@@ -183,7 +183,7 @@ Interior finite differences are central; exact 0/1 bounds use feasible one-sided
 
 ## M. D3 interaction truth
 
-D3 generates multi-actuator, multi-step sequences from the same replayable prefix contract. It supplies interaction training data and joint-action validation. A D3 `max-active` design parameter is a sampling choice only; production MPC remains all-actuator.
+D3 generates multi-actuator, multi-step sequences from the same replayable prefix contract. It supplies interaction training data and joint-action validation. Every discovered actuator is eligible; `change_probability` controls how often each actuator is perturbed and `perturbation_std` controls perturbation magnitude. These are data-coverage parameters only and do not create a runtime Top-K or fixed active subset.
 
 ## N. Step2 fixed-time contract
 
