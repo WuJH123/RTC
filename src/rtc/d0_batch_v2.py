@@ -33,6 +33,7 @@ def _generation(job: dict[str, object]) -> tuple[str, str, dict[str, object]]:
         "strategy": str(job["strategy"]),
         "source_inp_sha256": str(job["source_inp_sha256"]),
         "runtime_inp_sha256": str(job["runtime_inp_sha256"]),
+        "native_controls_template_sha256": job.get("native_controls_template_sha256"),
         "record_stride_seconds": int(job["record_stride_seconds"]),
         "swmm_threads_per_process": int(job["swmm_threads_per_process"]),
     }
@@ -61,6 +62,8 @@ def _stamp(metadata_path: str | Path, job: dict[str, object]) -> str:
             "rtc_source_tree_sha256": code_sha,
             "generation_lineage": lineage,
             "generated_artifact_sha256": hashes,
+            "source_inp_sha256": str(job["source_inp_sha256"]),
+            "native_controls_template_sha256": job.get("native_controls_template_sha256"),
         }
     )
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -124,6 +127,10 @@ def run_d0_batch_main() -> None:
     )
     parser.add_argument("--events", required=True)
     parser.add_argument("--strategy", choices=["no_control", "internal_rtc"], default="no_control")
+    parser.add_argument(
+        "--native-controls-template",
+        help="frozen network INP supplying [CONTROLS]; required for internal_rtc",
+    )
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--record-stride-seconds", type=int, default=300)
     parser.add_argument("--workers", type=int, default=min(16, os.cpu_count() or 1))
@@ -141,6 +148,16 @@ def run_d0_batch_main() -> None:
         raise ValueError("rtc-run-d0-batch refuses Final rows before Policy Lock")
     if min(args.record_stride_seconds, args.workers, args.swmm_threads_per_process) <= 0:
         raise ValueError("record stride/workers/SWMM threads must be positive")
+    template: Path | None = None
+    if args.strategy == "internal_rtc":
+        if not args.native_controls_template:
+            raise ValueError(
+                "internal_rtc D0 requires --native-controls-template so the event forcing/DWF "
+                "is paired with the frozen native rule set"
+            )
+        template = Path(args.native_controls_template).resolve()
+        if not template.is_file():
+            raise ValueError(f"native-controls template missing: {template}")
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -154,11 +171,12 @@ def run_d0_batch_main() -> None:
             raise ValueError(f"event INP missing: {source}")
         source_sha = sha256_file(source)
         runtime = runtime_dir / f"{row['event_id']}__{source_sha[:12]}__{args.strategy}.inp"
-        build_runtime_inp(
+        contract = build_runtime_inp(
             source,
             runtime,
             native_controls=args.strategy == "internal_rtc",
             swmm_threads=args.swmm_threads_per_process,
+            native_controls_template=template,
         )
         run_id = f"{row['event_id']}__{args.strategy}"
         event_dir = out / str(row["event_id"])
@@ -173,6 +191,7 @@ def run_d0_batch_main() -> None:
             "source_inp_sha256": source_sha,
             "runtime_inp": str(runtime),
             "runtime_inp_sha256": sha256_file(runtime),
+            "native_controls_template_sha256": contract.native_controls_template_sha256,
             "out_dir": str(event_dir),
             "run_id": run_id,
             "record_stride_seconds": args.record_stride_seconds,
@@ -205,12 +224,13 @@ def run_d0_batch_main() -> None:
     print(
         json.dumps(
             {
-                "contract": "D0_BATCH_T0_CAUSAL_RESUME_V2",
+                "contract": "D0_BATCH_T0_CAUSAL_RESUME_V3_EVENT_CONTROLS_PAIRED",
                 "events": len(results),
                 "computed": len(jobs),
                 "resumed": len(results) - len(jobs),
                 "workers": min(args.workers, max(1, len(jobs))),
                 "summary": str(summary),
+                "native_controls_template": None if template is None else str(template),
             },
             indent=2,
         )
