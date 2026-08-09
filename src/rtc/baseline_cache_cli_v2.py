@@ -8,9 +8,10 @@ from pathlib import Path
 import pandas as pd
 
 from .baseline_cache_cli import locked_final_contract, validate_final_event_registry
-from .baseline_cache_v3 import CACHE_CONTRACT, build_baseline_cache, parse_strategies, write_views
+from .baseline_cache_v3 import CACHE_CONTRACT, parse_strategies, write_views
 from .causal_timing import timing_from_controller_config
 from .inp_runtime import sha256_file
+from .paired_baseline_cache import build_event_paired_baseline_cache
 
 
 def _json(path: str | Path) -> dict[str, object]:
@@ -20,13 +21,31 @@ def _json(path: str | Path) -> dict[str, object]:
     return value
 
 
+def _locked_frozen_inp(policy_lock: str | Path) -> Path:
+    lock = _json(policy_lock)
+    artefacts = lock.get("artefacts")
+    hashes = lock.get("sha256")
+    if not isinstance(artefacts, dict) or not isinstance(hashes, dict):
+        raise ValueError("Policy Lock lacks artifact/hash maps")
+    path = Path(str(artefacts.get("frozen_inp", "")))
+    if not path.is_file():
+        raise ValueError(f"Policy-Locked frozen INP is missing: {path}")
+    if sha256_file(path) != str(hashes.get("frozen_inp", "")):
+        raise ValueError("Policy-Locked frozen INP changed")
+    return path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate audited fixed baselines including Auto-RBC and EFD"
+        description="Generate audited fixed baselines including event-paired Internal RTC, Auto-RBC and EFD"
     )
     parser.add_argument("--events", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--config", help="resolved controller/runtime config; required for prelock")
+    parser.add_argument(
+        "--frozen-inp",
+        help="frozen network supplying native [CONTROLS]; required for prelock, Policy Lock supplies it for final",
+    )
     parser.add_argument(
         "--strategies",
         help=(
@@ -53,11 +72,22 @@ def main() -> None:
             locked_physical_sha256=physical_sha,
             locked_final_groups=final_groups,
         )
+        frozen_inp = _locked_frozen_inp(args.policy_lock)
+        if args.frozen_inp and sha256_file(args.frozen_inp) != sha256_file(frozen_inp):
+            raise ValueError("--frozen-inp differs from the Policy-Locked frozen INP")
         formalize_final = True
     else:
         if not args.config:
             raise ValueError("--config is required for prelock baseline generation")
+        if not args.frozen_inp:
+            raise ValueError(
+                "--frozen-inp is required for prelock baseline generation so Internal RTC can "
+                "pair the exact event forcing/DWF with the authoritative native rule set"
+            )
         config = Path(args.config)
+        frozen_inp = Path(args.frozen_inp).resolve()
+        if not frozen_inp.is_file():
+            raise ValueError(f"frozen INP is missing: {frozen_inp}")
         timing_from_controller_config(_json(config)).validate(
             require_full_history_before_first_control=True
         )
@@ -65,7 +95,7 @@ def main() -> None:
         formalize_final = False
 
     out = Path(args.out_dir)
-    frame = build_baseline_cache(
+    frame = build_event_paired_baseline_cache(
         event_registry=events,
         output_dir=out,
         config_path=config,
@@ -73,6 +103,7 @@ def main() -> None:
         stage=args.stage,
         workers=args.workers,
         swmm_threads_per_process=args.swmm_threads_per_process,
+        native_controls_template=frozen_inp,
         force=args.force,
         formalize_final=formalize_final,
     )
@@ -86,6 +117,8 @@ def main() -> None:
         "strategies": sorted(frame["strategy"].unique().tolist()),
         "computed": int((frame["status"] == "completed").sum()),
         "resumed": int((frame["status"] == "resumed").sum()),
+        "native_controls_template": str(frozen_inp),
+        "native_controls_template_sha256": sha256_file(frozen_inp),
         **views,
     }, indent=2))
 
