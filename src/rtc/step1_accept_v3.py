@@ -10,6 +10,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
 
+from .code_contract import rtc_source_tree_sha256
 from .contracts import load_priority_nodes
 from .large_model_cli import _device, _filtered_index, _read_lines
 from .lazy_step1 import CausalStep1TrajectoryDataset, TrajectoryBatchSampler
@@ -200,6 +201,7 @@ def accept_step1_large_v3_main() -> None:
         metrics["priority_depth_nse"] = mean_finite("priority_depth_nse")
     payload = {
         "contract": "STEP1_HELDOUT_ACCEPTANCE_V3_GROUP_BALANCED_TIME_LOCKED",
+        "rtc_source_tree_sha256": rtc_source_tree_sha256(),
         "model_sha256": _sha(args.model),
         "run_index_sha256": _sha(args.run_index),
         "model_step_seconds": args.model_step_seconds,
