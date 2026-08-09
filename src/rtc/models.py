@@ -7,8 +7,6 @@ from torch import nn
 
 
 class GraphMessageBlock(nn.Module):
-    """Small dependency-free directed message-passing block."""
-
     def __init__(self, hidden_dim: int):
         super().__init__()
         self.message = nn.Sequential(
@@ -20,7 +18,6 @@ class GraphMessageBlock(nn.Module):
         self.norm = nn.LayerNorm(hidden_dim)
 
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        # x: [B, N, D], edge_index: [2, E]
         src, dst = edge_index.long()
         msg = self.message(torch.cat([x[:, src], x[:, dst]], dim=-1))
         agg = torch.zeros_like(x).index_add(1, dst, msg)
@@ -32,13 +29,7 @@ class GraphMessageBlock(nn.Module):
 
 
 class SparseStateEstimator(nn.Module):
-    """Step 1: reconstruct network state from strictly causal sparse histories.
-
-    ``context_history`` is the explicit causal path for realised rainfall and actuator
-    requested/readback history promised by the scientific contract. It is global by
-    default (``[B,T,C]``) and is broadcast to nodes; node-specific context
-    (``[B,T,N,C]``) is also accepted. Future realised rainfall/state is never an input.
-    """
+    """Step 1: reconstruct current network state from strictly causal sparse histories."""
 
     def __init__(
         self,
@@ -66,7 +57,6 @@ class SparseStateEstimator(nn.Module):
         edge_index: torch.Tensor,
         context_history: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        # histories: [B,T,N,F]; static: [N,S] or [B,N,S]
         if observed_history.shape != observation_mask.shape:
             raise ValueError("observed_history and observation_mask must have identical shape")
         b, t, n, _ = observed_history.shape
@@ -104,14 +94,26 @@ class SparseStateEstimator(nn.Module):
 
 
 class ActuatorFlowModel(nn.Module):
-    """Step 2A: continuous setting + local hydraulics -> actuator flow.
+    """Continuous setting + local hydraulics + physical/identity features -> actuator flow."""
 
-    The responsiveness probability is a soft hurdle, not a hard actuator-selection gate.
-    """
-
-    def __init__(self, state_dim: int, physics_dim: int, hidden_dim: int = 128):
+    def __init__(
+        self,
+        state_dim: int,
+        physics_dim: int,
+        hidden_dim: int = 128,
+        *,
+        actuator_count: int = 0,
+        actuator_embedding_dim: int = 16,
+    ):
         super().__init__()
-        in_dim = state_dim * 2 + physics_dim + 2
+        self.actuator_count = int(actuator_count)
+        self.actuator_embedding_dim = int(actuator_embedding_dim if actuator_count > 0 else 0)
+        self.identity = (
+            nn.Embedding(self.actuator_count, self.actuator_embedding_dim)
+            if self.actuator_count > 0
+            else None
+        )
+        in_dim = state_dim * 2 + physics_dim + 2 + self.actuator_embedding_dim
         self.encoder = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.SiLU(),
@@ -129,11 +131,23 @@ class ActuatorFlowModel(nn.Module):
         previous_flow: torch.Tensor,
         physics: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        z = torch.cat(
-            [upstream_state, downstream_state, setting[..., None], previous_flow[..., None], physics],
-            dim=-1,
-        )
-        z = self.encoder(z)
+        parts = [
+            upstream_state,
+            downstream_state,
+            setting[..., None],
+            previous_flow[..., None],
+            physics,
+        ]
+        if self.identity is not None:
+            actuator_n = int(setting.shape[-1])
+            if actuator_n != self.actuator_count:
+                raise ValueError(
+                    f"actuator count/order differs from frozen model: {actuator_n} != {self.actuator_count}"
+                )
+            ids = torch.arange(actuator_n, device=setting.device)
+            emb = self.identity(ids).unsqueeze(0).expand(setting.shape[0], -1, -1)
+            parts.append(emb)
+        z = self.encoder(torch.cat(parts, dim=-1))
         responsiveness = torch.sigmoid(self.response_logit(z)).squeeze(-1)
         delta = self.flow_delta(z).squeeze(-1)
         flow = previous_flow + responsiveness * delta
@@ -141,8 +155,6 @@ class ActuatorFlowModel(nn.Module):
 
 
 class HydraulicTransition(nn.Module):
-    """Step 2B: node state + causal rainfall + actuator flow injection -> next node state."""
-
     def __init__(
         self,
         state_dim: int,
@@ -181,8 +193,6 @@ class Rollout:
 
 
 class DifferentiableHydraulicWorldModel(nn.Module):
-    """Step 2C: recursively couple actuator flow and graph hydraulic dynamics."""
-
     def __init__(
         self,
         *,
@@ -191,9 +201,17 @@ class DifferentiableHydraulicWorldModel(nn.Module):
         node_static_dim: int,
         actuator_physics_dim: int,
         hidden_dim: int = 160,
+        actuator_count: int = 0,
+        actuator_embedding_dim: int = 16,
     ):
         super().__init__()
-        self.actuator = ActuatorFlowModel(state_dim, actuator_physics_dim, hidden_dim)
+        self.actuator = ActuatorFlowModel(
+            state_dim,
+            actuator_physics_dim,
+            hidden_dim,
+            actuator_count=actuator_count,
+            actuator_embedding_dim=actuator_embedding_dim,
+        )
         self.transition = HydraulicTransition(
             state_dim, rainfall_dim, node_static_dim, hidden_dim=hidden_dim
         )
@@ -210,7 +228,6 @@ class DifferentiableHydraulicWorldModel(nn.Module):
         static_node_features: torch.Tensor,
         edge_index: torch.Tensor,
     ) -> Rollout:
-        # rainfall [B,H,N,R], settings [B,H,A]
         if rainfall.shape[0] != settings.shape[0] or rainfall.shape[1] != settings.shape[1]:
             raise ValueError("rainfall/settings batch and horizon dimensions must match")
         state = initial_state
