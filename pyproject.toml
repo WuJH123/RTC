@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wuhan-rtc"
-version = "0.6.3"
+version = "0.6.4"
 description = "Sparse-sensing, actuator-agnostic differentiable MPC for large urban drainage networks"
 requires-python = ">=3.10"
 dependencies = [
@@ -27,7 +27,7 @@ rtc-init-fresh-workspace = "rtc.fresh_workspace:main"
 rtc-validate-fresh-index = "rtc.fresh_model_guard:validate_index_main"
 rtc-build-graph = "rtc.pipeline_cli:build_graph_main"
 rtc-compile-formal-assets = "rtc.formal_assets_v3:main"
-rtc-build-baseline-cache = "rtc.baseline_cache_cli:main"
+rtc-build-baseline-cache = "rtc.baseline_cache_cli_v2:main"
 rtc-run-d0-batch = "rtc.d0_batch_v2:run_d0_batch_main"
 rtc-run-d1-batch = "rtc.large_data_cli:run_d1_batch_main"
 rtc-run-d1-exploration = "rtc.d1_exploration:main"
@@ -53,9 +53,9 @@ rtc-run-policy = "rtc.production_guard:main"
 rtc-accept-runtime = "rtc.runtime_acceptance:main"
 rtc-record-pipeline-stage = "rtc.pipeline_ledger_cli:main"
 rtc-build-policy-artifacts = "rtc.policy_artifacts_cli:main"
-rtc-policy-lock-v5 = "rtc.policy_lock:main"
-rtc-formalize-run = "rtc.formalize_run:main"
-rtc-compile-final-v4 = "rtc.formal_final_v4:main"
+rtc-policy-lock-v5 = "rtc.policy_lock_v6:main"
+rtc-formalize-run = "rtc.formalize_run_v2:main"
+rtc-compile-final-v4 = "rtc.formal_final_v5:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

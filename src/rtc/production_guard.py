@@ -10,7 +10,7 @@ from .baselines import canonical_baseline_id
 from .causal_timing import timing_from_controller_config
 from .code_contract import rtc_source_tree_sha256
 from .inp_runtime import sha256_file
-from .production_cli import run_policy_main
+from .production_cli_router import run_policy_main
 
 
 def _model_engine(path: str, *, name: str) -> str:

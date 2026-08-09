@@ -50,11 +50,13 @@ def _lock(tmp_path: Path, source: Path) -> Path:
     plan.write_text(
         json.dumps(
             {
-                "contract": "FORMAL_BASELINE_PLAN_V4_NO_DUPLICATE_HOLD",
+                "contract": "FORMAL_BASELINE_PLAN_V5_DYNAMIC_RULE_COMPARATORS",
                 "strategies": [
                     "proposed",
                     "no_control",
                     "internal_rtc",
+                    "auto_rbc",
+                    "efd",
                     "all_open",
                     "all_closed",
                 ],
@@ -98,6 +100,8 @@ def test_final_baseline_registry_must_match_locked_split_and_physics(tmp_path: P
     assert strategies == (
         "no_control",
         "internal_rtc",
+        "auto_rbc",
+        "efd",
         "all_open",
         "all_closed",
     )
