@@ -18,8 +18,6 @@ from .tfv_pipeline import TFVPipelineLedger, sha256_file
 
 POLICY_LOCK_CONTRACT = "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V4_CODE_TIME_DATA_BOUND"
 
-# Only artifacts that directly define the scientific experiment/runtime or demonstrate that
-# the trained models/controller passed the frozen acceptance criteria are mandatory.
 _REQUIRED = {
     "fresh_workspace_manifest",
     "inp_preflight",
@@ -42,7 +40,7 @@ _REQUIRED = {
 }
 
 _EXPECTED_GATE_SOURCE_CONTRACTS = {
-    "step1_acceptance": "STEP1_HELDOUT_ACCEPTANCE_V3_GROUP_BALANCED_TIME_LOCKED",
+    "step1_acceptance": "STEP1_HELDOUT_ACCEPTANCE_V4_GROUP_BALANCED_T0_ENGINE_BOUND",
     "step2_acceptance": "STEP2_EXACT_TRUTH_ACCEPTANCE_V4_GROUP_BALANCED_TIME_LOCKED",
     "gradient_acceptance": "D2_SWMM_TFV_GRADIENT_METRICS_V4_BOUND_AWARE_GROUP_BALANCED",
 }
@@ -79,7 +77,9 @@ def _thresholds(value: object) -> dict[str, dict[str, float]]:
     return {"minimum": minimum, "maximum": maximum}
 
 
-def _verify_workspace_and_split(artefacts: dict[str, str]) -> tuple[dict[str, object], dict[str, object]]:
+def _verify_workspace_and_split(
+    artefacts: dict[str, str],
+) -> tuple[dict[str, object], dict[str, object]]:
     workspace = load_fresh_workspace(artefacts["fresh_workspace_manifest"])
     inputs = workspace.get("inputs")
     if not isinstance(inputs, dict) or not isinstance(inputs.get("event_registry"), dict):
@@ -146,11 +146,15 @@ def _verify_acceptance(artefacts: dict[str, str], implementation_sha: str) -> No
         raise ValueError("candidate ranking is not rainfall-group balanced")
     if str(ranking.get("step2_sha256", "")) != step2_sha:
         raise ValueError("candidate ranking does not belong to the locked Step2 model")
-    if _thresholds(contract.get("candidate_ranking")) != _thresholds(ranking.get("thresholds", {})):
+    if _thresholds(contract.get("candidate_ranking")) != _thresholds(
+        ranking.get("thresholds", {})
+    ):
         raise ValueError("candidate-ranking thresholds differ from the frozen contract")
 
 
-def _load_checkpoint(path: str | Path, *, name: str, implementation_sha: str) -> dict[str, object]:
+def _load_checkpoint(
+    path: str | Path, *, name: str, implementation_sha: str
+) -> dict[str, object]:
     payload = torch.load(path, map_location="cpu")
     if not isinstance(payload, dict):
         raise ValueError(f"{name} checkpoint payload is invalid")
@@ -192,14 +196,21 @@ def _verify_model_timing(
         raise ValueError("Step2 model step differs from controller")
     if int(step2_cfg.get("horizon_steps", -1)) != horizon_steps:
         raise ValueError("Step2 horizon differs from controller")
-    if step2_cfg.get("time_contract") != "STEP2_FIXED_DISCRETE_TIME_V1":
-        raise ValueError("Step2 checkpoint lacks the frozen discrete-time contract")
+    if step2_cfg.get("time_contract") != "STEP2_FIXED_DISCRETE_TIME_ENGINE_V2":
+        raise ValueError("Step2 checkpoint lacks the frozen discrete-time/engine contract")
+    step1_engine = str(step1_cfg.get("swmm_engine_version", "")).strip()
+    step2_engine = str(step2_cfg.get("swmm_engine_version", "")).strip()
+    if not step1_engine or step1_engine != step2_engine:
+        raise ValueError(
+            f"Step1/Step2 SWMM engine lineage differs: {step1_engine} != {step2_engine}"
+        )
     return {
         "step1_training_manifest_sha256": str(step1["training_manifest_sha256"]),
         "step2_training_manifest_sha256": str(step2["training_manifest_sha256"]),
         "model_step_seconds": model_step_seconds,
         "history_steps": history_steps,
         "horizon_steps": horizon_steps,
+        "swmm_engine_version": step1_engine,
     }
 
 
@@ -217,7 +228,9 @@ def _verify_runtime_acceptance(
         raise ValueError("development real-time execution acceptance did not pass")
     if evidence.get("rtc_source_tree_sha256") != implementation_sha:
         raise ValueError("runtime acceptance uses an incompatible implementation contract")
-    if str(evidence.get("controller_config_sha256", "")) != sha256_file(controller_config_path):
+    if str(evidence.get("controller_config_sha256", "")) != sha256_file(
+        controller_config_path
+    ):
         raise ValueError("runtime acceptance was not generated with the locked controller config")
     budget = float(evidence.get("decision_runtime_budget_seconds", -1.0))
     if not 0 < budget < control_update_seconds:
@@ -345,8 +358,6 @@ def create_policy_lock(
     payload: dict[str, object] = {
         "contract": POLICY_LOCK_CONTRACT,
         "policy_sha256": policy_sha,
-        # Compatibility field name retained; this is the stable scientific implementation
-        # contract fingerprint, not a byte hash of the entire source tree.
         "rtc_source_tree_sha256": implementation_sha,
         "implementation_binding": "semantic_scientific_contract_plus_exact_numerical_artifact_hashes",
         "physical_network_sha256": physical_contract_sha256(artefacts["frozen_inp"]),
@@ -375,7 +386,7 @@ def create_policy_lock(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Create the minimal science-first TFV Policy Lock"
+        description="Create the science-first TFV Policy Lock with time/data/engine binding"
     )
     parser.add_argument("--ledger", required=True)
     parser.add_argument("--artifacts", required=True)
