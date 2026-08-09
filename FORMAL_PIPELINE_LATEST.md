@@ -1,22 +1,19 @@
-# Formal Pipeline — Wuhan TFV-first causal fresh-data contract
+# Formal Pipeline — Wuhan RTC v0.6
 
-This is the only admissible workflow for new Formal evidence.
+This file defines the fail-closed scientific evidence sequence for the final TFV-first study. It deliberately distinguishes **scientific correctness gates** from **paper-strength sample-size recommendations**.
 
-## A. Frozen scientific question
+## A. Scientific question
 
-Can a sparse-sensing, differentiable-surrogate, continuous receding-horizon controller reduce system-wide cumulative flooding volume in the Wuhan large sewer network, while using only causal online information and keeping observed priority-site deterioration as a soft secondary consideration?
+Can a sparse-sensing, differentiable-surrogate, continuous receding-horizon controller reduce **system-wide cumulative TFV** in the Wuhan large sewer network while using only causal online information?
 
-Primary objective: **TFV minimum**.
+- TFV: primary objective.
+- Eight-site PFV/depth: soft secondary/diagnostic.
+- Global Peak: report only.
+- Final truth: authoritative SWMM only.
 
-Priority PFV/depth: **soft/diagnostic**, not a hard gate.
+## B. Frozen priority set
 
-Global Peak: **report only**, obtained from routing-step replay.
-
-All Final claims: **authoritative SWMM truth**.
-
-## B. Frozen priority nodes
-
-Exactly eight:
+Exactly:
 
 ```text
 MSLBZW001
@@ -29,24 +26,13 @@ HS2529139
 HS2529052
 ```
 
-Preflight and Policy Lock both require all eight IDs to exist in the frozen graph.
+All eight must exist in the frozen graph/INP.
 
-## C. No-control contract
+## C. No-control
 
-Contract ID: `NO_SUPERVISORY_RTC_V2`.
+Contract: `NO_SUPERVISORY_RTC_V2`.
 
-No-control:
-
-- removes executable user-defined `[CONTROLS]`;
-- makes no Python setting writes;
-- preserves the physical network and forcing;
-- preserves pump curves and initial status;
-- preserves intrinsic `[PUMPS]` Startup/Shutoff depth logic;
-- preserves regulator physical/default behaviour.
-
-It is neither All-open nor All-closed.
-
-`rtc-inp-audit-v2` must record the remaining intrinsic local pump controls before any data generation.
+No-control removes executable user `[CONTROLS]` and makes no Python writes, while preserving rainfall/runoff forcing, physical network, pump curves, initial status, intrinsic `[PUMPS]` Startup/Shutoff depth logic and regulator physics.
 
 ## D. Formal strategy matrix
 
@@ -60,151 +46,96 @@ all_open
 all_closed
 ```
 
-`hold` is debug-only and is forbidden in Formal strategy matrices because it can collapse to No-control.
+`hold` is debug-only. `internal_rtc` retains native `[CONTROLS]`; the other controlled strategies use the controls-disabled physical base.
 
-`internal_rtc` retains native `[CONTROLS]` and receives no Python actuator writes.
+## E. Rainfall/split contract
 
-All other Formal strategies run on controls-disabled runtime INPs. All-open/All-closed share the same pre-control history as Proposed and start their commands at the frozen first-control epoch.
+Hard correctness requirements:
 
-## E. Fresh-data rule
+- unique `event_id` rows;
+- no `rainfall_group` crosses scientific splits;
+- development contains group-disjoint train and validation folds;
+- at least one untouched Final group;
+- Final is absent from pre-lock training/tuning;
+- referenced INPs exist.
 
-Historical RTC-derived data/model/evidence is not admissible.
+Recommended paper-strength design: about **160 independent rainfall groups**, e.g. 96 development / 24 calibration / 16 safety-audit / 24 Final, with about 19 independent development-validation groups. These counts are **recommendations, not execution gates**.
 
-Admissible existing inputs are limited to physical/observation/forcing definitions, for example:
+## F. Study workspace and reuse
 
-- frozen physical INP;
-- verified priority/sensor metadata;
-- rainfall forcing definitions used to create the new event registry.
+Initialize the study with `rtc-init-fresh-workspace`. The workspace binds canonical physical/input/split identities.
 
-Create a new >=160-group event registry, validate it, then initialize an empty workspace:
-
-```powershell
-rtc-init-fresh-workspace `
-  --root E:\RTC_sewer\RTC_fresh_v05 `
-  --inp <FROZEN_INP> `
-  --priority data/priority_nodes.txt `
-  --events <NEW_EVENT_REGISTRY_WITH_SPLITS.csv>
-```
-
-The canonical copied registry is:
+Large generated data may live on any local volume. Validity comes from:
 
 ```text
-<FRESH_ROOT>/contracts/event_registry_with_splits.csv
+scientific/data contract
++ stable RTC implementation fingerprint
++ exact numerical input/config/timing/action lineage
++ generated-artifact hashes
 ```
 
-Policy Lock requires `FRESH_WORKSPACE_MANIFEST.json` and key RTC-derived artifacts inside this root.
+The implementation fingerprint represents frozen scientific semantics; it is not a byte hash of every source file. File existence or directory location alone never authorizes reuse.
 
-## F. Rainfall design
+## G. Phase-0 time-scale discovery
 
-Minimum independent rainfall groups: **160**.
+Do not freeze 5/10/120 min a priori.
 
-Minimum role counts:
+Use development-only controls-disabled D0/D2 data sampled at `<=60 s` while SWMM keeps its internal routing step. Evaluate:
+
+- readback lag;
+- actuator-flow `t10/t50/t90` and peak time;
+- network flooding-rate response;
+- network maximum-depth response;
+- peak-near-horizon censoring.
+
+Do not use sustained-step response-area `mass90` as a hydraulic time constant. Use D3/pulse-release sequences to assess recovery after control release.
+
+Phase-0 branches whose time step differs from the frozen production model step cannot enter production Step2 shards.
+
+## H. Causal production timing
+
+If Phase-0 accepts 300 s observation/model + 600 s control with 13 history frames and first control at 60 min, the causal history is:
 
 ```text
-development  >= 96
-calibration  >= 24
-safety_audit >= 16
-final        >= 24
+0,5,10,...,55,60 min
 ```
 
-Development validation must contain >=19 independent rainfall groups at the minimum design.
+First MPC = 60 min, then 70,80,... min.
 
-No rainfall group may cross roles or development train/validation folds.
-
-```powershell
-rtc-validate-rainfall-design `
-  --events <NEW_EVENT_REGISTRY_WITH_SPLITS.csv> `
-  --out <FRESH_ROOT>/contracts/rainfall_design_evidence.json
-```
-
-The Final set remains untouched until Policy Lock.
-
-## G. Time-scale discovery before production data
-
-Do **not** freeze 5 min / 10 min / 120 min a priori.
-
-Phase-0 D2 must sample <=60 s so sub-5-min responses are observable. SWMM internal Dynamic-Wave routing remains the INP routing step.
-
-Phase-0 must report:
-
-- actuator target/current-setting response;
-- actuator-flow onset/peak/mass90;
-- network flooding-rate onset/peak/mass90;
-- network maximum-depth response.
-
-```powershell
-rtc-phase0-timescale `
-  --manifest <FRESH_ROOT>/d2_phase0/probe_manifest.csv `
-  --run-summary <FRESH_ROOT>/d2_phase0/runs/RUN_SUMMARY.csv `
-  --detail-out <FRESH_ROOT>/phase0/timescale_detail.csv `
-  --summary-out <FRESH_ROOT>/phase0/timescale_summary.json `
-  --max-sample-seconds 60
-```
-
-If a selected diagnostic horizon censors response-mass estimates near its endpoint, lengthen the Phase-0 horizon before freezing the production horizon.
-
-## H. Candidate 5-min/10-min causal implementation
-
-If Phase-0 accepts:
+Formal timing requires:
 
 ```text
-model/observation = 300 s
-control update    = 600 s
-history_steps     = 13
-first control     = 60 min
+record_stride_seconds == model_step_seconds
+control_update_seconds % model_step_seconds == 0
+first control aligns to model/control grids
+first control occurs after complete causal history
+horizon >= one full control interval
 ```
 
-then t=0 is explicitly included, giving exactly:
-
-```text
-0,5,10,...,55,60 min = 13 causal frames
-```
-
-First MPC = 60 min, then 70, 80, ... min.
-
-One 10-min control block spans two 5-min model intervals.
-
-`CausalTimingContract` fails closed if:
-
-- control update is not divisible by model step;
-- first control is off either time grid;
-- first control precedes a complete causal history;
-- horizon is shorter than one full control interval.
+The SWMM Dynamic-Wave solver continues at its internal routing step between Python callbacks.
 
 ## I. Online information boundary
 
-At decision time t, policy inputs may contain only:
+Allowed at decision time `t`:
 
-- sparse depth/head observations <=t;
-- realised rainfall <=t;
-- actuator target/current-setting/flow readback <=t;
-- static graph and actuator physics;
-- causal forecast generated from observed rainfall history.
+- sparse depth/head observations `<=t`;
+- realised rainfall `<=t`;
+- actuator target/current-setting/flow readback `<=t`;
+- static graph/device information;
+- a forecast derived only from causal rainfall history.
 
 Forbidden:
 
-- event ID as control signal;
+- event ID as policy signal;
 - future realised rainfall/runoff;
 - future SWMM state/flooding;
-- future native/Internal trajectory;
+- future Internal trajectory;
 - Final truth;
-- offline labels masquerading as online state.
+- offline future labels presented online.
 
-## J. Baseline cache / canonical D0
+## J. Baseline cache
 
-Generate fixed references once and reuse them:
-
-```powershell
-rtc-build-baseline-cache `
-  --events <FRESH_ROOT>/contracts/event_registry_with_splits.csv `
-  --config <FRESH_ROOT>/contracts/controller_resolved.json `
-  --out-dir <FRESH_ROOT>/baseline_cache `
-  --stage prelock `
-  --workers 16 `
-  --swmm-threads-per-process 1
-```
-
-Formal fixed strategies:
+After production timing is frozen, generate fixed references exactly once per event:
 
 ```text
 no_control
@@ -213,65 +144,73 @@ all_open
 all_closed
 ```
 
-The cache must validate actual `[CONTROLS]` state, Python-controller presence, decision logs, commanded extreme settings and physical-network hash.
+Cache reuse requires matching event/physical/timing/strategy/implementation lineage and verified artifact hashes.
 
 Use:
 
-- `STEP1_BASELINE_INDEX.csv` for fresh Step1 baselines;
-- `NO_CONTROL_D0_INDEX.csv` for replayable D2/D3 checkpoints.
+```text
+STEP1_BASELINE_INDEX.csv  → Step1 baseline trajectories
+NO_CONTROL_D0_INDEX.csv   → replayable D2/D3 checkpoint source
+```
 
 ## K. D1 / Step1
 
-D1 is new development/train controlled-state exploration for Step1 only.
+D1 is development/train controlled-state exploration for Step1 coverage only. It is forbidden as a D2/D3 checkpoint source.
 
-D1 is forbidden as a D2/D3 checkpoint source.
+Step1 uses causal sparse history and reconstructs the **current** full state. Every trajectory must have the frozen model-step grid. Formal validation is rainfall-group balanced.
 
-Step1 must be trained only on fresh workspace data and validated on rainfall-group-disjoint development validation groups.
-
-Step1 acceptance includes the preregistered reconstruction metric family and model hash.
+Step1 training state may resume only for the same run-index, graph, sensors, timing, architecture/training configuration and compatible implementation contract.
 
 ## L. D2 same-prefix truth
 
-Checkpoints come only from fresh controls-disabled, no-Python-write No-control trajectories.
+D2 checkpoints come only from controls-disabled No-control prefixes.
 
-D2 branches must preserve exact prefix lineage and save:
+At checkpoint `t`:
 
-- current SI state;
-- causal rainfall;
-- requested/current actuator settings;
-- actuator flow;
-- H-step hydraulic target states;
-- H-step actuator flows;
-- exact cumulative node flooding-volume delta from SWMM statistics;
-- checkpoint/action/event/rainfall hashes.
+1. record pre-action state/statistics;
+2. write candidate action `u_t`;
+3. run SWMM forward;
+4. record future post-action state/flow;
+5. compute exact cumulative SWMM node flooding-volume change.
 
-At setting bounds, gradient truth uses valid one-sided finite differences.
+Therefore the learned alignment is:
+
+```text
+x_t + u_t + exogenous rainfall trajectory → x_(t+1),...,x_(t+H)
+```
+
+Interior finite differences are central; exact 0/1 bounds use feasible one-sided differences.
 
 ## M. D3 interaction truth
 
-D3 uses the same replayable prefix contract and generates fresh multi-actuator, multi-step interaction sequences.
+D3 generates multi-actuator, multi-step sequences from the same replayable prefix contract. It supplies interaction training data and joint-action validation. A D3 `max-active` design parameter is a sampling choice only; production MPC remains all-actuator.
 
-No fixed active facility subset is allowed in the scientific contract.
+## N. Step2 fixed-time contract
 
-## N. Step2 index / training
+Build a deduplicated D2+D3 index, then train/validation shards. Every shard set must have one immutable:
 
-Build one deduplicated D2+D3 index:
-
-```powershell
-rtc-build-step2-index `
-  --d2-manifest <FRESH_ROOT>/d2/probe_manifest.csv `
-  --d2-run-summary <FRESH_ROOT>/d2/runs/RUN_SUMMARY.csv `
-  --d3-run-summary <FRESH_ROOT>/d3/RUN_SUMMARY.csv `
-  --out <FRESH_ROOT>/step2/step2_run_index.csv
+```text
+model_step_seconds
+horizon_steps
 ```
 
-The builder must collapse repeated D2 center/base provenance and reject Final data.
+Mixed time grids are rejected.
 
-Step2 training supervises hydraulic trajectory, actuator flow and exact cumulative SWMM node flooding volume.
+Step2 supervises hydraulic trajectory, actuator flow and exact cumulative SWMM node flooding volume.
 
-## O. TFV/PFV truth
+## O. One predicted-volume operator
 
-For node i over interval [t0,t1]:
+Step2 training, Step2 validation, MPC, gradient validation and ranking must all use:
+
+```text
+trapezoidal integration of checkpoint/current flooding rate + future predicted flooding rates
+```
+
+A future-only right-endpoint rectangle is forbidden because it would train and optimize different TFV objectives.
+
+## P. Authoritative TFV/PFV
+
+For node `i` over `[t0,t1]`:
 
 ```text
 DeltaV_i = SWMM cumulative flooding volume_i(t1)
@@ -285,66 +224,55 @@ TFV = sum DeltaV_i over all hydraulic nodes
 PFV = sum DeltaV_i over the frozen eight priority nodes
 ```
 
-`Node.flooding` is an instantaneous rate and cannot itself be reported as volume.
+`Node.flooding` is an instantaneous rate, not a volume.
 
-The MPC surrogate integrates predicted current+future flooding rates using the shared trapezoidal volume operator; that prediction is not substituted for authoritative SWMM truth.
-
-## P. Global Peak truth
-
-Formal Global Peak is:
+## Q. Global Peak
 
 ```text
-max_t sum_i max(flooding_rate_i(t), 0)
+Global Peak = max_t sum_i max(flooding_rate_i(t), 0)
 ```
 
-evaluated synchronously at routing time during frozen-decision replay.
+Formal peak comes from routing-step observation of a frozen-decision replay. The replay preserves the main run's Python target-write cadence so the reporting calculation cannot change the executed policy.
 
-It is not the sum of each node's individual historical peak and is not an MPC hard constraint.
+## R. Step1/Step2/action-effect gates
 
-## Q. Gradient/ranking acceptance
+Before development closed-loop can become Formal-eligible:
 
-Before Proposed development closed-loop can be Formal-eligible:
+1. rainfall-group-balanced Step1 held-out reconstruction passes;
+2. rainfall-group-balanced Step2 held-out trajectory/exact-TFV acceptance passes;
+3. D2 exact-SWMM local/boundary TFV-gradient acceptance passes;
+4. D2 local + D3 joint-sequence ranking/regret acceptance passes.
 
-- Step1 acceptance passes;
-- Step2 acceptance passes;
-- held-out exact-SWMM TFV gradient acceptance passes;
-- held-out exact-SWMM candidate-ranking acceptance passes.
+Single-actuator ranking alone is insufficient because online MPC optimizes a joint 109-dimensional action space.
 
-Predicted volume semantics must be identical between Step2, gradient evaluation, ranking evaluation and MPC.
+## S. All-actuator continuous MPC
 
-## R. Real-time implementation acceptance
+MPC optimizes direct continuous settings for every writable actuator and projects every future control block to the feasible numerical/rate contract. No fixed active subset, Engineering36, runtime Top-K mask or artificial binary-pump conversion is permitted in the scientific controller.
 
-The controller must freeze `decision_runtime_budget_seconds` after workstation benchmarking. The budget must be strictly smaller than the control interval.
+Priority-site deterioration is minimized only as a secondary preference within a TFV-near-optimal solution envelope.
 
-Every Proposed development decision records wall-clock Step1+forecast+MPC+projection time.
+## T. Real-time execution gate
 
-If a decision exceeds the budget, the stale candidate is rejected and `FALLBACK_COMPUTE_DEADLINE` is executed.
+Freeze `decision_runtime_budget_seconds < control_update_seconds` after workstation benchmarking.
 
-Run:
+Every Proposed development decision records Step1 + forecast + MPC + projection wall-clock time. A stale candidate becomes `FALLBACK_COMPUTE_DEADLINE`.
 
-```powershell
-rtc-accept-runtime `
-  --run-index <FRESH_ROOT>/development/RUN_INDEX.csv `
-  --config <FRESH_ROOT>/contracts/controller_resolved.json `
-  --out <FRESH_ROOT>/acceptance/runtime_acceptance.json
-```
-
-A Formal-pass runtime gate requires:
+Formal runtime acceptance requires:
 
 ```text
-control-grid violations          = 0
-first-decision violations        = 0
-missing runtime diagnostics      = 0
-FALLBACK_HISTORY_WARMUP          = 0
-FALLBACK_READBACK                = 0
-FALLBACK_RUNTIME_ERROR           = 0
-FALLBACK_COMPUTE_DEADLINE        = 0
+control-grid violations       = 0
+first-decision violations     = 0
+missing runtime diagnostics   = 0
+FALLBACK_HISTORY_WARMUP       = 0
+FALLBACK_READBACK             = 0
+FALLBACK_RUNTIME_ERROR        = 0
+FALLBACK_COMPUTE_DEADLINE     = 0
 max decision runtime <= budget
 ```
 
-## S. Pipeline ledger
+## U. Pipeline ledger
 
-The causal fresh-data ledger order is:
+Required evidence order:
 
 ```text
 inp_preflight
@@ -362,69 +290,32 @@ policy_lock
 final_closed_loop_swmm
 ```
 
-No later stage can pass before all previous required stages pass with hashed evidence.
-
-## T. Policy Lock
+## V. Policy Lock
 
 Current contract:
 
-`WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V3_CAUSAL_FRESH_DATA`
-
-The artefact map must include at least:
-
 ```text
-fresh_workspace_manifest
-inp_preflight
-frozen_inp
-priority_nodes
-sensor_layout
-time_scale_config
-step1_model
-step2_model
-graph_schema
-state_schema
-actuator_catalog
-split_registry
-model_acceptance_contract
-step1_acceptance
-step2_acceptance
-gradient_acceptance
-candidate_ranking_acceptance
-controller_config
-rainfall_forecast_config
-fallback_policy
-baseline_plan
-runtime_acceptance
+WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V4_CODE_TIME_DATA_BOUND
 ```
 
-The lock verifies fresh-workspace provenance, hashes, rainfall cohort design, causal timing, real-time execution and the exact strategy matrix.
+It binds the scientific implementation fingerprint, physical/input/split identities, priority/sensors, controller/time contract, graph, Step1/Step2 checkpoint/training lineage, acceptance evidence, runtime evidence and baseline plan.
 
-## U. Untouched Final
+Only direct scientific experiment/evidence artifacts are mandatory; unrelated files are not Policy-Lock gates.
+
+## W. Untouched Final
 
 Only after Policy Lock:
 
-1. generate/resume fixed Final baselines once;
-2. run locked Proposed once per Final event;
+1. generate/resume the four fixed Final references once;
+2. run locked Proposed once per untouched Final event;
 3. formalize each run;
-4. replay exact routing-step Global Peak;
-5. compile with `rtc-compile-final-v4`.
+4. replay routing-step Global Peak;
+5. compile the complete five-strategy paired matrix.
 
-Final compiler requires the complete event x strategy matrix:
+Final aggregation first collapses variants inside each rainfall group, then gives each independent rainfall group equal weight.
 
-```text
-proposed
-no_control
-internal_rtc
-all_open
-all_closed
-```
+Final outcomes may not alter models, thresholds, forecast, timing, runtime budget, sensors, priority nodes or split assignments.
 
-No Final result may alter models, thresholds, rainfall forecast, time scales, runtime budget, sensor layout or priority-node definitions.
+## X. Field-deployment boundary
 
-## V. Field-deployment boundary
-
-SWMM fractional settings provide a valid numerical control experiment. For pumps other than Type5, SWMM applies the setting as a multiplier to the pump-curve flow; regulators have their own fractional setting semantics.
-
-This is not evidence that every physical Wuhan facility has VFD/continuous remote actuation.
-
-A physical deployment claim additionally requires verified per-facility SCADA/operability metadata: discrete/continuous mode, rate/ramp, dwell, interlocks, communications latency, watchdog/fail-safe and manual override. Unknown hardware metadata must not be invented.
+SWMM fractional settings are valid numerical pump/orifice/weir controls. They do not prove that every physical Wuhan facility has continuous remote actuation. A field-deployment claim additionally requires verified SCADA/VFD/discrete-continuous mode, ramp/rate, dwell, interlock, communication/readback latency, watchdog/fail-safe and manual-override metadata.
