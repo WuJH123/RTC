@@ -1,5 +1,6 @@
 def test_formal_pipeline_modules_import() -> None:
     import rtc.acceptance_gate  # noqa: F401
+    import rtc.baseline_cache  # noqa: F401
     import rtc.calibration_cases  # noqa: F401
     import rtc.checkpoint_design  # noqa: F401
     import rtc.context_features  # noqa: F401
