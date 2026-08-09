@@ -1,6 +1,6 @@
-# Wuhan RTC v0.6.5 — sparse-state reconstruction, differentiable action model and realtime TFV MPC
+# Wuhan RTC v0.6.6 — event-paired baselines, causal dry prefix and TFV-first MPC
 
-The repository implements a **model-based** urban-drainage realtime-control workflow:
+This repository implements a **model-based** urban-drainage real-time-control workflow:
 
 ```text
 causal sparse observations + realised rainfall + actuator readback
@@ -20,21 +20,44 @@ causal sparse observations + realised rainfall + actuator readback
                        authoritative SWMM
 ```
 
-The primary optimization variable is the **time sequence of writable facility settings**. The primary objective is predicted cumulative system-wide **Total Flood Volume (TFV)**. Priority Flood Volume (PFV) and priority depth are soft/reporting quantities rather than hard admission gates. Final truth comes from SWMM cumulative node statistics.
+The primary objective is system-wide cumulative **Total Flood Volume (TFV)**. Priority Flood Volume (PFV) and priority depth are soft/reporting quantities rather than hard admission gates. Global Peak is report-only. Final truth comes from authoritative SWMM cumulative node statistics and routing-step replay.
 
 ## Start here
 
-For a completely fresh local study, use:
+Use:
 
-- `docs/LEAN_FRESH_RUN_V065.md` — current staged execution contract, including exact Step 0–2 commands;
-- `FORMAL_PIPELINE_LATEST.md` — current scientific/Policy-Lock/Final evidence contract;
-- `configs/formal_controller_v4.template.json` — later full production-controller configuration template.
+- `docs/LEAN_FRESH_RUN_V066.md` — current fresh-run contract;
+- `FORMAL_PIPELINE_LATEST.md` — scientific/Policy-Lock/Final evidence contract;
+- `configs/formal_controller_v4.template.json` — production-controller template;
+- `configs/formal_baseline_plan.v3.json` — seven-strategy event-paired comparison contract.
 
-Do not use the historical v0.6.2/v0.6.3 runbooks as the active contract.
+Historical v0.6.2–v0.6.5 runbooks remain useful provenance but are not the active contract.
+
+## v0.6.6 corrections from the Project7 pre-training audit
+
+The pre-training audit found that copied event INPs carried the desired event forcing/DWF but no executable native `[CONTROLS]`. Using those files directly for `internal_rtc` would therefore mislabel a no-native-control event as the native comparator. It also found no pre-rain causal history, a 3 h recovery tail that was right-censored in all eight high-frequency pilot events, and no field metadata proving that 57 PUMP2 facilities are real VFD assets.
+
+v0.6.6 changes the contract accordingly:
+
+```text
+rtc-prepare-event-suite
+    -> preserves the absolute storm clock and DWF phase,
+       moves simulation start earlier to create a dry/DWF causal history,
+       and extends the post-rain recovery tail.
+
+rtc-check-study-readiness
+    -> fails closed on insufficient warm-up/tail, unresolved sensor/rainfall provenance,
+       or an invalid actuator-claim scope.
+
+Internal RTC runtime
+    -> exact prepared event forcing + DWF + initial conditions
+       plus ONLY the frozen network [CONTROLS] payload.
+
+Formal Final
+    -> hashes and verifies the native controls payload against Policy Lock.
+```
 
 ## Formal baseline matrix
-
-The current comparison matrix is:
 
 ```text
 proposed
@@ -46,166 +69,88 @@ all_open
 all_closed
 ```
 
-`auto_rrc` / `Auto-RRC` are accepted aliases and canonicalized to `auto_rbc`.
+The scientifically important competitive baselines are No-control, Internal RTC, Auto-RBC and EFD. All-open and All-closed are diagnostic extremes and are reported separately.
 
-The strategies mean:
+- **No-control** — native supervisory `[CONTROLS]` disabled and no Python setting writes; exact event forcing, DWF, initial conditions and intrinsic/local equipment physics remain.
+- **Internal RTC** — a **strong native engineering comparator**. The same event forcing/DWF/initial state is paired at runtime with the frozen network native rules. It may access true SWMM rule variables on the native rule clock; this information/frequency advantage is disclosed rather than artificially removed.
+- **Auto-RBC** — causal local rule control from current actuator-adjacent true SWMM depths. Its direct local sensor budget may exceed the Proposed sparse layout and is disclosed.
+- **EFD** — causal storage-aware Equal Filling Degree from current controlled-storage depths.
+- **All-open / All-closed** — diagnostic extremes.
 
-- **No-control** — native supervisory `[CONTROLS]` disabled and no Python setting writes; intrinsic/local equipment behavior remains physical.
-- **Internal RTC** — original SWMM `[CONTROLS]` are retained; Python makes no setting writes.
-- **Auto-RBC** — automatically parameterized causal rule-based control from current actuator-adjacent normalized node depths; no future rainfall/state or event tuning.
-- **EFD** — storage-aware Equal Filling Degree from current normalized storage filling; no future information.
-- **All-open / All-closed** — extreme diagnostic policies, not the main evidence of superiority.
+No strategy may use future realised rainfall, future SWMM state/flooding, future Internal trajectory or untouched Final truth.
 
-Auto-RBC and EFD execute on the same controls-disabled physical model and supervisory cadence as Proposed. If the production contract defines `max_setting_delta_per_update`, the same per-update movement limit is applied to the rule comparators.
+## Actuation scope
 
-## What TFV/PFV comparisons mean
-
-For each independent rainfall group, Final reporting computes Proposed minus each reference separately:
+All 109 discovered SWMM-writable settings remain eligible in the simulation MPC. The default study contract is:
 
 ```text
-delta_TFV = TFV_proposed - TFV_reference
-TFV reduction % = 100 * (TFV_reference - TFV_proposed) / TFV_reference
-
-delta_PFV = PFV_proposed - PFV_reference
-PFV reduction % = 100 * (PFV_reference - PFV_proposed) / PFV_reference
+SWMM_MODEL_CONTINUOUS_SIMULATION_ONLY
 ```
 
-The scientifically important comparisons are primarily No-control, Internal RTC, Auto-RBC and EFD. All-open/All-closed show physical/control extremes.
+This is **not** a field certification that every pump has a VFD or that every regulator can move continuously. No artificial binary mask is introduced without engineering metadata. A field-deployment claim requires a separate hashed capability map describing control mode, bounds, ramp, dwell, interlock, readback and fail-safe behavior.
+
+## Rainfall scope
+
+The currently audited main library is an exact 180-event factorial over:
+
+```text
+return periods: 10, 20, 30, 50, 75, 100 years
+durations:      75, 105, 150, 210, 240, 300 min
+patterns:       block, chicago_center, chicago_early, chicago_late, double_peak
+spatial mode:   one uniform design gage across all subcatchments
+```
+
+The repository binds these actual event bytes but does **not** claim independent regeneration from an official Wuhan IDF standard unless an authoritative formula/generator provenance file is supplied. Missing 2–5 year, <75 min, >300 min and spatially heterogeneous storms are robustness/sensitivity gaps, not silently invented data.
 
 ## Fresh-data execution logic
 
-If previous RTC-derived data are not trusted, keep code, copied source inputs and generated evidence under one parent directory but keep the **study workspace itself empty before initialization**. For example:
+Recommended directory separation:
 
 ```text
-E:\RTC_sewer\Project7\repo      # git clone
-E:\RTC_sewer\Project7\inputs    # copied authoritative source assets only
-E:\RTC_sewer\Project7\study     # fresh generated study workspace
-E:\RTC_sewer\Project7\logs      # command logs / audit notes
+E:\RTC_sewer\Project7\repo
+E:\RTC_sewer\Project7\inputs
+E:\RTC_sewer\Project7\study_v066
+E:\RTC_sewer\Project7\logs
 ```
 
-Reuse only intended source assets (event INPs/external rainfall files, event registry/source rainfall metadata, sensor definition and priority definition). Regenerate D0/D1/D2/D3, Step1/Step2 models, development runs, Policy Lock and Final runs.
+Do not overwrite the previous v0.6.5 study. v0.6.6 changes the scientific implementation contract, so D0/D1/D2/D3/models/acceptance/development/Policy Lock/Final evidence must be regenerated under the new contract.
 
-The efficient order is:
+The ten-step flow is:
 
 ```text
-0. input / graph / actuator / split audit
+0. prepared inputs / lineage / graph / actuator / split / readiness audit
 1. forcing-only Phase-0 cohort -> high-frequency No-control D0 -> checkpoints -> small D2
-2. exact-SWMM timing + control-leverage diagnosis -> evidence-bound timing freeze
-3. production D0 + D1 -> Step1
-4. budgeted D2 + small D3 -> Step2
-5. development closed-loop Proposed + meaningful baselines
-6. only if control value exists -> Policy Lock + untouched seven-strategy Final
+2. exact-SWMM response timing + control leverage -> non-censored timing freeze
+3. production D0 + D1 -> Step1 train and held-out acceptance
+4. production D2 + D3 -> Step2 train and held-out acceptance
+5. D2 gradient + D2/D3 ranking/regret acceptance
+6. development closed-loop Proposed vs competitive baselines
+7. runtime/readback/deadline acceptance
+8. Policy Lock
+9. untouched seven-strategy authoritative-SWMM Final
 ```
 
-v0.6.5 removes two manual breaks in this chain:
-
-```text
-rtc-design-phase0-events
-    -> deterministic development-only Phase-0 group selection using rainfall forcing descriptors when available
-
-rtc-freeze-phase0-timing
-    -> validates a non-censored Phase-0 timing report and writes a hashed timing-only resolved contract
-```
-
-Do not generate a large Step2 dataset before SWMM itself shows useful action-dependent TFV variation.
+Do not scale Step2 before exact SWMM demonstrates useful action-dependent TFV variation, and do not enter closed-loop MPC if Step2 action ranking/gradient acceptance fails.
 
 ## Data roles
 
-### D0 — reference hydraulic trajectories
+- **D0:** controls-disabled reference hydraulic trajectories, including the causal dry/DWF prefix.
+- **D1:** development/train-only continuous controlled exploration for Step1 state coverage.
+- **Step1:** sparse causal history -> current full six-channel hydraulic state estimate.
+- **D2:** exact same-prefix single-actuator/local counterfactual effects; sampling budget does not shrink online action space.
+- **D3:** joint multi-actuator, multi-control-block sequences for interaction/ranking learning.
+- **Step2:** current state + future setting/rainfall sequence -> future hydraulic/actuator-flow/flood-volume trajectory.
+- **MPC:** optimize the future setting sequence online, retain best-so-far, require predicted hold dominance, execute only the first move and re-solve.
 
-Full-event controls-disabled trajectories. They provide passive hydraulic-state coverage, response timing and exact replay prefixes for counterfactual actions.
-
-### D1 — controlled exploration trajectories
-
-Development/train-only exploratory facility settings. They expose Step1 to controlled hydraulic states rather than only No-control states.
-
-### Step1 — sparse history to current full state
-
-Step1 learns:
-
-```text
-sparse depth/head history
-+ observation mask
-+ causal rainfall / actuator context
-+ graph/static features
--> current full six-channel hydraulic state
-```
-
-It is a state observer, not the control policy itself.
-
-### D2 — local same-state action effects
-
-At one replayed hydraulic checkpoint, change one sampled actuator up/down while all other settings are held in the complete action vector. `rtc-design-probes-efficient` rotates a limited local-probe budget across checkpoints while keeping the online action space unchanged.
-
-### D3 — joint multi-facility time sequences
-
-D3 changes several facilities over several control blocks. It supplies interaction data that independent D2 probes cannot provide.
-
-### Step2 — differentiable hydraulic/action world model
-
-Step2 learns:
-
-```text
-current full state
-+ future facility setting sequence
-+ rainfall sequence
-+ previous actuator flow / device physics
--> future hydraulic state trajectory
--> future actuator-flow trajectory
--> cumulative flooding consequence
-```
-
-Training includes exact SWMM cumulative node flood-volume supervision. For control usefulness, action ranking and gradient direction matter more than a cosmetically small average state RMSE.
-
-### MPC — learn the system, optimize the action online
-
-The project does **not** train a neural policy that directly outputs facility settings. Instead:
-
-1. Step1 estimates the current whole-network state.
-2. Step2 acts as a fast differentiable virtual drainage system.
-3. MPC optimizes the future setting sequence from current readback.
-4. The best-so-far sequence is retained.
-5. A candidate is executable only if predicted TFV beats explicit hold/fallback by the configured numerical margin.
-6. Only the first move is written; the problem is solved again at the next decision.
-
-## Early control-value screen
-
-Before expensive Step2 training, run:
-
-```text
-rtc-control-leverage-audit
-```
-
-It uses exact SWMM branches to report whether different facility actions create meaningful TFV spread and whether better-than-hold actions exist. If exact actions are almost indistinguishable, generating ten times more neural-network data is unlikely to solve the control problem.
-
-## Development success criterion
-
-The first engineering objective is not “Proposed must already beat every baseline”. It is:
-
-```text
-1. Proposed produces real time-varying facility actions rather than permanent hold;
-2. decision runtime fits inside the control interval;
-3. authoritative SWMM shows that those actions alter TFV in the expected direction;
-4. Proposed is not the worst group-balanced TFV strategy among
-   No-control / Internal RTC / Auto-RBC / EFD;
-5. preferably it beats No-control and at least one dynamic rule baseline.
-```
-
-All-open and All-closed are diagnostics and should not be used to claim success simply because Proposed beats an extreme policy.
-
-## Metric definitions
+## Metrics
 
 ```text
 TFV = sum over all hydraulic nodes of SWMM cumulative flooding-volume delta [m3]
-PFV = the same cumulative volume delta summed over configured priority nodes [m3]
+PFV = the same cumulative volume delta summed over the eight frozen priority nodes [m3]
 Global Peak = max_t sum_i max(flooding_rate_i(t), 0) [m3/s]
 ```
 
-`Node.flooding` and node `peak_flooding_rate` are rates, not TFV/PFV.
-
-## Causal boundary
-
-Online Proposed, Auto-RBC and EFD use only information available at or before the current decision. Proposed may use causal rainfall scenarios derived from observed history. None may use future realised rainfall, future SWMM state/flooding or Final truth.
+Formal aggregation gives each independent rainfall group equal weight.
 
 ## Workstation defaults
 
@@ -213,8 +158,7 @@ For a 16 GB RAM / RTX 4060 8 GB workstation:
 
 ```text
 SWMM generation: 16 independent processes x 1 SWMM thread
-reduce workers to 12 if Windows begins paging
-
+reduce to 12 workers if Windows begins paging
 Step1: batch 8, grad accumulation 2, AMP
 Step2: batch 2, grad accumulation 4, AMP
 Step2 shard size: about 128
@@ -225,16 +169,16 @@ Step2 shard size: about 128
 ```powershell
 cd E:\RTC_sewer\Project7\repo
 git checkout main
-git pull
+git pull --ff-only
 python -m pip install -e ".[dev,swmm]"
 python -m pytest -q
 python -c "import importlib.metadata; print(importlib.metadata.version('wuhan-rtc'))"
 ```
 
-Expected release after the v0.6.5 bootstrap audit:
+Expected release:
 
 ```text
-0.6.5
+0.6.6
 ```
 
-Code and CI establish execution contracts, not Wuhan performance. Whether Proposed actually reduces TFV must still be demonstrated by fresh authoritative-SWMM development and untouched Final runs.
+Code and CI establish execution contracts, not Wuhan performance. Whether Proposed reduces TFV must be demonstrated by fresh authoritative-SWMM development and untouched Final runs.
