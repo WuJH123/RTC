@@ -17,6 +17,7 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.formal_ranking  # noqa: F401
     import rtc.formalize_run  # noqa: F401
     import rtc.forcing  # noqa: F401
+    import rtc.fresh_model_guard  # noqa: F401
     import rtc.fresh_workspace  # noqa: F401
     import rtc.inp_audit_v2  # noqa: F401
     import rtc.inp_runtime  # noqa: F401
