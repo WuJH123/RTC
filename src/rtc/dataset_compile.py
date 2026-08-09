@@ -21,7 +21,7 @@ class BranchTensors:
     elapsed_seconds: np.ndarray
     node_ids: tuple[str, ...]
     actuator_ids: tuple[str, ...]
-    candidate_action_sha256: str
+    action_or_sequence_sha256: str
 
 
 def _pivot(frame: pd.DataFrame, *, times: np.ndarray, ids: tuple[str, ...], id_col: str, value_col: str) -> np.ndarray:
@@ -31,8 +31,28 @@ def _pivot(frame: pd.DataFrame, *, times: np.ndarray, ids: tuple[str, ...], id_c
     return table.to_numpy(dtype=float)
 
 
+def _settings_for_intervals(meta: dict[str, object], times: np.ndarray, actuator_ids: tuple[str, ...]) -> tuple[np.ndarray, str]:
+    interval_times = times[:-1]
+    if "candidate_settings" in meta:
+        values = np.array([float(meta["candidate_settings"][aid]) for aid in actuator_ids], dtype=float)  # type: ignore[index]
+        return np.repeat(values[None, :], interval_times.size, axis=0), str(meta["candidate_action_sha256"])
+    if "settings_sequence" in meta:
+        sequence = meta["settings_sequence"]
+        if not isinstance(sequence, list) or not sequence:
+            raise ValueError("invalid settings_sequence metadata")
+        checkpoint_seconds = int(meta["checkpoint_minutes"]) * 60
+        block = int(meta["control_block_seconds"])
+        rows: list[list[float]] = []
+        for elapsed in interval_times:
+            step = min(max(0, int((int(elapsed) - checkpoint_seconds) // block)), len(sequence) - 1)
+            action = sequence[step]
+            rows.append([float(action[aid]) for aid in actuator_ids])
+        return np.asarray(rows, dtype=float), str(meta["sequence_sha256"])
+    raise ValueError("metadata has neither candidate_settings nor settings_sequence")
+
+
 def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
-    """Compile one authoritative branch to SI free-rollout training arrays.
+    """Compile one authoritative D2/D3 branch to SI free-rollout training arrays.
 
     State layout is ``[depth_m, head_m, flooding_m3s, volume_m3]``. Exogenous forcing is
     node-local ``[rainfall_mmhr, runoff_m3s]``; subcatchment runoff is accumulated at its
@@ -64,8 +84,7 @@ def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
     state = np.stack([depth, head, flooding, volume], axis=-1)
 
     flow = flow_rate_to_m3s(_pivot(act, times=times, ids=actuator_ids, id_col="actuator_id", value_col="flow"), flow_units)
-    settings_vector = np.array([float(meta["candidate_settings"][aid]) for aid in actuator_ids], dtype=float)
-    settings = np.repeat(settings_vector[None, :], times.size - 1, axis=0)
+    settings, action_sha = _settings_for_intervals(meta, times, actuator_ids)
 
     node_index = {nid: i for i, nid in enumerate(node_ids)}
     forcing = np.zeros((times.size - 1, len(node_ids), 2), dtype=float)
@@ -77,7 +96,6 @@ def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
         rainfall_by_node: dict[str, list[float]] = {}
         runoff_by_node: dict[str, float] = {}
         for _, row in rows.iterrows():
-            # PySWMM connection type 2 means the subcatchment loads directly to a node.
             if int(row["outlet_connection_type"]) != 2:
                 continue
             outlet = str(row["outlet_id"])
@@ -100,12 +118,12 @@ def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
         elapsed_seconds=times,
         node_ids=node_ids,
         actuator_ids=actuator_ids,
-        candidate_action_sha256=str(meta["candidate_action_sha256"]),
+        action_or_sequence_sha256=action_sha,
     )
 
 
 def compile_branches_to_npz(metadata_paths: list[str | Path], output_path: str | Path) -> Path:
-    """Stack same-schema branches into one compressed Step2 tensor dataset."""
+    """Stack same-schema/same-horizon D2 and D3 branches into a Step2 tensor dataset."""
 
     branches = [compile_branch_tensors(path) for path in metadata_paths]
     if not branches:
@@ -130,6 +148,6 @@ def compile_branches_to_npz(metadata_paths: list[str | Path], output_path: str |
         target_actuator_flows=np.stack([b.target_actuator_flows for b in branches]),
         node_ids=np.asarray(node_ids),
         actuator_ids=np.asarray(actuator_ids),
-        candidate_action_sha256=np.asarray([b.candidate_action_sha256 for b in branches]),
+        action_or_sequence_sha256=np.asarray([b.action_or_sequence_sha256 for b in branches]),
     )
     return out
