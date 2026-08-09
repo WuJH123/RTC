@@ -33,6 +33,15 @@ def _replace_cli_value(flag: str, value: str) -> None:
     sys.argv[pos + 1] = value
 
 
+def _remove_cli_pair(flag: str) -> None:
+    if flag not in sys.argv:
+        return
+    pos = sys.argv.index(flag)
+    if pos + 1 >= len(sys.argv):
+        raise RuntimeError(f"CLI flag {flag} has no value")
+    del sys.argv[pos : pos + 2]
+
+
 def _stamp_run_metadata(
     *,
     metadata_path: Path,
@@ -137,6 +146,9 @@ def main() -> None:
             )
         expected_engine = step1_engine
 
+    # --native-controls-template is consumed by this public guard; the legacy policy parser does
+    # not know about it and must not see an unknown argument.
+    _remove_cli_pair("--native-controls-template")
     run_policy_main()
     metadata_path = Path(known.out_dir) / f"{known.run_id}.json"
     if not metadata_path.is_file():
