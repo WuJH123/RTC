@@ -1,0 +1,47 @@
+{
+  "contract": "MODEL_ACCEPTANCE_CONTRACT_V2",
+  "instruction": "Replace every REPLACE_BEFORE_FORMAL value using development-only sensitivity analysis before calibration, safety audit, Policy Lock, or Final. Strings are intentional: formal_lock_v3 will refuse to parse this template until values are frozen.",
+  "step1": {
+    "minimum": {
+      "unobserved_depth_nse": "REPLACE_BEFORE_FORMAL",
+      "priority_depth_nse": "REPLACE_BEFORE_FORMAL"
+    },
+    "maximum": {
+      "unobserved_depth_rmse_m": "REPLACE_BEFORE_FORMAL",
+      "priority_depth_rmse_m": "REPLACE_BEFORE_FORMAL"
+    }
+  },
+  "step2": {
+    "minimum": {
+      "tfv_rank_correlation": "REPLACE_BEFORE_FORMAL",
+      "priority_flood_rank_correlation": "REPLACE_BEFORE_FORMAL"
+    },
+    "maximum": {
+      "depth_rmse_m": "REPLACE_BEFORE_FORMAL",
+      "flood_rate_rmse_m3s": "REPLACE_BEFORE_FORMAL",
+      "managed_flow_rmse_m3s": "REPLACE_BEFORE_FORMAL",
+      "tfv_mae_m3": "REPLACE_BEFORE_FORMAL",
+      "priority_flood_volume_mae_m3": "REPLACE_BEFORE_FORMAL"
+    }
+  },
+  "gradient": {
+    "minimum": {
+      "tfv_gradient_sign_accuracy": "REPLACE_BEFORE_FORMAL",
+      "tfv_gradient_cosine_similarity": "REPLACE_BEFORE_FORMAL",
+      "pfv_gradient_sign_accuracy": "REPLACE_BEFORE_FORMAL"
+    },
+    "maximum": {
+      "tfv_gradient_mae": "REPLACE_BEFORE_FORMAL",
+      "pfv_gradient_mae": "REPLACE_BEFORE_FORMAL"
+    }
+  },
+  "candidate_ranking": {
+    "minimum": {
+      "tfv_rank_correlation": "REPLACE_BEFORE_FORMAL",
+      "tfv_top1_hit_rate": "REPLACE_BEFORE_FORMAL"
+    },
+    "maximum": {
+      "tfv_selected_regret_m3": "REPLACE_BEFORE_FORMAL"
+    }
+  }
+}
