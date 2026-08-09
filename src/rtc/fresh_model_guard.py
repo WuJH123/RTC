@@ -80,9 +80,9 @@ def train_step1_main() -> None:
 
 
 def accept_step1_main() -> None:
-    from .large_model_cli import accept_step1_large_main
+    from .step1_accept_v3 import accept_step1_large_v3_main
 
-    _guard_step1(accept_step1_large_main, acceptance=True)
+    _guard_step1(accept_step1_large_v3_main, acceptance=True)
 
 
 def compile_step2_shards_main() -> None:
