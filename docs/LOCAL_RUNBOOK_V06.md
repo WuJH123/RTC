@@ -1,8 +1,8 @@
-# Local runbook — RTC v0.6 final code-bound workflow
+# Local runbook — RTC v0.6 final workflow
 
-Use this sequence after the final PR is merged to `main`. Do not start large data generation from an unmerged development branch.
+Use this sequence only after the final PR has been merged to `main`. The workflow is designed to be scientifically fail-closed where correctness requires it, while allowing safe resume of expensive SWMM generation and model training.
 
-## 0. Freeze the source tree first
+## 0. Install the frozen release
 
 ```powershell
 cd E:\RTC_sewer\RTC
@@ -12,18 +12,18 @@ python -m pip install -e ".[dev,swmm]"
 python -m pytest -q
 ```
 
-Once the first RTC-derived data is generated, do **not** edit `src/rtc` during the study. v0.6 intentionally binds data/model resume keys to the entire RTC Python source tree. A source change invalidates stale generated evidence by design.
+v0.6 uses a **stable scientific implementation fingerprint**, not a byte-for-byte hash of every source file. Expensive results are reused when the implementation semantics plus their exact numerical inputs/configuration and generated-artifact hashes still match.
 
-Recommended local environment:
+Recommended workstation execution:
 
 ```text
-SWMM: up to 16 independent Python processes, normally 1 SWMM thread/process
-GPU: RTX 4060 8 GB, AMP on, small micro-batches + gradient accumulation
+SWMM generation: up to 16 independent Python processes, normally 1 SWMM thread/process
+GPU training: RTX 4060 8 GB, AMP, small micro-batch + gradient accumulation
 ```
 
-## 1. Prepare a new event registry
+## 1. Prepare the event registry
 
-Build a new CSV outside the future Fresh Workspace containing at least 160 independent rainfall groups and these columns:
+Create a new CSV with:
 
 ```text
 event_id
@@ -33,7 +33,7 @@ scientific_split
 development_fold
 ```
 
-Recommended descriptors when available:
+Optional but recommended descriptors:
 
 ```text
 total_depth_mm
@@ -42,11 +42,11 @@ peak_intensity_mmhr
 antecedent_rainfall_mm
 ```
 
-Use whole rainfall groups for splitting. Final groups remain untouched until Policy Lock.
+Correctness requires whole rainfall groups to remain inside one scientific split and one development fold. Final groups remain untouched until Policy Lock.
 
-## 2. Initialize the Fresh Workspace
+For publication-strength evidence, target roughly 160 independent rainfall groups (for example 96 development / 24 calibration / 16 safety-audit / 24 Final). This is a **recommended study size, not a software execution gate**.
 
-Example:
+## 2. Initialize the study workspace
 
 ```powershell
 $Root     = "E:\RTC_sewer\RTC_fresh_v06"
@@ -66,9 +66,9 @@ rtc-validate-rainfall-design `
   --out "$Root\contracts\rainfall_design_evidence.json"
 ```
 
-The Fresh Workspace must start empty.
+The root must be empty on first initialization. Large generated data may be placed on another local volume; scientific reuse is validated by lineage/config/artifact hashes, not by directory location.
 
-## 3. Preflight the physical model and priority mapping
+## 3. Physical/priority preflight
 
 ```powershell
 rtc-inp-audit-v2 `
@@ -77,19 +77,11 @@ rtc-inp-audit-v2 `
   --out "$Root\preflight\inp_audit.json"
 ```
 
-Do not continue unless:
+Continue only when the intended Wuhan physical census is confirmed, all eight priority nodes are present, and No-control is reported as `NO_SUPERVISORY_RTC_V2` with local pump Startup/Shutoff behavior preserved.
 
-- all eight priority nodes are present;
-- physical census matches the intended Wuhan V8 lineage;
-- No-control contract is `NO_SUPERVISORY_RTC_V2`;
-- native supervisory controls are identified;
-- intrinsic pump Startup/Shutoff logic is reported rather than erased.
+## 4. Phase-0: determine the time scales first
 
-## 4. Phase-0 — determine production time scales before large generation
-
-Create a **development-only** pilot event CSV from the canonical registry. Do not include Final rows.
-
-Generate high-frequency controls-disabled No-control trajectories:
+Create a **development-only** pilot CSV; never include Final rows.
 
 ```powershell
 rtc-run-d0-batch `
@@ -99,30 +91,18 @@ rtc-run-d0-batch `
   --record-stride-seconds 60 `
   --workers 16 `
   --swmm-threads-per-process 1
-```
 
-Design exact minute-aligned checkpoints:
-
-```powershell
 rtc-design-checkpoints `
   --run-index "$Root\phase0\d0\D0_no_control_RUN_INDEX.csv" `
   --out "$Root\phase0\checkpoints.csv" `
   --checkpoints-per-event 8 `
   --minimum-elapsed-minutes 60
-```
 
-Design D2 setting probes:
-
-```powershell
 rtc-design-probes `
   --inp $Inp `
   --checkpoints "$Root\phase0\checkpoints.csv" `
   --out "$Root\phase0\probe_manifest.csv"
-```
 
-Run high-frequency D2:
-
-```powershell
 rtc-run-probes `
   --manifest "$Root\phase0\probe_manifest.csv" `
   --out-dir "$Root\phase0\d2" `
@@ -130,11 +110,7 @@ rtc-run-probes `
   --stride-seconds 60 `
   --workers 16 `
   --swmm-threads-per-process 1
-```
 
-Analyse readback/t10/t50/t90/peak timing:
-
-```powershell
 rtc-phase0-timescale `
   --manifest "$Root\phase0\probe_manifest.csv" `
   --run-summary "$Root\phase0\d2\RUN_SUMMARY.csv" `
@@ -143,57 +119,56 @@ rtc-phase0-timescale `
   --max-sample-seconds 60
 ```
 
-If the horizon is censored, extend it. If recovery after releasing a control action matters, generate D3 pulse/release sequences before freezing the production horizon.
+Use readback lag, `t10/t50/t90`, peak timing and horizon censoring. If the response remains censored, lengthen the pilot horizon. Use D3/pulse-release sequences when recovery after releasing an action must be identified.
 
-Do not put 60 s Phase-0 branches into production Step2 shards.
+**Do not put 60 s Phase-0 branches into production Step2 shards.**
 
-## 5. Freeze the production timing/controller skeleton
+## 5. Freeze the production timing/controller contract
 
-After Phase-0, create resolved files inside the Fresh Workspace:
+Write resolved files such as:
 
 ```text
-contracts/time_scale_config.json
-contracts/controller_resolved.json
-contracts/rainfall_forecast_config.json
-contracts/fallback_policy.json
+$Root\contracts\time_scale_config.json
+$Root\contracts\controller_resolved.json
+$Root\contracts\model_acceptance_contract.json
 ```
 
-The controller must satisfy:
+Required timing relationships:
 
 ```text
 record_stride_seconds == model_step_seconds
 control_update_seconds % model_step_seconds == 0
 first control lies on model and control grids
-full causal history exists before first MPC
+first control occurs only after a complete causal history
 horizon >= one complete control interval
 decision_runtime_budget_seconds < control_update_seconds
 ```
 
-If 5/10 min is accepted, a representative contract is:
+If Phase-0 supports 5/10 min, a representative contract is:
 
 ```text
-model_step_seconds       = 300
-control_update_seconds   = 600
-history_steps            = 13
-control_start_minutes    = 60
-record_stride_seconds    = 300
+model_step_seconds      = 300
+control_update_seconds  = 600
+history_steps           = 13
+control_start_minutes   = 60
+record_stride_seconds   = 300
 ```
 
-`horizon_steps` must come from Phase-0/validation rather than being assumed.
+`horizon_steps` must be selected from Phase-0/validation rather than assumed.
 
-## 6. Build the frozen graph/formal static assets
+## 6. Build graph/static assets
 
-Build the graph from the frozen physical INP and write graph/state/actuator schemas inside the Fresh Workspace using the repository's formal-asset utilities. The resulting canonical artifacts must include at least:
+Build the graph and static schemas from the frozen INP using the repository utilities. Canonical artifacts should include:
 
 ```text
-formal_assets/graph_schema.npz
-formal_assets/state_schema.json
-formal_assets/actuator_catalog.json
+$Root\formal_assets\graph_schema.npz
+$Root\formal_assets\state_schema.json
+$Root\formal_assets\actuator_catalog.json
 ```
 
-All 109 writable SWMM links remain in the actuator schema. No Engineering36/Top-K subset is introduced.
+The actuator schema must retain all 109 writable SWMM links. Do not introduce Engineering36 or a fixed runtime Top-K subset.
 
-## 7. Generate fixed pre-lock baselines exactly once
+## 7. Generate fixed pre-lock references once
 
 ```powershell
 rtc-build-baseline-cache `
@@ -205,11 +180,20 @@ rtc-build-baseline-cache `
   --swmm-threads-per-process 1
 ```
 
-The safe-resume cache is code/input/time/hash bound. Subsequent Steps read the cache indexes instead of rerunning the same baseline.
+Formal fixed references are:
 
-## 8. Generate D1 development/train exploration for Step1
+```text
+no_control
+internal_rtc
+all_open
+all_closed
+```
 
-Create a CSV containing only development/train events, then:
+The cache safely resumes matching event/strategy evidence. Later stages reuse `NO_CONTROL_D0_INDEX.csv` and `STEP1_BASELINE_INDEX.csv` instead of rerunning the same SWMM baselines.
+
+## 8. Generate D1 for Step1 coverage
+
+Create a CSV containing **development/train only**, then:
 
 ```powershell
 rtc-run-d1-batch `
@@ -224,11 +208,18 @@ rtc-run-d1-batch `
   --swmm-threads-per-process 1
 ```
 
-D1 resumes by event and cannot accept validation/calibration/safety-audit/Final rows.
+D1 resumes event-by-event. It is Step1 state-space coverage only and must not be used as a D2/D3 replay prefix.
 
-Build Step1 train/validation run indexes from fresh baseline-cache trajectories plus D1 train trajectories as appropriate. Do not use D1 as a D2/D3 replay prefix.
+Build Step1 indexes:
 
-## 9. Train Step1 with epoch resume
+```powershell
+rtc-build-step1-index `
+  --baseline-index "$Root\baseline_cache\STEP1_BASELINE_INDEX.csv" `
+  --d1-index "$Root\d1\D1_RUN_INDEX.csv" `
+  --out-dir "$Root\step1"
+```
+
+## 9. Train and accept Step1
 
 ```powershell
 rtc-train-step1-large `
@@ -244,9 +235,7 @@ rtc-train-step1-large `
   --out "$Root\models\step1.pt"
 ```
 
-If interrupted, rerun the exact same command. The default `step1.pt.trainstate.pt` resumes the next epoch only when data/config/code contracts still match.
-
-Validate:
+If interrupted, rerun the exact command. The default `step1.pt.trainstate.pt` resumes only for the same data/timing/model/training contract.
 
 ```powershell
 rtc-accept-step1-large `
@@ -267,11 +256,9 @@ rtc-accept-gate `
   --out "$Root\acceptance\step1_gate.json"
 ```
 
-Step1 metrics are equal-weight per independent rainfall group.
+## 10. Generate production D2 and D3
 
-## 10. Generate production D2/D3
-
-Use the code-bound No-control baseline index:
+Use the cached No-control prefix:
 
 ```powershell
 rtc-design-checkpoints `
@@ -279,11 +266,7 @@ rtc-design-checkpoints `
   --out "$Root\checkpoints\checkpoint_settings.csv" `
   --checkpoints-per-event 8 `
   --minimum-elapsed-minutes <HISTORY_READY_MINUTES>
-```
 
-Design and run production D2 on the frozen model step/horizon. Example for a 300 s model step and 120 min horizon:
-
-```powershell
 rtc-design-probes `
   --inp $Inp `
   --checkpoints "$Root\checkpoints\checkpoint_settings.csv" `
@@ -292,13 +275,13 @@ rtc-design-probes `
 rtc-run-probes `
   --manifest "$Root\d2\probe_manifest.csv" `
   --out-dir "$Root\d2" `
-  --horizon-minutes 120 `
-  --stride-seconds 300 `
+  --horizon-minutes <FROZEN_HORIZON_MINUTES> `
+  --stride-seconds <FROZEN_MODEL_STEP> `
   --workers 16 `
   --swmm-threads-per-process 1
 ```
 
-Design D3 sequences from the same replayable checkpoints:
+D3:
 
 ```powershell
 rtc-design-d3 `
@@ -319,9 +302,9 @@ rtc-run-d3-batch `
   --swmm-threads-per-process 1
 ```
 
-`max-active` here is a **data-exploration sequence-design parameter**, not a runtime MPC Top-K/fixed controlled set. Production MPC still optimizes all actuators.
+`--max-active` controls exploration sparsity in D3 data generation only. Online MPC still optimizes all actuators.
 
-## 11. Build the Step2 run index and time-locked shards
+## 11. Build the time-locked Step2 data
 
 ```powershell
 rtc-build-step2-index `
@@ -331,7 +314,7 @@ rtc-build-step2-index `
   --out "$Root\step2\step2_run_index.csv"
 ```
 
-Train shards:
+Compile train shards:
 
 ```powershell
 rtc-compile-step2-shards `
@@ -344,9 +327,9 @@ rtc-compile-step2-shards `
   --horizon-steps <FROZEN_HORIZON_STEPS>
 ```
 
-Validation shards use the same command with `--development-fold validation` and a separate output directory.
+Repeat with `--development-fold validation` and `--out-dir "$Root\step2\validation_shards"`.
 
-## 12. Train/accept Step2 with epoch resume
+## 12. Train and accept Step2
 
 ```powershell
 rtc-train-step2-large `
@@ -359,7 +342,7 @@ rtc-train-step2-large `
   --out "$Root\models\step2.pt"
 ```
 
-Rerun the same command after interruption to resume from the code/data-bound train-state.
+Rerun the same command to resume an interrupted epoch sequence.
 
 ```powershell
 rtc-accept-step2-large `
@@ -377,7 +360,9 @@ rtc-accept-gate `
   --out "$Root\acceptance\step2_gate.json"
 ```
 
-## 13. Validate local gradient and joint action ordering
+## 13. Validate the action-effect model
+
+Local/boundary TFV gradient:
 
 ```powershell
 rtc-formal-gradient-v2 `
@@ -395,7 +380,7 @@ rtc-accept-gate `
   --out "$Root\acceptance\gradient_gate.json"
 ```
 
-Then validate the action space actually used by MPC:
+Joint action ranking:
 
 ```powershell
 rtc-formal-ranking `
@@ -409,11 +394,25 @@ rtc-formal-ranking `
   --out "$Root\acceptance\ranking.json"
 ```
 
-Formal ranking must pass both D2 local and D3 joint-sequence thresholds.
+Formal ranking must pass both D2 local and D3 multi-actuator/multi-step evidence.
 
-## 14. Run Proposed development closed-loop and real-time gate
+## 14. Proposed development closed loop and real-time gate
 
-For each selected development event, call the public `rtc-run-policy --strategy proposed` with the frozen graph/Step1/Step2/controller/sensors/priority inputs and write outputs under `$Root\development`.
+Run each selected development event with:
+
+```powershell
+rtc-run-policy `
+  --strategy proposed `
+  --inp <EVENT_INP> `
+  --out-dir <EVENT_OUTPUT_DIR> `
+  --run-id <RUN_ID> `
+  --sensors $Sensors `
+  --priority $Priority `
+  --config "$Root\contracts\controller_resolved.json" `
+  --graph "$Root\formal_assets\graph_schema.npz" `
+  --step1 "$Root\models\step1.pt" `
+  --step2 "$Root\models\step2.pt"
+```
 
 Create `development/RUN_INDEX.csv`, then:
 
@@ -424,11 +423,11 @@ rtc-accept-runtime `
   --out "$Root\acceptance\runtime_acceptance.json"
 ```
 
-Do not Policy Lock if there is any history/readback/runtime/deadline fatal fallback or if maximum decision wall-clock time exceeds the frozen budget.
+Do not Policy Lock if any fatal history/readback/runtime/deadline fallback occurs or the frozen compute budget is exceeded.
 
-## 15. Create Policy Lock V4
+## 15. Policy Lock V4
 
-Complete the TFV pipeline ledger and the artifact-map JSON, then:
+Complete the TFV pipeline ledger and artifact-map JSON, then:
 
 ```powershell
 rtc-policy-lock-v5 `
@@ -443,9 +442,11 @@ Expected contract:
 WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V4_CODE_TIME_DATA_BOUND
 ```
 
-After this point, do not change code, models, timing, thresholds, forecast, sensors, priority nodes or splits.
+After lock, do not change the scientific implementation contract, models, timing, thresholds, forecast, sensors, priority nodes or split registry used by Final.
 
-## 16. Generate fixed Final references once
+## 16. Final fixed references and Proposed
+
+Generate/resume fixed Final references exactly once:
 
 ```powershell
 rtc-build-baseline-cache `
@@ -457,28 +458,26 @@ rtc-build-baseline-cache `
   --swmm-threads-per-process 1
 ```
 
-The current source tree must exactly equal the source tree recorded in Policy Lock.
+Run the locked Proposed controller once per untouched Final event. Do not tune anything from Final outcomes.
 
-## 17. Run Proposed Final and formalize every run
-
-Run locked Proposed once for every untouched Final event using `rtc-run-policy` and no tuning.
-
-For every Proposed/fixed reference run:
+Formalize every Proposed/fixed run:
 
 ```powershell
 rtc-formalize-run `
   --main-metadata <RUN_METADATA.json> `
-  --strategy <STRATEGY> `
+  --strategy <proposed|no_control|internal_rtc|all_open|all_closed> `
   --event-id <EVENT_ID> `
   --rainfall-group <RAINFALL_GROUP> `
-  --out <FORMAL_MANIFEST.json>
+  --out <RUN.formal_manifest.json>
 ```
 
-The command replays routing-step Global Peak using isolated temporary SWMM engine files and deletes those files afterward.
+Build one complete Final run index with:
 
-## 18. Compile the paired Final result
+```text
+event_id,rainfall_group,strategy,formal_manifest_path
+```
 
-Create a complete run index containing exactly one Formal manifest per event × strategy, then:
+and compile:
 
 ```powershell
 rtc-compile-final-v4 `
@@ -487,26 +486,29 @@ rtc-compile-final-v4 `
   --out-dir "$Root\final"
 ```
 
-The Final summary is equal-weight per independent rainfall group, not per raw event row.
+The compiler first collapses variants inside each rainfall group, then gives every independent rainfall group equal weight.
 
-## 19. Safe restart rule
+## 17. Safe resume rule
 
-After a crash, rerun the same command. Safe resume is automatic for code-bound data caches and epoch train-states. Do not manually copy/rename old outputs to satisfy a missing path.
+Rerun an interrupted command normally. Do **not** manually copy old outputs into a new run to make a command skip work.
 
-If the source tree changes, expect previous RTC-derived artifacts to fail their code hash. That is deliberate: regenerate under the new final code rather than forcing reuse.
+A computation is safely reusable only when its declared contract/key matches and required artifact hashes verify. File existence alone is never sufficient.
 
-## 20. Success condition
+If a scientific implementation contract, numerical input, timing, action/sequence manifest, graph/model or training manifest changes, the affected result must be regenerated/retrained. Unrelated documentation/reporting edits should not invalidate expensive evidence.
 
-Only claim the final framework is complete when all of the following are simultaneously true:
+## 18. Completion checklist
 
-- priority/physical preflight passes;
+The final framework is complete only when all of these are true:
+
+- physical/priority preflight passes;
 - Phase-0 timing is not censored;
+- production timing is frozen;
 - Step1 group-balanced gate passes;
 - Step2 group-balanced gate passes;
 - D2 gradient gate passes;
-- D3 joint-action ranking gate passes;
-- Proposed development runtime gate passes;
+- D2 + D3 joint-action ranking gate passes;
+- Proposed development real-time gate passes;
 - Policy Lock V4 is created;
 - untouched Final contains the complete five-strategy matrix;
-- all Final metrics are authoritative SWMM truth;
-- no Final information was used for tuning.
+- all Final TFV/PFV/Global Peak metrics are authoritative SWMM truth;
+- no Final information was used for training or tuning.
