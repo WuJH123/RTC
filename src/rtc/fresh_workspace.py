@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 
 from .inp_runtime import sha256_file
@@ -23,10 +24,10 @@ def initialize_fresh_workspace(
 ) -> dict[str, object]:
     """Create a clean output root and bind immutable input identities.
 
-    Rainfall/event definitions and the physical INP are *inputs*. All hydraulic trajectories,
-    counterfactual branches, model checkpoints, closed-loop runs and Formal evidence must be
-    generated inside this new root under the current repository contract. Existing historical
-    output folders are never imported into the workspace.
+    The physical model, observation metadata and rainfall/event definitions are scientific
+    inputs. The event registry itself is copied into the fresh root and becomes the canonical
+    split registry. All hydraulic trajectories, counterfactual branches, model checkpoints,
+    closed-loop runs and Formal evidence must subsequently be generated under this root.
     """
 
     root_path = _resolve(root)
@@ -40,22 +41,41 @@ def initialize_fresh_workspace(
     else:
         root_path.mkdir(parents=True, exist_ok=False)
 
-    inputs: dict[str, dict[str, str]] = {}
-    for name, raw in {
-        "frozen_inp": frozen_inp,
-        "priority_nodes": priority_nodes,
-        "event_registry": event_registry,
+    source_inp = _resolve(frozen_inp)
+    priority = _resolve(priority_nodes)
+    source_registry = _resolve(event_registry)
+    for name, path in {
+        "frozen_inp": source_inp,
+        "priority_nodes": priority,
+        "event_registry_source": source_registry,
     }.items():
-        path = _resolve(raw)
         if not path.is_file():
             raise ValueError(f"fresh workspace input is missing: {name}: {path}")
-        inputs[name] = {
-            "path": str(path),
-            "sha256": sha256_file(path),
-        }
+
+    contracts = root_path / "contracts"
+    contracts.mkdir(parents=True, exist_ok=False)
+    locked_registry = contracts / "event_registry_with_splits.csv"
+    shutil.copyfile(source_registry, locked_registry)
+
+    inputs: dict[str, dict[str, str]] = {
+        "frozen_inp": {"path": str(source_inp), "sha256": sha256_file(source_inp)},
+        "priority_nodes": {"path": str(priority), "sha256": sha256_file(priority)},
+        "event_registry_source": {
+            "path": str(source_registry),
+            "sha256": sha256_file(source_registry),
+        },
+        "event_registry": {
+            "path": str(locked_registry.resolve()),
+            "sha256": sha256_file(locked_registry),
+        },
+    }
+    if inputs["event_registry_source"]["sha256"] != inputs["event_registry"]["sha256"]:
+        raise RuntimeError("fresh event-registry copy changed content")
+
     payload: dict[str, object] = {
         "contract": WORKSPACE_CONTRACT,
         "output_root": str(root_path),
+        "canonical_event_registry": str(locked_registry.resolve()),
         "inputs": inputs,
         "admissible_preexisting_data": [
             "frozen physical INP",
@@ -94,6 +114,10 @@ def load_fresh_workspace(path: str | Path) -> dict[str, object]:
         p = _resolve(str(raw.get("path", "")))
         if not p.is_file() or sha256_file(p) != str(raw.get("sha256", "")):
             raise ValueError(f"fresh workspace input disappeared/changed: {name}: {p}")
+    canonical = _resolve(str(payload.get("canonical_event_registry", "")))
+    require_path_inside_workspace(canonical, root)
+    if not canonical.is_file():
+        raise ValueError("canonical fresh event registry is missing")
     return payload
 
 
