@@ -30,12 +30,12 @@ def run_hydraulic_trajectory(
     record_stride_seconds: int = 300,
     keep_engine_files: bool = False,
 ) -> HydraulicTrajectoryResult:
-    """Generate one compact full-event D0/D1 authoritative trajectory.
+    """Generate one compact full-event authoritative trajectory including causal ``t=0``.
 
-    The same function is valid for Internal-RTC (original INP) and No-control (controls-
-    disabled runtime INP); policy semantics are recorded in metadata. Only node-level
-    causal rainfall is retained for model input. Per-subcatchment runoff/rainfall CSVs are
-    intentionally not persisted by default.
+    PySWMM ``step_advance`` controls the interval between iteration callbacks; it does not
+    emit an initial zero-time callback. The initial hydraulic/rainfall/readback frame is
+    therefore recorded explicitly before iteration so D0 and closed-loop/D1 trajectories
+    share exactly the same t=0-inclusive Step1 history semantics.
     """
 
     try:
@@ -76,29 +76,60 @@ def run_hydraulic_trajectory(
         connection = {sid: tuple(obj.connection) for sid, obj in sub_obj.items()}
         resolved = resolve_subcatchment_outlets(connection, node_ids)
 
-        for _ in sim:
-            elapsed = int((sim.current_time - sim.start_time).total_seconds())
-            elapsed_values.append(elapsed)
+        def append_frame(elapsed: int) -> None:
+            elapsed_values.append(int(elapsed))
             state_values.append(
-                _node_state_si(node_obj, node_ids, system_units=system_units, flow_units=flow_units)
+                _node_state_si(
+                    node_obj,
+                    node_ids,
+                    system_units=system_units,
+                    flow_units=flow_units,
+                )
             )
             rainfall_values.append(
-                current_node_rainfall_mmhr(sub_obj, resolved, node_ids, system_units)[:, None]
+                current_node_rainfall_mmhr(
+                    sub_obj, resolved, node_ids, system_units
+                )[:, None]
             )
-            target_values.append(np.array([link_obj[a].target_setting for a in actuator_ids], dtype=np.float32))
-            current_values.append(np.array([link_obj[a].current_setting for a in actuator_ids], dtype=np.float32))
+            target_values.append(
+                np.array(
+                    [link_obj[a].target_setting for a in actuator_ids],
+                    dtype=np.float32,
+                )
+            )
+            current_values.append(
+                np.array(
+                    [link_obj[a].current_setting for a in actuator_ids],
+                    dtype=np.float32,
+                )
+            )
             flow_values.append(
                 flow_rate_to_m3s(
-                    np.array([link_obj[a].flow for a in actuator_ids], dtype=float), flow_units
+                    np.array([link_obj[a].flow for a in actuator_ids], dtype=float),
+                    flow_units,
                 ).astype(np.float32)
             )
+
+        # Initial causal frame: no supervisory action has been applied.
+        append_frame(0)
+        for _ in sim:
+            elapsed = int((sim.current_time - sim.start_time).total_seconds())
+            if elapsed <= elapsed_values[-1]:
+                raise RuntimeError("SWMM trajectory callback time did not advance")
+            append_frame(elapsed)
         end_statistics = snapshot_node_statistics(node_obj)
         flow_error = float(sim.flow_routing_error)
 
+    times = np.asarray(elapsed_values, dtype=np.int64)
+    if times[0] != 0 or times.size < 2:
+        raise RuntimeError("D0 trajectory failed to preserve t=0-inclusive time grid")
+    if not np.all(np.diff(times) == int(record_stride_seconds)):
+        raise RuntimeError("D0 trajectory does not follow the requested fixed record stride")
+
     np.savez_compressed(
         compact_path,
-        schema_version=np.asarray("RTC_COMPACT_TRAJECTORY_V2"),
-        elapsed_seconds=np.asarray(elapsed_values, dtype=np.int64),
+        schema_version=np.asarray("RTC_COMPACT_TRAJECTORY_V3_T0_CAUSAL"),
+        elapsed_seconds=times,
         node_ids=np.asarray(node_ids),
         state_si=np.stack(state_values).astype(np.float32),
         state_channels=np.asarray(STATE_CHANNELS),
@@ -120,8 +151,10 @@ def run_hydraulic_trajectory(
 
     metadata = {
         "run_id": run_id,
-        "data_contract": "D0_D1_COMPACT_TRAJECTORY_V2",
+        "data_contract": "D0_D1_COMPACT_TRAJECTORY_V3_T0_CAUSAL",
         "data_role": "D0_D1_HYDRAULIC_TRAJECTORY",
+        "causal_timing_revision": "T0_INCLUDED_V2",
+        "initial_observation_elapsed_seconds": 0,
         "python_actuator_writes": False,
         "native_controls_enabled": bool(section_has_payload(inp, "CONTROLS")),
         "inp_path": str(inp.resolve()),
@@ -135,7 +168,9 @@ def run_hydraulic_trajectory(
         "compact_file": compact_path.name,
         "node_statistics_file": statistics_path.name,
     }
-    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return HydraulicTrajectoryResult(
         metadata_path=str(metadata_path),
         compact_path=str(compact_path),

@@ -10,6 +10,7 @@ from .data_design import canonical_sequence_sha
 from .forcing import current_node_rainfall_mmhr, resolve_subcatchment_outlets
 from .inp import discover_actuators, discover_nodes
 from .inp_runtime import assert_native_controls_disabled
+from .replay_prefix import load_checkpoint_reference, verify_replayed_checkpoint
 from .swmm_data import STATE_CHANNELS, _node_state_si, sha256_file
 from .swmm_stats import snapshot_node_statistics, write_node_statistics
 from .units import flow_rate_to_m3s
@@ -33,9 +34,12 @@ def run_control_sequence_branch(
     output_dir: str | Path,
     branch_id: str,
     python_intervention_seconds: int = 300,
+    reference_trajectory_metadata_path: str | Path | None = None,
+    replay_state_atol: float = 1e-5,
+    replay_setting_atol: float = 1e-7,
     keep_engine_files: bool = False,
 ) -> SequenceBranchResult:
-    """Run one exact D3 multi-actuator sequence on a controls-disabled physical base."""
+    """Run one exact D3 sequence after verifying the saved No-control checkpoint state."""
 
     try:
         from pyswmm import Links, Nodes, Simulation, Subcatchments
@@ -70,6 +74,13 @@ def run_control_sequence_branch(
 
     checkpoint_seconds = int(checkpoint_minutes * 60)
     stop_seconds = checkpoint_seconds + len(normalized) * control_block_seconds
+    reference = (
+        load_checkpoint_reference(
+            reference_trajectory_metadata_path, elapsed_seconds=checkpoint_seconds
+        )
+        if reference_trajectory_metadata_path is not None
+        else None
+    )
     compact_path = out / f"{branch_id}.compact.npz"
     stats_path = out / f"{branch_id}.node_statistics.csv.gz"
     metadata_path = out / f"{branch_id}.json"
@@ -85,6 +96,7 @@ def run_control_sequence_branch(
     commanded_values: list[np.ndarray] = []
     start_statistics: dict[str, dict[str, float]] | None = None
     end_statistics: dict[str, dict[str, float]] | None = None
+    prefix_verification: dict[str, object] | None = None
 
     with Simulation(str(inp), reportfile=str(report_path), outputfile=str(engine_output_path)) as sim:
         sim.step_advance(python_intervention_seconds)
@@ -107,14 +119,18 @@ def run_control_sequence_branch(
                 raise RuntimeError("SWMM callback stepped beyond aligned D3 horizon endpoint")
             relative = elapsed - checkpoint_seconds
             action_step = min(max(relative // control_block_seconds, 0), len(normalized) - 1)
-            state_values.append(
-                _node_state_si(node_obj, node_ids, system_units=system_units, flow_units=flow_units)
+            state = _node_state_si(
+                node_obj, node_ids, system_units=system_units, flow_units=flow_units
             )
+            current = np.array(
+                [link_obj[a].current_setting for a in actuator_ids], dtype=np.float32
+            )
+            state_values.append(state)
             rainfall_values.append(
                 current_node_rainfall_mmhr(sub_obj, resolved, node_ids, system_units)[:, None]
             )
             target_values.append(np.array([link_obj[a].target_setting for a in actuator_ids], dtype=np.float32))
-            current_values.append(np.array([link_obj[a].current_setting for a in actuator_ids], dtype=np.float32))
+            current_values.append(current)
             flow_values.append(
                 flow_rate_to_m3s(
                     np.array([link_obj[a].flow for a in actuator_ids], dtype=float), flow_units
@@ -127,6 +143,20 @@ def run_control_sequence_branch(
 
             if elapsed == checkpoint_seconds and not checkpoint_recorded:
                 checkpoint_recorded = True
+                if reference is not None:
+                    prefix_verification = dict(
+                        verify_replayed_checkpoint(
+                            reference,
+                            elapsed_seconds=elapsed,
+                            node_ids=node_ids,
+                            actuator_ids=actuator_ids,
+                            state_si=state,
+                            current_setting=current,
+                            swmm_engine_version=engine_version,
+                            state_atol=replay_state_atol,
+                            setting_atol=replay_setting_atol,
+                        )
+                    )
                 start_statistics = snapshot_node_statistics(node_obj)
 
             if elapsed == stop_seconds:
@@ -134,7 +164,6 @@ def run_control_sequence_branch(
                 sim.terminate_simulation()
                 break
 
-            # Action k governs [t_k, t_{k+1}); record state before the write, then apply.
             for aid, value in normalized[action_step].items():
                 link_obj[aid].target_setting = value
 
@@ -144,7 +173,7 @@ def run_control_sequence_branch(
 
     np.savez_compressed(
         compact_path,
-        schema_version=np.asarray("RTC_COMPACT_BRANCH_V2"),
+        schema_version=np.asarray("RTC_COMPACT_BRANCH_V3_PREFIX_VERIFIED"),
         elapsed_seconds=np.asarray(elapsed_values, dtype=np.int64),
         node_ids=np.asarray(node_ids),
         state_si=np.stack(state_values).astype(np.float32),
@@ -171,7 +200,7 @@ def run_control_sequence_branch(
     model_horizon_steps = len(normalized) * control_block_steps
     metadata = {
         "branch_id": branch_id,
-        "data_contract": "D3_CONTROLS_DISABLED_COMPACT_V2",
+        "data_contract": "D3_CONTROLS_DISABLED_COMPACT_V3_PREFIX_VERIFIED",
         "data_role": "D3_MULTI_ACTUATOR_SEQUENCE",
         "sequence_sha256": canonical_sequence_sha(normalized),
         "settings_sequence": normalized,
@@ -195,6 +224,8 @@ def run_control_sequence_branch(
         "compact_file": compact_path.name,
         "node_statistics_file": stats_path.name,
         "post_action_flood_volume_truth": "SWMM_node_statistics_delta_exact_horizon",
+        "same_prefix_required": reference is not None,
+        "same_prefix_verification": prefix_verification,
     }
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return SequenceBranchResult(

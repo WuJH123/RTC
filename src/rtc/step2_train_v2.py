@@ -19,7 +19,7 @@ from .training import save_torch_checkpoint
 
 def train_step2_large_v2_main() -> None:
     parser = argparse.ArgumentParser(
-        description="Train the time-locked Step2 world model with resumable exact-TFV supervision"
+        description="Train time/engine-locked Step2 with resumable exact-TFV supervision"
     )
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--graph", required=True)
@@ -50,6 +50,7 @@ def train_step2_large_v2_main() -> None:
     manifest = load_shard_manifest(args.manifest)
     model_step_seconds = int(manifest["model_step_seconds"])
     horizon_steps = int(manifest["horizon_steps"])
+    swmm_engine_version = str(manifest["swmm_engine_version"])
     (
         (state_mean, state_std),
         (rain_mean, rain_std),
@@ -98,6 +99,7 @@ def train_step2_large_v2_main() -> None:
         "graph_sha256": sha256_file(args.graph),
         "model_step_seconds": model_step_seconds,
         "horizon_steps": horizon_steps,
+        "swmm_engine_version": swmm_engine_version,
         "hidden_dim": args.hidden_dim,
         "actuator_embedding_dim": args.actuator_embedding_dim,
         "batch_size": args.batch_size,
@@ -144,6 +146,8 @@ def train_step2_large_v2_main() -> None:
                     raise ValueError("Step2 shard model step changed during training")
                 if int(ds["horizon_steps"].item()) != horizon_steps:
                     raise ValueError("Step2 shard horizon changed during training")
+                if str(ds["swmm_engine_version"].item()) != swmm_engine_version:
+                    raise ValueError("Step2 shard SWMM engine changed during training")
                 arrays = [
                     torch.from_numpy(ds[name].astype(np.float32))
                     for name in (
@@ -281,7 +285,8 @@ def train_step2_large_v2_main() -> None:
         **core_config,
         "model_step_seconds": model_step_seconds,
         "horizon_steps": horizon_steps,
-        "time_contract": "STEP2_FIXED_DISCRETE_TIME_V1",
+        "swmm_engine_version": swmm_engine_version,
+        "time_contract": "STEP2_FIXED_DISCRETE_TIME_ENGINE_V2",
         "training_contract_sha256": contract_sha,
     }
     meta = save_torch_checkpoint(
@@ -294,10 +299,11 @@ def train_step2_large_v2_main() -> None:
     print(
         json.dumps(
             {
-                "contract": "STEP2_TRAINING_V4_TIME_LOCKED_RESUMABLE",
+                "contract": "STEP2_TRAINING_V5_TIME_ENGINE_LOCKED_RESUMABLE",
                 "checkpoint": meta,
                 "model_step_seconds": model_step_seconds,
                 "horizon_steps": horizon_steps,
+                "swmm_engine_version": swmm_engine_version,
                 "completed_epochs": args.epochs,
                 "resumed_from_epoch": start_epoch,
                 "final_losses": history[-1] if history else None,

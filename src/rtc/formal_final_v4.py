@@ -11,7 +11,7 @@ from .code_contract import rtc_source_tree_sha256
 from .contracts import load_priority_nodes
 from .formal_run_verify import read_json as _json
 from .formal_run_verify import verify_formal_run_v4
-from .inp_lineage import physical_contract_sha256
+from .inp_lineage import physical_contract_sha256, scientific_event_contract_sha256
 from .tfv_pipeline import sha256_file
 
 
@@ -23,13 +23,11 @@ def _verified_lock(path: str | Path) -> dict[str, object]:
     if lock.get("contract") != POLICY_LOCK_CONTRACT:
         raise ValueError("TFV-first Final requires Policy Lock V4")
     if lock.get("rtc_source_tree_sha256") != rtc_source_tree_sha256():
-        raise ValueError(
-            "current scientific implementation contract differs from Policy Lock"
-        )
+        raise ValueError("current scientific implementation contract differs from Policy Lock")
     if lock.get("priority_is_hard_constraint") is not False:
         raise ValueError("Policy Lock violates TFV-first soft-priority contract")
     if lock.get("formal_metric_aggregation") != "equal_weight_per_independent_rainfall_group":
-        raise ValueError("Policy Lock lacks the rainfall-group-balanced metric contract")
+        raise ValueError("Policy Lock lacks rainfall-group-balanced metric contract")
     artefacts, hashes = lock.get("artefacts"), lock.get("sha256")
     if not isinstance(artefacts, dict) or not isinstance(hashes, dict):
         raise ValueError("Policy Lock lacks artefact/hash maps")
@@ -43,11 +41,13 @@ def _verified_lock(path: str | Path) -> dict[str, object]:
     if int(rainfall_design.get("role_group_counts", {}).get("final", 0)) < 1:  # type: ignore[union-attr]
         raise ValueError("Final requires at least one untouched rainfall group")
     causal_timing = lock.get("causal_timing")
-    if (
-        not isinstance(causal_timing, dict)
-        or causal_timing.get("initial_observation_elapsed_seconds") != 0
-    ):
+    if not isinstance(causal_timing, dict) or causal_timing.get("initial_observation_elapsed_seconds") != 0:
         raise ValueError("Final requires the t=0-included causal timing contract")
+    model_contracts = lock.get("model_contracts")
+    if not isinstance(model_contracts, dict) or not str(
+        model_contracts.get("swmm_engine_version", "")
+    ).strip():
+        raise ValueError("Policy Lock lacks the trained SWMM engine identity")
     return lock
 
 
@@ -65,7 +65,9 @@ def compile_final_v4(
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, pd.DataFrame]]:
     lock = _verified_lock(policy_lock_path)
     artefacts = lock["artefacts"]
-    assert isinstance(artefacts, dict)
+    hashes = lock["sha256"]
+    model_contracts = lock["model_contracts"]
+    assert isinstance(artefacts, dict) and isinstance(hashes, dict) and isinstance(model_contracts, dict)
     physical_sha = physical_contract_sha256(str(artefacts["frozen_inp"]))
     priority = load_priority_nodes(str(artefacts["priority_nodes"]))
     plan = _json(str(artefacts["baseline_plan"]))
@@ -84,51 +86,85 @@ def compile_final_v4(
     controller = _json(str(artefacts["controller_config"]))
     model_step = int(controller["model_step_seconds"])
     control_update = int(controller["control_update_seconds"])
+    locked_engine = str(model_contracts["swmm_engine_version"])
+    proposed_hashes = {
+        name: str(hashes[name])
+        for name in ("controller_config", "graph_schema", "step1_model", "step2_model")
+    }
 
     split = pd.read_csv(str(artefacts["split_registry"]))
-    roles = split[["rainfall_group", "scientific_split"]].drop_duplicates().copy()
-    roles["rainfall_group"] = roles["rainfall_group"].astype(str)
-    if roles.groupby("rainfall_group")["scientific_split"].nunique().max() != 1:
+    required_split = {"event_id", "rainfall_group", "inp_path", "scientific_split"}
+    missing_split = sorted(required_split - set(split.columns))
+    if missing_split:
+        raise ValueError(f"locked split registry lacks Final event lineage: {missing_split}")
+    split = split.copy()
+    split["event_id"] = split["event_id"].astype(str)
+    split["rainfall_group"] = split["rainfall_group"].astype(str)
+    split["scientific_split"] = split["scientific_split"].astype(str)
+    if split["event_id"].duplicated().any():
+        raise ValueError("locked split registry must contain one authoritative row per event_id")
+    if split.groupby("rainfall_group")["scientific_split"].nunique().max() != 1:
         raise ValueError("locked split registry contains rainfall-group leakage")
-    role_map = (
-        roles.set_index("rainfall_group")["scientific_split"].astype(str).to_dict()
-    )
+    final_registry = split[split["scientific_split"] == "final"].copy()
+    if final_registry.empty:
+        raise ValueError("locked split registry contains no Final events")
+    for path in final_registry["inp_path"].astype(str):
+        if not Path(path).is_file():
+            raise ValueError(f"locked Final event INP disappeared: {path}")
+    event_group = final_registry.set_index("event_id")["rainfall_group"].to_dict()
+    event_sha = {
+        str(row["event_id"]): scientific_event_contract_sha256(str(row["inp_path"]))
+        for _, row in final_registry.iterrows()
+    }
 
     index = pd.read_csv(run_index_path)
     needed = {"event_id", "rainfall_group", "strategy", "formal_manifest_path"}
     missing = sorted(needed - set(index.columns))
     if missing:
         raise ValueError(f"Final run index missing columns: {missing}")
+    index = index.copy()
+    index["event_id"] = index["event_id"].astype(str)
+    index["rainfall_group"] = index["rainfall_group"].astype(str)
+    index["strategy"] = index["strategy"].astype(str)
     if index.duplicated(["event_id", "strategy"]).any():
         raise ValueError("duplicate event/strategy Final run")
-    if any(
-        role_map.get(g) != "final"
-        for g in set(index["rainfall_group"].astype(str))
-    ):
-        raise ValueError("Final index contains a non-final/unknown rainfall group")
+    expected_events = set(final_registry["event_id"].astype(str))
+    present_events = set(index["event_id"])
+    if present_events != expected_events:
+        raise ValueError(
+            "Final run index must contain every and only locked Final event; "
+            f"missing={sorted(expected_events-present_events)}, extra={sorted(present_events-expected_events)}"
+        )
+    for _, item in index.iterrows():
+        eid = str(item["event_id"])
+        if str(item["rainfall_group"]) != str(event_group[eid]):
+            raise ValueError(f"Final event {eid} rainfall_group differs from locked registry")
     expected = set(strategies)
     for event, group in index.groupby("event_id", sort=False):
         present = set(group["strategy"].astype(str))
         if present != expected:
-            raise ValueError(
-                f"incomplete Final strategy matrix at {event}: {sorted(present)}"
-            )
+            raise ValueError(f"incomplete Final strategy matrix at {event}: {sorted(present)}")
         if group["rainfall_group"].astype(str).nunique() != 1:
             raise ValueError(f"Final event {event} maps to multiple rainfall groups")
 
     rows: list[dict[str, object]] = []
     for _, item in index.iterrows():
+        eid = str(item["event_id"])
         result = verify_formal_run_v4(
             str(item["formal_manifest_path"]),
             priority=priority,
             physical_sha=physical_sha,
             model_step_seconds=model_step,
             control_update_seconds=control_update,
+            expected_event_sha256=event_sha[eid],
+            expected_swmm_engine_version=locked_engine,
+            expected_proposed_artifact_sha256=proposed_hashes,
         )
         for key in ("event_id", "rainfall_group", "strategy"):
             if str(result[key]) != str(item[key]):
                 raise ValueError(f"Final index {key} differs from bound formal run")
         rows.append(result)
+
     detail = pd.DataFrame(rows)
     metric_cols = [
         "tfv_m3",
@@ -144,29 +180,22 @@ def compile_final_v4(
         .sort_values("strategy")
         .reset_index(drop=True)
     )
-    summary["independent_rainfall_groups"] = int(
-        grouped["rainfall_group"].nunique()
-    )
+    summary["independent_rainfall_groups"] = int(grouped["rainfall_group"].nunique())
+    summary["final_events"] = int(len(expected_events))
+    summary["swmm_engine_version"] = locked_engine
     summary["aggregation"] = "equal_weight_per_rainfall_group"
 
     pairs: dict[str, pd.DataFrame] = {}
-    proposed = grouped[grouped["strategy"] == "proposed"].set_index(
-        "rainfall_group"
-    )
+    proposed = grouped[grouped["strategy"] == "proposed"].set_index("rainfall_group")
     for reference in strategies:
         if reference == "proposed":
             continue
         base = grouped[grouped["strategy"] == reference].set_index("rainfall_group")
         if set(proposed.index) != set(base.index):
-            raise ValueError(
-                f"unpaired Final rainfall groups for proposed vs {reference}"
-            )
+            raise ValueError(f"unpaired Final rainfall groups for proposed vs {reference}")
         records: list[dict[str, object]] = []
         for rainfall_group in sorted(proposed.index):
-            row: dict[str, object] = {
-                "rainfall_group": rainfall_group,
-                "reference": reference,
-            }
+            row: dict[str, object] = {"rainfall_group": rainfall_group, "reference": reference}
             for metric in (
                 "tfv_m3",
                 "priority_flood_volume_m3",
@@ -185,7 +214,7 @@ def compile_final_v4(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Compile locked rainfall-group-balanced TFV-first Formal Final"
+        description="Compile complete event/model/strategy-bound rainfall-balanced Formal Final"
     )
     parser.add_argument("--policy-lock", required=True)
     parser.add_argument("--run-index", required=True)
@@ -214,12 +243,15 @@ def main() -> None:
             {
                 "contract": "TFV_PRIMARY__PRIORITY_PFV_SOFT_SECONDARY_V1",
                 "events": int(detail["event_id"].nunique()),
-                "independent_rainfall_groups": int(
-                    detail["rainfall_group"].nunique()
-                ),
+                "independent_rainfall_groups": int(detail["rainfall_group"].nunique()),
+                "swmm_engine_versions": sorted(detail["swmm_engine_version"].unique().tolist()),
                 "aggregation": "equal_weight_per_rainfall_group",
                 "strategies": sorted(detail["strategy"].unique().tolist()),
                 "priority_pfv_is_hard_gate": False,
+                "complete_locked_final_event_set": True,
+                "event_forcing_bound": True,
+                "strategy_execution_bound": True,
+                "proposed_locked_artifacts_bound": True,
                 "detail": str(out / "formal_final_detail.csv"),
                 "group_detail": str(out / "formal_final_group_detail.csv"),
                 "summary": str(out / "formal_final_summary.csv"),

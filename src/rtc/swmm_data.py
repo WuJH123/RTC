@@ -14,6 +14,7 @@ from .data_design import canonical_action_sha
 from .forcing import current_node_rainfall_mmhr, resolve_subcatchment_outlets
 from .inp import discover_actuators, discover_nodes
 from .inp_runtime import assert_native_controls_disabled
+from .replay_prefix import load_checkpoint_reference, verify_replayed_checkpoint
 from .swmm_stats import snapshot_node_statistics, write_node_statistics
 from .units import flow_rate_to_m3s, length_to_m, volume_to_m3
 
@@ -66,15 +67,18 @@ def run_independent_control_branch(
     output_dir: str | Path,
     branch_id: str,
     python_intervention_seconds: int = 300,
+    reference_trajectory_metadata_path: str | Path | None = None,
+    replay_state_atol: float = 1e-5,
+    replay_setting_atol: float = 1e-7,
     save_raw_csv: bool = False,
     keep_engine_files: bool = False,
 ) -> BranchResult:
     """Run one exact same-prefix D2 counterfactual on a controls-disabled INP.
 
-    The default evidence is one compact NPZ plus exact cumulative node statistics and JSON
-    lineage. Raw row-wise CSV and SWMM report/output files are optional debug artefacts.
-    The horizon endpoint is sampled and snapshotted *before* termination, so exact flooding
-    volume cannot include one extra Python stride.
+    Formal D2 supplies the saved No-control trajectory used to select the checkpoint. Before
+    the candidate is written, the full six-channel hydraulic state and all actuator readbacks
+    are compared to that saved checkpoint. Thus an engine/runtime/prefix drift cannot silently
+    masquerade as an action effect.
     """
 
     try:
@@ -105,6 +109,13 @@ def run_independent_control_branch(
     if checkpoint_seconds % python_intervention_seconds or horizon_seconds % python_intervention_seconds:
         raise ValueError("checkpoint and horizon must align with Python intervention stride")
     stop_seconds = checkpoint_seconds + horizon_seconds
+    reference = (
+        load_checkpoint_reference(
+            reference_trajectory_metadata_path, elapsed_seconds=checkpoint_seconds
+        )
+        if reference_trajectory_metadata_path is not None
+        else None
+    )
 
     compact_path = out / f"{branch_id}.compact.npz"
     statistics_path = out / f"{branch_id}.node_statistics.csv.gz"
@@ -122,6 +133,7 @@ def run_independent_control_branch(
     flow_values: list[np.ndarray] = []
     start_statistics: dict[str, dict[str, float]] | None = None
     end_statistics: dict[str, dict[str, float]] | None = None
+    prefix_verification: dict[str, object] | None = None
 
     with ExitStack() as stack:
         sim = stack.enter_context(
@@ -188,6 +200,20 @@ def run_independent_control_branch(
 
             if elapsed == checkpoint_seconds and not checkpoint_recorded:
                 checkpoint_recorded = True
+                if reference is not None:
+                    prefix_verification = dict(
+                        verify_replayed_checkpoint(
+                            reference,
+                            elapsed_seconds=elapsed,
+                            node_ids=node_ids,
+                            actuator_ids=actuator_ids,
+                            state_si=state,
+                            current_setting=current,
+                            swmm_engine_version=engine_version,
+                            state_atol=replay_state_atol,
+                            setting_atol=replay_setting_atol,
+                        )
+                    )
                 start_statistics = snapshot_node_statistics(node_obj)
 
             if elapsed == stop_seconds:
@@ -204,7 +230,7 @@ def run_independent_control_branch(
 
     np.savez_compressed(
         compact_path,
-        schema_version=np.asarray("RTC_COMPACT_BRANCH_V2"),
+        schema_version=np.asarray("RTC_COMPACT_BRANCH_V3_PREFIX_VERIFIED"),
         elapsed_seconds=np.asarray(elapsed_values, dtype=np.int64),
         node_ids=np.asarray(node_ids),
         state_si=np.stack(state_values).astype(np.float32),
@@ -229,7 +255,7 @@ def run_independent_control_branch(
 
     metadata = {
         "branch_id": branch_id,
-        "data_contract": "D2_CONTROLS_DISABLED_COMPACT_V2",
+        "data_contract": "D2_CONTROLS_DISABLED_COMPACT_V3_PREFIX_VERIFIED",
         "candidate_action_sha256": canonical_action_sha(candidate_settings),
         "inp_path": str(inp_path.resolve()),
         "inp_sha256": sha256_file(inp_path),
@@ -248,6 +274,8 @@ def run_independent_control_branch(
         "compact_file": compact_path.name,
         "node_statistics_file": statistics_path.name,
         "post_action_flood_volume_truth": "SWMM_node_statistics_delta_exact_horizon",
+        "same_prefix_required": reference is not None,
+        "same_prefix_verification": prefix_verification,
         "raw_csv_saved": bool(save_raw_csv),
         "node_file": node_path.name if save_raw_csv else None,
         "actuator_file": actuator_path.name if save_raw_csv else None,

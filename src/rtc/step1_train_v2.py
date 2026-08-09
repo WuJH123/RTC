@@ -24,7 +24,7 @@ from .training import save_torch_checkpoint
 
 def train_step1_large_v2_main() -> None:
     parser = argparse.ArgumentParser(
-        description="Train Step1 lazily with atomic code/data-bound epoch resume"
+        description="Train Step1 lazily with atomic code/data/engine-bound epoch resume"
     )
     parser.add_argument("--run-index", required=True)
     parser.add_argument("--graph", required=True)
@@ -60,12 +60,6 @@ def train_step1_large_v2_main() -> None:
     graph = _load_graph(args.graph)
     sensors = _read_lines(args.sensors)
     index = _filtered_index(args.run_index, split="development", fold="train")
-    (
-        (obs_mean, obs_std),
-        (ctx_mean, ctx_std),
-        (state_mean, state_std),
-        (static_mean, static_std),
-    ) = _step1_normalization(index, graph, sensors)
     dataset = CausalStep1TrajectoryDataset(
         index,
         graph=graph,
@@ -76,6 +70,12 @@ def train_step1_large_v2_main() -> None:
         development_fold="train",
         cache_trajectories=2,
     )
+    (
+        (obs_mean, obs_std),
+        (ctx_mean, ctx_std),
+        (state_mean, state_std),
+        (static_mean, static_std),
+    ) = _step1_normalization(index, graph, sensors)
     sampler = TrajectoryBatchSampler(
         dataset, batch_size=args.batch_size, seed=args.seed, shuffle=True
     )
@@ -94,6 +94,7 @@ def train_step1_large_v2_main() -> None:
         context_dim=5,
         history_steps=args.history_steps,
         model_step_seconds=args.model_step_seconds,
+        swmm_engine_version=dataset.swmm_engine_version,
         context_contract="NODE_LOCAL_CAUSAL_CONTEXT_V1",
     ).to(device)
     model.set_normalization(
@@ -119,6 +120,7 @@ def train_step1_large_v2_main() -> None:
         "sensors_sha256": _sha(args.sensors),
         "history_steps": args.history_steps,
         "model_step_seconds": args.model_step_seconds,
+        "swmm_engine_version": dataset.swmm_engine_version,
         "hidden_dim": args.hidden_dim,
         "graph_layers": args.graph_layers,
         "batch_size": args.batch_size,
@@ -191,6 +193,7 @@ def train_step1_large_v2_main() -> None:
         "context_dim": 5,
         "history_steps": args.history_steps,
         "model_step_seconds": args.model_step_seconds,
+        "swmm_engine_version": dataset.swmm_engine_version,
         "context_contract": "NODE_LOCAL_CAUSAL_CONTEXT_V1",
         "training_contract_sha256": contract_sha,
     }
@@ -204,9 +207,10 @@ def train_step1_large_v2_main() -> None:
     print(
         json.dumps(
             {
-                "contract": "STEP1_TRAINING_V3_RESUMABLE",
+                "contract": "STEP1_TRAINING_V4_T0_ENGINE_BOUND_RESUMABLE",
                 "checkpoint": meta,
                 "windows": len(dataset),
+                "swmm_engine_version": dataset.swmm_engine_version,
                 "completed_epochs": args.epochs,
                 "resumed_from_epoch": start_epoch,
                 "final_normalized_mse": history[-1] if history else None,
