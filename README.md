@@ -274,6 +274,8 @@ Before Policy Lock:
 7. Proposed development closed-loop SWMM;
 8. real-time runtime/readback/deadline acceptance.
 
+v0.6.1 also exposes public CLIs to compile Formal static assets, record the ordered evidence ledger and build the canonical Policy-Lock artifact map.
+
 Current lock contract:
 
 ```text
@@ -284,7 +286,7 @@ Only after lock may untouched Final events be evaluated.
 
 ## 15. Supported execution documents
 
-- `docs/LOCAL_RUNBOOK_V06.md` — exact local command order;
+- `docs/LOCAL_RUNBOOK_V061.md` — canonical v0.6.1 local command order;
 - `docs/FINAL_DATA_INVENTORY_V06.md` — generated/reusable data inventory;
 - `docs/CHECKLIST_FINAL_AUDIT_V061.md` — checklist-by-checklist audit status;
 - `FORMAL_PIPELINE_LATEST.md` — scientific evidence contract.
