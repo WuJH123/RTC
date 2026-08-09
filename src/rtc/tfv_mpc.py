@@ -71,13 +71,7 @@ def _project_block_settings_(
     current_settings: torch.Tensor,
     max_delta_per_update: float | torch.Tensor | None,
 ) -> None:
-    """Project all future control blocks to a sequentially executable setting path.
-
-    Direct projected settings intentionally replace sigmoid(logit(setting)). Sigmoid
-    parameterization has almost zero derivative near exact 0/1 and can make an OFF pump
-    practically impossible to activate. Projected optimization keeps inward gradients alive
-    at both bounds while preserving continuous [0,1] feasibility.
-    """
+    """Project all future control blocks to a sequentially executable setting path."""
 
     if block_settings.ndim != 3 or block_settings.shape[0] != 1:
         raise ValueError("block_settings must have shape [1, blocks, actuator]")
@@ -104,7 +98,14 @@ def _project_block_settings_(
 
 
 class ContinuousTFVFirstMPC:
-    """All-actuator continuous MPC: TFV primary, priority PFV soft secondary."""
+    """All-actuator continuous MPC: TFV primary, priority PFV soft secondary.
+
+    Holding current settings is always an executable fallback sequence. The optimizer keeps
+    the best primary iterate it has actually seen and, when priority sites are configured,
+    the best secondary iterate inside the TFV near-optimal set. A candidate is executable
+    only if its predicted TFV beats the explicit fallback sequence by the configured small
+    improvement margin. This is an engineering dominance check, not a separate safety gate.
+    """
 
     def __init__(
         self,
@@ -122,6 +123,8 @@ class ContinuousTFVFirstMPC:
         tfv_near_opt_absolute_m3: float = 1.0,
         near_opt_penalty: float = 1e4,
         movement_tiebreak: float = 1e-6,
+        min_predicted_tfv_improvement_m3: float = 0.0,
+        min_predicted_tfv_improvement_relative: float = 0.0,
     ):
         if not 0.5 < forecast_quantile < 1.0 or not 0.5 < tfv_cvar_alpha < 1.0:
             raise ValueError("forecast/CVaR quantiles must lie in (0.5,1)")
@@ -129,6 +132,10 @@ class ContinuousTFVFirstMPC:
             raise ValueError("TFV near-optimality tolerances must be non-negative")
         if dt_seconds <= 0:
             raise ValueError("MPC dt_seconds must be positive")
+        if min_predicted_tfv_improvement_m3 < 0:
+            raise ValueError("minimum predicted TFV improvement must be non-negative")
+        if min_predicted_tfv_improvement_relative < 0:
+            raise ValueError("relative predicted TFV improvement must be non-negative")
         self.model = world_model
         self.depth_index = int(depth_index)
         self.flood_rate_index = int(flood_rate_index)
@@ -142,6 +149,12 @@ class ContinuousTFVFirstMPC:
         self.tfv_near_opt_absolute_m3 = float(tfv_near_opt_absolute_m3)
         self.near_opt_penalty = float(near_opt_penalty)
         self.movement_tiebreak = float(movement_tiebreak)
+        self.min_predicted_tfv_improvement_m3 = float(
+            min_predicted_tfv_improvement_m3
+        )
+        self.min_predicted_tfv_improvement_relative = float(
+            min_predicted_tfv_improvement_relative
+        )
 
     def _rollout(
         self,
@@ -253,84 +266,9 @@ class ContinuousTFVFirstMPC:
         )
         optimiser = torch.optim.Adam([block_parameter], lr=float(learning_rate))
 
-        with torch.no_grad():
-            fallback_initial, fallback = self._rollout(
-                initial_state,
-                rainfall_scenarios,
-                fallback_settings,
-                previous_actuator_flow,
-                actuator_upstream,
-                actuator_downstream,
-                actuator_physics,
-                static_node_features,
-                edge_index,
-            )
-            fallback_volumes = self._volumes(fallback_initial, fallback)
-            fallback_depth = None
-            if self.priority_indices is not None and self.priority_indices.numel():
-                p = self.priority_indices.to(fallback_volumes.device)
-                fallback_depth = fallback.states[..., self.depth_index][..., p]
-
-        primary_iterations = max(1, int(round(iterations * 0.7)))
-        for _ in range(primary_iterations):
-            optimiser.zero_grad(set_to_none=True)
+        def rollout_for(blocks_value: torch.Tensor):
             settings = _expand_blocks(
-                block_parameter, horizon=horizon, block_steps=control_block_steps
-            )
-            candidate_initial, rollout = self._rollout(
-                initial_state,
-                rainfall_scenarios,
-                settings,
-                previous_actuator_flow,
-                actuator_upstream,
-                actuator_downstream,
-                actuator_physics,
-                static_node_features,
-                edge_index,
-            )
-            tfv = self._volumes(candidate_initial, rollout).sum(dim=-1)
-            loss = _upper_tail_cvar(tfv, self.tfv_cvar_alpha) + self.movement_tiebreak * (
-                block_parameter[:, 0] - current
-            ).square().mean()
-            if not torch.isfinite(loss):
-                break
-            loss.backward()
-            optimiser.step()
-            _project_block_settings_(
-                block_parameter,
-                current_settings=current,
-                max_delta_per_update=max_setting_delta_per_update,
-            )
-
-        with torch.no_grad():
-            primary_settings = _expand_blocks(
-                block_parameter, horizon=horizon, block_steps=control_block_steps
-            )
-            primary_initial, primary_rollout = self._rollout(
-                initial_state,
-                rainfall_scenarios,
-                primary_settings,
-                previous_actuator_flow,
-                actuator_upstream,
-                actuator_downstream,
-                actuator_physics,
-                static_node_features,
-                edge_index,
-            )
-            primary_tfv = _upper_tail_cvar(
-                self._volumes(primary_initial, primary_rollout).sum(dim=-1),
-                self.tfv_cvar_alpha,
-            )
-            allowed_tfv = (
-                primary_tfv
-                + self.tfv_near_opt_absolute_m3
-                + self.tfv_near_opt_relative * primary_tfv.abs()
-            )
-
-        for _ in range(max(0, iterations - primary_iterations)):
-            optimiser.zero_grad(set_to_none=True)
-            settings = _expand_blocks(
-                block_parameter, horizon=horizon, block_steps=control_block_steps
+                blocks_value, horizon=horizon, block_steps=control_block_steps
             )
             candidate_initial, rollout = self._rollout(
                 initial_state,
@@ -344,11 +282,104 @@ class ContinuousTFVFirstMPC:
                 edge_index,
             )
             tfv = _upper_tail_cvar(
-                self._volumes(candidate_initial, rollout).sum(dim=-1), self.tfv_cvar_alpha
+                self._volumes(candidate_initial, rollout).sum(dim=-1),
+                self.tfv_cvar_alpha,
             )
+            return settings, candidate_initial, rollout, tfv
+
+        with torch.no_grad():
+            fallback_initial, fallback = self._rollout(
+                initial_state,
+                rainfall_scenarios,
+                fallback_settings,
+                previous_actuator_flow,
+                actuator_upstream,
+                actuator_downstream,
+                actuator_physics,
+                static_node_features,
+                edge_index,
+            )
+            fallback_volumes = self._volumes(fallback_initial, fallback)
+            fallback_tfv = _upper_tail_cvar(
+                fallback_volumes.sum(dim=-1), self.tfv_cvar_alpha
+            )
+            fallback_depth = None
+            if self.priority_indices is not None and self.priority_indices.numel():
+                p = self.priority_indices.to(fallback_volumes.device)
+                fallback_depth = fallback.states[..., self.depth_index][..., p]
+
+            _, _, _, initial_tfv = rollout_for(block_parameter)
+            best_primary_blocks = block_parameter.detach().clone()
+            best_primary_tfv = float(initial_tfv)
+
+        primary_iterations = max(1, int(round(iterations * 0.7)))
+        for _ in range(primary_iterations):
+            optimiser.zero_grad(set_to_none=True)
+            _, _, _, tfv = rollout_for(block_parameter)
+            if torch.isfinite(tfv) and float(tfv.detach()) < best_primary_tfv:
+                best_primary_tfv = float(tfv.detach())
+                best_primary_blocks = block_parameter.detach().clone()
+            loss = tfv + self.movement_tiebreak * (
+                block_parameter[:, 0] - current
+            ).square().mean()
+            if not torch.isfinite(loss):
+                break
+            loss.backward()
+            optimiser.step()
+            _project_block_settings_(
+                block_parameter,
+                current_settings=current,
+                max_delta_per_update=max_setting_delta_per_update,
+            )
+
+        with torch.no_grad():
+            _, _, _, tail_primary_tfv = rollout_for(block_parameter)
+            if torch.isfinite(tail_primary_tfv) and float(tail_primary_tfv) < best_primary_tfv:
+                best_primary_tfv = float(tail_primary_tfv)
+                best_primary_blocks = block_parameter.detach().clone()
+            block_parameter.copy_(best_primary_blocks)
+            _, primary_initial, primary_rollout, primary_tfv = rollout_for(
+                block_parameter
+            )
+            allowed_tfv = (
+                primary_tfv
+                + self.tfv_near_opt_absolute_m3
+                + self.tfv_near_opt_relative * primary_tfv.abs()
+            )
+            primary_priority, _, _ = self._priority_deterioration(
+                primary_initial, primary_rollout, fallback_volumes, fallback_depth
+            )
+            best_secondary_blocks = block_parameter.detach().clone()
+            best_secondary_priority = float(primary_priority)
+            best_secondary_tfv = float(primary_tfv)
+
+        secondary_iterations = max(0, iterations - primary_iterations)
+        if self.priority_indices is None or self.priority_indices.numel() == 0:
+            secondary_iterations = 0
+
+        for _ in range(secondary_iterations):
+            optimiser.zero_grad(set_to_none=True)
+            _, candidate_initial, rollout, tfv = rollout_for(block_parameter)
             priority_soft, _, _ = self._priority_deterioration(
                 candidate_initial, rollout, fallback_volumes, fallback_depth
             )
+            if (
+                torch.isfinite(tfv)
+                and torch.isfinite(priority_soft)
+                and float(tfv.detach()) <= float(allowed_tfv) + 1e-6
+            ):
+                priority_value = float(priority_soft.detach())
+                tfv_value = float(tfv.detach())
+                if (
+                    priority_value < best_secondary_priority - 1e-9
+                    or (
+                        abs(priority_value - best_secondary_priority) <= 1e-9
+                        and tfv_value < best_secondary_tfv
+                    )
+                ):
+                    best_secondary_priority = priority_value
+                    best_secondary_tfv = tfv_value
+                    best_secondary_blocks = block_parameter.detach().clone()
             loss = (
                 priority_soft
                 + self.near_opt_penalty * torch.relu(tfv - allowed_tfv).square()
@@ -366,30 +397,43 @@ class ContinuousTFVFirstMPC:
             )
 
         with torch.no_grad():
-            settings = _expand_blocks(
-                block_parameter, horizon=horizon, block_steps=control_block_steps
-            )
-            candidate_initial, rollout = self._rollout(
-                initial_state,
-                rainfall_scenarios,
-                settings,
-                previous_actuator_flow,
-                actuator_upstream,
-                actuator_downstream,
-                actuator_physics,
-                static_node_features,
-                edge_index,
-            )
-            tfv = _upper_tail_cvar(
-                self._volumes(candidate_initial, rollout).sum(dim=-1), self.tfv_cvar_alpha
-            )
+            if secondary_iterations:
+                _, tail_initial, tail_rollout, tail_tfv = rollout_for(block_parameter)
+                tail_priority, _, _ = self._priority_deterioration(
+                    tail_initial, tail_rollout, fallback_volumes, fallback_depth
+                )
+                if (
+                    torch.isfinite(tail_tfv)
+                    and torch.isfinite(tail_priority)
+                    and float(tail_tfv) <= float(allowed_tfv) + 1e-6
+                ):
+                    priority_value = float(tail_priority)
+                    tfv_value = float(tail_tfv)
+                    if (
+                        priority_value < best_secondary_priority - 1e-9
+                        or (
+                            abs(priority_value - best_secondary_priority) <= 1e-9
+                            and tfv_value < best_secondary_tfv
+                        )
+                    ):
+                        best_secondary_blocks = block_parameter.detach().clone()
+            block_parameter.copy_(best_secondary_blocks)
+            settings, candidate_initial, rollout, tfv = rollout_for(block_parameter)
             soft, worst_flood, worst_depth = self._priority_deterioration(
                 candidate_initial, rollout, fallback_volumes, fallback_depth
             )
+
+            required_improvement = max(
+                self.min_predicted_tfv_improvement_m3,
+                self.min_predicted_tfv_improvement_relative * abs(float(fallback_tfv)),
+            )
+            predicted_improvement = float(fallback_tfv - tfv)
+            numeric_margin = max(1e-6, 1e-9 * max(abs(float(fallback_tfv)), 1.0))
             candidate_valid = bool(
                 torch.isfinite(settings).all().item()
                 and torch.isfinite(tfv).item()
                 and torch.isfinite(soft).item()
+                and predicted_improvement >= required_improvement + numeric_margin
             )
             return TFVFirstMPCResult(
                 settings=settings[0].detach(),

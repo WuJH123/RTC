@@ -6,6 +6,7 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.causal_timing  # noqa: F401
     import rtc.checkpoint_design  # noqa: F401
     import rtc.context_features  # noqa: F401
+    import rtc.control_leverage  # noqa: F401
     import rtc.d0_batch_v2  # noqa: F401
     import rtc.d1_exploration  # noqa: F401
     import rtc.d2_eval  # noqa: F401
@@ -14,6 +15,7 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.d3_design_cli  # noqa: F401
     import rtc.d3_runner_guard  # noqa: F401
     import rtc.data_index  # noqa: F401
+    import rtc.efficient_probe_design  # noqa: F401
     import rtc.formal_assets_v2  # noqa: F401
     import rtc.formal_assets_v3  # noqa: F401
     import rtc.formal_final_v4  # noqa: F401
@@ -42,6 +44,7 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.ranking_guard  # noqa: F401
     import rtc.replay_peak  # noqa: F401
     import rtc.replay_prefix  # noqa: F401
+    import rtc.robust_tfv_mpc  # noqa: F401
     import rtc.runtime_acceptance  # noqa: F401
     import rtc.step1_accept_v3  # noqa: F401
     import rtc.step1_train_v2  # noqa: F401

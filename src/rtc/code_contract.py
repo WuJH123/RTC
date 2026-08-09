@@ -7,12 +7,12 @@ import json
 # This is intentionally a semantic/release contract, not a byte-for-byte hash of every
 # ``src/rtc`` file. Scientific inputs/config/model/artifact files remain independently hashed.
 IMPLEMENTATION_CONTRACT = {
-    "release": "WUHAN_RTC_V062_DATA_LINEAGE_IMPLEMENTATION_V1",
+    "release": "WUHAN_RTC_V063_INDEPENDENT_VIABILITY_IMPLEMENTATION_V1",
     "causal_observation": "T0_INCLUDED_ALL_TRAJECTORIES_V2",
     "no_control": "NO_SUPERVISORY_RTC_V2",
     "hydraulic_truth": "SWMM_CUMULATIVE_NODE_FLOOD_VOLUME_V1",
     "predicted_volume": "TRAPEZOID_CURRENT_PLUS_FUTURE_FLOOD_RATE_V1",
-    "step2_time": "STEP2_FIXED_DISCRETE_TIME_V1",
+    "step2_time": "STEP2_FIXED_DISCRETE_TIME_ENGINE_V2",
     "swmm_engine_lineage": "ONE_ENGINE_PER_TRAIN_ACCEPT_FINAL_V1",
     "counterfactual_prefix": "EXACT_NO_CONTROL_PREFIX_REPLAY_V1",
     "event_forcing_lineage": "SCIENTIFIC_EVENT_INP_EXCEPT_CONTROLS_THREADS_V1",
@@ -20,7 +20,10 @@ IMPLEMENTATION_CONTRACT = {
     "d3_feasibility": "SEQUENTIAL_SETTING_RATE_MATCHES_CONTROLLER_V1",
     "mpc_action_space": "ALL_ACTUATORS_DIRECT_CONTINUOUS_PROJECTED_V1",
     "mpc_objective": "TFV_PRIMARY_PRIORITY_SOFT_SECONDARY_V1",
+    "mpc_robust_selection": "BEST_SO_FAR_AND_HOLD_DOMINANCE_V1",
     "action_effect_validation": "D2_LOCAL_PLUS_D3_JOINT_SEQUENCE_V1",
+    "efficient_d2_sampling": "ROTATING_ALL_ACTUATOR_COVERAGE_BUDGET_V1",
+    "pretraining_viability": "EXACT_SWMM_CONTROL_LEVERAGE_PILOT_V1",
     "formal_aggregation": "EQUAL_WEIGHT_PER_RAINFALL_GROUP_V1",
     "resume_semantics": "INPUT_CONFIG_ARTIFACT_HASH_BOUND_V1",
 }
