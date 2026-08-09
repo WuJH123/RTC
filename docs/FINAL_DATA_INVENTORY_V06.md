@@ -25,7 +25,7 @@ contracts/rainfall_design_evidence.json
 preflight/inp_audit.json
 ```
 
-The workspace binds the canonical inputs/splits. Large generated trajectories/shards may live on another local disk. Scientific validity is determined by lineage, the stable implementation-contract fingerprint, numerical input/config keys and generated-artifact hashes — not by physical directory location.
+The workspace binds canonical inputs/splits. Large generated trajectories/shards may live on another local disk. Scientific validity is determined by lineage, the stable implementation-contract fingerprint, numerical input/config keys and generated-artifact hashes — not by physical directory location.
 
 The recommended paper-strength rainfall target is about 160 independent groups, but software correctness requires only leakage-free development train/validation plus untouched Final groups.
 
@@ -134,7 +134,7 @@ d3/<branch>.node_statistics.csv.gz
 
 D3 supplies multi-actuator/multi-step interaction evidence used both for Step2 training and joint-action ranking validation.
 
-`max-active` is a D3 exploration parameter only; it does not impose a runtime MPC Top-K.
+Every discovered actuator is eligible in each sequence. `change_probability` controls how often each actuator is perturbed and `perturbation_std` controls perturbation magnitude; both are data-coverage parameters only and do not impose a runtime MPC Top-K/fixed subset.
 
 ## 8. Step2 index and time-locked shards
 
