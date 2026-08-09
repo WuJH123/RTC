@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wuhan-rtc"
-version = "0.2.0"
-description = "Sparse-sensing, actuator-agnostic differentiable MPC for urban drainage networks"
+version = "0.3.0"
+description = "Sparse-sensing, actuator-agnostic differentiable MPC for large urban drainage networks"
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.26",
@@ -20,25 +20,41 @@ swmm = ["pyswmm>=2.0"]
 
 [project.scripts]
 rtc-audit-inp = "rtc.cli:audit_inp_main"
+rtc-inp-audit-v2 = "rtc.inp_audit_v2:main"
+rtc-resolve-priority = "rtc.priority_resolver:main"
 rtc-design-probes = "rtc.cli:design_probes_main"
 rtc-run-probes = "rtc.cli:run_probes_main"
 rtc-build-graph = "rtc.pipeline_cli:build_graph_main"
 rtc-make-passive-inp = "rtc.pipeline_cli:make_passive_inp_main"
 rtc-split-groups = "rtc.pipeline_cli:split_groups_main"
 rtc-run-trajectory = "rtc.pipeline_cli:run_trajectory_main"
+rtc-run-d0-batch = "rtc.large_data_cli:run_d0_batch_main"
 rtc-design-d3 = "rtc.pipeline_cli:design_d3_main"
 rtc-run-d3 = "rtc.pipeline_cli:run_d3_main"
+rtc-run-d3-batch = "rtc.large_data_cli:run_d3_batch_main"
+rtc-run-d1-exploration = "rtc.d1_exploration:main"
+rtc-design-checkpoints = "rtc.checkpoint_design:main"
 rtc-compile-step1 = "rtc.pipeline_cli:compile_step1_main"
-rtc-compile-step2 = "rtc.model_cli:compile_step2_dataset_main"
 rtc-train-step1 = "rtc.model_cli:train_step1_main"
 rtc-accept-step1 = "rtc.model_cli:accept_step1_main"
+rtc-train-step1-large = "rtc.large_model_cli:train_step1_large_main"
+rtc-accept-step1-large = "rtc.large_model_cli:accept_step1_large_main"
+rtc-compile-step2 = "rtc.model_cli:compile_step2_dataset_main"
+rtc-compile-step2-shards = "rtc.large_model_cli:compile_step2_shards_main"
 rtc-train-step2 = "rtc.model_cli:train_step2_main"
 rtc-accept-step2 = "rtc.model_cli:accept_step2_main"
+rtc-train-step2-large = "rtc.large_model_cli:train_step2_large_main"
+rtc-accept-step2-large = "rtc.large_model_cli:accept_step2_large_main"
+rtc-accept-gate = "rtc.acceptance_gate:main"
 rtc-calibrate-safety = "rtc.evidence_cli:calibrate_safety_main"
 rtc-audit-safety = "rtc.evidence_cli:audit_safety_main"
 rtc-record-stage = "rtc.evidence_cli:record_stage_main"
 rtc-policy-lock = "rtc.evidence_cli:policy_lock_main"
+rtc-policy-lock-v5 = "rtc.formal_lock_v5:main"
+rtc-run-policy = "rtc.production_cli:run_policy_main"
 rtc-compile-final = "rtc.final_cli:compile_final_main"
+rtc-compile-final-v4 = "rtc.formal_final_v4:main"
+rtc-formalize-run = "rtc.formalize_run:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
