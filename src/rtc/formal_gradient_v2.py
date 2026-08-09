@@ -9,9 +9,9 @@ import numpy as np
 import pandas as pd
 import torch
 
+from .d2_eval import exact_node_volumes, join_manifest_runs, model_metrics
 from .gradient_truth import compare_gradient_vectors
 from .production_cli import _load_graph, _load_step2
-from .validation_cli import _exact_node_volumes, _join_manifest_runs, _model_metrics
 
 
 def _sha(path: str | Path) -> str:
@@ -36,7 +36,7 @@ def build_gradient_truth(
     No-control prefixes).
     """
 
-    merged = _join_manifest_runs(pd.read_csv(manifest_path), pd.read_csv(run_summary_path))
+    merged = join_manifest_runs(pd.read_csv(manifest_path), pd.read_csv(run_summary_path))
     if "scientific_split" in merged.columns:
         merged = merged[merged["scientific_split"].astype(str) == split]
     if split == "development" and "development_fold" in merged.columns:
@@ -68,7 +68,7 @@ def build_gradient_truth(
         def exact(row: pd.Series) -> np.ndarray:
             path = str(row["metadata_path"])
             if path not in exact_cache:
-                exact_cache[path] = _exact_node_volumes(path, graph.node_ids)
+                exact_cache[path] = exact_node_volumes(path, graph.node_ids)
             return exact_cache[path]
 
         method: str
@@ -94,7 +94,7 @@ def build_gradient_truth(
         aid = str(mid["actuator_id"])
         if aid not in actuator_index:
             raise ValueError(f"D2 actuator absent from frozen graph: {aid}")
-        _tfv, _pfv, pred_grad, _pred_pfv_grad = _model_metrics(
+        _tfv, _pfv, pred_grad, _pred_pfv_grad = model_metrics(
             model=model,
             graph=graph,
             metadata_path=str(mid["metadata_path"]),
