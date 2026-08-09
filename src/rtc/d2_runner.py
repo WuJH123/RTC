@@ -10,6 +10,10 @@ import pandas as pd
 
 from .generation_contract import generation_key
 from .inp_runtime import build_runtime_inp, sha256_file
+from .replay_prefix import reference_trajectory_lineage
+
+
+D2_DATA_CONTRACT = "D2_CONTROLS_DISABLED_COMPACT_V3_PREFIX_VERIFIED"
 
 
 def _read_json(path: str | Path) -> dict[str, object]:
@@ -21,7 +25,7 @@ def _read_json(path: str | Path) -> dict[str, object]:
 
 def _generation(job: dict[str, object]) -> tuple[str, str, dict[str, object]]:
     payload = {
-        "data_contract": "D2_CONTROLS_DISABLED_COMPACT_V2",
+        "data_contract": D2_DATA_CONTRACT,
         "event_id": str(job["event_id"]),
         "rainfall_group": str(job["rainfall_group"]),
         "scientific_split": str(job["scientific_split"]),
@@ -31,6 +35,9 @@ def _generation(job: dict[str, object]) -> tuple[str, str, dict[str, object]]:
         "candidate_action_sha256": str(job["candidate_action_sha256"]),
         "source_inp_sha256": str(job["source_inp_sha256"]),
         "runtime_inp_sha256": str(job["runtime_inp_sha256"]),
+        "reference_metadata_sha256": str(job["reference_metadata_sha256"]),
+        "reference_compact_sha256": str(job["reference_compact_sha256"]),
+        "reference_swmm_engine_version": str(job["reference_swmm_engine_version"]),
         "horizon_minutes": int(job["horizon_minutes"]),
         "stride_seconds": int(job["stride_seconds"]),
         "swmm_threads_per_process": int(job["swmm_threads_per_process"]),
@@ -43,6 +50,9 @@ def _generation(job: dict[str, object]) -> tuple[str, str, dict[str, object]]:
 def _stamp(metadata_path: str | Path, job: dict[str, object]) -> str:
     path = Path(metadata_path)
     meta = _read_json(path)
+    verification = meta.get("same_prefix_verification")
+    if not isinstance(verification, dict) or verification.get("passed") is not True:
+        raise RuntimeError("Formal D2 branch lacks successful exact No-control prefix verification")
     key, code_sha, lineage = _generation(job)
     hashes: dict[str, str] = {}
     for field in ("compact_file", "node_statistics_file"):
@@ -78,7 +88,10 @@ def _complete(metadata_path: Path, expected_key: str) -> bool:
         return False
     try:
         meta = _read_json(metadata_path)
-        if meta.get("data_contract") != "D2_CONTROLS_DISABLED_COMPACT_V2":
+        if meta.get("data_contract") != D2_DATA_CONTRACT:
+            return False
+        verification = meta.get("same_prefix_verification")
+        if not isinstance(verification, dict) or verification.get("passed") is not True:
             return False
         if meta.get("generation_key_sha256") != expected_key:
             return False
@@ -111,6 +124,7 @@ def _run_job(job: dict[str, object]) -> dict[str, object]:
         output_dir=str(job["out_dir"]),
         branch_id=str(job["branch_id"]),
         python_intervention_seconds=int(job["stride_seconds"]),
+        reference_trajectory_metadata_path=str(job["reference_metadata_path"]),
         save_raw_csv=bool(job["debug_raw"]),
         keep_engine_files=bool(job["keep_engine_files"]),
     )
@@ -133,7 +147,7 @@ def _run_job(job: dict[str, object]) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run authoritative code-bound resumable pre-lock D2 counterfactual branches"
+        description="Run authoritative resumable D2 branches with exact No-control prefix verification"
     )
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--inp", help="default event INP; manifest inp_path takes precedence")
@@ -158,6 +172,7 @@ def main() -> None:
         "candidate_settings_json",
         "checkpoint_minutes",
         "checkpoint_id",
+        "trajectory_metadata_path",
         "scientific_split",
     }
     missing = sorted(required - set(manifest.columns))
@@ -200,6 +215,8 @@ def main() -> None:
         event = str(row.get("event_id", "event"))
         action_sha = str(row["candidate_action_sha256"])
         checkpoint = int(row["checkpoint_minutes"])
+        reference_path = str(row["trajectory_metadata_path"])
+        reference_lineage = reference_trajectory_lineage(reference_path)
         branch_id = f"{event}__t{checkpoint:04d}__{action_sha[:16]}"
         metadata = out / f"{branch_id}.json"
         job: dict[str, object] = {
@@ -221,6 +238,7 @@ def main() -> None:
             "swmm_threads_per_process": args.swmm_threads_per_process,
             "debug_raw": args.debug_raw,
             "keep_engine_files": args.keep_engine_files,
+            **reference_lineage,
         }
         expected_key, _, _ = _generation(job)
         if not args.no_resume and _complete(metadata, expected_key):
@@ -253,7 +271,7 @@ def main() -> None:
     print(
         json.dumps(
             {
-                "contract": "D2_BATCH_CODE_BOUND_RESUME_V1",
+                "contract": "D2_BATCH_PREFIX_VERIFIED_RESUME_V2",
                 "branches": len(results),
                 "computed": len(jobs),
                 "resumed": len(results) - len(jobs),
