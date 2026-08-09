@@ -1,14 +1,17 @@
 def test_formal_pipeline_modules_import() -> None:
     import rtc.acceptance_gate  # noqa: F401
     import rtc.baseline_cache  # noqa: F401
+    import rtc.baseline_cache_cli  # noqa: F401
     import rtc.calibration_cases  # noqa: F401
     import rtc.checkpoint_design  # noqa: F401
     import rtc.context_features  # noqa: F401
     import rtc.d1_exploration  # noqa: F401
+    import rtc.d2_eval  # noqa: F401
     import rtc.data_index  # noqa: F401
     import rtc.formal_assets_v2  # noqa: F401
     import rtc.formal_final_v4  # noqa: F401
     import rtc.formal_gradient  # noqa: F401
+    import rtc.formal_gradient_v2  # noqa: F401
     import rtc.formal_lock_v5  # noqa: F401
     import rtc.formal_ranking  # noqa: F401
     import rtc.formalize_run  # noqa: F401
