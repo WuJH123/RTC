@@ -20,6 +20,7 @@ class Step1Windows:
     event_ids: np.ndarray
     rainfall_groups: np.ndarray
     scientific_splits: np.ndarray
+    development_folds: np.ndarray
     target_elapsed_seconds: np.ndarray
     node_ids: tuple[str, ...]
     actuator_ids: tuple[str, ...]
@@ -91,13 +92,7 @@ def compile_step1_windows(
     history_steps: int = 13,
     stride_steps: int = 1,
 ) -> Step1Windows:
-    """Build causal Step1 examples from D0/D1 full-event authoritative trajectories.
-
-    ``run_index`` must provide ``metadata_path``, ``event_id``, ``rainfall_group`` and
-    ``scientific_split``. The target is the same current time as the final history frame,
-    not a future state. Only listed sensors are visible in ``observed_history``; full
-    network SWMM truth appears only in the supervised ``target_state``.
-    """
+    """Build causal Step1 examples from D0/D1 full-event authoritative trajectories."""
 
     required = {"metadata_path", "event_id", "rainfall_group", "scientific_split"}
     missing = sorted(required - set(run_index.columns))
@@ -113,6 +108,7 @@ def compile_step1_windows(
     event_ids: list[str] = []
     rainfall_groups: list[str] = []
     splits: list[str] = []
+    dev_folds: list[str] = []
     target_times: list[int] = []
     canonical_nodes: tuple[str, ...] | None = None
     canonical_actuators: tuple[str, ...] | None = None
@@ -134,6 +130,8 @@ def compile_step1_windows(
         mask = np.zeros_like(sensor_state_source, dtype=float)
         observed[:, sensor_idx, :] = sensor_state_source[:, sensor_idx, :]
         mask[:, sensor_idx, :] = 1.0
+        split = str(row["scientific_split"])
+        dev_fold = str(row.get("development_fold", "train" if split == "development" else ""))
 
         for end in range(history_steps - 1, len(times), stride_steps):
             start = end - history_steps + 1
@@ -143,7 +141,8 @@ def compile_step1_windows(
             targets.append(full_state[end])
             event_ids.append(str(row["event_id"]))
             rainfall_groups.append(str(row["rainfall_group"]))
-            splits.append(str(row["scientific_split"]))
+            splits.append(split)
+            dev_folds.append(dev_fold)
             target_times.append(int(times[end]))
 
     if not observed_windows or canonical_nodes is None or canonical_actuators is None or canonical_context_names is None:
@@ -156,6 +155,7 @@ def compile_step1_windows(
         event_ids=np.asarray(event_ids),
         rainfall_groups=np.asarray(rainfall_groups),
         scientific_splits=np.asarray(splits),
+        development_folds=np.asarray(dev_folds),
         target_elapsed_seconds=np.asarray(target_times, dtype=np.int64),
         node_ids=canonical_nodes,
         actuator_ids=canonical_actuators,
@@ -175,6 +175,7 @@ def save_step1_windows(windows: Step1Windows, output_path: str | Path) -> Path:
         event_ids=windows.event_ids,
         rainfall_groups=windows.rainfall_groups,
         scientific_splits=windows.scientific_splits,
+        development_folds=windows.development_folds,
         target_elapsed_seconds=windows.target_elapsed_seconds,
         node_ids=np.asarray(windows.node_ids),
         actuator_ids=np.asarray(windows.actuator_ids),
