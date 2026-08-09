@@ -8,15 +8,28 @@ import pytest
 from rtc.checkpoint_design import _assert_replayable_no_control_prefix
 
 
-def test_d2_checkpoint_requires_controls_disabled_no_write_prefix() -> None:
+def test_d2_checkpoint_requires_controls_disabled_no_write_t0_prefix() -> None:
     _assert_replayable_no_control_prefix(
         {
-            "data_contract": "D0_D1_COMPACT_TRAJECTORY_V2",
+            "data_contract": "D0_D1_COMPACT_TRAJECTORY_V3_T0_CAUSAL",
+            "initial_observation_elapsed_seconds": 0,
             "python_actuator_writes": False,
             "native_controls_enabled": False,
         },
         "no_control.json",
     )
+
+
+def test_old_d0_contract_is_not_formal_replayable() -> None:
+    with pytest.raises(ValueError, match="not a current replayable"):
+        _assert_replayable_no_control_prefix(
+            {
+                "data_contract": "D0_D1_COMPACT_TRAJECTORY_V2",
+                "python_actuator_writes": False,
+                "native_controls_enabled": False,
+            },
+            "old.json",
+        )
 
 
 def test_cached_no_control_baseline_is_replayable(tmp_path: Path) -> None:
@@ -44,7 +57,8 @@ def test_cached_no_control_baseline_is_replayable(tmp_path: Path) -> None:
         ),
         (
             {
-                "data_contract": "D0_D1_COMPACT_TRAJECTORY_V2",
+                "data_contract": "D0_D1_COMPACT_TRAJECTORY_V3_T0_CAUSAL",
+                "initial_observation_elapsed_seconds": 0,
                 "python_actuator_writes": False,
                 "native_controls_enabled": True,
             },
@@ -52,11 +66,20 @@ def test_cached_no_control_baseline_is_replayable(tmp_path: Path) -> None:
         ),
         (
             {
-                "data_contract": "D0_D1_COMPACT_TRAJECTORY_V2",
+                "data_contract": "D0_D1_COMPACT_TRAJECTORY_V3_T0_CAUSAL",
+                "initial_observation_elapsed_seconds": 0,
                 "python_actuator_writes": True,
                 "native_controls_enabled": False,
             },
             "Python writes",
+        ),
+        (
+            {
+                "data_contract": "D0_D1_COMPACT_TRAJECTORY_V3_T0_CAUSAL",
+                "python_actuator_writes": False,
+                "native_controls_enabled": False,
+            },
+            "does not prove t=0 inclusion",
         ),
     ],
 )
