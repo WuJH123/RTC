@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
 from rtc.rainfall_design import validate_formal_rainfall_design
 from rtc.splits import assign_rainfall_group_splits
@@ -25,7 +24,7 @@ def _registry(tmp_path: Path, n: int = 160) -> pd.DataFrame:
     return assign_rainfall_group_splits(base, seed=42)
 
 
-def test_160_group_default_split_satisfies_formal_minima(tmp_path: Path) -> None:
+def test_160_group_default_split_meets_recommended_paper_design(tmp_path: Path) -> None:
     frame = _registry(tmp_path, 160)
     evidence = validate_formal_rainfall_design(frame)
     assert evidence["rainfall_groups"] == 160
@@ -36,9 +35,14 @@ def test_160_group_default_split_satisfies_formal_minima(tmp_path: Path) -> None
         "safety_audit": 16,
     }
     assert evidence["development_validation_groups"] == 19
+    assert evidence["required_invariants_passed"] is True
+    assert evidence["paper_strength_recommendations_met"] is True
 
 
-def test_fewer_than_160_groups_is_rejected_for_formal_lock(tmp_path: Path) -> None:
+def test_smaller_valid_design_runs_but_reports_paper_strength_recommendations(tmp_path: Path) -> None:
     frame = _registry(tmp_path, 120)
-    with pytest.raises(ValueError, match=">= 160"):
-        validate_formal_rainfall_design(frame)
+    evidence = validate_formal_rainfall_design(frame)
+    assert evidence["required_invariants_passed"] is True
+    assert evidence["rainfall_groups"] == 120
+    assert evidence["paper_strength_recommendations_met"] is False
+    assert evidence["recommendations"]
