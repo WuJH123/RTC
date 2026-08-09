@@ -11,9 +11,8 @@ import torch
 
 from .acceptance import apply_metric_thresholds, rank_correlation
 from .contracts import load_priority_nodes
-from .dataset_compile import compile_branch_tensors
+from .d2_eval import exact_node_volumes, join_manifest_runs, model_metrics
 from .production_cli import _load_graph, _load_step2
-from .validation_cli import _exact_node_volumes, _join_manifest_runs
 
 
 def _sha(path: str | Path) -> str:
@@ -41,7 +40,7 @@ def run_ranking_gate(
     development_fold: str = "validation",
     device: str | None = None,
 ) -> dict[str, object]:
-    merged = _join_manifest_runs(pd.read_csv(manifest_path), pd.read_csv(run_summary_path))
+    merged = join_manifest_runs(pd.read_csv(manifest_path), pd.read_csv(run_summary_path))
     if "scientific_split" in merged.columns:
         merged = merged[merged["scientific_split"].astype(str) == split]
     if split == "development" and "development_fold" in merged.columns:
@@ -49,8 +48,8 @@ def run_ranking_gate(
     if merged.empty:
         raise ValueError("no held-out D2 branches for ranking gate")
 
-    # D2 design repeats the base/center action once for every probed actuator. Ranking must
-    # operate on unique physical actions, not actuator-labelled design rows.
+    # The D2 manifest repeats the same center/base physical action once per probed actuator.
+    # Ranking must operate on unique physical actions so the base action is not overweighted.
     action_keys = ["checkpoint_id", "candidate_action_sha256"]
     group_keys = ["checkpoint_id"]
     if "event_id" in merged.columns:
@@ -79,52 +78,34 @@ def run_ranking_gate(
         shas: list[str] = []
         for _, row in group.iterrows():
             path = str(row["metadata_path"])
-            branch = compile_branch_tensors(path)
-            if branch.node_ids != graph.node_ids or branch.actuator_ids != graph.actuator_ids:
-                raise ValueError("ranking branch schema differs from locked graph schema")
-            dt = np.diff(branch.elapsed_seconds).astype(np.float32)
-            if np.any(dt <= 0):
-                raise ValueError("ranking branch time grid must be strictly increasing")
-            with torch.no_grad():
-                rollout = model.rollout(
-                    torch.as_tensor(branch.initial_state[None], dtype=torch.float32, device=dev),
-                    torch.as_tensor(branch.rainfall[None], dtype=torch.float32, device=dev),
-                    torch.as_tensor(branch.settings[None], dtype=torch.float32, device=dev),
-                    torch.as_tensor(branch.previous_actuator_flow[None], dtype=torch.float32, device=dev),
-                    torch.as_tensor(graph.actuator_upstream, dtype=torch.long, device=dev),
-                    torch.as_tensor(graph.actuator_downstream, dtype=torch.long, device=dev),
-                    torch.as_tensor(graph.actuator_physics[None], dtype=torch.float32, device=dev),
-                    torch.as_tensor(graph.static_node_features, dtype=torch.float32, device=dev),
-                    torch.as_tensor(graph.edge_index, dtype=torch.long, device=dev),
-                )
-                rates = rollout.states[0, ..., 2].clamp_min(0.0)
-                node_vol = (
-                    rates
-                    * torch.as_tensor(dt, dtype=torch.float32, device=dev).view(-1, 1)
-                ).sum(dim=0).cpu().numpy()
+            predicted_tfv, predicted_pfv, _, _ = model_metrics(
+                model=model,
+                graph=graph,
+                metadata_path=path,
+                priority_indices=pidx,
+                device=dev,
+            )
             if path not in exact_cache:
-                exact_cache[path] = _exact_node_volumes(path, graph.node_ids)
+                exact_cache[path] = exact_node_volumes(path, graph.node_ids)
             exact = exact_cache[path]
-            pred_tfv.append(float(node_vol.sum()))
-            pred_pfv.append(float(node_vol[pidx].sum()))
+            pred_tfv.append(predicted_tfv)
+            pred_pfv.append(predicted_pfv)
             true_tfv.append(float(exact.sum()))
             true_pfv.append(float(exact[pidx].sum()))
             shas.append(str(row["candidate_action_sha256"]))
         best_pred = int(np.argmin(pred_tfv))
         best_true = int(np.argmin(true_tfv))
-        detail.append(
-            {
-                "event_id": str(group["event_id"].iloc[0]) if "event_id" in group.columns else "",
-                "checkpoint_id": str(group["checkpoint_id"].iloc[0]),
-                "candidate_count": len(group),
-                "tfv_rank_correlation": rank_correlation(np.asarray(pred_tfv), np.asarray(true_tfv)),
-                "pfv_rank_correlation": rank_correlation(np.asarray(pred_pfv), np.asarray(true_pfv)),
-                "tfv_top1_hit": float(best_pred == best_true),
-                "tfv_selected_regret_m3": float(true_tfv[best_pred] - true_tfv[best_true]),
-                "predicted_best_action_sha256": shas[best_pred],
-                "true_best_action_sha256": shas[best_true],
-            }
-        )
+        detail.append({
+            "event_id": str(group["event_id"].iloc[0]) if "event_id" in group.columns else "",
+            "checkpoint_id": str(group["checkpoint_id"].iloc[0]),
+            "candidate_count": len(group),
+            "tfv_rank_correlation": rank_correlation(np.asarray(pred_tfv), np.asarray(true_tfv)),
+            "pfv_rank_correlation": rank_correlation(np.asarray(pred_pfv), np.asarray(true_pfv)),
+            "tfv_top1_hit": float(best_pred == best_true),
+            "tfv_selected_regret_m3": float(true_tfv[best_pred] - true_tfv[best_true]),
+            "predicted_best_action_sha256": shas[best_pred],
+            "true_best_action_sha256": shas[best_true],
+        })
     frame = pd.DataFrame(detail)
     if frame.empty:
         raise ValueError("no held-out checkpoint has at least three unique D2 actions")
@@ -141,7 +122,7 @@ def run_ranking_gate(
     detail_path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(detail_path, index=False)
     payload: dict[str, object] = {
-        "contract": "D2_SWMM_CANDIDATE_RANKING_ACCEPTANCE_V2",
+        "contract": "D2_SWMM_CANDIDATE_RANKING_ACCEPTANCE_V3_TRAPEZOID",
         "passed": result.passed,
         "failed_metrics": list(result.failed_metrics),
         "metrics": result.metrics,
@@ -152,6 +133,8 @@ def run_ranking_gate(
         "step2_sha256": _sha(step2_path),
         "manifest_sha256": _sha(manifest_path),
         "run_summary_sha256": _sha(run_summary_path),
+        "prediction_volume_integration": "trapezoid_current_plus_future_flooding_rate",
+        "truth_source_tfv_pfv": "SWMM_NODE_STATISTICS_CUMULATIVE_EXACT_HORIZON",
         "detail_csv": str(detail_path),
     }
     Path(output_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

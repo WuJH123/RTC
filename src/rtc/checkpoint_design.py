@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .inp_runtime import section_has_payload
 from .units import flow_rate_to_m3s, length_to_m
 
 
@@ -15,28 +16,73 @@ def _load_meta(path: str | Path) -> tuple[dict[str, object], Path]:
     return json.loads(p.read_text(encoding="utf-8")), p.parent
 
 
-def _assert_replayable_no_control_prefix(meta: dict[str, object], metadata_path: str | Path) -> None:
-    """D2/D3 fresh branches can only reproduce a no-write, controls-disabled prefix.
+def _source_event_inp(item: pd.Series, meta: dict[str, object]) -> str:
+    """Recover the original event INP when a No-control baseline cache sidecar exists."""
 
-    D1 controlled trajectories are excellent Step1 coverage but are *not* valid D2/D3
-    checkpoint sources unless their entire prior action history is replayed. Internal-RTC
-    trajectories are also invalid because D2/D3 deliberately disable native controls.
+    raw_sidecar = item.get("sidecar_path", "")
+    sidecar_text = "" if pd.isna(raw_sidecar) else str(raw_sidecar).strip()
+    if sidecar_text:
+        sidecar_path = Path(sidecar_text)
+        if sidecar_path.is_file():
+            sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            if (
+                sidecar.get("contract") == "FIXED_BASELINE_CACHE_V1"
+                and sidecar.get("strategy") == "no_control"
+            ):
+                source = Path(str(sidecar.get("source_inp", "")))
+                if not source.is_file():
+                    raise ValueError(f"baseline cache original event INP disappeared: {source}")
+                return str(source)
+    runtime = Path(str(meta.get("inp_path", "")))
+    if not runtime.is_file():
+        raise ValueError(f"checkpoint source INP disappeared: {runtime}")
+    return str(runtime)
+
+
+def _assert_replayable_no_control_prefix(meta: dict[str, object], metadata_path: str | Path) -> None:
+    """D2/D3 fresh branches require a no-write, controls-disabled prefix.
+
+    Both the older compact D0 trajectory contract and the new reusable fixed-baseline cache
+    are accepted. D1 controlled trajectories remain invalid because their prior action
+    history is not reproduced by a fresh No-control branch.
     """
 
-    if meta.get("data_contract") != "D0_D1_COMPACT_TRAJECTORY_V2":
-        raise ValueError(
-            f"D2/D3 checkpoint source is not an authoritative D0 compact trajectory: {metadata_path}. "
-            "Do not use D1 controlled states without explicit prefix-action replay."
-        )
-    if meta.get("python_actuator_writes") is not False:
-        raise ValueError(
-            f"D2/D3 checkpoint source contains/does not prove absence of Python actuator writes: {metadata_path}"
-        )
-    if meta.get("native_controls_enabled") is not False:
-        raise ValueError(
-            f"D2/D3 checkpoint source has native Internal-RTC controls enabled: {metadata_path}. "
-            "Use the No-control D0 trajectory so the fresh D2/D3 prefix is identical."
-        )
+    contract = str(meta.get("data_contract", ""))
+    if contract == "D0_D1_COMPACT_TRAJECTORY_V2":
+        if meta.get("python_actuator_writes") is not False:
+            raise ValueError(
+                f"D2/D3 checkpoint source contains/does not prove absence of Python actuator writes: {metadata_path}"
+            )
+        if meta.get("native_controls_enabled") is not False:
+            raise ValueError(
+                f"D2/D3 checkpoint source has native Internal-RTC controls enabled: {metadata_path}. "
+                "Use the No-control trajectory so the fresh D2/D3 prefix is identical."
+            )
+        return
+
+    if contract == "CLOSED_LOOP_COMPACT_V2":
+        if meta.get("controller_present") is not False:
+            raise ValueError(
+                f"D2/D3 checkpoint source contains Python control decisions: {metadata_path}. "
+                "Use BASELINE_CACHE/NO_CONTROL_D0_INDEX.csv only."
+            )
+        inp_path = Path(str(meta.get("inp_path", "")))
+        if not inp_path.is_file() or section_has_payload(inp_path, "CONTROLS"):
+            raise ValueError(
+                f"D2/D3 checkpoint source is not a controls-disabled No-control runtime: {metadata_path}"
+            )
+        decision_name = meta.get("decision_file")
+        if not decision_name:
+            raise ValueError("cached No-control metadata lacks decision_file lineage")
+        decision_path = Path(metadata_path).parent / str(decision_name)
+        if not decision_path.is_file() or decision_path.read_text(encoding="utf-8").strip():
+            raise ValueError("cached No-control decision log must exist and be empty")
+        return
+
+    raise ValueError(
+        f"D2/D3 checkpoint source is not a replayable No-control trajectory: {metadata_path}. "
+        "Do not use D1 controlled states without explicit prefix-action replay."
+    )
 
 
 def _state_table(metadata_path: str | Path) -> tuple[pd.DataFrame, tuple[str, ...], np.ndarray, dict[str, object]]:
@@ -115,6 +161,7 @@ def design_checkpoints(
         metadata_path = str(item["metadata_path"])
         state, actuator_ids, settings_by_time, meta = _state_table(metadata_path)
         _assert_replayable_no_control_prefix(meta, metadata_path)
+        source_event_inp = _source_event_inp(item, meta)
         keep = state["elapsed_seconds"].to_numpy(dtype=int) >= minimum_elapsed_minutes * 60
         state = state.loc[keep].copy()
         settings_by_time = settings_by_time[keep]
@@ -154,7 +201,7 @@ def design_checkpoints(
                 "rainfall_group": str(item["rainfall_group"]),
                 "scientific_split": split,
                 "development_fold": str(item.get("development_fold", "")),
-                "inp_path": str(meta["inp_path"]),
+                "inp_path": source_event_inp,
                 "trajectory_metadata_path": metadata_path,
                 "network_max_depth_m": float(row["network_max_depth_m"]),
                 "network_total_flood_rate_m3s": float(row["network_total_flood_rate_m3s"]),
@@ -174,8 +221,8 @@ def design_checkpoints(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Design stratified D2/D3 checkpoints from replayable No-control D0 prefixes only")
-    parser.add_argument("--run-index", required=True)
+    parser = argparse.ArgumentParser(description="Design stratified D2/D3 checkpoints from replayable No-control prefixes only")
+    parser.add_argument("--run-index", required=True, help="prefer BASELINE_CACHE/NO_CONTROL_D0_INDEX.csv")
     parser.add_argument("--out", required=True)
     parser.add_argument("--checkpoints-per-event", type=int, default=8)
     parser.add_argument("--minimum-elapsed-minutes", type=int, default=60)

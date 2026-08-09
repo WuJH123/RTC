@@ -12,12 +12,13 @@
     "proposed": "TFV-first sparse-state + differentiable continuous MPC. Runs on the controls-disabled physical base; priority PFV is soft/diagnostic, never a hard admission gate.",
     "no_control": "Same physical network and forcing with [CONTROLS] disabled and no Python setting writes. This is NOT all-open.",
     "internal_rtc": "Original frozen event INP with native [CONTROLS] enabled and no Python setting writes.",
-    "hold": "Controls-disabled base; freeze actuator readback at the first control decision.",
-    "all_open": "Diagnostic controls-disabled run with every eligible continuous setting fixed at 1.0.",
-    "all_closed": "Diagnostic controls-disabled run with every eligible continuous setting fixed at 0.0."
+    "hold": "Controls-disabled base; at the first common control decision freeze the actuator readback vector for the rest of the event.",
+    "all_open": "Diagnostic controls-disabled policy; from the first common control decision command every eligible continuous setting to 1.0 and hold it there.",
+    "all_closed": "Diagnostic controls-disabled policy; from the first common control decision command every eligible continuous setting to 0.0 and hold it there."
   },
   "policy_isolation": {
     "internal_rtc_native_controls": true,
-    "all_other_strategies_native_controls": false
+    "all_other_strategies_native_controls": false,
+    "common_precontrol_prefix": "Proposed, Hold, All-open and All-closed share the same controls-disabled prefix until the frozen control_start_minutes epoch."
   }
 }
