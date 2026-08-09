@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .inp_runtime import section_has_payload
 from .units import flow_rate_to_m3s, length_to_m
 
 
@@ -16,27 +17,49 @@ def _load_meta(path: str | Path) -> tuple[dict[str, object], Path]:
 
 
 def _assert_replayable_no_control_prefix(meta: dict[str, object], metadata_path: str | Path) -> None:
-    """D2/D3 fresh branches can only reproduce a no-write, controls-disabled prefix.
+    """D2/D3 fresh branches require a no-write, controls-disabled prefix.
 
-    D1 controlled trajectories are excellent Step1 coverage but are *not* valid D2/D3
-    checkpoint sources unless their entire prior action history is replayed. Internal-RTC
-    trajectories are also invalid because D2/D3 deliberately disable native controls.
+    Both the older compact D0 trajectory contract and the new reusable fixed-baseline cache
+    are accepted. D1 controlled trajectories remain invalid because their prior action
+    history is not reproduced by a fresh No-control branch.
     """
 
-    if meta.get("data_contract") != "D0_D1_COMPACT_TRAJECTORY_V2":
-        raise ValueError(
-            f"D2/D3 checkpoint source is not an authoritative D0 compact trajectory: {metadata_path}. "
-            "Do not use D1 controlled states without explicit prefix-action replay."
-        )
-    if meta.get("python_actuator_writes") is not False:
-        raise ValueError(
-            f"D2/D3 checkpoint source contains/does not prove absence of Python actuator writes: {metadata_path}"
-        )
-    if meta.get("native_controls_enabled") is not False:
-        raise ValueError(
-            f"D2/D3 checkpoint source has native Internal-RTC controls enabled: {metadata_path}. "
-            "Use the No-control D0 trajectory so the fresh D2/D3 prefix is identical."
-        )
+    contract = str(meta.get("data_contract", ""))
+    if contract == "D0_D1_COMPACT_TRAJECTORY_V2":
+        if meta.get("python_actuator_writes") is not False:
+            raise ValueError(
+                f"D2/D3 checkpoint source contains/does not prove absence of Python actuator writes: {metadata_path}"
+            )
+        if meta.get("native_controls_enabled") is not False:
+            raise ValueError(
+                f"D2/D3 checkpoint source has native Internal-RTC controls enabled: {metadata_path}. "
+                "Use the No-control trajectory so the fresh D2/D3 prefix is identical."
+            )
+        return
+
+    if contract == "CLOSED_LOOP_COMPACT_V2":
+        if meta.get("controller_present") is not False:
+            raise ValueError(
+                f"D2/D3 checkpoint source contains Python control decisions: {metadata_path}. "
+                "Use BASELINE_CACHE/NO_CONTROL_D0_INDEX.csv only."
+            )
+        inp_path = Path(str(meta.get("inp_path", "")))
+        if not inp_path.is_file() or section_has_payload(inp_path, "CONTROLS"):
+            raise ValueError(
+                f"D2/D3 checkpoint source is not a controls-disabled No-control runtime: {metadata_path}"
+            )
+        decision_name = meta.get("decision_file")
+        if not decision_name:
+            raise ValueError("cached No-control metadata lacks decision_file lineage")
+        decision_path = Path(metadata_path).parent / str(decision_name)
+        if not decision_path.is_file() or decision_path.read_text(encoding="utf-8").strip():
+            raise ValueError("cached No-control decision log must exist and be empty")
+        return
+
+    raise ValueError(
+        f"D2/D3 checkpoint source is not a replayable No-control trajectory: {metadata_path}. "
+        "Do not use D1 controlled states without explicit prefix-action replay."
+    )
 
 
 def _state_table(metadata_path: str | Path) -> tuple[pd.DataFrame, tuple[str, ...], np.ndarray, dict[str, object]]:
@@ -174,8 +197,8 @@ def design_checkpoints(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Design stratified D2/D3 checkpoints from replayable No-control D0 prefixes only")
-    parser.add_argument("--run-index", required=True)
+    parser = argparse.ArgumentParser(description="Design stratified D2/D3 checkpoints from replayable No-control prefixes only")
+    parser.add_argument("--run-index", required=True, help="prefer BASELINE_CACHE/NO_CONTROL_D0_INDEX.csv")
     parser.add_argument("--out", required=True)
     parser.add_argument("--checkpoints-per-event", type=int, default=8)
     parser.add_argument("--minimum-elapsed-minutes", type=int, default=60)
