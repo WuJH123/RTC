@@ -1,15 +1,15 @@
 # Superseded — Wuhan RTC v0.6.2 runbook
 
-This runbook is retained only as historical context and **must not be used for a new fresh run after v0.6.3**.
+This runbook is retained only as historical context and **must not be used for a new fresh run**.
 
-The independent v0.6.3 audit found a Step2 train-to-production loading mismatch and changed the recommended data-generation strategy so that physical control leverage is tested before expensive full D2/D3 generation.
+Subsequent audits fixed the Step2 train-to-production contract, added lean exact-SWMM control-leverage screening, added causal Auto-RBC/EFD comparators, and made Phase-0 cohort selection plus timing freeze executable rather than manual.
 
 Use only:
 
 ```text
-docs/LEAN_FRESH_RUN_V063.md
+docs/LEAN_FRESH_RUN_V065.md
 ```
 
 for the next from-scratch Codex/local execution.
 
-The publication/Policy-Lock machinery remains available after development closed-loop SWMM has demonstrated useful control value.
+The publication/Policy-Lock machinery remains available only after development closed-loop SWMM has demonstrated useful time-varying control value.

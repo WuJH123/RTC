@@ -2,6 +2,8 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.acceptance_gate  # noqa: F401
     import rtc.baseline_cache  # noqa: F401
     import rtc.baseline_cache_cli  # noqa: F401
+    import rtc.baseline_cache_cli_v2  # noqa: F401
+    import rtc.baseline_cache_v3  # noqa: F401
     import rtc.calibration_cases  # noqa: F401
     import rtc.causal_timing  # noqa: F401
     import rtc.checkpoint_design  # noqa: F401
@@ -19,12 +21,14 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.formal_assets_v2  # noqa: F401
     import rtc.formal_assets_v3  # noqa: F401
     import rtc.formal_final_v4  # noqa: F401
+    import rtc.formal_final_v5  # noqa: F401
     import rtc.formal_gradient  # noqa: F401
     import rtc.formal_gradient_v2  # noqa: F401
     import rtc.formal_lock_v5  # noqa: F401
     import rtc.formal_ranking  # noqa: F401
     import rtc.formal_run_verify  # noqa: F401
     import rtc.formalize_run  # noqa: F401
+    import rtc.formalize_run_v2  # noqa: F401
     import rtc.forcing  # noqa: F401
     import rtc.fresh_model_guard  # noqa: F401
     import rtc.fresh_workspace  # noqa: F401
@@ -35,16 +39,20 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.large_data_cli  # noqa: F401
     import rtc.large_model_cli  # noqa: F401
     import rtc.lazy_step1  # noqa: F401
+    import rtc.phase0_design  # noqa: F401
     import rtc.phase0_timescale  # noqa: F401
     import rtc.pipeline_ledger_cli  # noqa: F401
     import rtc.policy_artifacts_cli  # noqa: F401
+    import rtc.policy_lock_v6  # noqa: F401
     import rtc.priority_resolver  # noqa: F401
+    import rtc.production_cli_router  # noqa: F401
     import rtc.production_guard  # noqa: F401
     import rtc.rainfall_design  # noqa: F401
     import rtc.ranking_guard  # noqa: F401
     import rtc.replay_peak  # noqa: F401
     import rtc.replay_prefix  # noqa: F401
     import rtc.robust_tfv_mpc  # noqa: F401
+    import rtc.rule_baselines  # noqa: F401
     import rtc.runtime_acceptance  # noqa: F401
     import rtc.step1_accept_v3  # noqa: F401
     import rtc.step1_train_v2  # noqa: F401
@@ -52,4 +60,5 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.step2_train_v2  # noqa: F401
     import rtc.tfv_mpc  # noqa: F401
     import rtc.tfv_pipeline  # noqa: F401
+    import rtc.timing_freeze  # noqa: F401
     import rtc.train_state  # noqa: F401
