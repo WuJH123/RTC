@@ -38,18 +38,10 @@ def run_independent_control_branch(
 ) -> BranchResult:
     """Run one authoritative same-prefix SWMM counterfactual branch.
 
-    Scientific contract:
-    - a new Simulation is created for every branch;
-    - no Python controls are applied before the checkpoint, so all branches replay the
-      exact same native prefix for a fixed event INP;
-    - the pre-action checkpoint state is recorded before candidate settings are written;
-    - requested target setting, actual current setting, facility flow and node hydraulics
-      are recorded after the checkpoint;
-    - ``step_advance`` is only an intervention/output stride. It does not alter SWMM's
-      internal routing step.
-
-    This intentionally favours causal correctness over speed. A verified hot-start cache
-    can be introduced later without changing the data contract.
+    Each branch creates a fresh Simulation, replays the native prefix without Python
+    overrides, records the exact pre-action checkpoint, then commands the complete
+    continuous action and records target/current readback plus hydraulics. ``step_advance``
+    changes only the Python intervention/output stride, never SWMM's routing timestep.
     """
 
     try:
@@ -72,6 +64,8 @@ def run_independent_control_branch(
             raise ValueError(f"{aid} setting outside [0,1]: {value}")
     if checkpoint_minutes <= 0 or horizon_minutes <= 0:
         raise ValueError("checkpoint and horizon must be positive")
+    if python_intervention_seconds <= 0:
+        raise ValueError("python intervention stride must be positive")
     if (checkpoint_minutes * 60) % python_intervention_seconds:
         raise ValueError("checkpoint must align with the Python intervention stride")
 
@@ -87,6 +81,9 @@ def run_independent_control_branch(
         import csv
 
         sim.step_advance(python_intervention_seconds)
+        flow_units = str(sim.flow_units)
+        system_units = str(sim.system_units)
+        engine_version = str(sim.engine_version)
         links = Links(sim)
         nodes = Nodes(sim)
         link_obj = {aid: links[aid] for aid in catalog.ids}
@@ -129,7 +126,7 @@ def run_independent_control_branch(
                         sim.current_time.isoformat(),
                         phase,
                         aid,
-                        candidate_settings[aid] if elapsed >= checkpoint_seconds else "",
+                        "" if phase == "PRE_ACTION_CHECKPOINT" else candidate_settings[aid],
                         obj.target_setting,
                         obj.current_setting,
                         obj.flow,
@@ -138,11 +135,11 @@ def run_independent_control_branch(
 
             if elapsed == checkpoint_seconds and not checkpoint_recorded:
                 checkpoint_recorded = True
-            # Apply after recording the exact pre-action checkpoint. Reapply at every
-            # intervention so Python controls have priority over native rules thereafter.
             for aid, value in candidate_settings.items():
                 link_obj[aid].target_setting = float(value)
 
+        if not checkpoint_recorded:
+            raise RuntimeError("simulation did not reach the requested checkpoint")
         flow_error = float(sim.flow_routing_error)
 
     metadata = {
@@ -155,6 +152,9 @@ def run_independent_control_branch(
         "actuator_count": len(catalog.actuators),
         "candidate_settings": {k: float(v) for k, v in sorted(candidate_settings.items())},
         "prefix_policy": "native_swmm_no_python_override_until_checkpoint",
+        "flow_units": flow_units,
+        "system_units": system_units,
+        "swmm_engine_version": engine_version,
         "flow_routing_error_pct": flow_error,
         "node_file": node_path.name,
         "actuator_file": actuator_path.name,
