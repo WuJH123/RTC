@@ -38,21 +38,23 @@ def _load_lines(path: str | Path) -> tuple[str, ...]:
 
 
 def _load_graph(path: str | Path) -> GraphSchema:
-    raw = np.load(path, allow_pickle=False)
-    return GraphSchema(
-        node_ids=tuple(raw["node_ids"].astype(str).tolist()),
-        edge_index=raw["edge_index"].astype(np.int64),
-        static_node_features=raw["static_node_features"].astype(np.float32),
-        static_node_feature_names=tuple(raw["static_node_feature_names"].astype(str).tolist()),
-        actuator_ids=tuple(raw["actuator_ids"].astype(str).tolist()),
-        actuator_upstream=raw["actuator_upstream"].astype(np.int64),
-        actuator_downstream=raw["actuator_downstream"].astype(np.int64),
-        actuator_physics=raw["actuator_physics"].astype(np.float32),
-        actuator_physics_feature_names=tuple(
-            raw["actuator_physics_feature_names"].astype(str).tolist()
-        ),
-        system_units=str(raw["system_units"].item()),
-    )
+    with np.load(path, allow_pickle=False) as raw:
+        return GraphSchema(
+            node_ids=tuple(raw["node_ids"].astype(str).tolist()),
+            edge_index=raw["edge_index"].astype(np.int64),
+            static_node_features=raw["static_node_features"].astype(np.float32),
+            static_node_feature_names=tuple(
+                raw["static_node_feature_names"].astype(str).tolist()
+            ),
+            actuator_ids=tuple(raw["actuator_ids"].astype(str).tolist()),
+            actuator_upstream=raw["actuator_upstream"].astype(np.int64),
+            actuator_downstream=raw["actuator_downstream"].astype(np.int64),
+            actuator_physics=raw["actuator_physics"].astype(np.float32),
+            actuator_physics_feature_names=tuple(
+                raw["actuator_physics_feature_names"].astype(str).tolist()
+            ),
+            system_units=str(raw["system_units"].item()),
+        )
 
 
 def _load_step1(path: str | Path, device: torch.device) -> SparseStateEstimator:
@@ -75,7 +77,20 @@ def _load_step2(
     cfg = dict(payload["model_config"])
     cfg.pop("state_weights", None)
     cfg.pop("flow_loss_weight", None)
+    runtime_metadata = {
+        key: cfg.pop(key)
+        for key in (
+            "model_step_seconds",
+            "horizon_steps",
+            "time_contract",
+            "training_contract_sha256",
+        )
+        if key in cfg
+    }
+    if runtime_metadata.get("time_contract") != "STEP2_FIXED_DISCRETE_TIME_V1":
+        raise ValueError("Step2 checkpoint lacks the frozen discrete-time contract")
     model = DifferentiableHydraulicWorldModel(**cfg)
+    model.runtime_metadata = runtime_metadata  # type: ignore[attr-defined]
     model.load_state_dict(payload["state_dict"])
     return model.to(device).eval()
 
@@ -86,7 +101,30 @@ def _controller_config(
     allowed = {f.name for f in fields(ControllerConfig)}
     payload = {k: v for k, v in raw.items() if k in allowed}
     payload["control_block_steps"] = control_block_steps
-    return ControllerConfig(**payload)
+    result = ControllerConfig(**payload)
+    result.validate()
+    return result
+
+
+def _validate_model_time_contracts(
+    *,
+    step1: SparseStateEstimator,
+    step2: DifferentiableHydraulicWorldModel,
+    model_step_seconds: int,
+    controller_cfg: dict[str, object],
+) -> None:
+    history_steps = int(controller_cfg["history_steps"])
+    horizon_steps = int(controller_cfg["horizon_steps"])
+    step1_meta = dict(getattr(step1, "runtime_metadata", {}))
+    step2_meta = dict(getattr(step2, "runtime_metadata", {}))
+    if int(step1_meta.get("model_step_seconds", -1)) != model_step_seconds:
+        raise ValueError("Step1 checkpoint model step differs from production controller")
+    if int(step1_meta.get("history_steps", -1)) != history_steps:
+        raise ValueError("Step1 checkpoint history length differs from production controller")
+    if int(step2_meta.get("model_step_seconds", -1)) != model_step_seconds:
+        raise ValueError("Step2 checkpoint model step differs from production controller")
+    if int(step2_meta.get("horizon_steps", -1)) != horizon_steps:
+        raise ValueError("Step2 checkpoint horizon differs from production controller")
 
 
 def _constant_controller(value: float):
@@ -118,7 +156,9 @@ def _priority_and_calibration(
             f"Missing: {missing}"
         )
     pidx = torch.as_tensor(
-        [graph.node_ids.index(node) for node in priority], dtype=torch.long, device=device
+        [graph.node_ids.index(node) for node in priority],
+        dtype=torch.long,
+        device=device,
     )
     if not calibration_path:
         return pidx, 0.0, 0.0
@@ -152,9 +192,7 @@ def run_policy_main() -> None:
         description="Run TFV-first Proposed RTC or one frozen non-duplicate Formal comparator"
     )
     parser.add_argument(
-        "--strategy",
-        required=True,
-        choices=list(FORMAL_POLICY_STRATEGIES),
+        "--strategy", required=True, choices=list(FORMAL_POLICY_STRATEGIES)
     )
     parser.add_argument("--inp", required=True)
     parser.add_argument("--out-dir", required=True)
@@ -162,22 +200,21 @@ def run_policy_main() -> None:
     parser.add_argument("--sensors", required=True)
     parser.add_argument(
         "--priority",
-        help="optional soft-priority node file; Formal Proposed use requires the verified eight-node mapping",
+        help="soft-priority node file; Formal Proposed requires the verified eight-node mapping",
     )
     parser.add_argument("--config", required=True)
     parser.add_argument("--graph")
     parser.add_argument("--step1")
     parser.add_argument("--step2")
     parser.add_argument("--calibration")
-    parser.add_argument(
-        "--runtime-inp-cache-dir",
-        help="shared cache for controls-disabled INPs; defaults to <out-dir>/_runtime_inp",
-    )
+    parser.add_argument("--runtime-inp-cache-dir")
     parser.add_argument("--device")
     args = parser.parse_args()
 
     strategy = str(args.strategy)
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
+    if not isinstance(cfg, dict):
+        raise ValueError("controller config must be a JSON object")
     model_step_seconds = int(cfg["model_step_seconds"])
     control_update_seconds = int(cfg["control_update_seconds"])
     record_stride_seconds = int(cfg.get("record_stride_seconds", model_step_seconds))
@@ -185,6 +222,8 @@ def run_policy_main() -> None:
         raise ValueError(
             "control_update_seconds must be a positive integer multiple of model_step_seconds"
         )
+    if record_stride_seconds != model_step_seconds:
+        raise ValueError("production record stride must equal model step")
     control_block_steps = control_update_seconds // model_step_seconds
     control_start_minutes = int(cfg.get("control_start_minutes", 0))
     sensors = _load_lines(args.sensors)
@@ -222,6 +261,15 @@ def run_policy_main() -> None:
             raise ValueError("sensor nodes are not all present in the frozen graph schema")
         step1 = _load_step1(args.step1, device)
         step2 = _load_step2(args.step2, device)
+        controller_cfg_raw = cfg.get("controller", {})
+        if not isinstance(controller_cfg_raw, dict):
+            raise ValueError("config controller must be an object")
+        _validate_model_time_contracts(
+            step1=step1,
+            step2=step2,
+            model_step_seconds=model_step_seconds,
+            controller_cfg=controller_cfg_raw,
+        )
         pidx, flood_ucb, depth_ucb = _priority_and_calibration(
             priority_path=args.priority,
             calibration_path=args.calibration,
@@ -241,7 +289,9 @@ def run_policy_main() -> None:
             depth_error_ucb_m=depth_ucb,
             forecast_quantile=float(objective_cfg.get("forecast_quantile", 0.95)),
             tfv_cvar_alpha=float(objective_cfg.get("tfv_cvar_alpha", 0.90)),
-            tfv_near_opt_relative=float(objective_cfg.get("tfv_near_opt_relative", 0.01)),
+            tfv_near_opt_relative=float(
+                objective_cfg.get("tfv_near_opt_relative", 0.01)
+            ),
             tfv_near_opt_absolute_m3=float(
                 objective_cfg.get("tfv_near_opt_absolute_m3", 1.0)
             ),
@@ -255,17 +305,10 @@ def run_policy_main() -> None:
             decay_per_step=float(forecast_cfg.get("decay_per_step", 0.92)),
             scenario_multipliers=tuple(
                 float(x)
-                for x in forecast_cfg.get(
-                    "scenario_multipliers", [0.75, 1.0, 1.25]
-                )
+                for x in forecast_cfg.get("scenario_multipliers", [0.75, 1.0, 1.25])
             ),
-            history_steps_for_level=int(
-                forecast_cfg.get("history_steps_for_level", 3)
-            ),
+            history_steps_for_level=int(forecast_cfg.get("history_steps_for_level", 3)),
         )
-        controller_cfg_raw = cfg.get("controller", {})
-        if not isinstance(controller_cfg_raw, dict):
-            raise ValueError("config controller must be an object")
         controller = TorchMPCController(
             step1=step1,
             mpc=mpc,
