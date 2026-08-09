@@ -11,6 +11,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from .code_contract import rtc_source_tree_sha256
 from .models import DifferentiableHydraulicWorldModel, SparseStateEstimator
 
 
@@ -25,7 +26,9 @@ def _device(device: str | torch.device | None) -> torch.device:
     return torch.device(device)
 
 
-def _tensor(value: np.ndarray | torch.Tensor, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+def _tensor(
+    value: np.ndarray | torch.Tensor, *, dtype: torch.dtype = torch.float32
+) -> torch.Tensor:
     if isinstance(value, torch.Tensor):
         return value.detach().cpu().to(dtype=dtype)
     return torch.as_tensor(value, dtype=dtype)
@@ -46,7 +49,7 @@ def train_step1(
     learning_rate: float = 1e-3,
     device: str | torch.device | None = None,
 ) -> TrainingHistory:
-    """Train Step1 on development-only causal windows."""
+    """Legacy in-memory development helper; Formal training uses rtc-train-step1-large."""
 
     dev = _device(device)
     obs = _tensor(observed_history)
@@ -64,7 +67,11 @@ def train_step1(
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     static = _tensor(static_node_features).to(dev)
     edges = _tensor(edge_index, dtype=torch.long).to(dev)
-    weights = None if state_weights is None else torch.as_tensor(state_weights, dtype=torch.float32, device=dev)
+    weights = (
+        None
+        if state_weights is None
+        else torch.as_tensor(state_weights, dtype=torch.float32, device=dev)
+    )
     model.to(dev).train()
     opt = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     losses: list[float] = []
@@ -78,7 +85,11 @@ def train_step1(
             else:
                 b_obs, b_mask, b_target, b_context = batch
                 b_context = b_context.to(dev)
-            b_obs, b_mask, b_target = b_obs.to(dev), b_mask.to(dev), b_target.to(dev)
+            b_obs, b_mask, b_target = (
+                b_obs.to(dev),
+                b_mask.to(dev),
+                b_target.to(dev),
+            )
             pred = model(b_obs, b_mask, static, edges, b_context)
             error = (pred - b_target).square()
             if weights is not None:
@@ -115,12 +126,7 @@ def train_step2(
     learning_rate: float = 1e-3,
     device: str | torch.device | None = None,
 ) -> TrainingHistory:
-    """Train the coupled setting->flow->hydraulic free-rollout world model.
-
-    D2 same-checkpoint probes should be mixed with D0/D1 base dynamics and D3 interaction
-    rollouts by the caller. The loss supervises full hydraulic trajectories and actuator
-    flows rather than only PFV/TFV scores.
-    """
+    """Legacy in-memory helper; Formal training uses the sharded exact-TFV trainer."""
 
     dev = _device(device)
     tensors = [
@@ -144,7 +150,11 @@ def train_step2(
     down = _tensor(actuator_downstream, dtype=torch.long).to(dev)
     static = _tensor(static_node_features).to(dev)
     edges = _tensor(edge_index, dtype=torch.long).to(dev)
-    weights = None if state_weights is None else torch.as_tensor(state_weights, dtype=torch.float32, device=dev)
+    weights = (
+        None
+        if state_weights is None
+        else torch.as_tensor(state_weights, dtype=torch.float32, device=dev)
+    )
     model.to(dev).train()
     opt = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     losses: list[float] = []
@@ -152,7 +162,9 @@ def train_step2(
         running = 0.0
         count = 0
         for batch in loader:
-            b_initial, b_rain, b_settings, b_prev, b_phys, b_states, b_flows = [x.to(dev) for x in batch]
+            b_initial, b_rain, b_settings, b_prev, b_phys, b_states, b_flows = [
+                x.to(dev) for x in batch
+            ]
             rollout = model.rollout(
                 b_initial,
                 b_rain,
@@ -192,8 +204,11 @@ def save_torch_checkpoint(
         raise ValueError("trainable checkpoints may only be fit on the development split")
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
+    code_sha = rtc_source_tree_sha256()
     torch.save(
         {
+            "checkpoint_contract": "RTC_TORCH_CHECKPOINT_V2_CODE_BOUND",
+            "rtc_source_tree_sha256": code_sha,
             "state_dict": model.state_dict(),
             "model_config": model_config,
             "training_manifest_sha256": training_manifest_sha256,
@@ -205,8 +220,12 @@ def save_torch_checkpoint(
     meta = {
         "checkpoint": str(out),
         "sha256": digest,
+        "checkpoint_contract": "RTC_TORCH_CHECKPOINT_V2_CODE_BOUND",
+        "rtc_source_tree_sha256": code_sha,
         "training_manifest_sha256": training_manifest_sha256,
         "scientific_split": scientific_split,
     }
-    out.with_suffix(out.suffix + ".json").write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    out.with_suffix(out.suffix + ".json").write_text(
+        json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return meta
