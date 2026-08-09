@@ -3,6 +3,7 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.baseline_cache  # noqa: F401
     import rtc.baseline_cache_cli  # noqa: F401
     import rtc.calibration_cases  # noqa: F401
+    import rtc.causal_timing  # noqa: F401
     import rtc.checkpoint_design  # noqa: F401
     import rtc.context_features  # noqa: F401
     import rtc.d1_exploration  # noqa: F401
@@ -23,6 +24,8 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.lazy_step1  # noqa: F401
     import rtc.phase0_timescale  # noqa: F401
     import rtc.priority_resolver  # noqa: F401
+    import rtc.production_guard  # noqa: F401
+    import rtc.rainfall_design  # noqa: F401
     import rtc.replay_peak  # noqa: F401
     import rtc.step2_shards  # noqa: F401
     import rtc.step2_train_v2  # noqa: F401
