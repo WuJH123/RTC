@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from .inp_lineage import physical_contract_sha256
+from .pipeline import sha256_file
+from .replay_peak import replay_exact_global_peak
+
+
+def formalize_run(
+    *,
+    main_metadata_path: str | Path,
+    strategy: str,
+    event_id: str,
+    rainfall_group: str,
+    output_path: str | Path,
+) -> dict[str, object]:
+    meta_path = Path(main_metadata_path)
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if meta.get("exact_global_peak") is not False:
+        raise ValueError(
+            "formal main run must use exact_global_peak=false so reporting does not alter model/control cadence"
+        )
+    for key in ("inp_path", "inp_sha256", "decision_file", "node_statistics_file"):
+        if key not in meta:
+            raise ValueError(f"main run metadata lacks {key}")
+    inp_path = Path(str(meta["inp_path"]))
+    if not inp_path.is_file():
+        raise ValueError(f"main run INP disappeared: {inp_path}")
+    decision_path = meta_path.parent / str(meta["decision_file"])
+    stats_path = meta_path.parent / str(meta["node_statistics_file"])
+    if not decision_path.is_file() or not stats_path.is_file():
+        raise ValueError("main run decision/statistics evidence is missing")
+    if sha256_file(inp_path) != str(meta["inp_sha256"]):
+        raise ValueError("main run INP bytes changed after execution")
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    replay_path = out.with_suffix(".peak_replay.json")
+    replay = replay_exact_global_peak(
+        inp_path=inp_path,
+        decision_log_path=decision_path,
+        output_path=replay_path,
+        source_main_metadata_path=meta_path,
+    )
+    if replay["source_main_metadata_sha256"] != sha256_file(meta_path):
+        raise RuntimeError("peak replay did not bind to the intended main metadata")
+    if replay["decision_log_sha256"] != sha256_file(decision_path):
+        raise RuntimeError("peak replay did not bind to the intended decision schedule")
+    payload: dict[str, object] = {
+        "contract": "FORMAL_CLOSED_LOOP_RUN_MANIFEST_V3",
+        "event_id": str(event_id),
+        "rainfall_group": str(rainfall_group),
+        "strategy": str(strategy),
+        "main_metadata_path": str(meta_path.resolve()),
+        "main_metadata_sha256": sha256_file(meta_path),
+        "node_statistics_path": str(stats_path.resolve()),
+        "node_statistics_sha256": sha256_file(stats_path),
+        "decision_log_path": str(decision_path.resolve()),
+        "decision_log_sha256": sha256_file(decision_path),
+        "peak_replay_path": str(replay_path.resolve()),
+        "peak_replay_sha256": sha256_file(replay_path),
+        "inp_path": str(inp_path.resolve()),
+        "full_inp_sha256": sha256_file(inp_path),
+        "physical_network_sha256": physical_contract_sha256(inp_path),
+        "model_step_seconds": int(meta["observation_update_seconds"]),
+        "control_update_seconds": int(meta["control_update_seconds"]),
+        "truth_contract": {
+            "pfv_tfv": "SWMM_NODE_STATISTICS_CUMULATIVE_FROM_MAIN_CAUSAL_RUN",
+            "global_peak": "ROUTING_STEP_REPLAY_OF_FROZEN_EXECUTED_DECISION_LOG",
+        },
+    }
+    out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return payload
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Bind one causal main run to exact routing-step peak replay")
+    parser.add_argument("--main-metadata", required=True)
+    parser.add_argument("--strategy", required=True)
+    parser.add_argument("--event-id", required=True)
+    parser.add_argument("--rainfall-group", required=True)
+    parser.add_argument("--out", required=True)
+    args = parser.parse_args()
+    payload = formalize_run(
+        main_metadata_path=args.main_metadata,
+        strategy=args.strategy,
+        event_id=args.event_id,
+        rainfall_group=args.rainfall_group,
+        output_path=args.out,
+    )
+    print(json.dumps(payload, indent=2))
+
+
+if __name__ == "__main__":
+    main()
