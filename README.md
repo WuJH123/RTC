@@ -93,7 +93,7 @@ Formal preflight fails if any of these eight nodes is absent from the frozen gra
 
 This distinction is important. SWMM pump Startup/Shutoff depth logic is a pump property, not a `[CONTROLS]` rule. Removing supervisory control rules must not silently mutate local equipment/protection behaviour.
 
-Run the preflight audit before generating any data:
+Run the preflight audit after the fresh workspace exists:
 
 ```powershell
 rtc-inp-audit-v2 `
@@ -124,7 +124,7 @@ Definitions:
 - **All-open:** controls-disabled common prefix, then command all eligible link settings to `1.0` from the common first-control epoch.
 - **All-closed:** same prefix, then command settings to `0.0`.
 
-`hold` remains available only for runtime debugging. It is excluded from Formal comparison because freezing the first controls-disabled readback can collapse to an effective No-control duplicate.
+`hold` remains available only as an internal/debug helper. It is excluded from the public production strategy CLI and from Formal comparison because freezing the first controls-disabled readback can collapse to an effective No-control duplicate.
 
 All-open/All-closed are **extreme diagnostic comparators**, not claims that real hardware can physically force every device to those states against local protection. The runtime records requested, target and current settings separately.
 
@@ -184,11 +184,26 @@ rtc-build-baseline-cache `
 
 ---
 
-## 6. Fresh-data-only workspace
+## 6. Rainfall/event design and fresh-data-only workspace
 
 Do not point the new workflow at historical Project6 output/model folders.
 
-After a new event registry has been prepared and split, initialize an empty output root:
+First prepare a **new** event registry outside the future output root. It must already contain whole-rainfall-group assignments to `development / calibration / safety_audit / final` and development `train / validation` folds.
+
+For this large 109-actuator study, the current Formal design requires at least **160 independent rainfall groups**. This is a project-level conservative evidence design, not a universal hydrological constant.
+
+At the minimum 160-group design:
+
+| Role | Groups |
+|---|---:|
+| Development | 96 |
+| Calibration | 24 |
+| Safety audit | 16 |
+| Untouched Final | 24 |
+
+Development contains approximately 77 train and 19 validation groups at the minimum design. A rainfall group is the leakage unit; variants sharing the same rainfall forcing must stay in the same group.
+
+Then initialize an empty output root:
 
 ```powershell
 rtc-init-fresh-workspace `
@@ -198,49 +213,31 @@ rtc-init-fresh-workspace `
   --events <NEW_EVENT_REGISTRY_WITH_SPLITS.csv>
 ```
 
-The command:
+`rtc-init-fresh-workspace` validates the >=160-group design **before creating the root**. If the registry is invalid, no half-initialized output directory is left behind. If valid, it:
 
-- refuses a non-empty output root;
-- copies the event/split registry into `<FRESH_ROOT>/contracts/event_registry_with_splits.csv`;
-- records hashes for the frozen INP, priority file and event registry;
+- refuses a pre-existing non-empty output root;
+- copies the registry into `<FRESH_ROOT>/contracts/event_registry_with_splits.csv`;
+- binds hashes for the frozen INP, priority file and event registry;
+- records the validated rainfall-design summary;
 - creates `FRESH_WORKSPACE_MANIFEST.json`.
 
-Policy Lock requires this manifest and rejects key RTC-derived artifacts located outside the fresh root. Historical RTC hydraulic trajectories, old baseline outcomes, old D1/D2/D3 branches, old Step1/Step2 checkpoints and old Formal evidence are therefore not admissible in the new study.
-
-The physical INP, observed-site metadata and rainfall forcing definitions are scientific **inputs**, not reusable RTC-derived outputs.
-
----
-
-## 7. Rainfall/event design
-
-For this large 109-actuator study, the current Formal design requires at least **160 independent rainfall groups**. This is a project-level conservative evidence design, not a universal hydrological constant.
-
-At the minimum 160-group design, the frozen split fractions give:
-
-| Role | Groups |
-|---|---:|
-| Development | 96 |
-| Calibration | 24 |
-| Safety audit | 16 |
-| Untouched Final | 24 |
-
-Development is again rainfall-group-disjoint into train/validation; at 160 total groups the default design gives approximately 77 development-train and 19 development-validation groups.
-
-A rainfall group is the leakage unit. Multiple variants sharing the same rainfall forcing must stay in the same group.
-
-Validate before expensive SWMM generation:
+For a standalone citable rainfall-design evidence file, run **after initialization** on the canonical copied registry:
 
 ```powershell
 rtc-validate-rainfall-design `
-  --events <NEW_EVENT_REGISTRY_WITH_SPLITS.csv> `
+  --events <FRESH_ROOT>/contracts/event_registry_with_splits.csv `
   --out <FRESH_ROOT>/contracts/rainfall_design_evidence.json
 ```
 
-If available, include event descriptors such as total depth, duration, peak intensity and antecedent rainfall in the registry. The validator checks them and records their distribution; it does not invent unsupported IDF or climatological limits.
+If available, include total depth, duration, peak intensity and antecedent-rainfall descriptors. The validator records their distribution but does not invent unsupported IDF/climatology limits.
+
+Policy Lock rejects key RTC-derived artifacts located outside the fresh root. Historical RTC hydraulic trajectories, baseline outcomes, D1/D2/D3 branches, Step1/Step2 checkpoints and old Formal evidence are not admissible.
+
+The physical INP, verified observation metadata and rainfall forcing definitions are scientific **inputs**, not reusable RTC-derived outputs.
 
 ---
 
-## 8. The 15 s / 5 min / 10 min time hierarchy
+## 7. The 15 s / 5 min / 10 min time hierarchy
 
 These are three different clocks and must not be confused.
 
@@ -289,7 +286,7 @@ Only after reviewing high-frequency hydraulic response, readback and real comput
 
 ---
 
-## 9. Exact causal timeline if Phase-0 accepts 5 min observation + 10 min control
+## 8. Exact causal timeline if Phase-0 accepts 5 min observation + 10 min control
 
 The current controller explicitly includes the initial causal observation at `t=0` before any supervisory write.
 
@@ -345,7 +342,7 @@ The fail-closed timing validator enforces:
 
 ---
 
-## 10. Real-time means wall-clock feasible, not just simulation-time feasible
+## 9. Real-time means wall-clock feasible, not just simulation-time feasible
 
 A SWMM simulation can wait indefinitely while Python optimises. A field controller cannot.
 
@@ -369,7 +366,7 @@ rtc-accept-runtime `
 Policy Lock requires:
 
 - first Proposed decision exactly at the frozen first-control epoch;
-- every decision on the frozen 10-min control grid;
+- every decision on the frozen control grid;
 - t=0 initial observation present;
 - zero history-warmup fallback;
 - zero readback fallback;
@@ -380,7 +377,7 @@ Policy Lock requires:
 
 ---
 
-## 11. Step1 — sparse-sensing current-state reconstruction
+## 10. Step1 — sparse-sensing current-state reconstruction
 
 Generate all Step1 data fresh.
 
@@ -397,7 +394,7 @@ Train and validate on rainfall-group-disjoint development folds.
 
 ---
 
-## 12. D2 — same-prefix actuator-response truth
+## 11. D2 — same-prefix actuator-response truth
 
 D2 checkpoints are designed only from fresh No-control prefixes:
 
@@ -417,7 +414,7 @@ Each branch stores compact SI arrays and exact cumulative SWMM node-flooding-vol
 
 ---
 
-## 13. D3 — multi-actuator interaction sequences
+## 12. D3 — multi-actuator interaction sequences
 
 D3 uses the same fresh replayable No-control checkpoint contract and provides multi-actuator/multi-step interaction data. No Engineering36 or fixed runtime Top-K subset is introduced: every writable SWMM actuator remains part of the frozen actuator schema.
 
@@ -435,7 +432,7 @@ The builder collapses repeated D2 center/base provenance to one physically execu
 
 ---
 
-## 14. TFV and PFV — authoritative engineering definitions
+## 13. TFV and PFV — authoritative engineering definitions
 
 `Node.flooding` is an instantaneous flooding **rate**. It is never TFV or PFV by itself.
 
@@ -469,7 +466,7 @@ It is obtained from frozen-decision routing-step replay for Formal reporting.
 
 ---
 
-## 15. Continuous SWMM settings versus field hardware
+## 14. Continuous SWMM settings versus field hardware
 
 SWMM supports fractional settings for pump/orifice/weir control. For non-Type5 pumps a pump setting scales the flow obtained from the pump curve; orifice/weir settings likewise have defined fractional meanings in SWMM.
 
@@ -489,7 +486,7 @@ The code must not claim that all 109 physical Wuhan facilities are already prove
 
 ---
 
-## 16. Step2 and acceptance gates
+## 15. Step2 and acceptance gates
 
 Compile bounded-memory shards and train Step2 only from newly generated D2/D3 branches.
 
@@ -506,7 +503,7 @@ Only then can Policy Lock be created.
 
 ---
 
-## 17. Policy Lock and Final
+## 16. Policy Lock and Final
 
 The Policy Lock contract is:
 
@@ -542,15 +539,15 @@ Final truth must never feed back into model training, time-scale selection, thre
 
 ---
 
-## 18. Recommended execution order from a clean machine
+## 17. Recommended execution order from a clean machine
 
 ```text
 0. install current repo and SWMM extra
-1. freeze/audit physical INP
-2. verify the eight priority nodes and sensor layout
-3. create NEW >=160-group event registry with group-disjoint roles
-4. validate rainfall design
-5. initialize EMPTY fresh workspace
+1. freeze physical INP; verify the eight priority nodes and sensor metadata
+2. create NEW >=160-group event registry with group-disjoint roles OUTSIDE the future output root
+3. initialize EMPTY fresh workspace (this validates the rainfall design and copies the registry)
+4. write standalone rainfall-design evidence from the canonical copied registry
+5. run INP preflight into the fresh root
 6. generate small high-frequency No-control/Internal + D2 Phase-0 pilot
 7. estimate readback/flow/network hydraulic time scales
 8. benchmark online controller computation
@@ -573,7 +570,7 @@ Do not start full 16-process generation before Phase-0 has frozen the scientific
 
 ---
 
-## 19. Compute/storage guidance
+## 18. Compute/storage guidance
 
 For the stated workstation target:
 
@@ -588,9 +585,9 @@ The workflow is resumable by hashed contracts, but resumability is allowed only 
 
 ---
 
-## 20. Current boundary of the claim
+## 19. Current boundary of the claim
 
-The repository is designed to support a scientifically causal and SWMM-authoritative RTC study. Passing all software/Model/Final gates establishes correctness **within the frozen SWMM model and the specified simulated actuator-setting contract**.
+The repository is designed to support a scientifically causal and SWMM-authoritative RTC study. Passing all software/model/Final gates establishes correctness **within the frozen SWMM model and the specified simulated actuator-setting contract**.
 
 A claim of direct field deployment additionally requires Wuhan-specific telemetry reliability, actuator-operability and SCADA safety/interlock metadata. Those data are not inferred from the INP and must be verified separately before physical implementation.
 
