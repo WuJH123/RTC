@@ -8,6 +8,7 @@ import numpy as np
 
 from .closed_loop import CausalObservation, ControllerAction
 from .inp_runtime import build_runtime_inp
+from .rule_baselines import AutoRBCController, EFDController, rule_baseline_sensor_nodes
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,18 @@ BASELINES = {
         False,
         False,
     ),
+    "auto_rbc": BaselineDefinition(
+        "auto_rbc",
+        "Automatically parameterized causal rule-based control from actuator-adjacent normalized node depths; no forecast or event tuning",
+        True,
+        False,
+    ),
+    "efd": BaselineDefinition(
+        "efd",
+        "Storage-aware Equal Filling Degree control using current normalized storage depths and writable storage outflows",
+        True,
+        False,
+    ),
     "all_open": BaselineDefinition(
         "all_open",
         "Diagnostic extreme policy on controls-disabled base: command every eligible setting to 1.0 from the first common control decision",
@@ -60,25 +73,35 @@ BASELINES = {
     ),
 }
 
-# Formal comparison matrix. Hold remains callable for engineering/debug experiments, but is
-# deliberately excluded so the paper does not count a duplicate No-control-like strategy.
-FORMAL_FIXED_BASELINE_IDS = ("no_control", "internal_rtc", "all_open", "all_closed")
+# Formal comparison matrix. Auto-RBC and EFD are genuine dynamic rule-based comparators;
+# All-open/All-closed remain diagnostic extremes. Hold remains debug-only.
+FORMAL_FIXED_BASELINE_IDS = (
+    "no_control",
+    "internal_rtc",
+    "auto_rbc",
+    "efd",
+    "all_open",
+    "all_closed",
+)
 DIAGNOSTIC_FIXED_BASELINE_IDS = ("hold",)
 SUPPORTED_FIXED_BASELINE_IDS = FORMAL_FIXED_BASELINE_IDS + DIAGNOSTIC_FIXED_BASELINE_IDS
-# Backward-compatible name used by older callers: now means the Formal fixed set.
 FIXED_BASELINE_IDS = FORMAL_FIXED_BASELINE_IDS
 
-# Backward-compatible aliases for pre-audit manifests. New Formal evidence must use the
-# explicit names above so No-control can never be confused with Internal-RTC.
+# Compatibility aliases. The commonly used term is Auto-RBC (rule-based control); accept
+# Auto-RRC as a user-facing spelling but canonicalize all scientific evidence to auto_rbc.
 LEGACY_BASELINE_ALIASES = {
     "native_rules": "internal_rtc",
     "passive_no_rtc": "no_control",
+    "auto_rrc": "auto_rbc",
+    "Auto-RRC": "auto_rbc",
+    "Auto-RBC": "auto_rbc",
+    "EFD": "efd",
 }
 
 
 def canonical_baseline_id(value: str) -> str:
     key = str(value).strip()
-    return LEGACY_BASELINE_ALIASES.get(key, key)
+    return LEGACY_BASELINE_ALIASES.get(key, key.lower())
 
 
 def write_no_control_inp(
@@ -139,7 +162,19 @@ def frozen_hold_controller() -> Callable[[CausalObservation], ControllerAction]:
     return controller
 
 
-def fixed_baseline_controller(strategy: str):
+def baseline_sensor_nodes(strategy: str, inp_path: str | Path) -> tuple[str, ...]:
+    strategy = canonical_baseline_id(strategy)
+    if strategy in {"auto_rbc", "efd"}:
+        return rule_baseline_sensor_nodes(strategy, inp_path)
+    return ()
+
+
+def fixed_baseline_controller(
+    strategy: str,
+    *,
+    inp_path: str | Path | None = None,
+    max_delta_per_update: float | None = None,
+):
     """Return the deterministic Python controller for a fixed/reference strategy."""
 
     strategy = canonical_baseline_id(strategy)
@@ -151,4 +186,18 @@ def fixed_baseline_controller(strategy: str):
         return constant_setting_controller(1.0, "ALL_OPEN")
     if strategy == "all_closed":
         return constant_setting_controller(0.0, "ALL_CLOSED")
+    if strategy == "auto_rbc":
+        if inp_path is None:
+            raise ValueError("Auto-RBC requires the source event INP")
+        return AutoRBCController(
+            inp_path,
+            max_delta_per_update=max_delta_per_update,
+        )
+    if strategy == "efd":
+        if inp_path is None:
+            raise ValueError("EFD requires the source event INP")
+        return EFDController(
+            inp_path,
+            max_delta_per_update=max_delta_per_update,
+        )
     raise ValueError(f"not a supported fixed baseline strategy: {strategy}")
