@@ -91,6 +91,34 @@ class _ToyWorld(nn.Module):
         return Rollout(states=states, actuator_flows=flows, responsiveness=responsiveness)
 
 
+class _PriorityTradeoffWorld(nn.Module):
+    """Higher setting lowers total flood but increases flooding at priority node 1."""
+
+    def rollout(
+        self,
+        initial_state,
+        rainfall,
+        settings,
+        previous_actuator_flow,
+        actuator_upstream,
+        actuator_downstream,
+        actuator_physics,
+        static_node_features,
+        edge_index,
+    ) -> Rollout:
+        _, horizon, _ = settings.shape
+        states = initial_state[:, None].expand(-1, horizon, -1, -1).clone()
+        setting = settings[..., 0]
+        states[..., 0, 2] = 1.0 - setting
+        states[..., 1, 2] = 0.1 + 0.2 * setting
+        flows = settings.clone()
+        return Rollout(
+            states=states,
+            actuator_flows=flows,
+            responsiveness=torch.ones_like(settings),
+        )
+
+
 def _mpc_inputs(horizon: int = 3):
     return {
         "initial_state": torch.tensor([[[0.0, 0.0, 0.5, 0.0]]]),
@@ -129,6 +157,38 @@ def test_robust_mpc_executes_only_when_predicted_tfv_beats_hold() -> None:
     )
     no_leverage = flat.optimize(**_mpc_inputs())
     assert no_leverage.candidate_valid is False
+
+
+def test_priority_deterioration_is_soft_when_total_tfv_improves() -> None:
+    horizon = 3
+    mpc = ContinuousTFVFirstMPC(
+        _PriorityTradeoffWorld(),
+        depth_index=0,
+        flood_rate_index=2,
+        priority_indices=torch.tensor([1]),
+        dt_seconds=300,
+        tfv_near_opt_relative=0.0,
+        tfv_near_opt_absolute_m3=0.0,
+    )
+    result = mpc.optimize(
+        initial_state=torch.tensor(
+            [[[0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.1, 0.0]]]
+        ),
+        rainfall_scenarios=torch.zeros(1, horizon, 2, 1),
+        current_settings=torch.tensor([0.5]),
+        fallback_settings=torch.full((1, horizon, 1), 0.5),
+        previous_actuator_flow=torch.zeros(1, 1),
+        actuator_upstream=torch.tensor([0]),
+        actuator_downstream=torch.tensor([1]),
+        actuator_physics=torch.zeros(1, 1, 2),
+        static_node_features=torch.zeros(2, 2),
+        edge_index=torch.tensor([[0, 1], [1, 0]]),
+        iterations=30,
+        learning_rate=0.1,
+    )
+    assert result.candidate_valid is True
+    assert float(result.settings[0, 0]) > 0.5
+    assert result.priority_positive_flood_deterioration_m3 > 0.0
 
 
 def _catalog(count: int) -> ActuatorCatalog:
