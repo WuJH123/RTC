@@ -51,6 +51,24 @@ def _settings_for_intervals(meta: dict[str, object], times: np.ndarray, actuator
     raise ValueError("metadata has neither candidate_settings nor settings_sequence")
 
 
+def _resolve_outlet(
+    sid: str,
+    connection: dict[str, tuple[int, str]],
+    valid_nodes: set[str],
+) -> str | None:
+    seen: set[str] = set()
+    current = sid
+    while current not in seen:
+        seen.add(current)
+        kind, target = connection[current]
+        if int(kind) == 2:
+            return target if target in valid_nodes else None
+        if int(kind) != 1 or target not in connection:
+            return None
+        current = target
+    raise ValueError(f"subcatchment outlet cycle detected at {sid}")
+
+
 def _node_rainfall(
     sub: pd.DataFrame,
     *,
@@ -58,13 +76,16 @@ def _node_rainfall(
     node_ids: tuple[str, ...],
     system_units: str,
 ) -> np.ndarray:
-    """Map realised rainfall at the interval start to receiving nodes.
-
-    SWMM runoff is deliberately not returned: it remains useful diagnostic truth but is
-    not an online feature because future runoff would not be available causally.
-    """
+    """Map realised rainfall at the interval start to ultimate receiving nodes."""
 
     node_index = {nid: i for i, nid in enumerate(node_ids)}
+    valid_nodes = set(node_ids)
+    first = sub.sort_values("elapsed_seconds").groupby("subcatchment_id", sort=False).first()
+    connection = {
+        str(sid): (int(row["outlet_connection_type"]), str(row["outlet_id"]))
+        for sid, row in first.iterrows()
+    }
+    outlet = {sid: _resolve_outlet(sid, connection, valid_nodes) for sid in connection}
     forcing = np.zeros((times.size, len(node_ids), 1), dtype=float)
     for ti, elapsed in enumerate(times):
         rows = sub[sub["elapsed_seconds"] == elapsed]
@@ -72,14 +93,11 @@ def _node_rainfall(
             raise ValueError(f"missing subcatchment rainfall at elapsed={elapsed}")
         rainfall_by_node: dict[str, list[float]] = {}
         for _, row in rows.iterrows():
-            # PySWMM Subcatchment.connection: type 2 is a node, type 1 another subcatchment.
-            if int(row["outlet_connection_type"]) != 2:
-                continue
-            outlet = str(row["outlet_id"])
-            if outlet in node_index:
-                rainfall_by_node.setdefault(outlet, []).append(float(row["rainfall"]))
-        for outlet, values in rainfall_by_node.items():
-            forcing[ti, node_index[outlet], 0] = float(
+            receiving_node = outlet.get(str(row["subcatchment_id"]))
+            if receiving_node is not None:
+                rainfall_by_node.setdefault(receiving_node, []).append(float(row["rainfall"]))
+        for receiving_node, values in rainfall_by_node.items():
+            forcing[ti, node_index[receiving_node], 0] = float(
                 rainfall_rate_to_mmhr(np.mean(values), system_units)
             )
     return forcing
@@ -90,8 +108,7 @@ def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
 
     State layout is ``[depth_m, head_m, flooding_m3s, volume_m3]``. The only exogenous
     formal forcing is rainfall observed/forecast causally; authoritative SWMM runoff is
-    retained in the raw branch evidence for diagnostics but excluded from model inputs.
-    The pre-action checkpoint is the initial state and only later samples are targets.
+    retained in raw evidence for diagnostics but excluded from model inputs.
     """
 
     meta_path = Path(metadata_path)
@@ -119,7 +136,6 @@ def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
 
     flow = flow_rate_to_m3s(_pivot(act, times=times, ids=actuator_ids, id_col="actuator_id", value_col="flow"), flow_units)
     settings, action_sha = _settings_for_intervals(meta, times, actuator_ids)
-    # Transition k uses rainfall available at state time k, never the realised sample at k+1.
     rainfall = _node_rainfall(sub, times=times[:-1], node_ids=node_ids, system_units=system_units)
 
     return BranchTensors(
@@ -137,8 +153,6 @@ def compile_branch_tensors(metadata_path: str | Path) -> BranchTensors:
 
 
 def compile_branches_to_npz(metadata_paths: list[str | Path], output_path: str | Path) -> Path:
-    """Stack same-schema/same-horizon D2 and D3 branches into a Step2 tensor dataset."""
-
     branches = [compile_branch_tensors(path) for path in metadata_paths]
     if not branches:
         raise ValueError("no branch metadata supplied")
