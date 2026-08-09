@@ -15,6 +15,30 @@ def _load_meta(path: str | Path) -> tuple[dict[str, object], Path]:
     return json.loads(p.read_text(encoding="utf-8")), p.parent
 
 
+def _assert_replayable_no_control_prefix(meta: dict[str, object], metadata_path: str | Path) -> None:
+    """D2/D3 fresh branches can only reproduce a no-write, controls-disabled prefix.
+
+    D1 controlled trajectories are excellent Step1 coverage but are *not* valid D2/D3
+    checkpoint sources unless their entire prior action history is replayed. Internal-RTC
+    trajectories are also invalid because D2/D3 deliberately disable native controls.
+    """
+
+    if meta.get("data_contract") != "D0_D1_COMPACT_TRAJECTORY_V2":
+        raise ValueError(
+            f"D2/D3 checkpoint source is not an authoritative D0 compact trajectory: {metadata_path}. "
+            "Do not use D1 controlled states without explicit prefix-action replay."
+        )
+    if meta.get("python_actuator_writes") is not False:
+        raise ValueError(
+            f"D2/D3 checkpoint source contains/does not prove absence of Python actuator writes: {metadata_path}"
+        )
+    if meta.get("native_controls_enabled") is not False:
+        raise ValueError(
+            f"D2/D3 checkpoint source has native Internal-RTC controls enabled: {metadata_path}. "
+            "Use the No-control D0 trajectory so the fresh D2/D3 prefix is identical."
+        )
+
+
 def _state_table(metadata_path: str | Path) -> tuple[pd.DataFrame, tuple[str, ...], np.ndarray, dict[str, object]]:
     meta, root = _load_meta(metadata_path)
     compact_name = meta.get("compact_file")
@@ -36,7 +60,6 @@ def _state_table(metadata_path: str | Path) -> tuple[pd.DataFrame, tuple[str, ..
         })
         return rows, actuator_ids, current_setting, meta
 
-    # Backward-compatible reader for pre-v2 D0/D1 row-wise evidence.
     node = pd.read_csv(root / str(meta["node_file"]), compression="infer")
     act = pd.read_csv(root / str(meta["actuator_file"]), compression="infer")
     flow_units = str(meta["flow_units"])
@@ -80,7 +103,7 @@ def design_checkpoints(
     required = {"metadata_path", "event_id", "rainfall_group", "scientific_split"}
     missing = sorted(required - set(run_index.columns))
     if missing:
-        raise ValueError(f"D0/D1 run index missing columns: {missing}")
+        raise ValueError(f"No-control D0 run index missing columns: {missing}")
     if checkpoints_per_event < 4:
         raise ValueError("use at least four checkpoints per event to cover hydraulic strata")
     rng = np.random.default_rng(seed)
@@ -89,7 +112,9 @@ def design_checkpoints(
         split = str(item["scientific_split"])
         if split == "final" or split not in allowed_splits:
             continue
-        state, actuator_ids, settings_by_time, meta = _state_table(str(item["metadata_path"]))
+        metadata_path = str(item["metadata_path"])
+        state, actuator_ids, settings_by_time, meta = _state_table(metadata_path)
+        _assert_replayable_no_control_prefix(meta, metadata_path)
         keep = state["elapsed_seconds"].to_numpy(dtype=int) >= minimum_elapsed_minutes * 60
         state = state.loc[keep].copy()
         settings_by_time = settings_by_time[keep]
@@ -110,8 +135,7 @@ def design_checkpoints(
         for stratum in range(4):
             candidates = state.index[state["hydraulic_stratum"] == stratum].to_numpy()
             if candidates.size:
-                take = min(per_stratum, candidates.size)
-                chosen.extend(rng.choice(candidates, size=take, replace=False).tolist())
+                chosen.extend(rng.choice(candidates, size=min(per_stratum, candidates.size), replace=False).tolist())
         remaining = checkpoints_per_event - len(set(chosen))
         if remaining > 0:
             pool = np.array(sorted(set(state.index) - set(chosen)), dtype=int)
@@ -125,12 +149,13 @@ def design_checkpoints(
                 "checkpoint_id": f"{item['event_id']}:t{elapsed}",
                 "checkpoint_minutes": elapsed // 60,
                 "checkpoint_elapsed_seconds": elapsed,
+                "prefix_contract": "CONTROLS_DISABLED_NO_CONTROL_FROM_T0",
                 "event_id": str(item["event_id"]),
                 "rainfall_group": str(item["rainfall_group"]),
                 "scientific_split": split,
                 "development_fold": str(item.get("development_fold", "")),
                 "inp_path": str(meta["inp_path"]),
-                "trajectory_metadata_path": str(item["metadata_path"]),
+                "trajectory_metadata_path": metadata_path,
                 "network_max_depth_m": float(row["network_max_depth_m"]),
                 "network_total_flood_rate_m3s": float(row["network_total_flood_rate_m3s"]),
                 "hydraulic_stratum": int(row["hydraulic_stratum"]),
@@ -149,7 +174,7 @@ def design_checkpoints(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Design stratified history-ready D2/D3 checkpoints")
+    parser = argparse.ArgumentParser(description="Design stratified D2/D3 checkpoints from replayable No-control D0 prefixes only")
     parser.add_argument("--run-index", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--checkpoints-per-event", type=int, default=8)
@@ -169,6 +194,7 @@ def main() -> None:
         "checkpoints": len(frame),
         "events": int(frame["event_id"].nunique()),
         "rainfall_groups": int(frame["rainfall_group"].nunique()),
+        "prefix_contract": "CONTROLS_DISABLED_NO_CONTROL_FROM_T0",
         "splits": frame.groupby("scientific_split")["checkpoint_id"].count().to_dict(),
         "out": str(out),
     }, indent=2))
