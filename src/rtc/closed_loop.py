@@ -80,9 +80,16 @@ def run_authoritative_closed_loop(
 ) -> ClosedLoopResult:
     """Run one causally isolated policy with compact SI evidence.
 
-    Observation cadence and control cadence are separate. Formal main runs should keep
-    ``exact_global_peak=False``; synchronized routing-step peak is computed later by replay
-    of the frozen decision log. Cumulative TFV/PFV truth always comes from SWMM statistics.
+    The initial hydraulic/rainfall/readback state at ``t=0`` is a legitimate causal
+    observation and is recorded before any supervisory control action. Thereafter observation
+    cadence and control cadence are separate. For a 5-minute observation/model step, 13
+    history frames therefore represent exactly ``t=0,5,...,60 min`` and can support a first
+    60-minute MPC decision without an off-by-one warm-up delay.
+
+    ``Simulation.step_advance`` only controls when Python regains control; the internal SWMM
+    routing step remains the INP routing step. Formal main runs keep ``exact_global_peak=False``
+    and compute the routing-step synchronous global peak later by replaying the frozen
+    decision log. Cumulative TFV/PFV truth always comes from SWMM node statistics.
     """
 
     try:
@@ -96,6 +103,8 @@ def run_authoritative_closed_loop(
     if control_update_seconds % observation_update_seconds:
         raise ValueError("control_update_seconds must be a multiple of observation_update_seconds")
     control_start_seconds = int(control_start_minutes * 60)
+    if control_start_seconds < 0:
+        raise ValueError("control_start_minutes must be non-negative")
     if control_start_seconds % observation_update_seconds:
         raise ValueError("control_start_minutes must align with observation_update_seconds")
 
@@ -118,7 +127,10 @@ def run_authoritative_closed_loop(
     report_path = out / f"{run_id}.rpt"
     engine_output_path = out / f"{run_id}.out"
     next_observation = observation_update_seconds
-    next_decision = max(control_start_seconds, observation_update_seconds)
+    # A positive control start is an absolute event-clock epoch. If zero is requested, the
+    # first supervisory write is deferred until one observation interval; Proposed Formal
+    # configs are required separately to provide sufficient history before their first write.
+    next_decision = control_start_seconds if control_start_seconds > 0 else observation_update_seconds
     next_record = record_stride_seconds
     decision_count = 0
     held_settings: dict[str, float] | None = None
@@ -188,14 +200,56 @@ def run_authoritative_closed_loop(
                     np.array([sensor_obj[n].head for n in sensor_nodes], dtype=float), system_units
                 ),
                 actuator_ids=actuator_ids,
-                actuator_target_setting=np.array([link_obj[a].target_setting for a in actuator_ids], dtype=float),
-                actuator_current_setting=np.array([link_obj[a].current_setting for a in actuator_ids], dtype=float),
+                actuator_target_setting=np.array(
+                    [link_obj[a].target_setting for a in actuator_ids], dtype=float
+                ),
+                actuator_current_setting=np.array(
+                    [link_obj[a].current_setting for a in actuator_ids], dtype=float
+                ),
                 actuator_flow_m3s=flow_rate_to_m3s(
                     np.array([link_obj[a].flow for a in actuator_ids], dtype=float), flow_units
                 ),
                 rainfall_node_ids=all_nodes,
                 observed_rainfall_mmhr=rainfall_mmhr,
             )
+
+        def append_record(elapsed: int, rain: np.ndarray, phase: str, source: str) -> None:
+            state = _node_state_si(
+                node_obj, all_nodes, system_units=system_units, flow_units=flow_units
+            )
+            target = np.array(
+                [link_obj[a].target_setting for a in actuator_ids], dtype=np.float32
+            )
+            current = np.array(
+                [link_obj[a].current_setting for a in actuator_ids], dtype=np.float32
+            )
+            flow = flow_rate_to_m3s(
+                np.array([link_obj[a].flow for a in actuator_ids], dtype=float), flow_units
+            ).astype(np.float32)
+            record_times.append(elapsed)
+            state_values.append(state)
+            rainfall_values.append(rain[:, None].astype(np.float32))
+            target_values.append(target)
+            current_values.append(current)
+            flow_values.append(flow)
+            if save_raw_csv:
+                assert node_writer is not None and act_writer is not None
+                for ni, nid in enumerate(all_nodes):
+                    node_writer.writerow([elapsed, phase, nid, *state[ni].tolist()])
+                for ai, aid in enumerate(actuator_ids):
+                    requested = "" if held_settings is None else held_settings[aid]
+                    act_writer.writerow(
+                        [elapsed, phase, aid, requested, target[ai], current[ai], flow[ai], source]
+                    )
+
+        # Initial conditions are part of the causal information set. Record/observe them
+        # before advancing SWMM or writing any supervisory command.
+        rain_zero = observed_rainfall()
+        if controller is not None and hasattr(controller, "observe"):
+            controller.observe(build_observation(0, rain_zero))  # type: ignore[attr-defined]
+        append_record(0, rain_zero, "INITIAL", "NATIVE")
+        initial_total_flooding = sum(max(0.0, float(obj.flooding)) for obj in node_obj.values())
+        global_peak_m3s = float(flow_rate_to_m3s(initial_total_flooding, flow_units))
 
         for _ in sim:
             elapsed = int((sim.current_time - sim.start_time).total_seconds())
@@ -219,19 +273,27 @@ def run_authoritative_closed_loop(
 
             action: ControllerAction | None = None
             if decision_due:
+                if obs is None:
+                    raise RuntimeError("decision is due without a current causal observation")
                 if hasattr(controller, "decide"):
                     action = _normalize_action(
-                        controller.decide(obs, observation_already_recorded=observation_due)  # type: ignore[attr-defined,union-attr]
+                        controller.decide(  # type: ignore[attr-defined]
+                            obs, observation_already_recorded=observation_due
+                        )
                     )
                 else:
-                    action = _normalize_action(controller(obs))  # type: ignore[arg-type,operator]
+                    action = _normalize_action(controller(obs))
                 expected, supplied = set(actuator_ids), set(action.settings)
                 if supplied != expected:
                     raise ValueError(
                         f"controller must return every actuator; missing={sorted(expected-supplied)}, extra={sorted(supplied-expected)}"
                     )
                 held_settings = {aid: float(action.settings[aid]) for aid in actuator_ids}
-                bad = {aid: value for aid, value in held_settings.items() if not 0.0 <= value <= 1.0}
+                bad = {
+                    aid: value
+                    for aid, value in held_settings.items()
+                    if not 0.0 <= value <= 1.0
+                }
                 if bad:
                     raise ValueError(f"controller settings outside [0,1]: {bad}")
                 for aid, value in held_settings.items():
@@ -239,42 +301,32 @@ def run_authoritative_closed_loop(
                 decision_count += 1
                 while next_decision <= elapsed:
                     next_decision += control_update_seconds
-                decision_fh.write(json.dumps({
-                    "elapsed_seconds": elapsed,
-                    "datetime": sim.current_time.isoformat(),
-                    "source": action.source,
-                    "settings": held_settings,
-                    "diagnostics": dict(action.diagnostics or {}),
-                }, sort_keys=True) + "\n")
+                decision_fh.write(
+                    json.dumps(
+                        {
+                            "elapsed_seconds": elapsed,
+                            "datetime": sim.current_time.isoformat(),
+                            "source": action.source,
+                            "settings": held_settings,
+                            "diagnostics": dict(action.diagnostics or {}),
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n"
+                )
             elif held_settings is not None:
                 for aid, value in held_settings.items():
                     link_obj[aid].target_setting = value
 
             if elapsed >= next_record:
                 rain_record = rain_now if rain_now is not None else observed_rainfall()
-                state = _node_state_si(
-                    node_obj, all_nodes, system_units=system_units, flow_units=flow_units
+                phase = "DECISION" if action is not None else "OBSERVATION"
+                source = (
+                    action.source
+                    if action is not None
+                    else ("HELD" if held_settings is not None else "NATIVE")
                 )
-                target = np.array([link_obj[a].target_setting for a in actuator_ids], dtype=np.float32)
-                current = np.array([link_obj[a].current_setting for a in actuator_ids], dtype=np.float32)
-                flow = flow_rate_to_m3s(
-                    np.array([link_obj[a].flow for a in actuator_ids], dtype=float), flow_units
-                ).astype(np.float32)
-                record_times.append(elapsed)
-                state_values.append(state)
-                rainfall_values.append(rain_record[:, None].astype(np.float32))
-                target_values.append(target)
-                current_values.append(current)
-                flow_values.append(flow)
-                if save_raw_csv:
-                    assert node_writer is not None and act_writer is not None
-                    phase = "DECISION" if action is not None else "OBSERVATION"
-                    for ni, nid in enumerate(all_nodes):
-                        node_writer.writerow([elapsed, phase, nid, *state[ni].tolist()])
-                    source = action.source if action is not None else ("HELD" if held_settings is not None else "NATIVE")
-                    for ai, aid in enumerate(actuator_ids):
-                        requested = "" if held_settings is None else held_settings[aid]
-                        act_writer.writerow([elapsed, phase, aid, requested, target[ai], current[ai], flow[ai], source])
+                append_record(elapsed, rain_record, phase, source)
                 while next_record <= elapsed:
                     next_record += record_stride_seconds
 
@@ -284,7 +336,7 @@ def run_authoritative_closed_loop(
     if record_times:
         np.savez_compressed(
             compact_path,
-            schema_version=np.asarray("RTC_COMPACT_CLOSED_LOOP_V2"),
+            schema_version=np.asarray("RTC_COMPACT_CLOSED_LOOP_V3_T0_CAUSAL"),
             elapsed_seconds=np.asarray(record_times, dtype=np.int64),
             node_ids=np.asarray(all_nodes),
             state_si=np.stack(state_values).astype(np.float32),
@@ -309,11 +361,12 @@ def run_authoritative_closed_loop(
 
     metadata = {
         "run_id": run_id,
-        "data_contract": "CLOSED_LOOP_COMPACT_V2",
+        "data_contract": "CLOSED_LOOP_COMPACT_V3_T0_CAUSAL",
         "inp_path": str(inp.resolve()),
         "inp_sha256": sha256_file(inp),
         "controller_present": controller is not None,
         "causal_controller_observation": "sparse_SI_hydraulics+SI_actuator_readback+realised_rainfall_only",
+        "initial_observation_elapsed_seconds": 0,
         "sensor_nodes": list(sensor_nodes),
         "actuator_ids": list(actuator_ids),
         "control_start_minutes": int(control_start_minutes),
@@ -324,7 +377,12 @@ def run_authoritative_closed_loop(
         "global_peak_flood_rate_m3s": float(global_peak_m3s),
         "flow_units": flow_units,
         "system_units": system_units,
-        "controller_units": {"depth": "m", "head": "m", "flow": "m3/s", "rainfall": "mm/h"},
+        "controller_units": {
+            "depth": "m",
+            "head": "m",
+            "flow": "m3/s",
+            "rainfall": "mm/h",
+        },
         "swmm_engine_version": engine_version,
         "flow_routing_error_pct": flow_error,
         "decisions": decision_count,
@@ -335,7 +393,9 @@ def run_authoritative_closed_loop(
         "node_file": node_path.name if save_raw_csv else None,
         "actuator_file": actuator_path.name if save_raw_csv else None,
     }
-    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return ClosedLoopResult(
         metadata_path=str(metadata_path),
         compact_path=str(compact_path),
