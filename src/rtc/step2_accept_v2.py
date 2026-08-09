@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from .acceptance import rank_correlation
+from .code_contract import rtc_source_tree_sha256
 from .contracts import load_priority_nodes
 from .flood_volume import trapezoid_node_flood_volume
 from .large_model_cli import _device
@@ -195,6 +196,7 @@ def accept_step2_large_v2_main() -> None:
     }
     payload = {
         "contract": "STEP2_EXACT_TRUTH_ACCEPTANCE_V4_GROUP_BALANCED_TIME_LOCKED",
+        "rtc_source_tree_sha256": rtc_source_tree_sha256(),
         "model_sha256": _sha(args.model),
         "manifest_sha256": sha256_file(args.manifest),
         "model_step_seconds": int(manifest["model_step_seconds"]),
