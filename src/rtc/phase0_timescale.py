@@ -12,6 +12,7 @@ from .units import flow_rate_to_m3s
 
 
 MAX_FORMAL_PHASE0_SAMPLE_SECONDS = 60
+PEAK_CENSOR_FRACTION = 0.90
 
 
 def _branch_series(
@@ -38,7 +39,6 @@ def _branch_series(
                 np.clip(state[..., 2], 0.0, None).sum(axis=1),
                 state[..., 0].max(axis=1),
             )
-    # Legacy fallback is retained only for old diagnostics. New Formal Phase0 must use compact.
     name = meta.get("actuator_file")
     node_name = meta.get("node_file")
     if not name or not node_name:
@@ -61,33 +61,41 @@ def _branch_series(
     return times, flow, setting, flood, max_depth
 
 
-def _effect_timescale(t: np.ndarray, effect: np.ndarray) -> tuple[float, float, float, float]:
+def _first_threshold_time(rel_t: np.ndarray, effect: np.ndarray, threshold: float) -> float:
+    hits = np.flatnonzero(effect >= threshold)
+    return np.nan if not hits.size else float(rel_t[int(hits[0])])
+
+
+def _step_response_times(
+    t: np.ndarray, effect: np.ndarray
+) -> tuple[float, float, float, float, float, bool, float]:
+    """Characterise a sustained step-action response without area/horizon confounding.
+
+    Returns peak magnitude, t10, t50, t90, peak time, peak-near-horizon censor flag and
+    endpoint/peak ratio. Area-mass metrics are deliberately avoided: under a sustained step
+    input the response area necessarily grows with the chosen horizon and is not a system
+    response constant.
+    """
+
     effect = np.asarray(effect, dtype=float)
+    rel_t = np.asarray(t, dtype=float) - float(t[0])
     peak = float(effect.max(initial=0.0))
-    if peak <= 1e-12:
-        return peak, np.nan, np.nan, np.nan
-    rel_t = t - t[0]
-    onset_idx = int(np.argmax(effect >= 0.10 * peak))
+    horizon = float(rel_t[-1]) if rel_t.size else 0.0
+    if peak <= 1e-12 or horizon <= 0:
+        return peak, np.nan, np.nan, np.nan, np.nan, False, np.nan
     peak_idx = int(np.argmax(effect))
-    dt = np.diff(t)
-    area = np.cumsum(0.5 * (effect[:-1] + effect[1:]) * dt)
-    total = float(area[-1]) if area.size else 0.0
-    if total > 0:
-        mass_idx = min(
-            int(np.searchsorted(area, 0.90 * total, side="left")) + 1,
-            len(rel_t) - 1,
-        )
-        mass90 = float(rel_t[mass_idx])
-    else:
-        mass90 = np.nan
-    return peak, float(rel_t[onset_idx]), float(rel_t[peak_idx]), mass90
+    peak_time = float(rel_t[peak_idx])
+    t10 = _first_threshold_time(rel_t, effect, 0.10 * peak)
+    t50 = _first_threshold_time(rel_t, effect, 0.50 * peak)
+    t90 = _first_threshold_time(rel_t, effect, 0.90 * peak)
+    peak_censored = bool(peak_time >= PEAK_CENSOR_FRACTION * horizon)
+    endpoint_ratio = float(effect[-1] / peak)
+    return peak, t10, t50, t90, peak_time, peak_censored, endpoint_ratio
 
 
 def _readback_lag_seconds(
     t: np.ndarray, base_setting: np.ndarray, candidate_setting: np.ndarray, requested: float
 ) -> float:
-    """First time candidate readback materially separates from same-prefix base readback."""
-
     separation = np.abs(candidate_setting - base_setting)
     requested_delta = abs(float(requested) - float(base_setting[0]))
     threshold = max(0.01, 0.10 * requested_delta)
@@ -102,16 +110,20 @@ def build_timescale_report(
     split: str = "development",
     max_sample_seconds: int = MAX_FORMAL_PHASE0_SAMPLE_SECONDS,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
+    if split != "development":
+        raise ValueError("Formal Phase0 timing selection is development-only")
     merged = join_manifest_runs(pd.read_csv(manifest_path), pd.read_csv(run_summary_path))
-    if "scientific_split" in merged.columns:
-        merged = merged[merged["scientific_split"].astype(str) == split]
+    if "scientific_split" not in merged.columns:
+        raise ValueError("Phase0 D2 evidence requires scientific_split lineage")
+    merged = merged[merged["scientific_split"].astype(str) == split]
     if merged.empty:
-        raise ValueError("no D2 branches for time-scale analysis")
+        raise ValueError("no development D2 branches for time-scale analysis")
     keys = ["checkpoint_id", "actuator_id"]
     if "event_id" in merged.columns:
         keys.insert(0, "event_id")
     rows: list[dict[str, object]] = []
     observed_sample_steps: set[int] = set()
+    observed_horizons: set[int] = set()
 
     for _, group in merged.groupby(keys, sort=False):
         base_setting = float(group["base_setting"].iloc[0])
@@ -129,7 +141,9 @@ def build_timescale_report(
         if not np.allclose(step, step[0]):
             raise ValueError("Phase0 D2 sampling grid must be regular")
         sample_seconds = int(round(float(step[0])))
+        horizon_seconds = int(round(float(base_t[-1] - base_t[0])))
         observed_sample_steps.add(sample_seconds)
+        observed_horizons.add(horizon_seconds)
         if sample_seconds > max_sample_seconds:
             raise ValueError(
                 f"Phase0 sampling is {sample_seconds}s; use <= {max_sample_seconds}s so sub-5-min responses are observable"
@@ -142,13 +156,9 @@ def build_timescale_report(
             t, q, u, flood, depth = _branch_series(str(candidate["metadata_path"]), aid)
             if not np.array_equal(t, base_t):
                 raise ValueError("same-checkpoint D2 branches have different sampling grids")
-            q_peak, q_onset, q_peak_t, q_mass90 = _effect_timescale(t, np.abs(q - base_q))
-            f_peak, f_onset, f_peak_t, f_mass90 = _effect_timescale(
-                t, np.abs(flood - base_flood)
-            )
-            h_peak, h_onset, h_peak_t, h_mass90 = _effect_timescale(
-                t, np.abs(depth - base_depth)
-            )
+            q_metrics = _step_response_times(t, np.abs(q - base_q))
+            f_metrics = _step_response_times(t, np.abs(flood - base_flood))
+            h_metrics = _step_response_times(t, np.abs(depth - base_depth))
             rows.append(
                 {
                     "event_id": str(candidate.get("event_id", "")),
@@ -157,21 +167,29 @@ def build_timescale_report(
                     "base_setting": base_setting,
                     "requested_setting": requested,
                     "sample_seconds": sample_seconds,
-                    "readback_separation_lag_seconds": _readback_lag_seconds(
-                        t, base_u, u, requested
-                    ),
-                    "peak_abs_flow_effect_m3s": q_peak,
-                    "flow_response_onset_seconds": q_onset,
-                    "flow_peak_effect_seconds": q_peak_t,
-                    "flow_response_mass90_seconds": q_mass90,
-                    "peak_abs_network_flood_rate_effect_m3s": f_peak,
-                    "network_flood_response_onset_seconds": f_onset,
-                    "network_flood_peak_effect_seconds": f_peak_t,
-                    "network_flood_response_mass90_seconds": f_mass90,
-                    "peak_abs_network_max_depth_effect": h_peak,
-                    "network_depth_response_onset_seconds": h_onset,
-                    "network_depth_peak_effect_seconds": h_peak_t,
-                    "network_depth_response_mass90_seconds": h_mass90,
+                    "horizon_seconds": horizon_seconds,
+                    "readback_separation_lag_seconds": _readback_lag_seconds(t, base_u, u, requested),
+                    "peak_abs_flow_effect_m3s": q_metrics[0],
+                    "flow_t10_seconds": q_metrics[1],
+                    "flow_t50_seconds": q_metrics[2],
+                    "flow_t90_seconds": q_metrics[3],
+                    "flow_peak_effect_seconds": q_metrics[4],
+                    "flow_peak_near_horizon": q_metrics[5],
+                    "flow_endpoint_to_peak_ratio": q_metrics[6],
+                    "peak_abs_network_flood_rate_effect_m3s": f_metrics[0],
+                    "network_flood_t10_seconds": f_metrics[1],
+                    "network_flood_t50_seconds": f_metrics[2],
+                    "network_flood_t90_seconds": f_metrics[3],
+                    "network_flood_peak_effect_seconds": f_metrics[4],
+                    "network_flood_peak_near_horizon": f_metrics[5],
+                    "network_flood_endpoint_to_peak_ratio": f_metrics[6],
+                    "peak_abs_network_max_depth_effect": h_metrics[0],
+                    "network_depth_t10_seconds": h_metrics[1],
+                    "network_depth_t50_seconds": h_metrics[2],
+                    "network_depth_t90_seconds": h_metrics[3],
+                    "network_depth_peak_effect_seconds": h_metrics[4],
+                    "network_depth_peak_near_horizon": h_metrics[5],
+                    "network_depth_endpoint_to_peak_ratio": h_metrics[6],
                 }
             )
     detail = pd.DataFrame(rows)
@@ -189,51 +207,80 @@ def build_timescale_report(
             "p90": float(np.quantile(values, 0.90)),
         }
 
+    def censor_fraction(flag_column: str, active_column: str) -> float:
+        active = detail[detail[active_column].astype(float) > 1e-12]
+        if active.empty:
+            return 0.0
+        return float(active[flag_column].astype(bool).mean())
+
+    censor = {
+        "flow_peak_near_horizon_fraction": censor_fraction(
+            "flow_peak_near_horizon", "peak_abs_flow_effect_m3s"
+        ),
+        "network_flood_peak_near_horizon_fraction": censor_fraction(
+            "network_flood_peak_near_horizon", "peak_abs_network_flood_rate_effect_m3s"
+        ),
+        "network_depth_peak_near_horizon_fraction": censor_fraction(
+            "network_depth_peak_near_horizon", "peak_abs_network_max_depth_effect"
+        ),
+    }
+    horizon_censored = any(value > 0.05 for value in censor.values())
     summary: dict[str, object] = {
-        "contract": "PHASE0_D2_HYDRAULIC_TIMESCALE_REPORT_V4_HIGH_FREQUENCY",
+        "contract": "PHASE0_D2_STEP_RESPONSE_TIMESCALE_V5_HIGH_FREQUENCY",
         "split": split,
         "response_cases": int(len(detail)),
         "actuators_tested": int(detail["actuator_id"].nunique()),
         "sampling_seconds": sorted(observed_sample_steps),
+        "horizon_seconds": sorted(observed_horizons),
         "formal_max_sampling_seconds": int(max_sample_seconds),
         "readback_separation_lag_seconds": quantiles(
             "readback_separation_lag_seconds", "peak_abs_flow_effect_m3s"
         ),
-        "flow_response_onset_seconds": quantiles(
-            "flow_response_onset_seconds", "peak_abs_flow_effect_m3s"
-        ),
+        "flow_t10_seconds": quantiles("flow_t10_seconds", "peak_abs_flow_effect_m3s"),
+        "flow_t50_seconds": quantiles("flow_t50_seconds", "peak_abs_flow_effect_m3s"),
+        "flow_t90_seconds": quantiles("flow_t90_seconds", "peak_abs_flow_effect_m3s"),
         "flow_peak_effect_seconds": quantiles(
             "flow_peak_effect_seconds", "peak_abs_flow_effect_m3s"
         ),
-        "flow_response_mass90_seconds": quantiles(
-            "flow_response_mass90_seconds", "peak_abs_flow_effect_m3s"
+        "network_flood_t10_seconds": quantiles(
+            "network_flood_t10_seconds", "peak_abs_network_flood_rate_effect_m3s"
         ),
-        "network_flood_response_onset_seconds": quantiles(
-            "network_flood_response_onset_seconds", "peak_abs_network_flood_rate_effect_m3s"
+        "network_flood_t90_seconds": quantiles(
+            "network_flood_t90_seconds", "peak_abs_network_flood_rate_effect_m3s"
         ),
         "network_flood_peak_effect_seconds": quantiles(
             "network_flood_peak_effect_seconds", "peak_abs_network_flood_rate_effect_m3s"
         ),
-        "network_flood_response_mass90_seconds": quantiles(
-            "network_flood_response_mass90_seconds", "peak_abs_network_flood_rate_effect_m3s"
+        "network_depth_t10_seconds": quantiles(
+            "network_depth_t10_seconds", "peak_abs_network_max_depth_effect"
         ),
-        "network_depth_response_onset_seconds": quantiles(
-            "network_depth_response_onset_seconds", "peak_abs_network_max_depth_effect"
+        "network_depth_t90_seconds": quantiles(
+            "network_depth_t90_seconds", "peak_abs_network_max_depth_effect"
         ),
+        "network_depth_peak_effect_seconds": quantiles(
+            "network_depth_peak_effect_seconds", "peak_abs_network_max_depth_effect"
+        ),
+        "peak_horizon_censoring": censor,
+        "horizon_censored": horizon_censored,
         "automatic_time_scale_selection": False,
         "candidate_production_timing": {
             "model_observation_seconds": 300,
             "control_update_seconds": 600,
-            "status": "candidate only; freeze after reviewing this high-frequency report and runtime compute/readback tests",
+            "status": "candidate only; freeze after measured step-response, readback and wall-clock runtime review",
         },
-        "instruction": "Do not infer a 5-min model step from 5-min sampled Phase0 data. Use <=60s Phase0 D2 sampling, then freeze production cadence from measured readback/flow/network response plus online compute latency.",
+        "instruction": (
+            "Use <=60s Phase0 D2 sampling. Cadence selection should use readback/t10/t50/t90/peak timing, "
+            "not response-area mass90 under a sustained step. If >5% of active responses peak in the last 10% "
+            "of the Phase0 horizon, lengthen the pilot horizon before freezing the production horizon. Recovery/decay "
+            "after releasing an action must be evaluated with D3/pulse-style sequences because sustained D2 steps cannot identify it."
+        ),
     }
     return detail, summary
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="High-frequency D2 audit of actuator/readback and network hydraulic response time scales"
+        description="High-frequency D2 step-response audit of readback, actuator and network timing"
     )
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--run-summary", required=True)
@@ -255,6 +302,8 @@ def main() -> None:
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     print(json.dumps(summary, indent=2))
+    if summary["horizon_censored"] is True:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
