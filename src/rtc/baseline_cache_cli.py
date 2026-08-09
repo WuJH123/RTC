@@ -15,11 +15,12 @@ from .baseline_cache import (
 )
 from .baselines import FIXED_BASELINE_IDS
 from .causal_timing import timing_from_controller_config
+from .code_contract import rtc_source_tree_sha256
 from .inp_lineage import physical_contract_sha256
 from .inp_runtime import sha256_file
 
 
-POLICY_LOCK_CONTRACT = "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V3_CAUSAL_FRESH_DATA"
+POLICY_LOCK_CONTRACT = "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V4_CODE_TIME_DATA_BOUND"
 
 
 def _json(path: str | Path) -> dict[str, object]:
@@ -44,11 +45,15 @@ def _locked_artifact(
 def locked_final_contract(
     policy_lock_path: str | Path,
 ) -> tuple[Path, tuple[str, ...], str, frozenset[str]]:
-    """Resolve immutable runtime/baseline/split/physical Final contracts."""
+    """Resolve immutable code/runtime/baseline/split/physical Final contracts."""
 
     lock = _json(policy_lock_path)
     if lock.get("contract") != POLICY_LOCK_CONTRACT:
-        raise ValueError("Final baseline generation requires causal fresh-data Policy Lock V3")
+        raise ValueError("Final baseline generation requires code/time/data-bound Policy Lock V4")
+    if lock.get("rtc_source_tree_sha256") != rtc_source_tree_sha256():
+        raise ValueError(
+            "current RTC source tree differs from Policy Lock; Final generation is forbidden"
+        )
     artefacts_raw = lock.get("artefacts")
     hashes_raw = lock.get("sha256")
     if not isinstance(artefacts_raw, dict) or not isinstance(hashes_raw, dict):
@@ -142,11 +147,13 @@ def validate_final_event_registry(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate every fixed baseline once per rainfall event and reuse hashed evidence"
+        description="Generate every fixed baseline once per rainfall event and reuse code-bound evidence"
     )
     parser.add_argument("--events", required=True)
     parser.add_argument("--out-dir", required=True)
-    parser.add_argument("--config", help="resolved controller/runtime config; required for prelock")
+    parser.add_argument(
+        "--config", help="resolved controller/runtime config; required for prelock"
+    )
     parser.add_argument(
         "--strategies",
         help="comma-separated Formal fixed baselines; default is no_control,internal_rtc,all_open,all_closed",
@@ -154,9 +161,11 @@ def main() -> None:
     parser.add_argument("--stage", choices=["prelock", "final"], default="prelock")
     parser.add_argument(
         "--policy-lock",
-        help="required for final; supplies locked config/baseline/split/physical contract",
+        help="required for final; supplies locked code/config/baseline/split/physical contract",
     )
-    parser.add_argument("--workers", type=int, default=min(16, os.cpu_count() or 1))
+    parser.add_argument(
+        "--workers", type=int, default=min(16, os.cpu_count() or 1)
+    )
     parser.add_argument("--swmm-threads-per-process", type=int, default=1)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
@@ -165,7 +174,9 @@ def main() -> None:
     if args.stage == "final":
         if not args.policy_lock:
             raise ValueError("--policy-lock is required for final baseline generation")
-        config, strategies, physical_sha, final_groups = locked_final_contract(args.policy_lock)
+        config, strategies, physical_sha, final_groups = locked_final_contract(
+            args.policy_lock
+        )
         if args.config and sha256_file(args.config) != sha256_file(config):
             raise ValueError("--config differs from the Policy-Locked controller config")
         events = validate_final_event_registry(
