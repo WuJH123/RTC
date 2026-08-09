@@ -45,16 +45,16 @@ def _workspace(tmp_path: Path) -> tuple[Path, Path]:
     return root, root / "FRESH_WORKSPACE_MANIFEST.json"
 
 
-def _code_bound_branch(path: Path) -> None:
+def _lineage_valid_branch(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     artifact = path.parent / "dummy.compact.npz"
     artifact.write_bytes(b"current-data")
-    key, code_sha = generation_key("test_branch", {"event": "e1"})
+    key, implementation_sha = generation_key("test_branch", {"event": "e1"})
     path.write_text(
         json.dumps(
             {
                 "generation_key_sha256": key,
-                "rtc_source_tree_sha256": code_sha,
+                "rtc_source_tree_sha256": implementation_sha,
                 "compact_file": artifact.name,
                 "generated_artifact_sha256": {
                     "compact_file": sha256_file(artifact)
@@ -71,10 +71,11 @@ def test_fresh_workspace_starts_empty_and_copies_event_registry(tmp_path: Path) 
     assert Path(loaded["canonical_event_registry"]).is_file()
     assert Path(loaded["canonical_event_registry"]).parent.parent == root.resolve()
     assert loaded["rainfall_design"]["rainfall_groups"] == 160
-    assert loaded["contract"] == "RTC_FRESH_WORKSPACE_V1_NO_HISTORICAL_OUTPUT_REUSE"
+    assert loaded["rainfall_design"]["required_invariants_passed"] is True
+    assert loaded["contract"] == "RTC_FRESH_WORKSPACE_V2_LINEAGE_NOT_PATH_BOUND"
 
 
-def test_nonempty_output_root_is_rejected(tmp_path: Path) -> None:
+def test_nonempty_output_root_is_rejected_at_initialization(tmp_path: Path) -> None:
     inp = tmp_path / "model.inp"
     inp.write_text("x", encoding="utf-8")
     priority = tmp_path / "priority.txt"
@@ -92,25 +93,25 @@ def test_nonempty_output_root_is_rejected(tmp_path: Path) -> None:
         )
 
 
-def test_workspace_path_guard_rejects_historical_output(tmp_path: Path) -> None:
+def test_workspace_path_helper_is_organizational_only(tmp_path: Path) -> None:
     root = tmp_path / "fresh"
     root.mkdir()
     inside = root / "models" / "step1.pt"
     inside.parent.mkdir()
     inside.write_text("new", encoding="utf-8")
     require_path_inside_workspace(inside, root)
-    historical = tmp_path / "Project6" / "step1.pt"
-    historical.parent.mkdir()
-    historical.write_text("old", encoding="utf-8")
-    with pytest.raises(ValueError, match="outside fresh workspace"):
-        require_path_inside_workspace(historical, root)
+    outside = tmp_path / "other_volume" / "step1.pt"
+    outside.parent.mkdir()
+    outside.write_text("valid-location-example", encoding="utf-8")
+    with pytest.raises(ValueError, match="outside study workspace"):
+        require_path_inside_workspace(outside, root)
 
 
-def test_training_index_requires_current_code_bound_branch_metadata(tmp_path: Path) -> None:
+def test_training_index_accepts_valid_lineage_outside_workspace(tmp_path: Path) -> None:
     root, workspace_manifest = _workspace(tmp_path)
-    branch = root / "d0" / "e1.json"
-    _code_bound_branch(branch)
-    index = root / "step1" / "run_index.csv"
+    branch = tmp_path / "large_data_disk" / "d0" / "e1.json"
+    _lineage_valid_branch(branch)
+    index = tmp_path / "indexes" / "run_index.csv"
     index.parent.mkdir(parents=True)
     pd.DataFrame(
         [
@@ -126,23 +127,23 @@ def test_training_index_requires_current_code_bound_branch_metadata(tmp_path: Pa
         run_index_path=index,
         workspace_manifest_path=workspace_manifest,
     )
-    assert evidence["all_metadata_inside_workspace"] is True
-    assert evidence["all_rows_current_code_bound"] is True
+    assert evidence["all_rows_lineage_valid"] is True
+    assert evidence["metadata_outside_workspace"] == 1
 
-    old_branch = tmp_path / "Project6" / "old.json"
-    old_branch.parent.mkdir()
-    old_branch.write_text("{}", encoding="utf-8")
+    invalid = tmp_path / "old" / "invalid.json"
+    invalid.parent.mkdir()
+    invalid.write_text("{}", encoding="utf-8")
     pd.DataFrame(
         [
             {
                 "event_id": "old",
                 "scientific_split": "development",
                 "development_fold": "train",
-                "metadata_path": str(old_branch),
+                "metadata_path": str(invalid),
             }
         ]
     ).to_csv(index, index=False)
-    with pytest.raises(ValueError, match="outside fresh workspace"):
+    with pytest.raises(ValueError, match="implementation contract|generation key"):
         validate_fresh_run_index(
             run_index_path=index,
             workspace_manifest_path=workspace_manifest,
