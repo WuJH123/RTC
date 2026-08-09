@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .contracts import load_priority_nodes, require_nodes_exist
+from .contracts import load_priority_nodes
 from .data_design import design_independent_actuator_probes, summarise_probe_design
 from .graph import infer_flow_units, infer_system_units
 from .inp import discover_actuators, discover_nodes
@@ -17,7 +17,9 @@ from .inp_runtime import build_runtime_inp, sha256_file
 
 
 def audit_inp_main() -> None:
-    parser = argparse.ArgumentParser(description="Audit SWMM actuator/state/runtime contract before expensive data generation")
+    parser = argparse.ArgumentParser(
+        description="Audit SWMM actuator/state/runtime contract before expensive data generation"
+    )
     parser.add_argument("--inp", required=True)
     parser.add_argument("--priority")
     parser.add_argument("--out")
@@ -54,7 +56,9 @@ def audit_inp_main() -> None:
 
 
 def design_probes_main() -> None:
-    parser = argparse.ArgumentParser(description="Design same-checkpoint single-actuator D2 counterfactual probes")
+    parser = argparse.ArgumentParser(
+        description="Design same-checkpoint single-actuator D2 counterfactual probes"
+    )
     parser.add_argument("--inp", required=True)
     parser.add_argument("--checkpoints", required=True, help="CSV with checkpoint_id and setting:<id>")
     parser.add_argument("--out", required=True)
@@ -63,6 +67,10 @@ def design_probes_main() -> None:
     args = parser.parse_args()
     catalog = discover_actuators(args.inp)
     checkpoints = pd.read_csv(args.checkpoints)
+    if "scientific_split" not in checkpoints.columns:
+        raise ValueError("D2 checkpoint manifest requires scientific_split lineage")
+    if (checkpoints["scientific_split"].astype(str) == "final").any():
+        raise ValueError("D2 probe design refuses Final checkpoints before Policy Lock")
     manifest = design_independent_actuator_probes(
         checkpoints, catalog, epsilon=args.epsilon, include_center=not args.no_center
     )
@@ -87,7 +95,12 @@ def _completed_probe(metadata_path: Path, *, action_sha: str) -> bool:
             return False
         compact = metadata_path.parent / str(meta["compact_file"])
         stats = metadata_path.parent / str(meta["node_statistics_file"])
-        return compact.is_file() and compact.stat().st_size > 0 and stats.is_file() and stats.stat().st_size > 0
+        return (
+            compact.is_file()
+            and compact.stat().st_size > 0
+            and stats.is_file()
+            and stats.stat().st_size > 0
+        )
     except Exception:
         return False
 
@@ -114,15 +127,17 @@ def _run_probe_job(job: dict[str, object]) -> dict[str, object]:
         "checkpoint_id": str(job["checkpoint_id"]),
         "event_id": str(job["event_id"]),
         "rainfall_group": str(job["rainfall_group"]),
+        "scientific_split": str(job["scientific_split"]),
+        "development_fold": str(job["development_fold"]),
         "flow_routing_error_pct": result.flow_routing_error_pct,
         "status": "completed",
     }
 
 
 def run_probes_main() -> None:
-    """Execute D2 in independent processes with resume and controls-disabled semantics."""
+    """Execute pre-lock D2 in independent processes with resume and controls-disabled semantics."""
 
-    parser = argparse.ArgumentParser(description="Run authoritative compact D2 probe branches")
+    parser = argparse.ArgumentParser(description="Run authoritative compact pre-lock D2 probe branches")
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--inp", help="default event INP; may be overridden by manifest inp_path")
     parser.add_argument("--out-dir", required=True)
@@ -137,12 +152,23 @@ def run_probes_main() -> None:
     args = parser.parse_args()
     if args.workers <= 0 or args.swmm_threads_per_process <= 0:
         raise ValueError("workers and SWMM threads/process must be positive")
+    if args.horizon_minutes <= 0 or args.stride_seconds <= 0:
+        raise ValueError("D2 horizon and stride must be positive")
 
     manifest = pd.read_csv(args.manifest)
-    required = {"candidate_action_sha256", "candidate_settings_json", "checkpoint_minutes"}
+    required = {
+        "candidate_action_sha256",
+        "candidate_settings_json",
+        "checkpoint_minutes",
+        "scientific_split",
+    }
     missing = sorted(required - set(manifest.columns))
     if missing:
         raise ValueError(f"manifest missing required columns: {missing}")
+    if (manifest["scientific_split"].astype(str) == "final").any():
+        raise ValueError(
+            "rtc-run-probes is a pre-Policy-Lock D2 generator and refuses Final rows"
+        )
     dedup_cols = ["candidate_action_sha256", "checkpoint_minutes"]
     for optional in ("event_id", "rainfall_group", "inp_path"):
         if optional in manifest.columns:
@@ -179,6 +205,8 @@ def run_probes_main() -> None:
         action_sha = str(row["candidate_action_sha256"])
         event = str(row.get("event_id", "event"))
         rainfall_group = str(row.get("rainfall_group", ""))
+        split = str(row.get("scientific_split", ""))
+        fold = str(row.get("development_fold", ""))
         checkpoint = int(row["checkpoint_minutes"])
         branch_id = f"{event}__t{checkpoint:04d}__{action_sha[:16]}"
         metadata_path = out_dir / f"{branch_id}.json"
@@ -192,19 +220,29 @@ def run_probes_main() -> None:
             "checkpoint_id": str(row.get("checkpoint_id", f"{event}:t{checkpoint}")),
             "event_id": event,
             "rainfall_group": rainfall_group,
+            "scientific_split": split,
+            "development_fold": fold,
             "horizon_minutes": args.horizon_minutes,
             "stride_seconds": args.stride_seconds,
             "debug_raw": args.debug_raw,
             "keep_engine_files": args.keep_engine_files,
         }
         if not args.no_resume and _completed_probe(metadata_path, action_sha=action_sha):
-            resumed.append({
-                "branch_id": branch_id, "metadata_path": str(metadata_path),
-                "candidate_action_sha256": action_sha, "checkpoint_minutes": checkpoint,
-                "checkpoint_id": base["checkpoint_id"], "event_id": event,
-                "rainfall_group": rainfall_group, "flow_routing_error_pct": float("nan"),
-                "status": "resumed",
-            })
+            resumed.append(
+                {
+                    "branch_id": branch_id,
+                    "metadata_path": str(metadata_path),
+                    "candidate_action_sha256": action_sha,
+                    "checkpoint_minutes": checkpoint,
+                    "checkpoint_id": base["checkpoint_id"],
+                    "event_id": event,
+                    "rainfall_group": rainfall_group,
+                    "scientific_split": split,
+                    "development_fold": fold,
+                    "flow_routing_error_pct": float("nan"),
+                    "status": "resumed",
+                }
+            )
         else:
             jobs.append(base)
 
@@ -217,11 +255,16 @@ def run_probes_main() -> None:
     results.sort(key=lambda r: str(r["branch_id"]))
     summary_path = out_dir / "RUN_SUMMARY.csv"
     pd.DataFrame(results).to_csv(summary_path, index=False)
-    print(json.dumps({
-        "branches": len(results),
-        "computed": len(jobs),
-        "resumed": len(resumed),
-        "workers": min(args.workers, max(1, len(jobs))),
-        "swmm_threads_per_process": args.swmm_threads_per_process,
-        "summary": str(summary_path),
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "branches": len(results),
+                "computed": len(jobs),
+                "resumed": len(resumed),
+                "workers": min(args.workers, max(1, len(jobs))),
+                "swmm_threads_per_process": args.swmm_threads_per_process,
+                "summary": str(summary_path),
+            },
+            indent=2,
+        )
+    )
