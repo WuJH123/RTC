@@ -25,6 +25,7 @@ def verify_formal_run_v4(
     control_update_seconds: int,
     expected_event_sha256: str | None = None,
     expected_swmm_engine_version: str | None = None,
+    expected_proposed_artifact_sha256: dict[str, str] | None = None,
 ) -> dict[str, object]:
     manifest_path = Path(manifest_path)
     run = read_json(manifest_path)
@@ -33,6 +34,11 @@ def verify_formal_run_v4(
         raise ValueError(f"not a Formal run V5 event/engine-bound manifest: {manifest_path}")
     if run.get("rtc_source_tree_sha256") != implementation_sha:
         raise ValueError(f"Formal run uses an incompatible implementation contract: {manifest_path}")
+    strategy_evidence = run.get("strategy_execution")
+    if not isinstance(strategy_evidence, dict) or strategy_evidence.get("passed") is not True:
+        raise ValueError(f"Formal run lacks verified actual strategy semantics: {manifest_path}")
+    if strategy_evidence.get("contract") != "FORMAL_STRATEGY_EXECUTION_VERIFICATION_V1":
+        raise ValueError(f"Formal run uses an incompatible strategy verification contract: {manifest_path}")
     if str(run.get("physical_network_sha256", "")) != physical_sha:
         raise ValueError(f"physical network changed in run: {manifest_path}")
     event_sha = str(run.get("scientific_event_sha256", ""))
@@ -49,6 +55,24 @@ def verify_formal_run_v4(
         raise ValueError(f"model-step cadence differs from Policy Lock: {manifest_path}")
     if int(run.get("control_update_seconds", -1)) != control_update_seconds:
         raise ValueError(f"control-update cadence differs from Policy Lock: {manifest_path}")
+
+    strategy = str(run.get("strategy", ""))
+    if strategy == "proposed":
+        if expected_proposed_artifact_sha256 is None:
+            raise ValueError("Proposed Formal verification requires locked model/controller artifact hashes")
+        field_map = {
+            "controller_config": "controller_config_sha256",
+            "graph_schema": "graph_schema_sha256",
+            "step1_model": "step1_model_sha256",
+            "step2_model": "step2_model_sha256",
+        }
+        for artifact_name, field in field_map.items():
+            expected = str(expected_proposed_artifact_sha256.get(artifact_name, ""))
+            actual = str(run.get(field, ""))
+            if not expected or actual != expected:
+                raise ValueError(
+                    f"Proposed Formal run {field} differs from Policy Lock: {manifest_path}"
+                )
 
     bound = {
         "main_metadata_path": "main_metadata_sha256",
@@ -68,6 +92,8 @@ def verify_formal_run_v4(
         "rtc_source_tree_sha256"
     ) != implementation_sha:
         raise ValueError("main policy run uses an incompatible implementation contract")
+    if strategy == "proposed" and meta.get("rtc_source_tree_sha256") != implementation_sha:
+        raise ValueError("Proposed main run was not stamped by the current public production guard")
     if str(meta.get("swmm_engine_version", "")) != engine_version:
         raise ValueError("main metadata SWMM engine differs from Formal manifest")
     if sha256_file(str(run["decision_log_path"])) != str(run["decision_log_sha256"]):
@@ -108,7 +134,7 @@ def verify_formal_run_v4(
     result: dict[str, object] = {
         "event_id": str(run["event_id"]),
         "rainfall_group": str(run["rainfall_group"]),
-        "strategy": str(run["strategy"]),
+        "strategy": strategy,
         "tfv_m3": float(flood.sum()),
         "priority_flood_volume_m3": float(flood.reindex(priority).sum()),
         "global_peak_flood_rate_m3s": float(
@@ -121,6 +147,7 @@ def verify_formal_run_v4(
         "swmm_engine_version": engine_version,
         "rtc_source_tree_sha256": implementation_sha,
         "formal_run_manifest_sha256": sha256_file(manifest_path),
+        "strategy_execution_verified": True,
         "truth_source_flood_volume": "SWMM_NODE_STATISTICS_CUMULATIVE_MAIN_RUN",
         "truth_source_global_peak": "ROUTING_STEP_FROZEN_DECISION_REPLAY_WRITE_CADENCE_PRESERVED",
     }
