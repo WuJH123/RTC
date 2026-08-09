@@ -1,0 +1,8 @@
+{
+  "contract": "ACTUATOR_SCOPE_V1",
+  "actuation_scope": "SWMM_MODEL_CONTINUOUS_SIMULATION_ONLY",
+  "actuator_count": 109,
+  "field_deployment_claim": false,
+  "engineering_capability_map_available": false,
+  "interpretation": "All 109 discovered SWMM writable settings remain eligible in the simulation study. Fractional SWMM settings are not evidence that the corresponding field pump/gate has VFD, continuous positioning, ramp, dwell, interlock or fail-safe capability. Do not infer binary/fixed-speed restrictions without engineering metadata, and do not claim field deployability without a hashed capability map."
+}
