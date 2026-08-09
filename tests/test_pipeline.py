@@ -232,6 +232,7 @@ def test_compact_branch_preserves_interval_alignment_and_exact_volume(tmp_path: 
         "compact_file": compact.name,
         "node_statistics_file": stats_path.name,
         "candidate_action_sha256": "x",
+        "swmm_engine_version": "5.2.4",
     }), encoding="utf-8")
     branch = compile_branch_tensors(meta)
     assert branch.settings.shape == (2, 1)
@@ -239,6 +240,7 @@ def test_compact_branch_preserves_interval_alignment_and_exact_volume(tmp_path: 
     assert branch.rainfall.shape == (2, 2, 1)
     assert branch.target_states.shape == (2, 2, 6)
     assert np.allclose(branch.exact_node_flood_volume_m3, [12.0, 3.0])
+    assert branch.swmm_engine_version == "5.2.4"
 
 
 def test_d3_design_never_freezes_a_fixed_active_subset(tmp_path: Path) -> None:
