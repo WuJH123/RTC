@@ -1,11 +1,10 @@
-# Wuhan RTC v0.6.1 — causal sparse sensing, differentiable hydraulics and TFV-first MPC
+# Wuhan RTC v0.6.2 — causal sparse sensing, differentiable hydraulics and TFV-first MPC
 
-This repository implements a large-network urban-drainage real-time-control research framework:
+This repository implements the Formal Wuhan large-network urban-drainage RTC workflow:
 
 ```text
-causal sparse hydraulic observations
-+ realised rainfall history
-+ actuator target/current-setting/flow readback
+causal sparse hydraulic observations + realised rainfall <= t
++ actuator target/current-setting/flow readback <= t
                          ↓
               Step1 current-state reconstruction
                          ↓
@@ -20,17 +19,15 @@ causal sparse hydraulic observations
 
 The primary objective is **minimum cumulative system-wide TFV**. The eight verified priority sites are a **soft secondary/diagnostic** consideration only. Global Peak is report-only. Final performance claims come from authoritative SWMM.
 
-## 1. Metric terminology — do not mix volume and peak rate
+## 1. Metric terminology
 
 In this project:
 
 - **TFV = Total Flood Volume**: cumulative SWMM flooding-volume change summed over every hydraulic node for the defined horizon/event.
-- **PFV = Priority Flood Volume**: the same cumulative flooding-volume change, but summed only over the frozen eight priority nodes.
+- **PFV = Priority Flood Volume**: the same cumulative flooding-volume change summed only over the frozen eight priority nodes.
 - **Global Peak**: maximum over routing time of the simultaneous network sum of positive instantaneous flooding rates.
-- `Node.flooding` is an instantaneous rate and is never itself TFV or PFV.
-- SWMM `peak_flooding_rate` is a node-level peak-rate statistic and is distinct from PFV.
-
-PFV is **not** “peak flood flow” in this repository and is not a hard MPC admission constraint.
+- `Node.flooding` is an instantaneous flooding rate and is never itself TFV or PFV.
+- node `peak_flooding_rate` is distinct from PFV.
 
 For node `i` over `[t0,t1]`:
 
@@ -40,6 +37,8 @@ DeltaV_i = cumulative_SWMM_flooding_volume_i(t1)
 TFV = sum DeltaV_i over all hydraulic nodes
 PFV = sum DeltaV_i over the eight priority nodes
 ```
+
+PFV/depth may deteriorate if necessary to obtain a better TFV solution; they are not hard MPC admission constraints.
 
 ## 2. Frozen causal information boundary
 
@@ -52,6 +51,8 @@ At decision time `t`, online control may use only information available at or be
 - rainfall scenarios forecast only from causal rainfall history.
 
 Forbidden online inputs include event ID as a control signal, future realised rainfall/runoff, future SWMM state/flooding, future Internal-RTC trajectory, offline future labels and Final truth.
+
+Every Formal Step1 trajectory is now explicitly **t=0 inclusive**. If model step is 5 min and history length is 13, the first complete causal history is exactly `0,5,...,60 min`.
 
 ## 3. Wuhan V8 physical/reporting contract
 
@@ -88,7 +89,7 @@ Preflight and Policy Lock fail if these eight IDs are absent from the actual fro
 - preserve intrinsic `[PUMPS]` Startup/Shutoff depth logic;
 - preserve regulator physical/default behaviour.
 
-Therefore No-control is neither All-open nor All-closed. `internal_rtc` keeps the original native `[CONTROLS]` and receives no Python setting writes.
+`internal_rtc` keeps original native `[CONTROLS]` and receives no Python writes.
 
 Formal comparison is exactly:
 
@@ -100,19 +101,19 @@ all_open
 all_closed
 ```
 
-`hold` is debug-only because on a controls-disabled base it can collapse to a No-control-like policy.
+`hold` is debug-only.
 
 ## 5. All-actuator continuous control
 
-Production MPC does **not** use Engineering36, a fixed facility subset, runtime Top-K masking or an artificial binary-pump assumption.
+Production MPC does **not** use Engineering36, a fixed active subset, runtime Top-K masking or an artificial binary-pump assumption.
 
-Every discovered writable actuator remains in the action schema. MPC optimises direct continuous settings and projects every future control block to `[0,1]` and, when frozen from engineering evidence, to sequential setting-rate limits. Which facilities move is therefore an **outcome of hydraulic optimisation**, not a preselected list.
+Every discovered writable actuator remains in the action schema. MPC optimises direct continuous settings and projects every future control block to `[0,1]` and, when engineering evidence defines it, to sequential setting-rate limits. Which facilities move is therefore an outcome of hydraulic optimisation.
 
-SWMM fractional settings are a valid numerical experiment. Immediate field-deployment claims require separate facility-specific SCADA/VFD/discrete-continuous mode, ramp, dwell, interlock, communication/readback and fail-safe metadata.
+D3 training/validation sequences now use the **same frozen `max_setting_delta_per_update` contract** as production MPC when that value is configured. Sampling sparsity (`change_probability`) remains data coverage only; it is not runtime facility selection.
 
-## 6. Three clocks and the D3 horizon rule
+## 6. Three clocks and D3 horizon
 
-Do not confuse:
+Never confuse:
 
 ```text
 SWMM hydraulic routing step
@@ -120,176 +121,201 @@ Step1/Step2 model-observation step
 supervisory MPC control-update step
 ```
 
-Production time scales are frozen only after `<=60 s` Phase-0 response/readback analysis.
+Production time scales are frozen only after high-frequency Phase-0 response/readback analysis.
 
-If Phase-0 accepts:
+Example if Phase-0 accepts 5/10/120 min:
 
 ```text
 model_step_seconds       = 300
 control_update_seconds   = 600
 history_steps            = 13
 first control            = 60 min
-model horizon            = 120 min
+Step2 horizon            = 24 model steps = 120 min
+D3 horizon               = 12 supervisory control blocks
 ```
 
-then:
+`rtc-design-d3` reads the frozen controller config and derives control-block count automatically. The public D3 runner rejects time-cadence or rate-feasibility drift.
+
+## 7. Data roles and saved trajectory contract
+
+### D0 / fixed baselines
+
+D0 and fixed baseline trajectories store compact SI evidence including:
 
 ```text
-0,5,10,...,60 min = 13 causal history frames
-Step2 horizon      = 24 model steps
-one control block = 2 model steps
-D3 horizon         = 12 supervisory control blocks
+elapsed_seconds
+node_ids
+state_si[..., 6]
+  depth_m
+  head_m
+  flooding_m3s
+  volume_m3
+  total_inflow_m3s
+  total_outflow_m3s
+rainfall_mmhr
+actuator_ids
+target_setting
+current_setting
+actuator_flow_m3s
 ```
 
-v0.6.1 fixes an earlier ambiguous D3 interface: `rtc-design-d3` now reads the frozen controller config and derives the control-block count automatically. A D3 manifest cannot be executed with a different model/control cadence through the public runner.
-
-## 7. Data roles and causal alignment
-
-### Fixed baseline cache
-
-Generate fixed baselines once per event/timing/strategy contract with `rtc-build-baseline-cache`; later stages reuse them only when lineage/config/artifact hashes still verify.
+Formal D0 starts at `elapsed_seconds=0` and then follows the frozen constant stride.
 
 ### D1 — Step1 state-space coverage
 
-D1 is development/train-only controlled exploration for Step1. It is never a D2/D3 replay prefix.
+D1 is development/train-only controlled exploration for Step1 coverage. It is never a D2/D3 counterfactual prefix.
 
 ### D2 — local same-prefix action-effect truth
 
 At checkpoint `t`, D2:
 
 ```text
-record x_t and cumulative statistics
-→ write one candidate u_t
+replay controls-disabled No-control prefix
+→ compare complete 6-channel state + all actuator readbacks
+  against the saved No-control checkpoint
+→ only if exact-prefix verification passes, snapshot cumulative statistics
+→ write candidate action u_t
 → run SWMM forward
-→ record x_(t+1)...x_(t+H), actuator flows
+→ record x_(t+1)...x_(t+H) and actuator flows
 → subtract exact cumulative SWMM node flooding statistics
 ```
 
+Reference trajectory metadata/compact hashes and SWMM engine version are part of D2 generation lineage.
+
 ### D3 — joint multi-actuator/multi-step truth
 
-D3 uses the same replayable No-control prefix and generates joint continuous setting sequences. Every actuator is eligible in each sequence. `change_probability` and `perturbation_std` control data coverage only.
+D3 applies the same exact-prefix verification before sequence execution. It supplies interaction data and joint action-ranking evidence. Every discovered actuator remains eligible.
 
-The D3 design manifest explicitly stores both:
+## 8. Step1 and Step2 training datasets
+
+This is model-based MPC, not reinforcement learning; an RL `reward` column is not required.
+
+Step1 learns:
 
 ```text
-model_horizon_steps
-control_blocks
-control_block_steps
-model_step_seconds
-control_update_seconds
+causal sparse depth/head history
++ observation mask
++ causal rainfall/actuator local context history
++ graph/static features
+→ current full 6-channel hydraulic state
 ```
 
-so model steps cannot be confused with control blocks.
-
-## 8. Step1 and Step2 are model-based, not reinforcement learning
-
-This project does **not** require an RL-style `(state, action, next_state, reward)` table.
-
-Step1 training uses causal sparse-history → current full-state pairs.
-
-Step2 training uses the equivalent model-based transition supervision:
+Step2 learns:
 
 ```text
 x_t
-+ action sequence u_t...
-+ exogenous rainfall sequence
-+ previous actuator flow/device physics
-→ future hydraulic state trajectory
++ continuous action sequence
++ causal/exogenous rainfall sequence
++ previous actuator flow + device physics
+→ future full hydraulic trajectory
 + future actuator-flow trajectory
-+ exact cumulative SWMM node flood-volume label
++ exact cumulative SWMM node flood-volume truth
 ```
 
-There is no learned “reward” column. MPC differentiates through Step2 at runtime and constructs the TFV-first objective directly from predicted hydraulic/flooding trajectories.
+The Step2 compiler preserves interval alignment:
 
-## 9. Step2 physical interpretation
+```text
+initial_state = x_t
+settings[k], rainfall[k] govern interval t_k → t_(k+1)
+target_states[k] = x_(k+1)
+target_actuator_flows[k] = q_(k+1)
+```
 
-Step2 is **physics-informed**, not a replacement hydraulic solver with mathematically exact mass conservation.
+Mixed model steps, horizons, node/actuator ordering or SWMM engine versions fail closed.
 
-Its architecture first predicts setting-dependent actuator flow from upstream/downstream states and device physics, injects that managed flow with opposite signs at the upstream/downstream nodes, and then advances the graph hydraulic state with a learned residual transition.
+## 9. SWMM engine lineage
 
-Formal training supervises:
+v0.6.2 treats the SWMM engine as part of the learned hydraulic operator:
 
-1. future hydraulic-state trajectory;
-2. managed actuator-flow trajectory;
-3. exact cumulative SWMM node flooding volume.
+- one SWMM engine per Step1 training/validation set;
+- one engine per Step2 D2/D3 shard set;
+- Step1 and Step2 locked models must have the same engine lineage;
+- Proposed closed-loop execution must use that same engine;
+- Final main run and Global Peak replay must use the same engine;
+- all paired Final strategies are compiled under one engine identity.
 
-Formal validation additionally reports negative-depth, negative-flood-rate, negative-node-volume and non-finite prediction fractions. Final hydraulic and flooding truth remains SWMM.
+Do not upgrade PySWMM/SWMM halfway through one Formal experiment.
 
-## 10. One flood-volume operator across the learned pipeline
+## 10. Flood-volume truth and predicted operator
 
-Step2 training, Step2 validation, MPC, gradient validation and action ranking all use:
+Authoritative D2/D3/Final volume truth is SWMM cumulative node statistics.
+
+Step2 training, validation, MPC, gradient validation and ranking use one consistent predicted-volume operator:
 
 ```text
 trapezoidal integration of checkpoint/current flooding rate
 + future predicted flooding rates
 ```
 
-The authoritative label is still the exact cumulative SWMM node-statistics delta, not the numerical integral.
+The numerical integral is a model objective/supervision bridge; Final truth remains SWMM statistics.
 
-## 11. Rainfall groups
+## 11. Step2 physical interpretation
 
-`rainfall_group` is the leakage/statistical independence unit.
+Step2 is **physics-informed**, not a mathematically exact replacement hydraulic solver. It predicts setting-dependent actuator flow from local states/device physics, injects managed flow with opposite signs at upstream/downstream nodes, then advances a graph hydraulic residual transition.
 
-Hard correctness requirements are:
+Formal validation reports trajectory/flow/TFV performance plus negative-depth, negative-flood-rate, negative-node-volume and non-finite prediction fractions.
 
-- unique `event_id`;
+## 12. Rainfall-group and event-forcing lineage
+
+`rainfall_group` is the statistical independence/leakage unit. Hard rules:
+
+- unique `event_id` rows;
 - no rainfall group crosses scientific splits;
 - development train/validation are rainfall-group-disjoint;
 - Final remains untouched before Policy Lock;
 - referenced event INPs exist.
 
-About **160 independent rainfall groups** remains the recommended paper-strength target (e.g. 96 development / 24 calibration / 16 safety-audit / 24 Final), not a software start-up gate.
+About 160 independent rainfall groups is a paper-strength recommendation, not an execution gate.
 
-Formal metrics first aggregate within rainfall group and then give independent rainfall groups equal weight.
+v0.6.2 additionally binds each Formal event to a **scientific event hash** containing all INP scientific/event content except policy-only `[CONTROLS]` and runtime-only `THREADS`. Referenced external `FILE` bytes are also hashed, so changing an external rainfall file in place invalidates the event identity.
 
-## 12. Safe resume and storage control
+## 13. Complete untouched Final
 
-File existence alone is never enough for reuse. D0/D1/D2/D3 and fixed baselines use deterministic scientific/numerical generation keys plus artifact hashes. Step1/Step2 training saves atomic epoch state including model, optimiser, scaler and RNG state.
+The Final compiler now requires:
 
-Successful runs default to compact NPZ + statistics + metadata/decision evidence. Raw row-wise CSV and SWMM `.rpt/.out` files are debug-only and are not retained by default, preventing avoidable disk growth.
+1. the run index contains **every and only** event marked `final` in the locked split registry;
+2. every Final event has exactly the five frozen strategies;
+3. each run's `rainfall_group` matches the locked registry;
+4. each strategy uses the registry-matched scientific event forcing hash;
+5. all comparison runs use one SWMM engine;
+6. statistics are paired by independent rainfall group and groups are equally weighted.
 
-The semantic implementation fingerprint is deliberately stable across unrelated documentation/reporting edits; numerical input/config/action/model/artifact hashes still bind the actual computation.
+This prevents accidental event substitution and selective omission of an unfavourable Final event.
 
-## 13. Compute contract
+## 14. Safe resume and v0.6.2 invalidation rule
 
-For the target workstation:
+File existence alone never authorises reuse. Generated branches use semantic scientific implementation identity + exact numerical input/config/action/reference hashes + generated-artifact hashes. Step1/Step2 save atomic epoch resume state including optimizer/scaler/RNG.
+
+**Do not reuse v0.6.1-derived RTC trajectories, D2/D3 branches, Step1/Step2 models, acceptance evidence or Policy Lock for v0.6.2.** The v0.6.2 semantic implementation fingerprint intentionally invalidates them because t=0, exact-prefix, engine and event-forcing semantics changed.
+
+Reusable inputs are the frozen physical/event INPs, verified priority/sensor definitions and rainfall registry when their own scientific identities remain valid.
+
+## 15. Compute/storage contract
+
+Recommended workstation execution:
 
 ```text
 SWMM generation: up to 16 independent Python processes × normally 1 SWMM thread/process
 GPU training: RTX 4060 8 GB, AMP, small micro-batch + gradient accumulation
 ```
 
-Do not interpret “16 CPU workers” as one SWMM simulation using 16 internal threads; independent-event/branch multiprocessing is the intended parallelism.
+Successful runs default to compact NPZ + statistics + metadata/decision evidence. Raw row-wise CSV and `.rpt/.out` are debug-only by default.
 
-## 14. Required pre-Policy-Lock evidence
+## 16. Policy Lock and execution document
 
-Before Policy Lock:
-
-1. physical/priority INP preflight;
-2. high-frequency Phase-0 timing evidence;
-3. Step1 held-out rainfall-group-balanced reconstruction gate;
-4. Step2 held-out trajectory/exact-TFV gate plus physical plausibility diagnostics;
-5. D2 exact-SWMM local/boundary TFV-gradient gate;
-6. D2 local + D3 joint-sequence ranking/regret gate;
-7. Proposed development closed-loop SWMM;
-8. real-time runtime/readback/deadline acceptance.
-
-v0.6.1 also exposes public CLIs to compile Formal static assets, record the ordered evidence ledger and build the canonical Policy-Lock artifact map.
-
-Current lock contract:
+Policy Lock outer contract remains:
 
 ```text
 WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V4_CODE_TIME_DATA_BOUND
 ```
 
-Only after lock may untouched Final events be evaluated.
+The semantic implementation fingerprint inside the lock is v0.6.2 and binds the strengthened data lineage.
 
-## 15. Supported execution documents
+Use only:
 
-- `docs/LOCAL_RUNBOOK_V061.md` — canonical v0.6.1 local command order;
-- `docs/FINAL_DATA_INVENTORY_V06.md` — generated/reusable data inventory;
-- `docs/CHECKLIST_FINAL_AUDIT_V061.md` — checklist-by-checklist audit status;
-- `FORMAL_PIPELINE_LATEST.md` — scientific evidence contract.
+- `docs/LOCAL_RUNBOOK_V062.md` — canonical Codex/local full workflow;
+- `docs/FINAL_DATA_INVENTORY_V062.md` — authoritative v0.6.2 data inventory;
+- `FORMAL_PIPELINE_LATEST.md` — scientific evidence sequence.
 
 Install/test the merged release with:
 
@@ -301,4 +327,4 @@ python -m pip install -e ".[dev,swmm]"
 python -m pytest -q
 ```
 
-The GitHub CI can verify code/contracts and unit-level pipeline interfaces. It cannot establish that Proposed significantly reduces Wuhan TFV: that scientific claim is admissible only after the actual frozen Wuhan model has completed the untouched Final five-strategy SWMM evaluation.
+GitHub CI verifies code/contracts and unit-level pipeline interfaces. It does **not** establish that Proposed significantly reduces Wuhan TFV; that claim is admissible only after the actual frozen Wuhan model completes the untouched Final five-strategy authoritative SWMM evaluation.
