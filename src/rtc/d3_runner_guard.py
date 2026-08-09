@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .large_data_cli import run_d3_batch_main
+from .d3_batch_v2 import run_d3_batch_main
 
 
 def validate_d3_execution_contract(
@@ -24,23 +24,30 @@ def validate_d3_execution_contract(
         raise ValueError("D3 manifest is empty")
     required = {
         "settings_sequence_json",
+        "trajectory_metadata_path",
         "model_horizon_steps",
         "model_step_seconds",
         "control_update_seconds",
         "control_block_steps",
         "control_blocks",
         "d3_time_contract",
+        "d3_feasibility_contract",
+        "sequence_rate_feasible",
     }
     missing = sorted(required - set(frame.columns))
     if missing:
         raise ValueError(
-            "D3 execution requires the controller-time-bound V2 design manifest; "
+            "D3 execution requires the controller-time/rate-bound design manifest; "
             f"missing columns: {missing}"
         )
     if set(frame["d3_time_contract"].astype(str)) != {
         "D3_MODEL_STEP_CONTROL_BLOCK_ALIGNMENT_V1"
     }:
         raise ValueError("D3 manifest uses an incompatible time contract")
+    if set(frame["d3_feasibility_contract"].astype(str)) != {
+        "D3_SEQUENTIAL_SETTING_RATE_FEASIBILITY_V1"
+    } or not frame["sequence_rate_feasible"].astype(bool).all():
+        raise ValueError("D3 manifest lacks sequential setting-rate feasibility")
 
     def one_int(column: str) -> int:
         values = pd.to_numeric(frame[column], errors="raise").astype(int).unique().tolist()
@@ -71,7 +78,7 @@ def validate_d3_execution_contract(
     if not (lengths == control_blocks).all():
         raise ValueError("D3 sequence JSON length differs from the frozen control-block count")
     return {
-        "contract": "D3_EXECUTION_TIME_GUARD_V1",
+        "contract": "D3_EXECUTION_TIME_RATE_PREFIX_GUARD_V2",
         "model_step_seconds": model_step,
         "control_update_seconds": control_update,
         "control_block_steps": block_steps,
