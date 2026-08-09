@@ -32,6 +32,7 @@ def test_formal_pipeline_modules_import() -> None:
     import rtc.large_model_cli  # noqa: F401
     import rtc.lazy_step1  # noqa: F401
     import rtc.phase0_timescale  # noqa: F401
+    import rtc.pipeline_ledger_cli  # noqa: F401
     import rtc.priority_resolver  # noqa: F401
     import rtc.production_guard  # noqa: F401
     import rtc.rainfall_design  # noqa: F401
