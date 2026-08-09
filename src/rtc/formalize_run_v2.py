@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .baselines import canonical_baseline_id
 from .code_contract import rtc_source_tree_sha256
+from .control_lineage import section_payload_sha256
 from .inp_lineage import physical_contract_sha256, scientific_event_contract_sha256
 from .inp_runtime import section_has_payload
 from .pipeline import sha256_file
@@ -42,10 +43,12 @@ def _verify_strategy_execution(
     controls = bool(section_has_payload(inp, "CONTROLS"))
     controller_present = bool(metadata.get("controller_present"))
     rule_contract: str | None = None
+    native_controls_payload_sha256: str | None = None
 
     if strategy == "internal_rtc":
         if not controls or controller_present or decisions:
             raise ValueError("Internal-RTC requires native controls, no Python controller and no writes")
+        native_controls_payload_sha256 = section_payload_sha256(inp, "CONTROLS")
     elif strategy == "no_control":
         if controls or controller_present or decisions:
             raise ValueError("No-control requires controls disabled, no Python controller and no writes")
@@ -93,7 +96,7 @@ def _verify_strategy_execution(
         raise ValueError(f"unsupported Formal strategy: {strategy}")
 
     result: dict[str, object] = {
-        "contract": "FORMAL_STRATEGY_EXECUTION_VERIFICATION_V1",
+        "contract": "FORMAL_STRATEGY_EXECUTION_VERIFICATION_V2_EVENT_PAIRED",
         "passed": True,
         "native_controls_enabled": controls,
         "python_controller_present": controller_present,
@@ -101,6 +104,9 @@ def _verify_strategy_execution(
     }
     if rule_contract is not None:
         result["rule_contract"] = rule_contract
+    if native_controls_payload_sha256 is not None:
+        result["native_controls_payload_sha256"] = native_controls_payload_sha256
+        result["native_controls_source"] = "FROZEN_TEMPLATE_PAIRED_WITH_EVENT_FORCING"
     return result
 
 
@@ -158,7 +164,7 @@ def formalize_run(
         raise RuntimeError("Global Peak replay SWMM engine differs from main run")
 
     payload: dict[str, object] = {
-        "contract": "FORMAL_CLOSED_LOOP_RUN_MANIFEST_V5_EVENT_ENGINE_BOUND",
+        "contract": "FORMAL_CLOSED_LOOP_RUN_MANIFEST_V6_EVENT_RULE_ENGINE_BOUND",
         "rtc_source_tree_sha256": current_code,
         "event_id": str(event_id),
         "rainfall_group": str(rainfall_group),
@@ -187,6 +193,7 @@ def formalize_run(
             "pfv_tfv": "SWMM_NODE_STATISTICS_CUMULATIVE_FROM_MAIN_CAUSAL_RUN",
             "global_peak": "ROUTING_STEP_REPLAY_OF_FROZEN_EXECUTED_DECISION_LOG",
             "event_binding": "FULL_SCIENTIFIC_EVENT_INP_EXCEPT_CONTROLS_AND_THREADS",
+            "internal_rule_binding": "CANONICAL_NATIVE_CONTROLS_PAYLOAD_SHA256",
             "engine_binding": "MAIN_AND_PEAK_REPLAY_SAME_SWMM_ENGINE",
             "strategy_binding": "ACTUAL_CONTROLS_CONTROLLER_DECISION_LOG_SEMANTICS",
         },
