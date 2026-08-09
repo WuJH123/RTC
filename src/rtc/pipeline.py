@@ -69,6 +69,19 @@ class PipelineLedger:
             if not self.passed(prior):
                 raise RuntimeError(f"pipeline is blocked before {stage}: {prior} has not passed")
 
+    def verify_integrity(self) -> None:
+        """Fail if any previously recorded evidence file has changed or disappeared."""
+
+        for stage, evidence in self.stages.items():
+            evidence.validate()
+            for path, expected in zip(evidence.evidence_paths, evidence.evidence_sha256, strict=True):
+                p = Path(path)
+                if not p.is_file():
+                    raise RuntimeError(f"pipeline evidence disappeared: {stage}: {path}")
+                current = sha256_file(p)
+                if current != expected:
+                    raise RuntimeError(f"pipeline evidence hash changed: {stage}: {path}")
+
     def to_json(self, path: str | Path) -> None:
         payload = {
             "contract": self.contract,
@@ -106,34 +119,49 @@ def evidence_from_files(stage: str, paths: list[str | Path], *, passed: bool, no
     return StageEvidence(stage=stage, passed=passed, evidence_paths=normalized, evidence_sha256=hashes, notes=notes)
 
 
+def _require_passed_json(path: str | Path, name: str) -> None:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if payload.get("passed") is not True:
+        raise ValueError(f"policy lock artifact {name} is not a passed evidence JSON")
+
+
 def create_policy_lock(
     *,
     ledger: PipelineLedger,
     artefacts: dict[str, str | Path],
     output_path: str | Path,
 ) -> dict[str, object]:
-    """Freeze every production artefact before untouched final evaluation.
-
-    The lock is fail-closed and can only be created after closed-loop development has
-    passed. Model weights, graph/schema metadata, calibration, controller code/config,
-    rainfall forecaster, actuator catalogue and fallback policy should all be supplied.
-    """
+    """Freeze the complete production/evidence lineage before untouched Final."""
 
     ledger.require_ready_for("policy_lock")
+    ledger.verify_integrity()
     required = {
         "step1_model",
         "step2_model",
         "graph_schema",
         "state_schema",
         "actuator_catalog",
+        "split_registry",
+        "model_acceptance_contract",
+        "step1_acceptance",
+        "step2_acceptance",
+        "gradient_acceptance",
+        "candidate_ranking_acceptance",
         "safety_calibration",
+        "safety_audit",
         "controller_config",
         "rainfall_forecast_config",
         "fallback_policy",
+        "baseline_plan",
     }
     missing = sorted(required - set(artefacts))
     if missing:
         raise ValueError(f"policy lock missing required artefacts: {missing}")
+    for name, path in artefacts.items():
+        if not Path(path).is_file():
+            raise ValueError(f"policy lock artifact does not exist: {name}: {path}")
+    for name in ("step1_acceptance", "step2_acceptance", "gradient_acceptance", "candidate_ranking_acceptance", "safety_audit"):
+        _require_passed_json(artefacts[name], name)
     hashes = {name: sha256_file(path) for name, path in sorted(artefacts.items())}
     canonical = json.dumps(hashes, sort_keys=True, separators=(",", ":"))
     policy_sha = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
