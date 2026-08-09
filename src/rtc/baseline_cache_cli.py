@@ -14,8 +14,13 @@ from .baseline_cache import (
     build_baseline_cache,
 )
 from .baselines import FIXED_BASELINE_IDS
+from .causal_timing import timing_from_controller_config
+from .code_contract import rtc_source_tree_sha256
 from .inp_lineage import physical_contract_sha256
 from .inp_runtime import sha256_file
+
+
+POLICY_LOCK_CONTRACT = "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V4_CODE_TIME_DATA_BOUND"
 
 
 def _json(path: str | Path) -> dict[str, object]:
@@ -26,10 +31,7 @@ def _json(path: str | Path) -> dict[str, object]:
 
 
 def _locked_artifact(
-    *,
-    artefacts: dict[str, object],
-    hashes: dict[str, object],
-    name: str,
+    *, artefacts: dict[str, object], hashes: dict[str, object], name: str
 ) -> Path:
     path = Path(str(artefacts.get(name, "")))
     if not path.is_file():
@@ -43,11 +45,15 @@ def _locked_artifact(
 def locked_final_contract(
     policy_lock_path: str | Path,
 ) -> tuple[Path, tuple[str, ...], str, frozenset[str]]:
-    """Resolve the immutable runtime/baseline/split/physical Final contract."""
+    """Resolve immutable runtime/baseline/split/physical Final contracts."""
 
     lock = _json(policy_lock_path)
-    if lock.get("contract") != "WUHAN_RTC_TFV_FIRST_POLICY_LOCK_V2":
-        raise ValueError("Final baseline generation requires the TFV-first Policy Lock V2")
+    if lock.get("contract") != POLICY_LOCK_CONTRACT:
+        raise ValueError("Final baseline generation requires Policy Lock V4")
+    if lock.get("rtc_source_tree_sha256") != rtc_source_tree_sha256():
+        raise ValueError(
+            "current RTC scientific implementation contract differs from Policy Lock"
+        )
     artefacts_raw = lock.get("artefacts")
     hashes_raw = lock.get("sha256")
     if not isinstance(artefacts_raw, dict) or not isinstance(hashes_raw, dict):
@@ -64,19 +70,19 @@ def locked_final_contract(
     split_path = _locked_artifact(
         artefacts=artefacts, hashes=hashes, name="split_registry"
     )
+    timing_from_controller_config(_json(config)).validate(
+        require_full_history_before_first_control=True
+    )
+
     plan = _json(plan_path)
     strategies = tuple(
         str(x) for x in plan.get("strategies", []) if str(x) != "proposed"
     )
-    if not strategies:
-        raise ValueError("locked baseline plan contains no fixed baselines")
-    invalid = sorted(set(strategies) - set(FIXED_BASELINE_IDS))
-    if invalid:
+    if strategies != FIXED_BASELINE_IDS:
         raise ValueError(
-            f"locked baseline plan contains unsupported fixed strategies: {invalid}"
+            "locked fixed-baseline matrix must be exactly "
+            f"{list(FIXED_BASELINE_IDS)}; got {list(strategies)}"
         )
-    if len(strategies) != len(set(strategies)):
-        raise ValueError("locked baseline plan contains duplicate strategies")
 
     split = pd.read_csv(split_path)
     required = {"rainfall_group", "scientific_split"}
@@ -92,7 +98,7 @@ def locked_final_contract(
         split.loc[split["scientific_split"] == "final", "rainfall_group"].tolist()
     )
     if not final_groups:
-        raise ValueError("locked split registry contains no Final rainfall groups")
+        raise ValueError("locked split registry contains no untouched Final rainfall groups")
 
     physical_sha = str(lock.get("physical_network_sha256", ""))
     if len(physical_sha) != 64:
@@ -141,7 +147,7 @@ def validate_final_event_registry(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate each deterministic baseline once per rainfall event and reuse hashed evidence downstream"
+        description="Generate fixed baselines once per event and safely reuse verified evidence"
     )
     parser.add_argument("--events", required=True)
     parser.add_argument("--out-dir", required=True)
@@ -149,11 +155,13 @@ def main() -> None:
         "--config", help="resolved controller/runtime config; required for prelock"
     )
     parser.add_argument(
-        "--strategies", help="comma-separated fixed baselines; defaults to all"
+        "--strategies",
+        help="comma-separated Formal fixed baselines; default is no_control,internal_rtc,all_open,all_closed",
     )
     parser.add_argument("--stage", choices=["prelock", "final"], default="prelock")
     parser.add_argument(
-        "--policy-lock", help="required for final; supplies locked config/baseline/split/physical contract"
+        "--policy-lock",
+        help="required for final; supplies locked implementation/config/baseline/split/physical contract",
     )
     parser.add_argument(
         "--workers", type=int, default=min(16, os.cpu_count() or 1)
@@ -181,6 +189,9 @@ def main() -> None:
         if not args.config:
             raise ValueError("--config is required for prelock baseline generation")
         config = Path(args.config)
+        timing_from_controller_config(_json(config)).validate(
+            require_full_history_before_first_control=True
+        )
         strategies = _parse_strategies(args.strategies)
         formalize_final = False
 
@@ -197,20 +208,26 @@ def main() -> None:
         formalize_final=formalize_final,
     )
     views = _write_views(frame, out)
-    print(json.dumps({
-        "contract": CACHE_CONTRACT,
-        "stage": args.stage,
-        "rows": int(len(frame)),
-        "events": int(frame["event_id"].nunique()),
-        "strategies": sorted(frame["strategy"].unique().tolist()),
-        "computed": int((frame["status"] == "completed").sum()),
-        "resumed": int((frame["status"] == "resumed").sum()),
-        "workers": min(
-            args.workers,
-            max(1, int((frame["status"] == "completed").sum())),
-        ),
-        **views,
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "contract": CACHE_CONTRACT,
+                "stage": args.stage,
+                "rows": int(len(frame)),
+                "events": int(frame["event_id"].nunique()),
+                "rainfall_groups": int(frame["rainfall_group"].nunique()),
+                "strategies": sorted(frame["strategy"].unique().tolist()),
+                "computed": int((frame["status"] == "completed").sum()),
+                "resumed": int((frame["status"] == "resumed").sum()),
+                "workers": min(
+                    args.workers,
+                    max(1, int((frame["status"] == "completed").sum())),
+                ),
+                **views,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

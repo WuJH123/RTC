@@ -1,10 +1,10 @@
 {
   "contract": "PRODUCTION_CONTROLLER_CONFIG_V4_TFV_FIRST",
-  "instruction": "PFV/priority depth are soft diagnostics/secondary preferences, never hard MPC admission constraints. Formal main runs keep exact_global_peak=false; exact peak is replayed afterward.",
-  "model_step_seconds": "REPLACE_AFTER_PHASE0_D2_PILOT",
-  "control_update_seconds": "REPLACE_AFTER_PHASE0_D2_PILOT",
-  "record_stride_seconds": "REPLACE_AFTER_PHASE0_D2_PILOT",
-  "control_start_minutes": "REPLACE_AFTER_HISTORY_READINESS_AUDIT",
+  "instruction": "PFV/priority depth are soft diagnostics/secondary preferences, never hard MPC admission constraints. Formal main runs keep exact_global_peak=false; exact peak is replayed afterward. The candidate production cadence is 300 s observation/model + 600 s control, but it must be frozen only after <=60 s Phase0 D2 response/readback audit and runtime benchmarking.",
+  "model_step_seconds": "REPLACE_AFTER_HIGH_FREQUENCY_PHASE0_D2_PILOT",
+  "control_update_seconds": "REPLACE_AFTER_HIGH_FREQUENCY_PHASE0_D2_PILOT",
+  "record_stride_seconds": "REPLACE_AFTER_HIGH_FREQUENCY_PHASE0_D2_PILOT",
+  "control_start_minutes": "REPLACE_AFTER_HISTORY_READINESS_AUDIT__MUST_ALIGN_CONTROL_GRID",
   "swmm_threads": 1,
   "exact_global_peak": false,
   "depth_state_index": 0,
@@ -25,13 +25,14 @@
     "history_steps_for_level": "REPLACE_DEVELOPMENT_ONLY"
   },
   "controller": {
-    "history_steps": "REPLACE_AFTER_PHASE0",
-    "horizon_steps": "REPLACE_AFTER_PHASE0_D2_PILOT",
+    "history_steps": "REPLACE_AFTER_PHASE0__T0_INCLUDED_SO_SPAN=(HISTORY_STEPS-1)*MODEL_STEP",
+    "horizon_steps": "REPLACE_AFTER_HIGH_FREQUENCY_PHASE0_D2_PILOT",
     "optimizer_iterations": "REPLACE_DEVELOPMENT_ONLY",
     "optimizer_learning_rate": "REPLACE_DEVELOPMENT_ONLY",
     "max_setting_delta_per_update": "REPLACE_FROM_ENGINEERING_METADATA_OR_NULL",
     "readback_target_tolerance": "REPLACE_FROM_ENGINEERING_RUNTIME_TEST",
     "readback_current_tolerance": "REPLACE_FROM_ENGINEERING_RUNTIME_TEST",
+    "decision_runtime_budget_seconds": "REPLACE_AFTER_WALL_CLOCK_BENCHMARK__MUST_BE_LESS_THAN_CONTROL_UPDATE",
     "fallback_policy_id": "CAUSAL_HOLD_CURRENT_V1"
   }
 }

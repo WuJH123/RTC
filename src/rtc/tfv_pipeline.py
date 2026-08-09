@@ -17,6 +17,7 @@ TFV_STAGES = (
     "gradient_acceptance",
     "candidate_ranking_acceptance",
     "closed_loop_development",
+    "runtime_timing_acceptance",
     "policy_lock",
     "final_closed_loop_swmm",
 )
@@ -49,10 +50,12 @@ class TFVStageEvidence:
 
 @dataclass
 class TFVPipelineLedger:
-    contract: str = "WUHAN_RTC_TFV_FIRST_PIPELINE_V2"
+    contract: str = "WUHAN_RTC_TFV_FIRST_PIPELINE_V3_CAUSAL_FRESH_DATA"
     stages: dict[str, TFVStageEvidence] = field(default_factory=dict)
 
-    def record_files(self, stage: str, paths: list[str | Path], *, passed: bool, notes: str = "") -> None:
+    def record_files(
+        self, stage: str, paths: list[str | Path], *, passed: bool, notes: str = ""
+    ) -> None:
         index = TFV_STAGES.index(stage)
         if passed:
             for prior in TFV_STAGES[:index]:
@@ -89,15 +92,25 @@ class TFVPipelineLedger:
 
     def to_json(self, path: str | Path) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_text(json.dumps({
-            "contract": self.contract,
-            "stages": {k: asdict(v) for k, v in self.stages.items()},
-        }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        Path(path).write_text(
+            json.dumps(
+                {
+                    "contract": self.contract,
+                    "stages": {k: asdict(v) for k, v in self.stages.items()},
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
     @classmethod
     def from_json(cls, path: str | Path) -> "TFVPipelineLedger":
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
-        obj = cls(contract=str(raw.get("contract", "WUHAN_RTC_TFV_FIRST_PIPELINE_V2")))
+        obj = cls(
+            contract=str(raw.get("contract", "WUHAN_RTC_TFV_FIRST_PIPELINE_V3_CAUSAL_FRESH_DATA"))
+        )
         for name, item in raw.get("stages", {}).items():
             obj.stages[name] = TFVStageEvidence(
                 stage=name,

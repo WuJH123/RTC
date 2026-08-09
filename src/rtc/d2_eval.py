@@ -18,7 +18,7 @@ def exact_node_volumes(metadata_path: str | Path, node_ids: tuple[str, ...]) -> 
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     stats_name = meta.get("node_statistics_file")
     if not stats_name:
-        raise ValueError(f"D2 branch lacks exact node_statistics_file: {metadata_path}")
+        raise ValueError(f"branch lacks exact node_statistics_file: {metadata_path}")
     stats = pd.read_csv(meta_path.parent / str(stats_name), compression="infer")
     required = {"node_id", "delta_flooding_volume_m3"}
     if not required.issubset(stats.columns):
@@ -33,12 +33,7 @@ def exact_node_volumes(metadata_path: str | Path, node_ids: tuple[str, ...]) -> 
 
 
 def join_manifest_runs(manifest: pd.DataFrame, runs: pd.DataFrame) -> pd.DataFrame:
-    """Join D2 design provenance to one executed branch record.
-
-    The manifest may contain repeated center/base rows per actuator. This helper intentionally
-    preserves those rows because gradient truth is actuator-labelled. Ranking code must
-    deduplicate physical actions explicitly before scoring.
-    """
+    """Join D2 design provenance to one executed branch record."""
 
     keys = ["candidate_action_sha256"]
     for candidate in ("event_id", "checkpoint_id", "checkpoint_minutes"):
@@ -46,10 +41,27 @@ def join_manifest_runs(manifest: pd.DataFrame, runs: pd.DataFrame) -> pd.DataFra
             keys.append(candidate)
     merged = manifest.merge(runs, on=keys, how="inner", suffixes=("", "_run"))
     if merged.empty:
-        raise ValueError(f"manifest and run summary have no matching D2 branches using keys {keys}")
+        raise ValueError(
+            f"manifest and run summary have no matching D2 branches using keys {keys}"
+        )
     if "metadata_path" not in merged.columns or merged["metadata_path"].isna().any():
         raise ValueError("joined D2 rows contain missing metadata paths")
     return merged
+
+
+def _verify_model_branch_time_contract(model, branch) -> None:
+    runtime = dict(getattr(model, "runtime_metadata", {}))
+    if runtime:
+        step = int(runtime.get("model_step_seconds", -1))
+        horizon = int(runtime.get("horizon_steps", -1))
+        if step != branch.model_step_seconds:
+            raise ValueError(
+                f"action-effect branch step {branch.model_step_seconds}s differs from Step2 {step}s"
+            )
+        if horizon != branch.horizon_steps:
+            raise ValueError(
+                f"action-effect branch horizon {branch.horizon_steps} differs from Step2 {horizon}"
+            )
 
 
 def model_metrics(
@@ -61,27 +73,19 @@ def model_metrics(
     device: torch.device,
     gradient_actuator_index: int | None = None,
 ) -> tuple[float, float, float | None, float | None]:
-    """Predict cumulative TFV/PFV and optional setting gradients in physical SI units.
-
-    The cumulative prediction uses the same current+future trapezoidal flooding-rate
-    integration as the TFV-first MPC and Step2 exact-volume training. If no priority nodes
-    are supplied, PFV is reported as zero and no PFV gradient is requested.
-    """
+    """Predict cumulative TFV/PFV and optional setting gradients in physical SI units."""
 
     branch = compile_branch_tensors(metadata_path)
     if branch.node_ids != graph.node_ids or branch.actuator_ids != graph.actuator_ids:
-        raise ValueError("D2 branch schema differs from locked graph schema")
+        raise ValueError("action-effect branch schema differs from locked graph schema")
+    _verify_model_branch_time_contract(model, branch)
     dt = np.diff(branch.elapsed_seconds).astype(np.float32)
     if np.any(dt <= 0):
-        raise ValueError("D2 branch time grid is not strictly increasing")
+        raise ValueError("action-effect branch time grid is not strictly increasing")
 
-    initial = torch.as_tensor(
-        branch.initial_state[None], dtype=torch.float32, device=device
-    )
+    initial = torch.as_tensor(branch.initial_state[None], dtype=torch.float32, device=device)
     if gradient_actuator_index is None:
-        settings = torch.as_tensor(
-            branch.settings[None], dtype=torch.float32, device=device
-        )
+        settings = torch.as_tensor(branch.settings[None], dtype=torch.float32, device=device)
         base = None
     else:
         base = torch.as_tensor(

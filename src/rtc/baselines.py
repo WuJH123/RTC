@@ -16,6 +16,7 @@ class BaselineDefinition:
     description: str
     python_override: bool
     native_controls_enabled: bool
+    formal_comparator: bool = True
 
 
 BASELINES = {
@@ -23,6 +24,7 @@ BASELINES = {
         "proposed",
         "Sparse-state + differentiable TFV-first continuous MPC on the controls-disabled physical base",
         True,
+        False,
         False,
     ),
     "internal_rtc": BaselineDefinition(
@@ -33,31 +35,38 @@ BASELINES = {
     ),
     "no_control": BaselineDefinition(
         "no_control",
-        "Same physical network/forcing with native [CONTROLS] disabled and no Python writes",
+        "No-supervisory-RTC: [CONTROLS] disabled, no Python writes; intrinsic pump startup/shutoff logic remains physical/local behavior",
         False,
-        False,
-    ),
-    "hold": BaselineDefinition(
-        "hold",
-        "Controls-disabled base; hold actuator readback observed at the first common control decision",
-        True,
         False,
     ),
     "all_open": BaselineDefinition(
         "all_open",
-        "Diagnostic controls-disabled policy: command every eligible setting to 1.0 from the first common control decision",
+        "Diagnostic extreme policy on controls-disabled base: command every eligible setting to 1.0 from the first common control decision",
         True,
         False,
     ),
     "all_closed": BaselineDefinition(
         "all_closed",
-        "Diagnostic controls-disabled policy: command every eligible setting to 0.0 from the first common control decision",
+        "Diagnostic extreme policy on controls-disabled base: command every eligible setting to 0.0 from the first common control decision",
         True,
+        False,
+    ),
+    "hold": BaselineDefinition(
+        "hold",
+        "Debug-only frozen-readback policy. Excluded from the Formal comparison matrix because on a controls-disabled base it can collapse to No-control.",
+        True,
+        False,
         False,
     ),
 }
 
-FIXED_BASELINE_IDS = ("no_control", "internal_rtc", "hold", "all_open", "all_closed")
+# Formal comparison matrix. Hold remains callable for engineering/debug experiments, but is
+# deliberately excluded so the paper does not count a duplicate No-control-like strategy.
+FORMAL_FIXED_BASELINE_IDS = ("no_control", "internal_rtc", "all_open", "all_closed")
+DIAGNOSTIC_FIXED_BASELINE_IDS = ("hold",)
+SUPPORTED_FIXED_BASELINE_IDS = FORMAL_FIXED_BASELINE_IDS + DIAGNOSTIC_FIXED_BASELINE_IDS
+# Backward-compatible name used by older callers: now means the Formal fixed set.
+FIXED_BASELINE_IDS = FORMAL_FIXED_BASELINE_IDS
 
 # Backward-compatible aliases for pre-audit manifests. New Formal evidence must use the
 # explicit names above so No-control can never be confused with Internal-RTC.
@@ -78,11 +87,13 @@ def write_no_control_inp(
     *,
     swmm_threads: int | None = None,
 ) -> Path:
-    """Create the scientific No-control INP.
+    """Create the scientific No-supervisory-RTC INP.
 
-    No-control means: identical physical network and forcing, native ``[CONTROLS]``
-    disabled, and no Python control writes. It is deliberately *not* all-open/all-closed.
-    Pump curves, initial status, storage geometry and all non-policy physics are retained.
+    This removes user-defined supervisory ``[CONTROLS]`` only. It intentionally preserves
+    pump curves, initial pump status, intrinsic [PUMPS] Startup/Shutoff depths, storage
+    geometry, regulator physics and all forcing. No Python control writes are made. It is
+    therefore neither All-open nor All-closed and remains an operationally meaningful
+    reference representing the network without supervisory RTC.
     """
 
     result = build_runtime_inp(
@@ -129,12 +140,7 @@ def frozen_hold_controller() -> Callable[[CausalObservation], ControllerAction]:
 
 
 def fixed_baseline_controller(strategy: str):
-    """Return the deterministic Python controller for a fixed baseline.
-
-    ``None`` means the SWMM runtime itself is the policy, which is correct for No-control
-    and Internal-RTC. Static diagnostic policies start at the same configured control epoch
-    as Proposed so full-event comparisons share the same uncontrolled history prefix.
-    """
+    """Return the deterministic Python controller for a fixed/reference strategy."""
 
     strategy = canonical_baseline_id(strategy)
     if strategy in {"no_control", "internal_rtc"}:
@@ -145,4 +151,4 @@ def fixed_baseline_controller(strategy: str):
         return constant_setting_controller(1.0, "ALL_OPEN")
     if strategy == "all_closed":
         return constant_setting_controller(0.0, "ALL_CLOSED")
-    raise ValueError(f"not a fixed baseline strategy: {strategy}")
+    raise ValueError(f"not a supported fixed baseline strategy: {strategy}")

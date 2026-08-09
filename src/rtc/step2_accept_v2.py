@@ -8,7 +8,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .acceptance import mae, rank_correlation, rmse
+from .acceptance import rank_correlation
+from .code_contract import rtc_source_tree_sha256
 from .contracts import load_priority_nodes
 from .flood_volume import trapezoid_node_flood_volume
 from .large_model_cli import _device
@@ -20,61 +21,200 @@ def _sha(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def _group() -> dict[str, object]:
+    return {
+        "depth_sse": 0.0,
+        "depth_n": 0,
+        "flow_sse": 0.0,
+        "flow_n": 0,
+        "pred_tfv": [],
+        "true_tfv": [],
+        "pred_pfv": [],
+        "true_pfv": [],
+    }
+
+
 def accept_step2_large_v2_main() -> None:
-    parser=argparse.ArgumentParser(description="Accept Step2 using exact cumulative SWMM flooding-volume truth")
-    parser.add_argument("--manifest",required=True); parser.add_argument("--graph",required=True); parser.add_argument("--model",required=True)
-    parser.add_argument("--priority"); parser.add_argument("--out",required=True); parser.add_argument("--batch-size",type=int,default=2); parser.add_argument("--device")
-    args=parser.parse_args()
-    device=_device(args.device); graph=_load_graph(args.graph); model=_load_step2(args.model,device)
-    manifest=load_shard_manifest(args.manifest)
-    up=torch.as_tensor(graph.actuator_upstream,dtype=torch.long,device=device); down=torch.as_tensor(graph.actuator_downstream,dtype=torch.long,device=device)
-    static=torch.as_tensor(graph.static_node_features,dtype=torch.float32,device=device); edges=torch.as_tensor(graph.edge_index,dtype=torch.long,device=device)
-    physics=torch.as_tensor(graph.actuator_physics,dtype=torch.float32,device=device)
-    pred_depth=[]; true_depth=[]; pred_flow=[]; true_flow=[]; pred_tfv=[]; true_tfv=[]; pred_pfv=[]; true_pfv=[]
-    pidx=None
+    parser = argparse.ArgumentParser(
+        description="Accept Step2 on exact SWMM truth with rainfall-group-balanced metrics"
+    )
+    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--graph", required=True)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--priority")
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--batch-size", type=int, default=2)
+    parser.add_argument("--device")
+    args = parser.parse_args()
+    device = _device(args.device)
+    graph = _load_graph(args.graph)
+    model = _load_step2(args.model, device)
+    manifest = load_shard_manifest(args.manifest)
+    model_meta = dict(getattr(model, "runtime_metadata", {}))
+    if int(model_meta.get("model_step_seconds", -1)) != int(manifest["model_step_seconds"]):
+        raise ValueError("Step2 validation shard step differs from model checkpoint")
+    if int(model_meta.get("horizon_steps", -1)) != int(manifest["horizon_steps"]):
+        raise ValueError("Step2 validation shard horizon differs from model checkpoint")
+
+    up = torch.as_tensor(graph.actuator_upstream, dtype=torch.long, device=device)
+    down = torch.as_tensor(graph.actuator_downstream, dtype=torch.long, device=device)
+    static = torch.as_tensor(
+        graph.static_node_features, dtype=torch.float32, device=device
+    )
+    edges = torch.as_tensor(graph.edge_index, dtype=torch.long, device=device)
+    physics = torch.as_tensor(
+        graph.actuator_physics, dtype=torch.float32, device=device
+    )
+    pidx = None
     if args.priority:
-        priority=load_priority_nodes(args.priority); missing=sorted(set(priority)-set(graph.node_ids))
-        if missing: raise ValueError(f"priority mapping incompatible with graph: {missing}")
-        pidx=np.asarray([graph.node_ids.index(n) for n in priority],dtype=int)
+        priority = load_priority_nodes(args.priority)
+        missing = sorted(set(priority) - set(graph.node_ids))
+        if missing:
+            raise ValueError(f"priority mapping incompatible with graph: {missing}")
+        pidx = np.asarray([graph.node_ids.index(n) for n in priority], dtype=int)
+
+    groups: dict[str, dict[str, object]] = {}
     with torch.no_grad():
         for item in manifest["shards"]:
-            with np.load(str(item["path"]),allow_pickle=False) as ds:
+            with np.load(str(item["path"]), allow_pickle=False) as ds:
                 if "exact_node_flood_volume_m3" not in ds.files:
-                    raise ValueError("Step2 Formal acceptance requires exact SWMM node flooding-volume truth in every shard")
-                count=ds["initial_state"].shape[0]
-                for start in range(0,count,args.batch_size):
-                    end=min(count,start+args.batch_size); b=end-start
-                    initial=torch.as_tensor(ds["initial_state"][start:end],dtype=torch.float32,device=device)
-                    rain=torch.as_tensor(ds["rainfall"][start:end],dtype=torch.float32,device=device)
-                    settings=torch.as_tensor(ds["settings"][start:end],dtype=torch.float32,device=device)
-                    prev=torch.as_tensor(ds["previous_actuator_flow"][start:end],dtype=torch.float32,device=device)
-                    rollout=model.rollout(initial,rain,settings,prev,up,down,physics.unsqueeze(0).expand(b,-1,-1),static,edges)
-                    dt=torch.as_tensor(np.diff(ds["elapsed_seconds"][start:end].astype(np.float32),axis=1),dtype=torch.float32,device=device)
-                    pred_node=trapezoid_node_flood_volume(initial,rollout.states,flood_rate_index=2,dt_seconds=dt).cpu().numpy()
-                    exact=ds["exact_node_flood_volume_m3"][start:end].astype(float)
-                    ps=rollout.states.cpu().numpy(); pf=rollout.actuator_flows.cpu().numpy(); ts=ds["target_states"][start:end]; tf=ds["target_actuator_flows"][start:end]
-                    pred_depth.append(ps[...,0]); true_depth.append(ts[...,0]); pred_flow.append(pf); true_flow.append(tf)
-                    pred_tfv.extend(pred_node.sum(axis=1)); true_tfv.extend(exact.sum(axis=1))
-                    if pidx is not None:
-                        pred_pfv.extend(pred_node[:,pidx].sum(axis=1)); true_pfv.extend(exact[:,pidx].sum(axis=1))
-    metrics={
-        "depth_rmse_m":rmse(np.concatenate(pred_depth),np.concatenate(true_depth)),
-        "managed_flow_rmse_m3s":rmse(np.concatenate(pred_flow),np.concatenate(true_flow)),
-        "tfv_exact_truth_mae_m3":mae(np.asarray(pred_tfv),np.asarray(true_tfv)),
-        "tfv_exact_truth_rank_correlation":rank_correlation(np.asarray(pred_tfv),np.asarray(true_tfv)),
-    }
+                    raise ValueError(
+                        "Step2 Formal acceptance requires exact SWMM node flooding-volume truth"
+                    )
+                if "rainfall_group" not in ds.files:
+                    raise ValueError("Step2 Formal acceptance requires rainfall_group provenance")
+                if int(ds["model_step_seconds"].item()) != int(manifest["model_step_seconds"]):
+                    raise ValueError("Step2 validation shard embedded step mismatch")
+                count = ds["initial_state"].shape[0]
+                rainfall_groups = ds["rainfall_group"].astype(str)
+                for start in range(0, count, args.batch_size):
+                    end = min(count, start + args.batch_size)
+                    b = end - start
+                    initial = torch.as_tensor(
+                        ds["initial_state"][start:end], dtype=torch.float32, device=device
+                    )
+                    rain = torch.as_tensor(
+                        ds["rainfall"][start:end], dtype=torch.float32, device=device
+                    )
+                    settings = torch.as_tensor(
+                        ds["settings"][start:end], dtype=torch.float32, device=device
+                    )
+                    prev = torch.as_tensor(
+                        ds["previous_actuator_flow"][start:end],
+                        dtype=torch.float32,
+                        device=device,
+                    )
+                    rollout = model.rollout(
+                        initial,
+                        rain,
+                        settings,
+                        prev,
+                        up,
+                        down,
+                        physics.unsqueeze(0).expand(b, -1, -1),
+                        static,
+                        edges,
+                    )
+                    elapsed = ds["elapsed_seconds"][start:end].astype(np.float32)
+                    dt_np = np.diff(elapsed, axis=1)
+                    expected_step = float(manifest["model_step_seconds"])
+                    if np.any(np.abs(dt_np - expected_step) > 1e-6):
+                        raise ValueError("Step2 validation branch violates frozen model step")
+                    pred_node = trapezoid_node_flood_volume(
+                        initial,
+                        rollout.states,
+                        flood_rate_index=2,
+                        dt_seconds=torch.as_tensor(dt_np, dtype=torch.float32, device=device),
+                    ).cpu().numpy()
+                    exact = ds["exact_node_flood_volume_m3"][start:end].astype(float)
+                    ps = rollout.states.cpu().numpy()
+                    pf = rollout.actuator_flows.cpu().numpy()
+                    ts = ds["target_states"][start:end]
+                    tf = ds["target_actuator_flows"][start:end]
+                    for local, group_id in enumerate(rainfall_groups[start:end]):
+                        agg = groups.setdefault(str(group_id), _group())
+                        depth_err = ps[local, ..., 0] - ts[local, ..., 0]
+                        flow_err = pf[local] - tf[local]
+                        agg["depth_sse"] = float(agg["depth_sse"]) + float(
+                            np.square(depth_err).sum()
+                        )
+                        agg["depth_n"] = int(agg["depth_n"]) + int(depth_err.size)
+                        agg["flow_sse"] = float(agg["flow_sse"]) + float(
+                            np.square(flow_err).sum()
+                        )
+                        agg["flow_n"] = int(agg["flow_n"]) + int(flow_err.size)
+                        agg["pred_tfv"].append(float(pred_node[local].sum()))  # type: ignore[union-attr]
+                        agg["true_tfv"].append(float(exact[local].sum()))  # type: ignore[union-attr]
+                        if pidx is not None:
+                            agg["pred_pfv"].append(float(pred_node[local, pidx].sum()))  # type: ignore[union-attr]
+                            agg["true_pfv"].append(float(exact[local, pidx].sum()))  # type: ignore[union-attr]
+    if not groups:
+        raise ValueError("Step2 validation contains no rainfall groups")
+
+    group_metrics: list[dict[str, float]] = []
+    for group_id, agg in sorted(groups.items()):
+        pred_tfv = np.asarray(agg["pred_tfv"], dtype=float)
+        true_tfv = np.asarray(agg["true_tfv"], dtype=float)
+        row = {
+            "rainfall_group": group_id,
+            "depth_rmse_m": float(
+                np.sqrt(float(agg["depth_sse"]) / max(int(agg["depth_n"]), 1))
+            ),
+            "managed_flow_rmse_m3s": float(
+                np.sqrt(float(agg["flow_sse"]) / max(int(agg["flow_n"]), 1))
+            ),
+            "tfv_exact_truth_mae_m3": float(np.mean(np.abs(pred_tfv - true_tfv))),
+            "tfv_exact_truth_rank_correlation": float(
+                rank_correlation(pred_tfv, true_tfv)
+            ),
+        }
+        if pidx is not None:
+            pred_pfv = np.asarray(agg["pred_pfv"], dtype=float)
+            true_pfv = np.asarray(agg["true_pfv"], dtype=float)
+            row["priority_flood_exact_truth_mae_m3"] = float(
+                np.mean(np.abs(pred_pfv - true_pfv))
+            )
+            row["priority_flood_exact_truth_rank_correlation"] = float(
+                rank_correlation(pred_pfv, true_pfv)
+            )
+        group_metrics.append(row)
+
+    metric_names = [
+        "depth_rmse_m",
+        "managed_flow_rmse_m3s",
+        "tfv_exact_truth_mae_m3",
+        "tfv_exact_truth_rank_correlation",
+    ]
     if pidx is not None:
-        metrics["priority_flood_exact_truth_mae_m3"]=mae(np.asarray(pred_pfv),np.asarray(true_pfv))
-        metrics["priority_flood_exact_truth_rank_correlation"]=rank_correlation(np.asarray(pred_pfv),np.asarray(true_pfv))
-    payload={
-        "contract":"STEP2_LARGE_EXACT_TRUTH_ACCEPTANCE_V3_TRAPEZOID",
-        "model_sha256":_sha(args.model),"manifest_sha256":sha256_file(args.manifest),
-        "metrics":metrics,"priority_diagnostic_only":True,
-        "truth_source_tfv_pfv":"SWMM_NODE_STATISTICS_CUMULATIVE_EXACT_HORIZON",
-        "prediction_volume_integration":"trapezoid_current_plus_future_flooding_rate",
+        metric_names += [
+            "priority_flood_exact_truth_mae_m3",
+            "priority_flood_exact_truth_rank_correlation",
+        ]
+    metrics = {
+        name: float(np.mean([row[name] for row in group_metrics]))
+        for name in metric_names
     }
-    Path(args.out).parent.mkdir(parents=True,exist_ok=True); Path(args.out).write_text(json.dumps(payload,indent=2,sort_keys=True)+"\n",encoding="utf-8")
-    print(json.dumps(payload,indent=2))
+    payload = {
+        "contract": "STEP2_EXACT_TRUTH_ACCEPTANCE_V4_GROUP_BALANCED_TIME_LOCKED",
+        "rtc_source_tree_sha256": rtc_source_tree_sha256(),
+        "model_sha256": _sha(args.model),
+        "manifest_sha256": sha256_file(args.manifest),
+        "model_step_seconds": int(manifest["model_step_seconds"]),
+        "horizon_steps": int(manifest["horizon_steps"]),
+        "rainfall_groups": len(group_metrics),
+        "aggregation": "equal_weight_per_rainfall_group",
+        "metrics": metrics,
+        "priority_diagnostic_only": True,
+        "truth_source_tfv_pfv": "SWMM_NODE_STATISTICS_CUMULATIVE_EXACT_HORIZON",
+        "prediction_volume_integration": "trapezoid_current_plus_future_flooding_rate",
+        "group_metrics": group_metrics,
+    }
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.out).write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(json.dumps(payload, indent=2))
 
 
-if __name__=="__main__": accept_step2_large_v2_main()
+if __name__ == "__main__":
+    accept_step2_large_v2_main()

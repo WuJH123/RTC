@@ -1,24 +1,25 @@
 {
-  "contract": "FORMAL_BASELINE_PLAN_V3",
+  "contract": "FORMAL_BASELINE_PLAN_V4_NO_DUPLICATE_HOLD",
   "strategies": [
     "proposed",
     "no_control",
     "internal_rtc",
-    "hold",
     "all_open",
     "all_closed"
   ],
   "notes": {
     "proposed": "TFV-first sparse-state + differentiable continuous MPC. Runs on the controls-disabled physical base; priority PFV is soft/diagnostic, never a hard admission gate.",
-    "no_control": "Same physical network and forcing with [CONTROLS] disabled and no Python setting writes. This is NOT all-open.",
+    "no_control": "No-supervisory-RTC. Remove executable [CONTROLS] and make no Python writes, while preserving physical forcing, pump curves/initial status and intrinsic [PUMPS] Startup/Shutoff level logic. This is neither All-open nor All-closed.",
     "internal_rtc": "Original frozen event INP with native [CONTROLS] enabled and no Python setting writes.",
-    "hold": "Controls-disabled base; at the first common control decision freeze the actuator readback vector for the rest of the event.",
-    "all_open": "Diagnostic controls-disabled policy; from the first common control decision command every eligible continuous setting to 1.0 and hold it there.",
-    "all_closed": "Diagnostic controls-disabled policy; from the first common control decision command every eligible continuous setting to 0.0 and hold it there."
+    "all_open": "Extreme diagnostic comparator on the controls-disabled base; from the first common control decision command every eligible continuous setting to 1.0 and hold it there.",
+    "all_closed": "Extreme diagnostic comparator on the controls-disabled base; from the first common control decision command every eligible continuous setting to 0.0 and hold it there."
+  },
+  "excluded_formal_strategies": {
+    "hold": "Available only for runtime debugging. On a controls-disabled base its frozen first-decision readback can collapse to the same effective policy as No-control, so it is excluded to avoid a duplicate comparator."
   },
   "policy_isolation": {
     "internal_rtc_native_controls": true,
-    "all_other_strategies_native_controls": false,
-    "common_precontrol_prefix": "Proposed, Hold, All-open and All-closed share the same controls-disabled prefix until the frozen control_start_minutes epoch."
+    "all_other_formal_strategies_native_controls": false,
+    "common_precontrol_prefix": "Proposed, All-open and All-closed share the same controls-disabled prefix until the frozen control_start_minutes epoch. No-control stays on that no-supervisory-RTC base for the entire event."
   }
 }

@@ -2,21 +2,24 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
+from .flood_volume import trapezoid_node_flood_volume
 from .large_model_cli import _amp_enabled, _device, _step2_stats
 from .models import DifferentiableHydraulicWorldModel
 from .production_cli import _load_graph
 from .step2_shards import load_shard_manifest, sha256_file
+from .train_state import restore_training_state, save_training_state, training_contract_sha
 from .training import save_torch_checkpoint
 
 
 def train_step2_large_v2_main() -> None:
     parser = argparse.ArgumentParser(
-        description="Train Step2 with state/flow supervision plus exact cumulative SWMM flooding-volume labels"
+        description="Train the time-locked Step2 world model with resumable exact-TFV supervision"
     )
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--graph", required=True)
@@ -31,9 +34,13 @@ def train_step2_large_v2_main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device")
     parser.add_argument("--no-amp", action="store_true")
+    parser.add_argument("--resume-state")
+    parser.add_argument("--no-resume-training", action="store_true")
     args = parser.parse_args()
     if args.exact_flood_loss_weight <= 0:
-        raise ValueError("exact-flood-loss-weight must be positive for Formal Step2 V2")
+        raise ValueError("exact-flood-loss-weight must be positive for Formal Step2")
+    if min(args.epochs, args.batch_size, args.grad_accum) <= 0:
+        raise ValueError("Step2 epochs/batch/grad-accum must be positive")
 
     torch.manual_seed(args.seed)
     device = _device(args.device)
@@ -41,9 +48,17 @@ def train_step2_large_v2_main() -> None:
         torch.set_float32_matmul_precision("high")
     graph = _load_graph(args.graph)
     manifest = load_shard_manifest(args.manifest)
-    (state_mean, state_std), (rain_mean, rain_std), (physics_mean, physics_std), (static_mean, static_std), flow_std = _step2_stats(manifest, graph)
+    model_step_seconds = int(manifest["model_step_seconds"])
+    horizon_steps = int(manifest["horizon_steps"])
+    (
+        (state_mean, state_std),
+        (rain_mean, rain_std),
+        (physics_mean, physics_std),
+        (static_mean, static_std),
+        flow_std,
+    ) = _step2_stats(manifest, graph)
     with np.load(str(manifest["shards"][0]["path"]), allow_pickle=False) as first:
-        config = {
+        core_config = {
             "state_dim": int(first["initial_state"].shape[-1]),
             "rainfall_dim": int(first["rainfall"].shape[-1]),
             "node_static_dim": int(graph.static_node_features.shape[-1]),
@@ -53,7 +68,7 @@ def train_step2_large_v2_main() -> None:
             "actuator_embedding_dim": args.actuator_embedding_dim,
         }
 
-    model = DifferentiableHydraulicWorldModel(**config).to(device)
+    model = DifferentiableHydraulicWorldModel(**core_config).to(device)
     model.set_normalization(
         state_mean=torch.as_tensor(state_mean, device=device),
         state_std=torch.as_tensor(state_std, device=device),
@@ -67,18 +82,54 @@ def train_step2_large_v2_main() -> None:
     )
     up = torch.as_tensor(graph.actuator_upstream, dtype=torch.long, device=device)
     down = torch.as_tensor(graph.actuator_downstream, dtype=torch.long, device=device)
-    static = torch.as_tensor(graph.static_node_features, dtype=torch.float32, device=device)
+    static = torch.as_tensor(
+        graph.static_node_features, dtype=torch.float32, device=device
+    )
     edges = torch.as_tensor(graph.edge_index, dtype=torch.long, device=device)
-    physics = torch.as_tensor(graph.actuator_physics, dtype=torch.float32, device=device)
-    optimiser = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
+    physics = torch.as_tensor(
+        graph.actuator_physics, dtype=torch.float32, device=device
+    )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
     amp = _amp_enabled(device, not args.no_amp)
     scaler = torch.cuda.amp.GradScaler(enabled=amp)
     rng = np.random.default_rng(args.seed)
+    train_payload = {
+        "manifest_sha256": sha256_file(args.manifest),
+        "graph_sha256": sha256_file(args.graph),
+        "model_step_seconds": model_step_seconds,
+        "horizon_steps": horizon_steps,
+        "hidden_dim": args.hidden_dim,
+        "actuator_embedding_dim": args.actuator_embedding_dim,
+        "batch_size": args.batch_size,
+        "grad_accum": args.grad_accum,
+        "learning_rate": args.learning_rate,
+        "exact_flood_loss_weight": args.exact_flood_loss_weight,
+        "seed": args.seed,
+        "amp": amp,
+    }
+    contract_sha, code_sha = training_contract_sha("step2", train_payload)
+    resume_path = Path(args.resume_state or (str(args.out) + ".trainstate.pt"))
+    start_epoch = 0
     history: list[dict[str, float]] = []
+    if not args.no_resume_training and resume_path.is_file():
+        start_epoch, extra = restore_training_state(
+            resume_path,
+            expected_contract_sha256=contract_sha,
+            expected_code_sha256=code_sha,
+            model=model,
+            optimizer=optimizer,
+            scaler=scaler,
+            map_location=device,
+        )
+        if "numpy_rng_state" in extra:
+            rng.bit_generator.state = extra["numpy_rng_state"]
+        history = [dict(x) for x in extra.get("history", [])]
+    elif args.no_resume_training and resume_path.is_file():
+        resume_path.unlink()
 
-    for _epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         model.train()
-        optimiser.zero_grad(set_to_none=True)
+        optimizer.zero_grad(set_to_none=True)
         shard_order = list(manifest["shards"])
         rng.shuffle(shard_order)
         loss_sum = state_sum = flow_sum = flood_sum = 0.0
@@ -87,14 +138,23 @@ def train_step2_large_v2_main() -> None:
             with np.load(str(item["path"]), allow_pickle=False) as ds:
                 if "exact_node_flood_volume_m3" not in ds.files:
                     raise ValueError(
-                        f"Formal Step2 training requires exact cumulative flood truth in shard: {item['path']}"
+                        "Formal Step2 requires exact cumulative flood truth in every shard"
                     )
+                if int(ds["model_step_seconds"].item()) != model_step_seconds:
+                    raise ValueError("Step2 shard model step changed during training")
+                if int(ds["horizon_steps"].item()) != horizon_steps:
+                    raise ValueError("Step2 shard horizon changed during training")
                 arrays = [
                     torch.from_numpy(ds[name].astype(np.float32))
                     for name in (
-                        "initial_state", "rainfall", "settings", "previous_actuator_flow",
-                        "target_states", "target_actuator_flows",
-                        "exact_node_flood_volume_m3", "elapsed_seconds",
+                        "initial_state",
+                        "rainfall",
+                        "settings",
+                        "previous_actuator_flow",
+                        "target_states",
+                        "target_actuator_flows",
+                        "exact_node_flood_volume_m3",
+                        "elapsed_seconds",
                     )
                 ]
             loader = DataLoader(
@@ -104,43 +164,85 @@ def train_step2_large_v2_main() -> None:
                 num_workers=0,
                 pin_memory=device.type == "cuda",
             )
-            for initial, rain, settings, prev, target_state, target_flow, exact_volume, elapsed in loader:
+            for (
+                initial,
+                rain,
+                settings,
+                prev,
+                target_state,
+                target_flow,
+                exact_volume,
+                elapsed,
+            ) in loader:
                 initial, rain, settings, prev, target_state, target_flow, exact_volume, elapsed = [
                     x.to(device, non_blocking=True)
-                    for x in (initial, rain, settings, prev, target_state, target_flow, exact_volume, elapsed)
+                    for x in (
+                        initial,
+                        rain,
+                        settings,
+                        prev,
+                        target_state,
+                        target_flow,
+                        exact_volume,
+                        elapsed,
+                    )
                 ]
                 batch = initial.shape[0]
-                with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
+                with torch.autocast(
+                    device_type=device.type, dtype=torch.float16, enabled=amp
+                ):
                     rollout = model.rollout(
-                        initial, rain, settings, prev, up, down,
-                        physics.unsqueeze(0).expand(batch, -1, -1), static, edges,
+                        initial,
+                        rain,
+                        settings,
+                        prev,
+                        up,
+                        down,
+                        physics.unsqueeze(0).expand(batch, -1, -1),
+                        static,
+                        edges,
                     )
-                    state_loss = (((rollout.states - target_state) / model.transition.state_std) ** 2).mean()
-                    flow_loss = (((rollout.actuator_flows - target_flow) / model.actuator.flow_std) ** 2).mean()
+                    state_loss = (
+                        ((rollout.states - target_state) / model.transition.state_std) ** 2
+                    ).mean()
+                    flow_loss = (
+                        ((rollout.actuator_flows - target_flow) / model.actuator.flow_std)
+                        ** 2
+                    ).mean()
                     dt = elapsed[:, 1:] - elapsed[:, :-1]
-                    if torch.any(dt <= 0):
-                        raise ValueError("Step2 shard contains a non-increasing time grid")
-                    pred_node_volume = (
-                        rollout.states[..., 2].clamp_min(0.0) * dt[..., None]
-                    ).sum(dim=1)
+                    if torch.any(dt <= 0) or torch.any(
+                        torch.abs(dt - float(model_step_seconds)) > 1e-6
+                    ):
+                        raise ValueError("Step2 batch violates frozen model step")
+                    pred_node_volume = trapezoid_node_flood_volume(
+                        initial,
+                        rollout.states,
+                        flood_rate_index=2,
+                        dt_seconds=dt,
+                    )
                     exact = exact_volume.clamp_min(0.0)
                     node_volume_loss = torch.square(
                         torch.log1p(pred_node_volume) - torch.log1p(exact)
                     ).mean()
                     total_volume_loss = torch.square(
-                        torch.log1p(pred_node_volume.sum(dim=-1)) - torch.log1p(exact.sum(dim=-1))
+                        torch.log1p(pred_node_volume.sum(dim=-1))
+                        - torch.log1p(exact.sum(dim=-1))
                     ).mean()
                     exact_flood_loss = node_volume_loss + total_volume_loss
-                    full_loss = state_loss + flow_loss + args.exact_flood_loss_weight * exact_flood_loss
+                    full_loss = (
+                        state_loss
+                        + flow_loss
+                        + args.exact_flood_loss_weight * exact_flood_loss
+                    )
                     loss = full_loss / args.grad_accum
                 scaler.scale(loss).backward()
                 micro_step += 1
                 if micro_step % args.grad_accum == 0:
-                    scaler.unscale_(optimiser)
+                    scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
-                    scaler.step(optimiser)
+                    scaler.step(optimizer)
                     scaler.update()
-                    optimiser.zero_grad(set_to_none=True)
+                    optimizer.zero_grad(set_to_none=True)
                 n = int(batch)
                 loss_sum += float(full_loss.detach()) * n
                 state_sum += float(state_loss.detach()) * n
@@ -148,35 +250,70 @@ def train_step2_large_v2_main() -> None:
                 flood_sum += float(exact_flood_loss.detach()) * n
                 seen += n
         if micro_step % args.grad_accum:
-            scaler.unscale_(optimiser)
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
-            scaler.step(optimiser)
+            scaler.step(optimizer)
             scaler.update()
-            optimiser.zero_grad(set_to_none=True)
-        history.append({
-            "total": loss_sum / max(seen, 1),
-            "state": state_sum / max(seen, 1),
-            "flow": flow_sum / max(seen, 1),
-            "exact_flood": flood_sum / max(seen, 1),
-        })
+            optimizer.zero_grad(set_to_none=True)
+        history.append(
+            {
+                "total": loss_sum / max(seen, 1),
+                "state": state_sum / max(seen, 1),
+                "flow": flow_sum / max(seen, 1),
+                "exact_flood": flood_sum / max(seen, 1),
+            }
+        )
+        save_training_state(
+            resume_path,
+            contract_sha256=contract_sha,
+            rtc_source_tree_sha256=code_sha,
+            completed_epochs=epoch + 1,
+            model=model,
+            optimizer=optimizer,
+            scaler=scaler,
+            extra_state={
+                "numpy_rng_state": rng.bit_generator.state,
+                "history": history,
+            },
+        )
 
+    checkpoint_config = {
+        **core_config,
+        "model_step_seconds": model_step_seconds,
+        "horizon_steps": horizon_steps,
+        "time_contract": "STEP2_FIXED_DISCRETE_TIME_V1",
+        "training_contract_sha256": contract_sha,
+    }
     meta = save_torch_checkpoint(
         model,
         args.out,
-        model_config=config,
+        model_config=checkpoint_config,
         training_manifest_sha256=sha256_file(args.manifest),
         scientific_split="development",
     )
-    print(json.dumps({
-        "contract": "STEP2_TRAINING_STATE_FLOW_EXACT_CUMULATIVE_FLOOD_V2",
-        "checkpoint": meta,
-        "final_losses": history[-1],
-        "exact_flood_loss_weight": args.exact_flood_loss_weight,
-        "device": str(device),
-        "amp": amp,
-        "micro_batch": args.batch_size,
-        "grad_accum": args.grad_accum,
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "contract": "STEP2_TRAINING_V4_TIME_LOCKED_RESUMABLE",
+                "checkpoint": meta,
+                "model_step_seconds": model_step_seconds,
+                "horizon_steps": horizon_steps,
+                "completed_epochs": args.epochs,
+                "resumed_from_epoch": start_epoch,
+                "final_losses": history[-1] if history else None,
+                "exact_flood_loss_weight": args.exact_flood_loss_weight,
+                "prediction_volume_integration": "trapezoid_current_plus_future_flooding_rate",
+                "truth_source_tfv": "SWMM_NODE_STATISTICS_CUMULATIVE_EXACT_HORIZON",
+                "training_state": str(resume_path),
+                "training_contract_sha256": contract_sha,
+                "device": str(device),
+                "amp": amp,
+                "micro_batch": args.batch_size,
+                "grad_accum": args.grad_accum,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
