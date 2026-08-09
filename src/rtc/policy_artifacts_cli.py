@@ -9,6 +9,7 @@ _CANONICAL_RELATIVE = {
     "fresh_workspace_manifest": "FRESH_WORKSPACE_MANIFEST.json",
     "inp_preflight": "preflight/inp_audit.json",
     "time_scale_config": "contracts/time_scale_config.json",
+    "study_readiness": "contracts/study_readiness.json",
     "step1_model": "models/step1.pt",
     "step2_model": "models/step2.pt",
     "graph_schema": "formal_assets/graph_schema.npz",
@@ -61,7 +62,7 @@ def build_policy_artifact_map(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build the canonical v0.6.1 Policy-Lock artifact map from a completed study root"
+        description="Build the canonical v0.6.6 Policy-Lock artifact map from a completed study root"
     )
     parser.add_argument("--root", required=True)
     parser.add_argument("--frozen-inp", required=True)
@@ -78,7 +79,7 @@ def main() -> None:
         baseline_plan=args.baseline_plan,
         output_path=args.out,
     )
-    print(json.dumps({"contract": "POLICY_LOCK_ARTIFACT_MAP_V1", "artifacts": payload}, indent=2))
+    print(json.dumps({"contract": "POLICY_LOCK_ARTIFACT_MAP_V2_READINESS_BOUND", "artifacts": payload}, indent=2))
 
 
 if __name__ == "__main__":
