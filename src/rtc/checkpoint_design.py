@@ -45,7 +45,9 @@ def _assert_replayable_no_control_prefix(
     meta: dict[str, object], metadata_path: str | Path
 ) -> None:
     contract = str(meta.get("data_contract", ""))
-    if contract == "D0_D1_COMPACT_TRAJECTORY_V2":
+    if contract == "D0_D1_COMPACT_TRAJECTORY_V3_T0_CAUSAL":
+        if int(meta.get("initial_observation_elapsed_seconds", -1)) != 0:
+            raise ValueError(f"D0 checkpoint source does not prove t=0 inclusion: {metadata_path}")
         if meta.get("python_actuator_writes") is not False:
             raise ValueError(
                 f"D2/D3 checkpoint source contains/does not prove absence of Python writes: {metadata_path}"
@@ -73,7 +75,7 @@ def _assert_replayable_no_control_prefix(
             raise ValueError("cached No-control decision log must exist and be empty")
         return
     raise ValueError(
-        f"D2/D3 checkpoint source is not a replayable No-control trajectory: {metadata_path}"
+        f"D2/D3 checkpoint source is not a current replayable No-control trajectory: {metadata_path}"
     )
 
 
@@ -173,9 +175,6 @@ def design_checkpoints(
         _assert_replayable_no_control_prefix(meta, metadata_path)
         source_event_inp = _source_event_inp(item, meta)
         elapsed_all = state["elapsed_seconds"].to_numpy(dtype=int)
-        # The current D2/D3 replay API addresses checkpoints in whole minutes. If Phase-0
-        # is sampled faster than 60 s, only exact minute-aligned states are eligible so no
-        # silent integer truncation changes the replayed prefix.
         keep = (
             (elapsed_all >= minimum_elapsed_minutes * 60)
             & (elapsed_all % 60 == 0)
@@ -233,13 +232,14 @@ def design_checkpoints(
                 "checkpoint_id": f"{item['event_id']}:t{elapsed}",
                 "checkpoint_minutes": elapsed // 60,
                 "checkpoint_elapsed_seconds": elapsed,
-                "prefix_contract": "CONTROLS_DISABLED_NO_CONTROL_FROM_T0",
+                "prefix_contract": "EXACT_NO_CONTROL_PREFIX_REPLAY_V1",
                 "event_id": str(item["event_id"]),
                 "rainfall_group": str(item["rainfall_group"]),
                 "scientific_split": split,
                 "development_fold": str(item.get("development_fold", "")),
                 "inp_path": source_event_inp,
                 "trajectory_metadata_path": metadata_path,
+                "reference_swmm_engine_version": str(meta.get("swmm_engine_version", "")),
                 "network_max_depth_m": float(row["network_max_depth_m"]),
                 "network_total_flood_rate_m3s": float(
                     row["network_total_flood_rate_m3s"]
@@ -256,12 +256,14 @@ def design_checkpoints(
         raise RuntimeError("Final rainfall truth leaked into checkpoint design")
     if result["checkpoint_id"].duplicated().any():
         raise ValueError("duplicate checkpoint IDs")
+    if (result["reference_swmm_engine_version"].astype(str).str.len() == 0).any():
+        raise ValueError("checkpoint design lacks SWMM engine lineage")
     return result
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Design stratified replayable No-control D2/D3 checkpoints"
+        description="Design stratified, exactly replay-verifiable No-control D2/D3 checkpoints"
     )
     parser.add_argument(
         "--run-index", required=True, help="prefer BASELINE_CACHE/NO_CONTROL_D0_INDEX.csv"
@@ -286,10 +288,8 @@ def main() -> None:
                 "checkpoints": len(frame),
                 "events": int(frame["event_id"].nunique()),
                 "rainfall_groups": int(frame["rainfall_group"].nunique()),
-                "prefix_contract": "CONTROLS_DISABLED_NO_CONTROL_FROM_T0",
-                "splits": frame.groupby("scientific_split")["checkpoint_id"]
-                .count()
-                .to_dict(),
+                "prefix_contract": "EXACT_NO_CONTROL_PREFIX_REPLAY_V1",
+                "splits": frame.groupby("scientific_split")["checkpoint_id"].count().to_dict(),
                 "out": str(out),
             },
             indent=2,
