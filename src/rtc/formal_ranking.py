@@ -30,9 +30,11 @@ def _thresholds(path: str | Path) -> tuple[dict[str, float], dict[str, float]]:
     )
 
 
-def _heldout(frame: pd.DataFrame, *, split: str, development_fold: str) -> pd.DataFrame:
-    if "scientific_split" not in frame.columns:
-        raise ValueError("ranking evidence requires scientific_split")
+def _heldout(
+    frame: pd.DataFrame, *, split: str, development_fold: str
+) -> pd.DataFrame:
+    if "scientific_split" not in frame.columns or "rainfall_group" not in frame.columns:
+        raise ValueError("ranking evidence requires scientific_split and rainfall_group")
     out = frame[frame["scientific_split"].astype(str) == split].copy()
     if split == "development":
         if "development_fold" not in out.columns:
@@ -53,9 +55,9 @@ def _score_groups(
     pidx: np.ndarray,
     device: torch.device,
 ) -> pd.DataFrame:
-    group_keys = ["checkpoint_id"]
+    group_keys = ["rainfall_group", "checkpoint_id"]
     if "event_id" in frame.columns:
-        group_keys.insert(0, "event_id")
+        group_keys.insert(1, "event_id")
     exact_cache: dict[str, np.ndarray] = {}
     detail: list[dict[str, object]] = []
     for _, group in frame.groupby(group_keys, sort=False):
@@ -89,7 +91,12 @@ def _score_groups(
         detail.append(
             {
                 "source_kind": source_kind,
-                "event_id": str(group["event_id"].iloc[0]) if "event_id" in group.columns else "",
+                "rainfall_group": str(group["rainfall_group"].iloc[0]),
+                "event_id": (
+                    str(group["event_id"].iloc[0])
+                    if "event_id" in group.columns
+                    else ""
+                ),
                 "checkpoint_id": str(group["checkpoint_id"].iloc[0]),
                 "candidate_count": len(group),
                 "tfv_rank_correlation": rank_correlation(
@@ -114,6 +121,41 @@ def _score_groups(
     return result
 
 
+def _balanced_metrics(frame: pd.DataFrame, prefix: str) -> dict[str, float]:
+    per_group = (
+        frame.groupby("rainfall_group", as_index=False)[
+            [
+                "tfv_rank_correlation",
+                "pfv_rank_correlation",
+                "tfv_top1_hit",
+                "tfv_selected_regret_m3",
+            ]
+        ]
+        .mean(numeric_only=True)
+        .reset_index(drop=True)
+    )
+    if per_group.empty:
+        raise ValueError(f"no rainfall-group ranking metrics for {prefix}")
+
+    def finite_mean(column: str) -> float:
+        values = per_group[column].to_numpy(dtype=float)
+        values = values[np.isfinite(values)]
+        if not values.size:
+            raise ValueError(f"no finite {prefix} ranking values for {column}")
+        return float(values.mean())
+
+    return {
+        f"{prefix}_tfv_rank_correlation": finite_mean("tfv_rank_correlation"),
+        f"{prefix}_pfv_rank_correlation": finite_mean("pfv_rank_correlation"),
+        f"{prefix}_tfv_top1_hit_rate": finite_mean("tfv_top1_hit"),
+        f"{prefix}_tfv_selected_regret_m3": finite_mean(
+            "tfv_selected_regret_m3"
+        ),
+        f"{prefix}_ranking_checkpoints": float(len(frame)),
+        f"{prefix}_ranking_rainfall_groups": float(len(per_group)),
+    }
+
+
 def run_ranking_gate(
     *,
     manifest_path: str | Path,
@@ -130,9 +172,9 @@ def run_ranking_gate(
 ) -> dict[str, object]:
     d2 = join_manifest_runs(pd.read_csv(manifest_path), pd.read_csv(run_summary_path))
     d2 = _heldout(d2, split=split, development_fold=development_fold)
-    action_keys = ["checkpoint_id", "candidate_action_sha256"]
+    action_keys = ["rainfall_group", "checkpoint_id", "candidate_action_sha256"]
     if "event_id" in d2.columns:
-        action_keys.insert(0, "event_id")
+        action_keys.insert(1, "event_id")
     d2 = d2.drop_duplicates(action_keys).copy()
 
     d3 = _heldout(
@@ -140,7 +182,12 @@ def run_ranking_gate(
         split=split,
         development_fold=development_fold,
     )
-    required_d3 = {"checkpoint_id", "sequence_sha256", "metadata_path"}
+    required_d3 = {
+        "rainfall_group",
+        "checkpoint_id",
+        "sequence_sha256",
+        "metadata_path",
+    }
     missing = sorted(required_d3 - set(d3.columns))
     if missing:
         raise ValueError(f"D3 ranking summary lacks columns: {missing}")
@@ -174,23 +221,10 @@ def run_ranking_gate(
     )
     detail = pd.concat([d2_detail, d3_detail], ignore_index=True)
 
-    def metrics_for(frame: pd.DataFrame, prefix: str) -> dict[str, float]:
-        return {
-            f"{prefix}_tfv_rank_correlation": float(frame["tfv_rank_correlation"].mean()),
-            f"{prefix}_pfv_rank_correlation": float(frame["pfv_rank_correlation"].mean()),
-            f"{prefix}_tfv_top1_hit_rate": float(frame["tfv_top1_hit"].mean()),
-            f"{prefix}_tfv_selected_regret_m3": float(
-                frame["tfv_selected_regret_m3"].mean()
-            ),
-            f"{prefix}_ranking_checkpoints": float(len(frame)),
-        }
-
     metrics = {
-        **metrics_for(d2_detail, "d2"),
-        **metrics_for(d3_detail, "d3"),
+        **_balanced_metrics(d2_detail, "d2"),
+        **_balanced_metrics(d3_detail, "d3"),
     }
-    # Conservative combined diagnostics retained for compact reporting; Formal thresholds
-    # should target the explicit D2/D3 metrics above.
     metrics["tfv_rank_correlation"] = min(
         metrics["d2_tfv_rank_correlation"], metrics["d3_tfv_rank_correlation"]
     )
@@ -208,11 +242,12 @@ def run_ranking_gate(
     detail_path.parent.mkdir(parents=True, exist_ok=True)
     detail.to_csv(detail_path, index=False)
     payload: dict[str, object] = {
-        "contract": "SWMM_JOINT_ACTION_RANKING_ACCEPTANCE_V4_D2_D3",
+        "contract": "SWMM_JOINT_ACTION_RANKING_ACCEPTANCE_V5_D2_D3_GROUP_BALANCED",
         "passed": result.passed,
         "failed_metrics": list(result.failed_metrics),
         "metrics": result.metrics,
         "thresholds": {"minimum": minimum, "maximum": maximum},
+        "aggregation": "checkpoint_metrics_then_equal_weight_per_rainfall_group",
         "split": split,
         "development_fold": development_fold if split == "development" else "",
         "step2_sha256": _sha(step2_path),
@@ -223,7 +258,10 @@ def run_ranking_gate(
         "truth_source_tfv_pfv": "SWMM_NODE_STATISTICS_CUMULATIVE_EXACT_HORIZON",
         "priority_metrics_diagnostic_only": True,
         "detail_csv": str(detail_path),
-        "interpretation": "D2 validates local/single-actuator ordering; D3 validates the joint multi-actuator multi-step sequence ordering actually required by MPC.",
+        "interpretation": (
+            "D2 validates local/single-actuator ordering; D3 validates joint multi-actuator "
+            "multi-step sequence ordering. Independent rainfall groups receive equal Formal weight."
+        ),
     }
     Path(output_path).write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -233,7 +271,7 @@ def run_ranking_gate(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Held-out exact-SWMM ranking gate for both D2 and D3 action spaces"
+        description="Group-balanced exact-SWMM ranking gate for D2 and D3 action spaces"
     )
     parser.add_argument("--manifest", required=True, help="D2 design manifest")
     parser.add_argument("--run-summary", required=True, help="D2 run summary")
