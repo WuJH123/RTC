@@ -167,6 +167,8 @@ def run_control_sequence_branch(
         report_path.unlink(missing_ok=True)
         engine_output_path.unlink(missing_ok=True)
 
+    control_block_steps = control_block_seconds // python_intervention_seconds
+    model_horizon_steps = len(normalized) * control_block_steps
     metadata = {
         "branch_id": branch_id,
         "data_contract": "D3_CONTROLS_DISABLED_COMPACT_V2",
@@ -174,7 +176,12 @@ def run_control_sequence_branch(
         "sequence_sha256": canonical_sequence_sha(normalized),
         "settings_sequence": normalized,
         "control_block_seconds": int(control_block_seconds),
-        "horizon_steps": len(normalized),
+        "control_blocks": len(normalized),
+        "control_block_steps": int(control_block_steps),
+        "model_step_seconds": int(python_intervention_seconds),
+        "horizon_steps": int(model_horizon_steps),
+        "model_horizon_seconds": int(model_horizon_steps * python_intervention_seconds),
+        "d3_time_contract": "D3_MODEL_STEP_CONTROL_BLOCK_ALIGNMENT_V1",
         "inp_path": str(inp.resolve()),
         "inp_sha256": sha256_file(inp),
         "native_controls_enabled": False,
