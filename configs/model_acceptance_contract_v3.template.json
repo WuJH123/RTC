@@ -1,6 +1,6 @@
 {
   "contract": "MODEL_ACCEPTANCE_CONTRACT_V3_TFV_FIRST",
-  "instruction": "Replace every placeholder using development-only engineering/scientific preregistration before calibration/final. Priority PFV metrics are diagnostic/secondary and are not hard policy-safety gates.",
+  "instruction": "Replace every placeholder using development-only engineering/scientific preregistration before calibration/final. Priority PFV metrics are diagnostic/secondary and are not hard policy-safety gates. Candidate ranking must pass both D2 local single-actuator and D3 joint multi-actuator sequence evidence because online MPC optimizes the joint action space.",
   "step1": {
     "minimum": {
       "unobserved_depth_nse": "REPLACE_BEFORE_FORMAL"
@@ -31,11 +31,14 @@
   },
   "candidate_ranking": {
     "minimum": {
-      "tfv_rank_correlation": "REPLACE_BEFORE_FORMAL",
-      "tfv_top1_hit_rate": "REPLACE_BEFORE_FORMAL"
+      "d2_tfv_rank_correlation": "REPLACE_BEFORE_FORMAL",
+      "d2_tfv_top1_hit_rate": "REPLACE_BEFORE_FORMAL",
+      "d3_tfv_rank_correlation": "REPLACE_BEFORE_FORMAL",
+      "d3_tfv_top1_hit_rate": "REPLACE_BEFORE_FORMAL"
     },
     "maximum": {
-      "tfv_selected_regret_m3": "REPLACE_BEFORE_FORMAL"
+      "d2_tfv_selected_regret_m3": "REPLACE_BEFORE_FORMAL",
+      "d3_tfv_selected_regret_m3": "REPLACE_BEFORE_FORMAL"
     }
   }
 }
