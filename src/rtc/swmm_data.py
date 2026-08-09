@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from .data_design import canonical_action_sha
 from .inp import discover_actuators, discover_nodes
 
 
@@ -14,6 +15,7 @@ class BranchResult:
     branch_id: str
     node_path: str
     actuator_path: str
+    subcatchment_path: str
     metadata_path: str
     flow_routing_error_pct: float
 
@@ -40,12 +42,13 @@ def run_independent_control_branch(
 
     Each branch creates a fresh Simulation, replays the native prefix without Python
     overrides, records the exact pre-action checkpoint, then commands the complete
-    continuous action and records target/current readback plus hydraulics. ``step_advance``
+    continuous action and records target/current readback, node hydraulics, and the
+    realised rainfall/runoff available from SWMM at each sampled time. ``step_advance``
     changes only the Python intervention/output stride, never SWMM's routing timestep.
     """
 
     try:
-        from pyswmm import Links, Nodes, Simulation
+        from pyswmm import Links, Nodes, Simulation, Subcatchments
     except ImportError as exc:  # pragma: no cover - optional dependency
         raise RuntimeError("install the SWMM extra: pip install -e '.[swmm]'") from exc
 
@@ -71,13 +74,16 @@ def run_independent_control_branch(
 
     node_path = out / f"{branch_id}.nodes.csv.gz"
     actuator_path = out / f"{branch_id}.actuators.csv.gz"
+    subcatchment_path = out / f"{branch_id}.subcatchments.csv.gz"
     metadata_path = out / f"{branch_id}.json"
     checkpoint_seconds = checkpoint_minutes * 60
     stop_seconds = (checkpoint_minutes + horizon_minutes) * 60
 
     with Simulation(str(inp_path)) as sim, gzip.open(
         node_path, "wt", encoding="utf-8", newline=""
-    ) as node_fh, gzip.open(actuator_path, "wt", encoding="utf-8", newline="") as act_fh:
+    ) as node_fh, gzip.open(actuator_path, "wt", encoding="utf-8", newline="") as act_fh, gzip.open(
+        subcatchment_path, "wt", encoding="utf-8", newline=""
+    ) as sub_fh:
         import csv
 
         sim.step_advance(python_intervention_seconds)
@@ -86,10 +92,13 @@ def run_independent_control_branch(
         engine_version = str(sim.engine_version)
         links = Links(sim)
         nodes = Nodes(sim)
+        subcatchments = Subcatchments(sim)
         link_obj = {aid: links[aid] for aid in catalog.ids}
         node_obj = {nid: nodes[nid] for nid in node_ids}
+        sub_obj = {obj.subcatchmentid: obj for obj in subcatchments}
         node_writer = csv.writer(node_fh)
         act_writer = csv.writer(act_fh)
+        sub_writer = csv.writer(sub_fh)
         node_writer.writerow(
             ["elapsed_seconds", "datetime", "phase", "node_id", "depth", "head", "flooding", "volume"]
         )
@@ -104,6 +113,9 @@ def run_independent_control_branch(
                 "current_setting",
                 "flow",
             ]
+        )
+        sub_writer.writerow(
+            ["elapsed_seconds", "datetime", "phase", "subcatchment_id", "rainfall", "runoff"]
         )
         checkpoint_recorded = False
         for _ in sim:
@@ -132,6 +144,10 @@ def run_independent_control_branch(
                         obj.flow,
                     ]
                 )
+            for sid, obj in sub_obj.items():
+                sub_writer.writerow(
+                    [elapsed, sim.current_time.isoformat(), phase, sid, obj.rainfall, obj.runoff]
+                )
 
             if elapsed == checkpoint_seconds and not checkpoint_recorded:
                 checkpoint_recorded = True
@@ -144,26 +160,31 @@ def run_independent_control_branch(
 
     metadata = {
         "branch_id": branch_id,
+        "candidate_action_sha256": canonical_action_sha(candidate_settings),
         "inp_path": str(inp_path.resolve()),
         "inp_sha256": sha256_file(inp_path),
         "checkpoint_minutes": checkpoint_minutes,
         "horizon_minutes": horizon_minutes,
         "python_intervention_seconds": python_intervention_seconds,
         "actuator_count": len(catalog.actuators),
+        "subcatchment_count": len(sub_obj),
         "candidate_settings": {k: float(v) for k, v in sorted(candidate_settings.items())},
         "prefix_policy": "native_swmm_no_python_override_until_checkpoint",
         "flow_units": flow_units,
         "system_units": system_units,
+        "rainfall_units": "mm/hr_if_SI_else_in/hr",
         "swmm_engine_version": engine_version,
         "flow_routing_error_pct": flow_error,
         "node_file": node_path.name,
         "actuator_file": actuator_path.name,
+        "subcatchment_file": subcatchment_path.name,
     }
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return BranchResult(
         branch_id=branch_id,
         node_path=str(node_path),
         actuator_path=str(actuator_path),
+        subcatchment_path=str(subcatchment_path),
         metadata_path=str(metadata_path),
         flow_routing_error_pct=flow_error,
     )
