@@ -15,8 +15,28 @@ def _load_meta(path: str | Path) -> tuple[dict[str, object], Path]:
     return json.loads(p.read_text(encoding="utf-8")), p.parent
 
 
-def _state_table(metadata_path: str | Path) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, object]]:
+def _state_table(metadata_path: str | Path) -> tuple[pd.DataFrame, tuple[str, ...], np.ndarray, dict[str, object]]:
     meta, root = _load_meta(metadata_path)
+    compact_name = meta.get("compact_file")
+    if compact_name:
+        raw = np.load(root / str(compact_name), allow_pickle=False)
+        times = raw["elapsed_seconds"].astype(np.int64)
+        state = raw["state_si"].astype(np.float32)
+        actuator_ids = tuple(raw["actuator_ids"].astype(str).tolist())
+        current_setting = raw["current_setting"].astype(np.float32)
+        if state.shape[0] != times.size or current_setting.shape[0] != times.size:
+            raise ValueError("compact trajectory time dimensions do not align")
+        if np.any(np.diff(times) <= 0):
+            raise ValueError("trajectory times must be strictly increasing")
+        rows = pd.DataFrame({
+            "elapsed_seconds": times,
+            "network_max_depth_m": state[..., 0].max(axis=1),
+            "network_mean_depth_m": state[..., 0].mean(axis=1),
+            "network_total_flood_rate_m3s": np.clip(state[..., 2], 0.0, None).sum(axis=1),
+        })
+        return rows, actuator_ids, current_setting, meta
+
+    # Backward-compatible reader for pre-v2 D0/D1 row-wise evidence.
     node = pd.read_csv(root / str(meta["node_file"]), compression="infer")
     act = pd.read_csv(root / str(meta["actuator_file"]), compression="infer")
     flow_units = str(meta["flow_units"])
@@ -25,18 +45,21 @@ def _state_table(metadata_path: str | Path) -> tuple[pd.DataFrame, pd.DataFrame,
     for elapsed, group in node.groupby("elapsed_seconds", sort=True):
         depth = length_to_m(group["depth"].to_numpy(dtype=float), system_units)
         flooding = flow_rate_to_m3s(group["flooding"].to_numpy(dtype=float), flow_units)
-        rows.append(
-            {
-                "elapsed_seconds": int(elapsed),
-                "network_max_depth_m": float(np.max(depth)),
-                "network_mean_depth_m": float(np.mean(depth)),
-                "network_total_flood_rate_m3s": float(np.clip(flooding, 0.0, None).sum()),
-            }
-        )
-    state = pd.DataFrame(rows).sort_values("elapsed_seconds").reset_index(drop=True)
-    if state.empty:
-        raise ValueError(f"trajectory has no node samples: {metadata_path}")
-    return state, act, meta
+        rows.append({
+            "elapsed_seconds": int(elapsed),
+            "network_max_depth_m": float(np.max(depth)),
+            "network_mean_depth_m": float(np.mean(depth)),
+            "network_total_flood_rate_m3s": float(np.clip(flooding, 0.0, None).sum()),
+        })
+    table = pd.DataFrame(rows).sort_values("elapsed_seconds").reset_index(drop=True)
+    actuator_ids = tuple(act["actuator_id"].astype(str).drop_duplicates().tolist())
+    times = table["elapsed_seconds"].astype(int).to_numpy()
+    setting = np.empty((len(times), len(actuator_ids)), dtype=np.float32)
+    for i, elapsed in enumerate(times):
+        at = act[act["elapsed_seconds"].astype(int) == int(elapsed)]
+        values = at.set_index(at["actuator_id"].astype(str))["current_setting"].astype(float)
+        setting[i] = [float(values.loc[a]) for a in actuator_ids]
+    return table, actuator_ids, setting, meta
 
 
 def _strata(score: np.ndarray) -> np.ndarray:
@@ -64,22 +87,23 @@ def design_checkpoints(
     output: list[dict[str, object]] = []
     for _, item in run_index.iterrows():
         split = str(item["scientific_split"])
-        if split == "final":
+        if split == "final" or split not in allowed_splits:
             continue
-        if split not in allowed_splits:
-            continue
-        state, act, meta = _state_table(str(item["metadata_path"]))
-        state = state[state["elapsed_seconds"] >= minimum_elapsed_minutes * 60].copy()
+        state, actuator_ids, settings_by_time, meta = _state_table(str(item["metadata_path"]))
+        keep = state["elapsed_seconds"].to_numpy(dtype=int) >= minimum_elapsed_minutes * 60
+        state = state.loc[keep].copy()
+        settings_by_time = settings_by_time[keep]
         if state.empty:
             raise ValueError(f"no checkpoint is history-ready for event {item['event_id']}")
-        # Dimensionless event-local risk score: depth and flooding both influence coverage,
-        # without using any future outcome beyond the current sampled state.
+
         def scaled(values: np.ndarray) -> np.ndarray:
             lo, hi = float(np.min(values)), float(np.max(values))
             return np.zeros_like(values) if hi <= lo else (values - lo) / (hi - lo)
+
         score = 0.5 * scaled(state["network_max_depth_m"].to_numpy()) + 0.5 * scaled(
             state["network_total_flood_rate_m3s"].to_numpy()
         )
+        state = state.reset_index(drop=True)
         state["hydraulic_stratum"] = _strata(score)
         chosen: list[int] = []
         per_stratum = max(1, checkpoints_per_event // 4)
@@ -93,16 +117,10 @@ def design_checkpoints(
             pool = np.array(sorted(set(state.index) - set(chosen)), dtype=int)
             if pool.size:
                 chosen.extend(rng.choice(pool, size=min(remaining, pool.size), replace=False).tolist())
-        chosen = sorted(set(chosen))
-        actuator_ids = tuple(act["actuator_id"].astype(str).drop_duplicates().tolist())
-        for idx in chosen:
+
+        for idx in sorted(set(chosen)):
             row = state.loc[idx]
             elapsed = int(row["elapsed_seconds"])
-            # Use nearest authoritative readback at the selected trajectory time.
-            at = act[act["elapsed_seconds"].astype(int) == elapsed]
-            if set(at["actuator_id"].astype(str)) != set(actuator_ids):
-                raise ValueError(f"incomplete actuator readback at event={item['event_id']} t={elapsed}")
-            settings = at.set_index(at["actuator_id"].astype(str))["current_setting"].astype(float)
             record: dict[str, object] = {
                 "checkpoint_id": f"{item['event_id']}:t{elapsed}",
                 "checkpoint_minutes": elapsed // 60,
@@ -117,8 +135,8 @@ def design_checkpoints(
                 "network_total_flood_rate_m3s": float(row["network_total_flood_rate_m3s"]),
                 "hydraulic_stratum": int(row["hydraulic_stratum"]),
             }
-            for aid in actuator_ids:
-                record[f"setting:{aid}"] = float(settings.loc[aid])
+            for ai, aid in enumerate(actuator_ids):
+                record[f"setting:{aid}"] = float(settings_by_time[idx, ai])
             output.append(record)
     result = pd.DataFrame(output)
     if result.empty:
