@@ -45,26 +45,27 @@ class ControllerConfig:
             raise ValueError("control_block_steps must be positive")
         if self.optimizer_iterations <= 0 or self.optimizer_learning_rate <= 0:
             raise ValueError("optimizer settings must be positive")
-        if self.max_setting_delta_per_update is not None and self.max_setting_delta_per_update < 0:
+        if (
+            self.max_setting_delta_per_update is not None
+            and self.max_setting_delta_per_update < 0
+        ):
             raise ValueError("max_setting_delta_per_update must be non-negative")
-        if self.decision_runtime_budget_seconds is not None and self.decision_runtime_budget_seconds <= 0:
+        if (
+            self.decision_runtime_budget_seconds is not None
+            and self.decision_runtime_budget_seconds <= 0
+        ):
             raise ValueError("decision_runtime_budget_seconds must be positive when supplied")
 
 
-def hold_current_fallback(observation: CausalObservation, horizon_steps: int) -> np.ndarray:
+def hold_current_fallback(
+    observation: CausalObservation, horizon_steps: int
+) -> np.ndarray:
     current = np.asarray(observation.actuator_current_setting, dtype=float).reshape(-1)
     return np.repeat(current[None, :], int(horizon_steps), axis=0)
 
 
 class TorchMPCController:
-    """Step1 -> causal rainfall forecast -> Step2/MPC -> executable first move.
-
-    Step1 receives node-local rainfall/actuator context rather than broadcasting the full
-    actuator vector to every node. Priority PFV remains a soft optimizer preference. Runtime
-    fallback is reserved for history/readback/numerical/deadline failures. The optional wall-
-    clock budget turns the simulation controller into a meaningful real-time implementation
-    contract: a stale optimization result is never executed after its frozen deadline.
-    """
+    """Step1 -> causal rainfall forecast -> Step2/MPC -> executable first move."""
 
     def __init__(
         self,
@@ -87,13 +88,17 @@ class TorchMPCController:
         self.fallback_sequence_provider = fallback_sequence_provider or hold_current_fallback
         self.config = config
         self.device = torch.device(
-            device if device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
+            device
+            if device is not None
+            else ("cuda" if torch.cuda.is_available() else "cpu")
         )
         missing = sorted(set(sensor_nodes) - set(graph.node_ids))
         if missing:
             raise ValueError(f"controller sensor nodes absent from graph: {missing}")
         self.node_index = {nid: i for i, nid in enumerate(graph.node_ids)}
-        self.sensor_index = np.array([self.node_index[n] for n in sensor_nodes], dtype=int)
+        self.sensor_index = np.array(
+            [self.node_index[n] for n in sensor_nodes], dtype=int
+        )
         self.observed_history: deque[np.ndarray] = deque(maxlen=config.history_steps)
         self.mask_history: deque[np.ndarray] = deque(maxlen=config.history_steps)
         self.context_history: deque[np.ndarray] = deque(maxlen=config.history_steps)
@@ -110,7 +115,10 @@ class TorchMPCController:
             raise ValueError("runtime actuator ordering differs from frozen graph schema")
         if tuple(obs.rainfall_node_ids) != self.graph.node_ids:
             raise ValueError("runtime rainfall node ordering differs from frozen graph schema")
-        if len(obs.sensor_depth_m) != len(self.sensor_nodes) or len(obs.sensor_head_m) != len(self.sensor_nodes):
+        if (
+            len(obs.sensor_depth_m) != len(self.sensor_nodes)
+            or len(obs.sensor_head_m) != len(self.sensor_nodes)
+        ):
             raise ValueError("sensor observation length mismatch")
         if len(obs.observed_rainfall_mmhr) != len(self.graph.node_ids):
             raise ValueError("rainfall observation length mismatch")
@@ -119,7 +127,10 @@ class TorchMPCController:
         self._validate_observation(obs)
         if self.last_observed_elapsed_seconds == obs.elapsed_seconds:
             return
-        if self.last_observed_elapsed_seconds is not None and obs.elapsed_seconds <= self.last_observed_elapsed_seconds:
+        if (
+            self.last_observed_elapsed_seconds is not None
+            and obs.elapsed_seconds <= self.last_observed_elapsed_seconds
+        ):
             raise ValueError("controller observations must be strictly increasing in time")
         n = len(self.graph.node_ids)
         observed = np.zeros((n, 2), dtype=np.float32)
@@ -148,12 +159,18 @@ class TorchMPCController:
         )
         expected = (self.config.horizon_steps, len(self.graph.actuator_ids))
         if sequence.shape != expected:
-            raise ValueError(f"fallback sequence must have shape {expected}, got {sequence.shape}")
-        if not np.isfinite(sequence).all() or np.any((sequence < 0.0) | (sequence > 1.0)):
+            raise ValueError(
+                f"fallback sequence must have shape {expected}, got {sequence.shape}"
+            )
+        if not np.isfinite(sequence).all() or np.any(
+            (sequence < 0.0) | (sequence > 1.0)
+        ):
             raise ValueError("fallback sequence contains invalid settings")
         return sequence
 
-    def decide(self, obs: CausalObservation, *, observation_already_recorded: bool = False) -> ControllerAction:
+    def decide(
+        self, obs: CausalObservation, *, observation_already_recorded: bool = False
+    ) -> ControllerAction:
         if not observation_already_recorded:
             self.observe(obs)
         else:
@@ -174,7 +191,9 @@ class TorchMPCController:
             if not readback.passed:
                 self.last_requested = fallback[0].copy()
                 return ControllerAction(
-                    settings=dict(zip(self.graph.actuator_ids, fallback[0], strict=True)),
+                    settings=dict(
+                        zip(self.graph.actuator_ids, fallback[0], strict=True)
+                    ),
                     source="FALLBACK_READBACK",
                     diagnostics={
                         "fallback_policy": self.config.fallback_policy_id,
@@ -199,44 +218,74 @@ class TorchMPCController:
         started = time.perf_counter()
         try:
             static = torch.as_tensor(
-                self.graph.static_node_features, dtype=torch.float32, device=self.device
+                self.graph.static_node_features,
+                dtype=torch.float32,
+                device=self.device,
             )
-            edges = torch.as_tensor(self.graph.edge_index, dtype=torch.long, device=self.device)
+            edges = torch.as_tensor(
+                self.graph.edge_index, dtype=torch.long, device=self.device
+            )
             with torch.no_grad():
                 initial_state = self.step1(
-                    torch.as_tensor(np.stack(self.observed_history)[None], dtype=torch.float32, device=self.device),
-                    torch.as_tensor(np.stack(self.mask_history)[None], dtype=torch.float32, device=self.device),
+                    torch.as_tensor(
+                        np.stack(self.observed_history)[None],
+                        dtype=torch.float32,
+                        device=self.device,
+                    ),
+                    torch.as_tensor(
+                        np.stack(self.mask_history)[None],
+                        dtype=torch.float32,
+                        device=self.device,
+                    ),
                     static,
                     edges,
-                    torch.as_tensor(np.stack(self.context_history)[None], dtype=torch.float32, device=self.device),
+                    torch.as_tensor(
+                        np.stack(self.context_history)[None],
+                        dtype=torch.float32,
+                        device=self.device,
+                    ),
                 )
             rainfall_scenarios = self.forecast.forecast(
-                np.stack(self.rainfall_history), horizon_steps=self.config.horizon_steps
+                np.stack(self.rainfall_history),
+                horizon_steps=self.config.horizon_steps,
             )
             result = self.mpc.optimize(
                 initial_state=initial_state,
                 rainfall_scenarios=torch.as_tensor(
                     rainfall_scenarios, dtype=torch.float32, device=self.device
                 ),
-                current_settings=torch.as_tensor(current, dtype=torch.float32, device=self.device),
-                fallback_settings=torch.as_tensor(fallback[None], dtype=torch.float32, device=self.device),
+                current_settings=torch.as_tensor(
+                    current, dtype=torch.float32, device=self.device
+                ),
+                fallback_settings=torch.as_tensor(
+                    fallback[None], dtype=torch.float32, device=self.device
+                ),
                 previous_actuator_flow=torch.as_tensor(
-                    obs.actuator_flow_m3s[None], dtype=torch.float32, device=self.device
+                    obs.actuator_flow_m3s[None],
+                    dtype=torch.float32,
+                    device=self.device,
                 ),
                 actuator_upstream=torch.as_tensor(
-                    self.graph.actuator_upstream, dtype=torch.long, device=self.device
+                    self.graph.actuator_upstream,
+                    dtype=torch.long,
+                    device=self.device,
                 ),
                 actuator_downstream=torch.as_tensor(
-                    self.graph.actuator_downstream, dtype=torch.long, device=self.device
+                    self.graph.actuator_downstream,
+                    dtype=torch.long,
+                    device=self.device,
                 ),
                 actuator_physics=torch.as_tensor(
-                    self.graph.actuator_physics[None], dtype=torch.float32, device=self.device
+                    self.graph.actuator_physics[None],
+                    dtype=torch.float32,
+                    device=self.device,
                 ),
                 static_node_features=static,
                 edge_index=edges,
                 iterations=self.config.optimizer_iterations,
                 learning_rate=self.config.optimizer_learning_rate,
                 control_block_steps=self.config.control_block_steps,
+                max_setting_delta_per_update=self.config.max_setting_delta_per_update,
             )
             candidate_valid = bool(
                 getattr(result, "candidate_valid", getattr(result, "admissible", False))
@@ -255,7 +304,9 @@ class TorchMPCController:
             if budget is not None and runtime_seconds > budget:
                 self.last_requested = fallback[0].copy()
                 return ControllerAction(
-                    settings=dict(zip(self.graph.actuator_ids, fallback[0], strict=True)),
+                    settings=dict(
+                        zip(self.graph.actuator_ids, fallback[0], strict=True)
+                    ),
                     source="FALLBACK_COMPUTE_DEADLINE",
                     diagnostics={
                         "fallback_policy": self.config.fallback_policy_id,
@@ -264,6 +315,7 @@ class TorchMPCController:
                     },
                 )
             self.last_requested = decision.requested.copy()
+            setting_change = np.abs(decision.requested - current)
             diagnostics: dict[str, float | int | bool | str] = {
                 "fallback_policy": self.config.fallback_policy_id,
                 "control_block_steps": self.config.control_block_steps,
@@ -271,7 +323,14 @@ class TorchMPCController:
                 "tfv_risk_m3": float(result.tfv_risk_m3),
                 "projected_first_move": decision.projected,
                 "decision_runtime_seconds": runtime_seconds,
-                "decision_runtime_budget_seconds": float(budget) if budget is not None else -1.0,
+                "decision_runtime_budget_seconds": (
+                    float(budget) if budget is not None else -1.0
+                ),
+                # These are diagnostics only: no Top-K mask is imposed. The number of
+                # hydraulically selected facilities emerges from the optimized setting move.
+                "active_actuator_count_1e4": int((setting_change > 1e-4).sum()),
+                "setting_change_l1": float(setting_change.sum()),
+                "setting_change_max": float(setting_change.max(initial=0.0)),
             }
             for name in (
                 "primary_tfv_reference_m3",
@@ -283,7 +342,9 @@ class TorchMPCController:
                 if hasattr(result, name):
                     diagnostics[name] = float(getattr(result, name))
             return ControllerAction(
-                settings=dict(zip(self.graph.actuator_ids, decision.requested, strict=True)),
+                settings=dict(
+                    zip(self.graph.actuator_ids, decision.requested, strict=True)
+                ),
                 source=decision.source,
                 diagnostics=diagnostics,
             )
