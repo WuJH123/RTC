@@ -9,7 +9,7 @@ from .code_contract import rtc_source_tree_sha256
 from .inp_runtime import sha256_file
 
 
-GENERATION_CONTRACT = "RTC_GENERATION_KEY_V1"
+GENERATION_CONTRACT = "RTC_GENERATION_KEY_V2_INPUT_CONFIG_BOUND"
 
 
 def canonical_json(value: object) -> str:
@@ -17,23 +17,23 @@ def canonical_json(value: object) -> str:
 
 
 def generation_key(kind: str, payload: Mapping[str, object]) -> tuple[str, str]:
-    """Return ``(key, code_sha)`` for one deterministic generated artefact.
+    """Return ``(key, implementation_sha)`` for one deterministic generated artefact.
 
-    Resume is safe only when the scientific inputs *and* the implementation that generated
-    them are unchanged. Binding the entire RTC Python source tree is intentionally
-    conservative: a source change invalidates stale SWMM/model artefacts instead of silently
-    mixing contracts inside a Fresh Workspace.
+    The key binds the stable scientific implementation contract plus the numerical/scientific
+    inputs supplied by the caller (INP hashes, event/checkpoint/action/timing/config identity,
+    etc.). It intentionally does *not* hash every Python file, so unrelated source edits do
+    not destroy expensive reusable SWMM evidence.
     """
 
-    code_sha = rtc_source_tree_sha256()
+    implementation_sha = rtc_source_tree_sha256()
     body = {
         "contract": GENERATION_CONTRACT,
         "kind": str(kind),
-        "rtc_source_tree_sha256": code_sha,
+        "rtc_source_tree_sha256": implementation_sha,
         "payload": dict(payload),
     }
     key = hashlib.sha256(canonical_json(body).encode("utf-8")).hexdigest()
-    return key, code_sha
+    return key, implementation_sha
 
 
 def hashed_file_record(path: str | Path) -> dict[str, str]:
