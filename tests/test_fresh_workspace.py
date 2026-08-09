@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -11,6 +12,8 @@ from rtc.fresh_workspace import (
     require_path_inside_workspace,
     validate_fresh_run_index,
 )
+from rtc.generation_contract import generation_key
+from rtc.inp_runtime import sha256_file
 from rtc.splits import assign_rainfall_group_splits
 
 
@@ -40,6 +43,26 @@ def _workspace(tmp_path: Path) -> tuple[Path, Path]:
         event_registry=events,
     )
     return root, root / "FRESH_WORKSPACE_MANIFEST.json"
+
+
+def _code_bound_branch(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    artifact = path.parent / "dummy.compact.npz"
+    artifact.write_bytes(b"current-data")
+    key, code_sha = generation_key("test_branch", {"event": "e1"})
+    path.write_text(
+        json.dumps(
+            {
+                "generation_key_sha256": key,
+                "rtc_source_tree_sha256": code_sha,
+                "compact_file": artifact.name,
+                "generated_artifact_sha256": {
+                    "compact_file": sha256_file(artifact)
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_fresh_workspace_starts_empty_and_copies_event_registry(tmp_path: Path) -> None:
@@ -83,11 +106,10 @@ def test_workspace_path_guard_rejects_historical_output(tmp_path: Path) -> None:
         require_path_inside_workspace(historical, root)
 
 
-def test_training_index_must_reference_only_fresh_branch_metadata(tmp_path: Path) -> None:
+def test_training_index_requires_current_code_bound_branch_metadata(tmp_path: Path) -> None:
     root, workspace_manifest = _workspace(tmp_path)
     branch = root / "d0" / "e1.json"
-    branch.parent.mkdir(parents=True)
-    branch.write_text("{}", encoding="utf-8")
+    _code_bound_branch(branch)
     index = root / "step1" / "run_index.csv"
     index.parent.mkdir(parents=True)
     pd.DataFrame(
@@ -105,6 +127,7 @@ def test_training_index_must_reference_only_fresh_branch_metadata(tmp_path: Path
         workspace_manifest_path=workspace_manifest,
     )
     assert evidence["all_metadata_inside_workspace"] is True
+    assert evidence["all_rows_current_code_bound"] is True
 
     old_branch = tmp_path / "Project6" / "old.json"
     old_branch.parent.mkdir()
