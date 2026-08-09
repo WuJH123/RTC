@@ -8,22 +8,32 @@ import numpy as np
 import pandas as pd
 
 
-FORMAL_MIN_RAINFALL_GROUPS = 160
-FORMAL_MIN_ROLE_GROUPS = {
+# Paper-strength design targets, not software execution gates. The scientific invariants are
+# group-disjoint development train/validation and untouched Final. Calibration/safety-audit
+# cohorts are optional unless a later analysis explicitly uses them.
+RECOMMENDED_RAINFALL_GROUPS = 160
+RECOMMENDED_ROLE_GROUPS = {
     "development": 96,
     "calibration": 24,
     "safety_audit": 16,
     "final": 24,
 }
-FORMAL_MIN_DEV_VALIDATION_GROUPS = 19
+RECOMMENDED_DEV_VALIDATION_GROUPS = 19
+_ALLOWED_SPLITS = {"development", "calibration", "safety_audit", "final"}
 
 
 def validate_formal_rainfall_design(frame: pd.DataFrame) -> dict[str, object]:
-    """Validate a fresh, rainfall-group-disjoint Formal event registry.
+    """Validate the rainfall-group split without imposing arbitrary sample-count gates.
 
-    160 is a project design minimum, not a universal hydrological constant. It is chosen for
-    this very large 109-actuator study so all four scientific roles remain independently
-    populated, including 24 untouched Final groups and ~19 development-validation groups.
+    Required for correctness:
+    - one authoritative row per event_id;
+    - no rainfall group crosses scientific splits;
+    - development contains group-disjoint train and validation folds;
+    - Final exists and remains separate from development;
+    - referenced event INPs exist.
+
+    Larger cohort sizes are reported against recommended paper-strength targets but do not
+    prevent the pipeline from running, piloting, resuming or training on the data available.
     """
 
     required = {
@@ -39,46 +49,45 @@ def validate_formal_rainfall_design(frame: pd.DataFrame) -> dict[str, object]:
     data = frame.copy()
     for column in ("event_id", "rainfall_group", "scientific_split", "development_fold"):
         data[column] = data[column].fillna("").astype(str)
+    if data.empty:
+        raise ValueError("rainfall event registry is empty")
     if data["event_id"].duplicated().any():
         raise ValueError("event_id must be unique: one authoritative event INP per event row")
     if (data["rainfall_group"] == "").any():
         raise ValueError("rainfall_group cannot be empty")
+    invalid_roles = sorted(set(data["scientific_split"]) - _ALLOWED_SPLITS)
+    if invalid_roles:
+        raise ValueError(f"unsupported scientific_split values: {invalid_roles}")
     cross = data.groupby("rainfall_group")["scientific_split"].nunique()
     if (cross != 1).any():
         raise ValueError("rainfall-group leakage exists across scientific splits")
 
     group_roles = data[["rainfall_group", "scientific_split"]].drop_duplicates()
     total = int(group_roles["rainfall_group"].nunique())
-    if total < FORMAL_MIN_RAINFALL_GROUPS:
-        raise ValueError(
-            f"Formal design requires >= {FORMAL_MIN_RAINFALL_GROUPS} independent rainfall groups; got {total}"
-        )
-    role_counts = group_roles.groupby("scientific_split")["rainfall_group"].count().to_dict()
-    for role, minimum in FORMAL_MIN_ROLE_GROUPS.items():
-        count = int(role_counts.get(role, 0))
-        if count < minimum:
-            raise ValueError(f"{role} requires >= {minimum} rainfall groups; got {count}")
+    role_counts = {
+        str(k): int(v)
+        for k, v in group_roles.groupby("scientific_split")["rainfall_group"].count().to_dict().items()
+    }
+    if role_counts.get("development", 0) < 2:
+        raise ValueError("development requires at least two rainfall groups so train/validation can be disjoint")
+    if role_counts.get("final", 0) < 1:
+        raise ValueError("at least one untouched Final rainfall group is required")
 
     dev = data[data["scientific_split"] == "development"]
     if set(dev["development_fold"]) != {"train", "validation"}:
-        raise ValueError("development groups must be split into train and validation")
+        raise ValueError("development groups must contain both train and validation folds")
     if (dev.groupby("rainfall_group")["development_fold"].nunique() != 1).any():
         raise ValueError("rainfall group crosses development train/validation")
     dev_val = int(
         dev.loc[dev["development_fold"] == "validation", "rainfall_group"].nunique()
     )
-    if dev_val < FORMAL_MIN_DEV_VALIDATION_GROUPS:
-        raise ValueError(
-            f"development validation requires >= {FORMAL_MIN_DEV_VALIDATION_GROUPS} rainfall groups; got {dev_val}"
-        )
+    if dev_val < 1:
+        raise ValueError("development validation requires at least one independent rainfall group")
     if (
         data.loc[data["scientific_split"] != "development", "development_fold"] != ""
     ).any():
         raise ValueError("non-development rows must not carry development_fold")
 
-    # If event descriptors are provided, make them part of the evidence and reject invalid
-    # values. The generator/source of rainfall can vary, so the validator does not invent IDF
-    # bounds or synthetic distributions that are not supported by project data.
     descriptor_columns = [
         c
         for c in (
@@ -106,21 +115,39 @@ def validate_formal_rainfall_design(frame: pd.DataFrame) -> dict[str, object]:
     if missing_inp:
         raise ValueError(f"event registry references missing INPs: {missing_inp[:10]}")
 
+    recommendations: list[str] = []
+    if total < RECOMMENDED_RAINFALL_GROUPS:
+        recommendations.append(
+            f"paper-strength target is >= {RECOMMENDED_RAINFALL_GROUPS} independent rainfall groups; current={total}"
+        )
+    for role, target in RECOMMENDED_ROLE_GROUPS.items():
+        count = int(role_counts.get(role, 0))
+        if count < target:
+            recommendations.append(f"recommended {role} groups >= {target}; current={count}")
+    if dev_val < RECOMMENDED_DEV_VALIDATION_GROUPS:
+        recommendations.append(
+            f"recommended development validation groups >= {RECOMMENDED_DEV_VALIDATION_GROUPS}; current={dev_val}"
+        )
+
     return {
-        "contract": "FORMAL_FRESH_RAINFALL_COHORTS_V1",
-        "minimum_total_groups": FORMAL_MIN_RAINFALL_GROUPS,
+        "contract": "RAINFALL_GROUP_SPLIT_VALIDATION_V2",
         "rainfall_groups": total,
-        "role_group_counts": {str(k): int(v) for k, v in role_counts.items()},
+        "role_group_counts": role_counts,
         "development_validation_groups": dev_val,
         "event_rows": int(len(data)),
         "descriptor_summary": descriptor_summary,
-        "fresh_hydraulic_data_instruction": "Generate all SWMM baselines/D0/D1/D2/D3/closed-loop outputs into a new output root under the current code contract; do not import historical RTC outputs/models.",
+        "required_invariants_passed": True,
+        "recommended_total_groups": RECOMMENDED_RAINFALL_GROUPS,
+        "recommended_role_groups": RECOMMENDED_ROLE_GROUPS,
+        "recommended_development_validation_groups": RECOMMENDED_DEV_VALIDATION_GROUPS,
+        "paper_strength_recommendations_met": not recommendations,
+        "recommendations": recommendations,
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Validate the >=160-group fresh Formal rainfall/event registry before expensive SWMM generation"
+        description="Validate rainfall-group-disjoint development/Final design and report cohort-size recommendations"
     )
     parser.add_argument("--events", required=True)
     parser.add_argument("--out", required=True)
