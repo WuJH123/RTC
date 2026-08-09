@@ -28,10 +28,11 @@ class _Trajectory:
     compact_path: str
     event_id: str
     rainfall_group: str
+    swmm_engine_version: str
 
 
 class CausalStep1TrajectoryDataset(Dataset):
-    """Lazy Step1 windows backed by compact trajectories, never duplicated on disk."""
+    """Lazy t=0-inclusive Step1 windows backed by compact trajectories."""
 
     def __init__(
         self,
@@ -69,13 +70,17 @@ class CausalStep1TrajectoryDataset(Dataset):
         self.cache: OrderedDict[int, dict[str, np.ndarray]] = OrderedDict()
         self.trajectories: list[_Trajectory] = []
         self.samples: list[Step1SampleRef] = []
+        engine_versions: set[str] = set()
 
         for _, row in frame.iterrows():
             meta_path = Path(str(row["metadata_path"]))
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             compact_name = meta.get("compact_file")
             if not compact_name:
-                raise ValueError(f"Formal Step1 requires compact trajectory V2: {meta_path}")
+                raise ValueError(f"Formal Step1 requires compact trajectory evidence: {meta_path}")
+            engine_version = str(meta.get("swmm_engine_version", "")).strip()
+            if not engine_version:
+                raise ValueError(f"Formal Step1 trajectory lacks SWMM engine version: {meta_path}")
             compact = meta_path.parent / str(compact_name)
             with np.load(compact, allow_pickle=False) as raw:
                 times = raw["elapsed_seconds"].astype(np.int64)
@@ -85,14 +90,24 @@ class CausalStep1TrajectoryDataset(Dataset):
                     raise ValueError(f"trajectory schema differs from locked graph: {compact}")
                 if times.size < history_steps:
                     continue
+                if int(times[0]) != 0:
+                    raise ValueError(
+                        f"Formal Step1 trajectory must include the causal t=0 frame: {compact}"
+                    )
                 dt = np.diff(times)
                 if not np.all(dt == model_step_seconds):
                     raise ValueError(
                         f"trajectory time grid differs from frozen model step {model_step_seconds}s: {compact}"
                     )
+            engine_versions.add(engine_version)
             ti = len(self.trajectories)
             self.trajectories.append(
-                _Trajectory(str(compact), str(row["event_id"]), str(row["rainfall_group"]))
+                _Trajectory(
+                    str(compact),
+                    str(row["event_id"]),
+                    str(row["rainfall_group"]),
+                    engine_version,
+                )
             )
             for end in range(history_steps - 1, times.size):
                 self.samples.append(
@@ -100,6 +115,11 @@ class CausalStep1TrajectoryDataset(Dataset):
                 )
         if not self.samples:
             raise ValueError("no causal Step1 windows were available")
+        if len(engine_versions) != 1:
+            raise ValueError(
+                f"Formal Step1 cannot mix SWMM engine versions: {sorted(engine_versions)}"
+            )
+        self.swmm_engine_version = next(iter(engine_versions))
 
     def __len__(self) -> int:
         return len(self.samples)
