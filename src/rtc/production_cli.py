@@ -18,7 +18,7 @@ from .forecast import PersistenceDecayForecast
 from .graph import GraphSchema
 from .inp_runtime import sha256_file
 from .models import DifferentiableHydraulicWorldModel, SparseStateEstimator
-from .tfv_mpc import ContinuousTFVFirstMPC
+from .robust_tfv_mpc import ContinuousTFVFirstMPC
 
 
 FORMAL_POLICY_STRATEGIES = (
@@ -90,10 +90,13 @@ def _load_step1(path: str | Path, device: torch.device) -> SparseStateEstimator:
     runtime_metadata = {
         "history_steps": int(cfg.get("history_steps", -1)),
         "model_step_seconds": int(cfg.get("model_step_seconds", -1)),
+        "swmm_engine_version": str(cfg.get("swmm_engine_version", "")).strip(),
         "context_contract": str(cfg.get("context_contract", "")),
         "training_contract_sha256": training_contract,
         "rtc_source_tree_sha256": str(payload["rtc_source_tree_sha256"]),
     }
+    if not runtime_metadata["swmm_engine_version"]:
+        raise ValueError("Step1 checkpoint lacks SWMM engine lineage")
     model = SparseStateEstimator(**cfg)
     model.runtime_metadata = runtime_metadata  # type: ignore[attr-defined]
     model.load_state_dict(payload["state_dict"])
@@ -117,6 +120,7 @@ def _load_step2(
         for key in (
             "model_step_seconds",
             "horizon_steps",
+            "swmm_engine_version",
             "time_contract",
             "training_contract_sha256",
         )
@@ -125,8 +129,12 @@ def _load_step2(
     runtime_metadata["rtc_source_tree_sha256"] = str(
         payload["rtc_source_tree_sha256"]
     )
-    if runtime_metadata.get("time_contract") != "STEP2_FIXED_DISCRETE_TIME_V1":
-        raise ValueError("Step2 checkpoint lacks the frozen discrete-time contract")
+    if runtime_metadata.get("time_contract") != "STEP2_FIXED_DISCRETE_TIME_ENGINE_V2":
+        raise ValueError(
+            "Step2 checkpoint lacks the current frozen discrete-time/engine contract"
+        )
+    if not str(runtime_metadata.get("swmm_engine_version", "")).strip():
+        raise ValueError("Step2 checkpoint lacks SWMM engine lineage")
     model = DifferentiableHydraulicWorldModel(**cfg)
     model.runtime_metadata = runtime_metadata  # type: ignore[attr-defined]
     model.load_state_dict(payload["state_dict"])
@@ -168,6 +176,12 @@ def _validate_model_time_contracts(
         raise ValueError("Step2 checkpoint model step differs from production controller")
     if int(step2_meta.get("horizon_steps", -1)) != horizon_steps:
         raise ValueError("Step2 checkpoint horizon differs from production controller")
+    step1_engine = str(step1_meta.get("swmm_engine_version", "")).strip()
+    step2_engine = str(step2_meta.get("swmm_engine_version", "")).strip()
+    if not step1_engine or step1_engine != step2_engine:
+        raise ValueError(
+            f"Step1/Step2 SWMM engine lineage differs: {step1_engine} != {step2_engine}"
+        )
 
 
 def _constant_controller(value: float):
@@ -348,6 +362,12 @@ def run_policy_main() -> None:
             ),
             near_opt_penalty=float(objective_cfg.get("near_opt_penalty", 1e4)),
             movement_tiebreak=float(objective_cfg.get("movement_tiebreak", 1e-6)),
+            min_predicted_tfv_improvement_m3=float(
+                objective_cfg.get("min_predicted_tfv_improvement_m3", 0.0)
+            ),
+            min_predicted_tfv_improvement_relative=float(
+                objective_cfg.get("min_predicted_tfv_improvement_relative", 0.0)
+            ),
         )
         forecast_cfg = cfg.get("forecast", {})
         if not isinstance(forecast_cfg, dict):
