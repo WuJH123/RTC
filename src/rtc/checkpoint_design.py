@@ -146,11 +146,33 @@ def _strata(score: np.ndarray) -> np.ndarray:
     return np.digitize(score, q, right=True)
 
 
+def _eligible_checkpoint_mask(
+    elapsed_seconds: np.ndarray,
+    *,
+    minimum_elapsed_minutes: int,
+    minimum_tail_minutes: int,
+) -> np.ndarray:
+    if minimum_elapsed_minutes <= 0:
+        raise ValueError("minimum_elapsed_minutes must be positive")
+    if minimum_tail_minutes < 0:
+        raise ValueError("minimum_tail_minutes must be non-negative")
+    if elapsed_seconds.size == 0:
+        return np.zeros(0, dtype=bool)
+    event_end_seconds = int(np.max(elapsed_seconds))
+    latest_checkpoint_seconds = event_end_seconds - minimum_tail_minutes * 60
+    return (
+        (elapsed_seconds >= minimum_elapsed_minutes * 60)
+        & (elapsed_seconds <= latest_checkpoint_seconds)
+        & (elapsed_seconds % 60 == 0)
+    )
+
+
 def design_checkpoints(
     run_index: pd.DataFrame,
     *,
     checkpoints_per_event: int = 8,
     minimum_elapsed_minutes: int = 60,
+    minimum_tail_minutes: int = 0,
     seed: int = 42,
     allowed_splits: tuple[str, ...] = (
         "development",
@@ -175,9 +197,10 @@ def design_checkpoints(
         _assert_replayable_no_control_prefix(meta, metadata_path)
         source_event_inp = _source_event_inp(item, meta)
         elapsed_all = state["elapsed_seconds"].to_numpy(dtype=int)
-        keep = (
-            (elapsed_all >= minimum_elapsed_minutes * 60)
-            & (elapsed_all % 60 == 0)
+        keep = _eligible_checkpoint_mask(
+            elapsed_all,
+            minimum_elapsed_minutes=minimum_elapsed_minutes,
+            minimum_tail_minutes=minimum_tail_minutes,
         )
         state = state.loc[keep].copy()
         settings_by_time = settings_by_time[keep]
@@ -271,12 +294,19 @@ def main() -> None:
     parser.add_argument("--out", required=True)
     parser.add_argument("--checkpoints-per-event", type=int, default=8)
     parser.add_argument("--minimum-elapsed-minutes", type=int, default=60)
+    parser.add_argument(
+        "--minimum-tail-minutes",
+        type=int,
+        default=0,
+        help="reserve this much authoritative post-checkpoint simulation time for D2/D3",
+    )
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     frame = design_checkpoints(
         pd.read_csv(args.run_index),
         checkpoints_per_event=args.checkpoints_per_event,
         minimum_elapsed_minutes=args.minimum_elapsed_minutes,
+        minimum_tail_minutes=args.minimum_tail_minutes,
         seed=args.seed,
     )
     out = Path(args.out)
@@ -289,6 +319,7 @@ def main() -> None:
                 "events": int(frame["event_id"].nunique()),
                 "rainfall_groups": int(frame["rainfall_group"].nunique()),
                 "prefix_contract": "EXACT_NO_CONTROL_PREFIX_REPLAY_V1",
+                "minimum_tail_minutes": args.minimum_tail_minutes,
                 "splits": frame.groupby("scientific_split")["checkpoint_id"].count().to_dict(),
                 "out": str(out),
             },

@@ -8,7 +8,7 @@ from .units import rainfall_rate_to_mmhr
 
 
 def resolve_subcatchment_outlets(
-    connection: Mapping[str, tuple[int, str]],
+    connection: Mapping[str, tuple[int, str] | str],
     node_ids: tuple[str, ...],
 ) -> dict[str, str | None]:
     valid_nodes = set(node_ids)
@@ -19,7 +19,17 @@ def resolve_subcatchment_outlets(
         outlet: str | None = None
         while current not in seen:
             seen.add(current)
-            kind, target = connection[current]
+            raw_connection = connection[current]
+            if isinstance(raw_connection, str):
+                target = raw_connection
+                if target in valid_nodes:
+                    kind = 2
+                elif target in connection:
+                    kind = 1
+                else:
+                    kind = 0
+            else:
+                kind, target = raw_connection
             if int(kind) == 2:
                 outlet = target if target in valid_nodes else None
                 break
