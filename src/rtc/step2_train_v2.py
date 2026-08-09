@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
+from .flood_volume import trapezoid_node_flood_volume
 from .large_model_cli import _amp_enabled, _device, _step2_stats
 from .models import DifferentiableHydraulicWorldModel
 from .production_cli import _load_graph
@@ -33,7 +34,7 @@ def train_step2_large_v2_main() -> None:
     parser.add_argument("--no-amp", action="store_true")
     args = parser.parse_args()
     if args.exact_flood_loss_weight <= 0:
-        raise ValueError("exact-flood-loss-weight must be positive for Formal Step2 V2")
+        raise ValueError("exact-flood-loss-weight must be positive for Formal Step2")
 
     torch.manual_seed(args.seed)
     device = _device(args.device)
@@ -41,7 +42,13 @@ def train_step2_large_v2_main() -> None:
         torch.set_float32_matmul_precision("high")
     graph = _load_graph(args.graph)
     manifest = load_shard_manifest(args.manifest)
-    (state_mean, state_std), (rain_mean, rain_std), (physics_mean, physics_std), (static_mean, static_std), flow_std = _step2_stats(manifest, graph)
+    (
+        (state_mean, state_std),
+        (rain_mean, rain_std),
+        (physics_mean, physics_std),
+        (static_mean, static_std),
+        flow_std,
+    ) = _step2_stats(manifest, graph)
     with np.load(str(manifest["shards"][0]["path"]), allow_pickle=False) as first:
         config = {
             "state_dim": int(first["initial_state"].shape[-1]),
@@ -92,9 +99,14 @@ def train_step2_large_v2_main() -> None:
                 arrays = [
                     torch.from_numpy(ds[name].astype(np.float32))
                     for name in (
-                        "initial_state", "rainfall", "settings", "previous_actuator_flow",
-                        "target_states", "target_actuator_flows",
-                        "exact_node_flood_volume_m3", "elapsed_seconds",
+                        "initial_state",
+                        "rainfall",
+                        "settings",
+                        "previous_actuator_flow",
+                        "target_states",
+                        "target_actuator_flows",
+                        "exact_node_flood_volume_m3",
+                        "elapsed_seconds",
                     )
                 ]
             loader = DataLoader(
@@ -104,34 +116,76 @@ def train_step2_large_v2_main() -> None:
                 num_workers=0,
                 pin_memory=device.type == "cuda",
             )
-            for initial, rain, settings, prev, target_state, target_flow, exact_volume, elapsed in loader:
+            for (
+                initial,
+                rain,
+                settings,
+                prev,
+                target_state,
+                target_flow,
+                exact_volume,
+                elapsed,
+            ) in loader:
                 initial, rain, settings, prev, target_state, target_flow, exact_volume, elapsed = [
                     x.to(device, non_blocking=True)
-                    for x in (initial, rain, settings, prev, target_state, target_flow, exact_volume, elapsed)
+                    for x in (
+                        initial,
+                        rain,
+                        settings,
+                        prev,
+                        target_state,
+                        target_flow,
+                        exact_volume,
+                        elapsed,
+                    )
                 ]
                 batch = initial.shape[0]
                 with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
                     rollout = model.rollout(
-                        initial, rain, settings, prev, up, down,
-                        physics.unsqueeze(0).expand(batch, -1, -1), static, edges,
+                        initial,
+                        rain,
+                        settings,
+                        prev,
+                        up,
+                        down,
+                        physics.unsqueeze(0).expand(batch, -1, -1),
+                        static,
+                        edges,
                     )
-                    state_loss = (((rollout.states - target_state) / model.transition.state_std) ** 2).mean()
-                    flow_loss = (((rollout.actuator_flows - target_flow) / model.actuator.flow_std) ** 2).mean()
+                    state_loss = (
+                        ((rollout.states - target_state) / model.transition.state_std) ** 2
+                    ).mean()
+                    flow_loss = (
+                        ((rollout.actuator_flows - target_flow) / model.actuator.flow_std) ** 2
+                    ).mean()
                     dt = elapsed[:, 1:] - elapsed[:, :-1]
                     if torch.any(dt <= 0):
                         raise ValueError("Step2 shard contains a non-increasing time grid")
-                    pred_node_volume = (
-                        rollout.states[..., 2].clamp_min(0.0) * dt[..., None]
-                    ).sum(dim=1)
+                    # IMPORTANT: this is exactly the same physical-volume operator used by
+                    # MPC, gradient truth and ranking evaluation. The checkpoint/current
+                    # flooding rate is the left endpoint; predicted future states are the
+                    # right endpoints. A future-only rectangle would train a different TFV
+                    # objective from the one later optimized online.
+                    pred_node_volume = trapezoid_node_flood_volume(
+                        initial,
+                        rollout.states,
+                        flood_rate_index=2,
+                        dt_seconds=dt,
+                    )
                     exact = exact_volume.clamp_min(0.0)
                     node_volume_loss = torch.square(
                         torch.log1p(pred_node_volume) - torch.log1p(exact)
                     ).mean()
                     total_volume_loss = torch.square(
-                        torch.log1p(pred_node_volume.sum(dim=-1)) - torch.log1p(exact.sum(dim=-1))
+                        torch.log1p(pred_node_volume.sum(dim=-1))
+                        - torch.log1p(exact.sum(dim=-1))
                     ).mean()
                     exact_flood_loss = node_volume_loss + total_volume_loss
-                    full_loss = state_loss + flow_loss + args.exact_flood_loss_weight * exact_flood_loss
+                    full_loss = (
+                        state_loss
+                        + flow_loss
+                        + args.exact_flood_loss_weight * exact_flood_loss
+                    )
                     loss = full_loss / args.grad_accum
                 scaler.scale(loss).backward()
                 micro_step += 1
@@ -153,12 +207,14 @@ def train_step2_large_v2_main() -> None:
             scaler.step(optimiser)
             scaler.update()
             optimiser.zero_grad(set_to_none=True)
-        history.append({
-            "total": loss_sum / max(seen, 1),
-            "state": state_sum / max(seen, 1),
-            "flow": flow_sum / max(seen, 1),
-            "exact_flood": flood_sum / max(seen, 1),
-        })
+        history.append(
+            {
+                "total": loss_sum / max(seen, 1),
+                "state": state_sum / max(seen, 1),
+                "flow": flow_sum / max(seen, 1),
+                "exact_flood": flood_sum / max(seen, 1),
+            }
+        )
 
     meta = save_torch_checkpoint(
         model,
@@ -167,16 +223,23 @@ def train_step2_large_v2_main() -> None:
         training_manifest_sha256=sha256_file(args.manifest),
         scientific_split="development",
     )
-    print(json.dumps({
-        "contract": "STEP2_TRAINING_STATE_FLOW_EXACT_CUMULATIVE_FLOOD_V2",
-        "checkpoint": meta,
-        "final_losses": history[-1],
-        "exact_flood_loss_weight": args.exact_flood_loss_weight,
-        "device": str(device),
-        "amp": amp,
-        "micro_batch": args.batch_size,
-        "grad_accum": args.grad_accum,
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "contract": "STEP2_TRAINING_STATE_FLOW_EXACT_CUMULATIVE_FLOOD_V3_TRAPEZOID",
+                "checkpoint": meta,
+                "final_losses": history[-1],
+                "exact_flood_loss_weight": args.exact_flood_loss_weight,
+                "prediction_volume_integration": "trapezoid_current_plus_future_flooding_rate",
+                "truth_source_tfv": "SWMM_NODE_STATISTICS_CUMULATIVE_EXACT_HORIZON",
+                "device": str(device),
+                "amp": amp,
+                "micro_batch": args.batch_size,
+                "grad_accum": args.grad_accum,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
