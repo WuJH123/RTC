@@ -5,7 +5,6 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-
 _FILE_TOKEN = re.compile(r"\bFILE\s+(?:\"([^\"]+)\"|'([^']+)'|(\S+))", re.IGNORECASE)
 
 
@@ -167,6 +166,7 @@ def build_runtime_inp(
     native_controls: bool,
     swmm_threads: int | None = None,
     native_controls_template: str | Path | None = None,
+    source_sha256: str | None = None,
 ) -> RuntimeInpContract:
     """Create a policy-isolated runtime INP without changing event forcing/hydraulics.
 
@@ -248,7 +248,7 @@ def build_runtime_inp(
     return RuntimeInpContract(
         source_path=str(src),
         runtime_path=str(dst.resolve()),
-        source_sha256=sha256_file(src),
+        source_sha256=sha256_file(src) if source_sha256 is None else str(source_sha256),
         runtime_sha256=sha256_file(dst),
         native_controls_enabled=bool(native_controls),
         swmm_threads=swmm_threads,

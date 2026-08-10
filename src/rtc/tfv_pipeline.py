@@ -5,14 +5,14 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-
 TFV_STAGES = (
     "inp_preflight",
     "rainfall_split",
     "phase0_timescale",
     "d0_d1_coverage",
-    "d2_d3_generation",
     "step1_acceptance",
+    "d2_d3_generation",
+    "step2_training",
     "step2_acceptance",
     "gradient_acceptance",
     "candidate_ranking_acceptance",
@@ -106,7 +106,7 @@ class TFVPipelineLedger:
         )
 
     @classmethod
-    def from_json(cls, path: str | Path) -> "TFVPipelineLedger":
+    def from_json(cls, path: str | Path) -> TFVPipelineLedger:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
         obj = cls(
             contract=str(raw.get("contract", "WUHAN_RTC_TFV_FIRST_PIPELINE_V3_CAUSAL_FRESH_DATA"))
