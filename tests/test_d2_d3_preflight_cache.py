@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -365,6 +366,86 @@ def test_d3_census_only_never_constructs_swmm_executor(tmp_path: Path, monkeypat
     runner.run_d3_batch_main()
     assert (tmp_path / "out" / "REQUEST_CENSUS.json").is_file()
     assert not list((tmp_path / "out").glob("*.compact.npz"))
+
+
+def test_d2_worker_passes_cached_runtime_sha_to_branch_runner(monkeypatch) -> None:
+    import rtc.d2_runner as runner
+    from rtc import swmm_data
+
+    captured: dict[str, object] = {}
+
+    def fake_runner(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(metadata_path="branch.json", flow_routing_error_pct=0.0)
+
+    monkeypatch.setattr(swmm_data, "run_independent_control_branch", fake_runner)
+    monkeypatch.setattr(runner, "_stamp", lambda *_args, **_kwargs: "generation")
+    job = {
+        "runtime_inp": "runtime.inp",
+        "runtime_inp_sha256": "r" * 64,
+        "checkpoint_minutes": 60,
+        "horizon_minutes": 360,
+        "candidate_settings_json": "{}",
+        "out_dir": "out",
+        "branch_id": "branch",
+        "candidate_action_sha256": "a" * 64,
+        "simulation_identity_sha256": "s" * 64,
+        "simulation_family_sha256": "f" * 64,
+        "checkpoint_id": "cp",
+        "event_id": "event",
+        "rainfall_group": "group",
+        "scientific_split": "development",
+        "development_fold": "train",
+        "reference_metadata_path": "reference.json",
+        "stride_seconds": 300,
+        "debug_raw": False,
+        "keep_engine_files": False,
+        "snapshot_horizons_minutes": (),
+        "endpoint_preflight": {},
+    }
+
+    runner._run_job(job)
+
+    assert captured["inp_sha256"] == "r" * 64
+
+
+def test_d3_worker_passes_cached_runtime_sha_to_branch_runner(monkeypatch) -> None:
+    import rtc.d3_batch_v2 as runner
+    from rtc import swmm_sequence
+
+    captured: dict[str, object] = {}
+
+    def fake_runner(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(metadata_path="branch.json", flow_routing_error_pct=0.0)
+
+    monkeypatch.setattr(swmm_sequence, "run_control_sequence_branch", fake_runner)
+    monkeypatch.setattr(runner, "_stamp", lambda *_args, **_kwargs: "generation")
+    job = {
+        "runtime_inp": "runtime.inp",
+        "runtime_inp_sha256": "r" * 64,
+        "checkpoint_minutes": 60,
+        "settings_sequence_json": "[]",
+        "control_block_seconds": 600,
+        "out_dir": "out",
+        "branch_id": "branch",
+        "stride_seconds": 300,
+        "reference_metadata_path": "reference.json",
+        "event_id": "event",
+        "rainfall_group": "group",
+        "scientific_split": "development",
+        "development_fold": "train",
+        "checkpoint_id": "cp",
+        "data_role": "D3_MULTI_ACTUATOR_ROLLOUT",
+        "sequence_sha256": "q" * 64,
+        "simulation_identity_sha256": "s" * 64,
+        "simulation_family_sha256": "f" * 64,
+        "endpoint_preflight": {},
+    }
+
+    runner._run(job)
+
+    assert captured["inp_sha256"] == "r" * 64
 
 
 def test_preflight_cache_fails_closed_when_source_changes(tmp_path: Path) -> None:

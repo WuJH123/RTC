@@ -216,6 +216,7 @@ def _run_job(job: dict[str, object]) -> dict[str, object]:
 
     result = run_independent_control_branch(
         inp_path=str(job["runtime_inp"]),
+        inp_sha256=str(job["runtime_inp_sha256"]),
         checkpoint_minutes=int(job["checkpoint_minutes"]),
         horizon_minutes=int(job["horizon_minutes"]),
         candidate_settings=json.loads(str(job["candidate_settings_json"])),

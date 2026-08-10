@@ -28,6 +28,7 @@ class SequenceBranchResult:
 def run_control_sequence_branch(
     *,
     inp_path: str | Path,
+    inp_sha256: str | None = None,
     checkpoint_minutes: int,
     settings_sequence: list[dict[str, float]],
     control_block_seconds: int,
@@ -212,7 +213,7 @@ def run_control_sequence_branch(
         "model_horizon_seconds": int(model_horizon_steps * python_intervention_seconds),
         "d3_time_contract": "D3_MODEL_STEP_CONTROL_BLOCK_ALIGNMENT_V1",
         "inp_path": str(inp.resolve()),
-        "inp_sha256": sha256_file(inp),
+        "inp_sha256": str(inp_sha256) if inp_sha256 is not None else sha256_file(inp),
         "native_controls_enabled": False,
         "checkpoint_minutes": int(checkpoint_minutes),
         "python_intervention_seconds": int(python_intervention_seconds),
