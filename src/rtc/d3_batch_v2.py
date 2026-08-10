@@ -139,6 +139,7 @@ def _run(job: dict[str, object]) -> dict[str, object]:
 
     result = run_control_sequence_branch(
         inp_path=str(job["runtime_inp"]),
+        inp_sha256=str(job["runtime_inp_sha256"]),
         checkpoint_minutes=int(job["checkpoint_minutes"]),
         settings_sequence=json.loads(str(job["settings_sequence_json"])),
         control_block_seconds=int(job["control_block_seconds"]),

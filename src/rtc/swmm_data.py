@@ -18,7 +18,6 @@ from .replay_prefix import load_checkpoint_reference, verify_replayed_checkpoint
 from .swmm_stats import snapshot_node_statistics, write_node_statistics
 from .units import flow_rate_to_m3s, length_to_m, volume_to_m3
 
-
 STATE_CHANNELS = (
     "depth_m",
     "head_m",
@@ -73,6 +72,7 @@ def _node_state_si(
 def run_independent_control_branch(
     *,
     inp_path: str | Path,
+    inp_sha256: str | None = None,
     checkpoint_minutes: int,
     horizon_minutes: int,
     candidate_settings: dict[str, float],
@@ -325,7 +325,7 @@ def run_independent_control_branch(
         "data_contract": "D2_CONTROLS_DISABLED_COMPACT_V3_PREFIX_VERIFIED",
         "candidate_action_sha256": canonical_action_sha(candidate_settings),
         "inp_path": str(inp_path.resolve()),
-        "inp_sha256": sha256_file(inp_path),
+        "inp_sha256": str(inp_sha256) if inp_sha256 is not None else sha256_file(inp_path),
         "native_controls_enabled": False,
         "checkpoint_minutes": checkpoint_minutes,
         "horizon_minutes": horizon_minutes,
