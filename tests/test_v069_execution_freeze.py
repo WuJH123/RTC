@@ -103,6 +103,28 @@ def test_dimensionless_acceptance_is_preregistered() -> None:
     assert contract["candidate_ranking"]["maximum"] == {}
 
 
+def test_phase0_budget_has_dedicated_cli_scope() -> None:
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'rtc-design-phase0-checkpoints = "rtc.execution_defaults_guard:checkpoint_design_main"' in pyproject
+    assert 'rtc-design-phase0-probes = "rtc.execution_defaults_guard:efficient_probe_design_main"' in pyproject
+    assert 'rtc-design-checkpoints = "rtc.checkpoint_design:main"' in pyproject
+    assert 'rtc-design-probes-efficient = "rtc.efficient_probe_design:main"' in pyproject
+    assert 'rtc-design-checkpoints = "rtc.execution_defaults_guard:checkpoint_design_main"' not in pyproject
+    assert 'rtc-design-probes-efficient = "rtc.execution_defaults_guard:efficient_probe_design_main"' not in pyproject
+
+
+def test_step0_prepares_effective120_before_fresh_workspace() -> None:
+    script = (ROOT / "scripts/adopt_and_step0_project7_v067.ps1").read_text(encoding="utf-8")
+    prepare = script.index("rtc-prepare-event-suite")
+    initialize = script.index("rtc-init-fresh-workspace")
+    assert prepare < initialize
+    assert "--events $PreparedRegistry" in script[initialize : initialize + 300]
+    assert 'Join-Path $Study "preflight\\inp_audit.json"' in script
+    assert 'Join-Path $Study "contracts\\study_readiness.json"' in script
+    assert "--target-effective-warmup-minutes 120" in script
+    assert "--post-rain-tail-minutes 360" in script
+
+
 def test_old_active_looking_contracts_are_absent() -> None:
     obsolete = [
         "configs/formal_controller_v5.template.json",

@@ -16,6 +16,18 @@ Before running SWMM or training, read exactly these active files:
 
 Do not search old versioned controller/split/acceptance files to decide current semantics. The active split contains only `development/train`, `development/validation`, and untouched `final`; calibration/safety-audit are no longer active roles.
 
+## Step0 event-clock lineage
+
+The authoritative Step0 bootstrap is `scripts/adopt_and_step0_project7_v067.ps1`. It must:
+
+1. verify the extracted v0.6.7 physical/rainfall source bundle and the frozen 18/6/6 source registry;
+2. deterministically prepare all 30 event INPs to **effective pre-rain warm-up = 120 min** with **post-rain tail = 360 min**;
+3. validate the prepared 18/6/6 registry;
+4. initialize `study_v069` against that **prepared effective-120 registry**, not against the original 60-min source registry;
+5. write canonical preflight/readiness evidence at the paths later consumed by Policy Lock.
+
+This ordering is mandatory. Initializing the fresh workspace against the original 60-min source registry and later replacing it with the prepared registry would create a registry-SHA mismatch at Policy Lock.
+
 ## Frozen choices — do not ask Codex to rediscover them
 
 - 30 events = **18 Train + 6 Validation + 6 Final**.
@@ -35,6 +47,39 @@ Do not search old versioned controller/split/acceptance files to decide current 
 - Exactly one small development runtime/readback benchmark is allowed to verify those fixed values. Failure is fail-closed and requires human review; do not auto-retune.
 - Auto-RBC and EFD use their fixed defaults; **never event-tune them**.
 - Phase-0 pulse/recovery is conditional diagnostic only and is not an automatic batch.
+
+## Cohort scope — mandatory
+
+- Phase-0 high-frequency D0/D2 uses only the frozen **6 selected Train events**.
+- Step3 production D0 at the frozen 300-s grid must cover **all 24 development events = 18 Train + 6 Validation**, because Step1 held-out acceptance requires real Validation trajectories.
+- D1 controlled exploration is **18 Train only**; no D1 on Validation or Final.
+- Step4 production D2/D3 must cover **Train and Validation development cohorts** sufficiently for Step2 training and held-out action-effect/ranking evidence; no Final rows are allowed pre-lock.
+- Step1 and Step2 fit only on **18 Train** and accept only on **6 Validation**.
+- Step6 development closed-loop comparison should use the **6 Validation** events as the held-out development comparison set; do not tune from those outcomes.
+- Step9 uses only the **6 untouched Final** events after Policy Lock.
+
+## CLI scope — do not propagate the Phase-0 budget into production D2
+
+The small `4 checkpoints/event × 12 actuators/checkpoint` budget is **Phase-0 only**.
+
+Use these guarded commands only for Phase-0:
+
+```text
+rtc-design-phase0-events
+rtc-design-phase0-checkpoints
+rtc-design-phase0-probes
+```
+
+For Step4 production D2 generation, use the general commands:
+
+```text
+rtc-design-checkpoints
+rtc-design-probes-efficient
+```
+
+The general Step4 commands are deliberately not forced to the Phase-0 4/12 budget. Their production design must provide sufficient Train/Validation coverage of the 109-actuator action space, use the current normal production defaults once unless the frozen workflow explicitly specifies otherwise, and must not be hyperparameter-swept.
+
+D1 and D3 values remain globally frozen by their guarded public CLIs because the user explicitly froze those settings for the study.
 
 ## Expensive-compute rules
 
