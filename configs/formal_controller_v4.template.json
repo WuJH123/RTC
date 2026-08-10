@@ -1,6 +1,6 @@
 {
   "contract": "PRODUCTION_CONTROLLER_CONFIG_V4_TFV_FIRST",
-  "instruction": "PFV means Priority Flood Volume and priority depth/PFV are soft diagnostics/secondary preferences, never hard MPC admission constraints. Formal main runs keep exact_global_peak=false; exact peak is replayed afterward. The candidate production cadence is 300 s observation/model + 600 s control, but it must be frozen only after <=60 s Phase0 D2 response/readback audit and runtime benchmarking. For Formal D3 joint-sequence evidence, horizon_steps * model_step_seconds must contain an integer number of control_update_seconds blocks; rtc-design-d3 derives that control-block count from this resolved config.",
+  "instruction": "PFV means Priority Flood Volume and priority depth/PFV are soft diagnostics/secondary preferences, never hard MPC admission constraints. For the v0.6.7 methodology testbed, pumps/orifices remain continuously controllable on [0,1] and the engineering smoothing assumption is max_setting_delta_per_update=0.5 on the 10-min supervisory grid; the INP also gives orifices a 10-min full-travel time. Formal main runs keep exact_global_peak=false; exact peak is replayed afterward. The candidate production cadence is 300 s observation/model + 600 s control, but prediction horizon and remaining development parameters must still be frozen from fresh Phase0 evidence and runtime benchmarking.",
   "model_step_seconds": "REPLACE_AFTER_HIGH_FREQUENCY_PHASE0_D2_PILOT",
   "control_update_seconds": "REPLACE_AFTER_HIGH_FREQUENCY_PHASE0_D2_PILOT",
   "record_stride_seconds": "REPLACE_AFTER_HIGH_FREQUENCY_PHASE0_D2_PILOT",
@@ -29,7 +29,7 @@
     "horizon_steps": "REPLACE_AFTER_HIGH_FREQUENCY_PHASE0_D2_PILOT",
     "optimizer_iterations": "REPLACE_DEVELOPMENT_ONLY",
     "optimizer_learning_rate": "REPLACE_DEVELOPMENT_ONLY",
-    "max_setting_delta_per_update": "REPLACE_FROM_ENGINEERING_METADATA_OR_NULL",
+    "max_setting_delta_per_update": 0.5,
     "readback_target_tolerance": "REPLACE_FROM_ENGINEERING_RUNTIME_TEST",
     "readback_current_tolerance": "REPLACE_FROM_ENGINEERING_RUNTIME_TEST",
     "decision_runtime_budget_seconds": "REPLACE_AFTER_WALL_CLOCK_BENCHMARK__MUST_BE_LESS_THAN_CONTROL_UPDATE",
