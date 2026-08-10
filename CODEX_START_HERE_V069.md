@@ -48,6 +48,16 @@ This ordering is mandatory. Initializing the fresh workspace against the origina
 - Auto-RBC and EFD use their fixed defaults; **never event-tune them**.
 - Phase-0 pulse/recovery is conditional diagnostic only and is not an automatic batch.
 
+## Cohort scope — mandatory
+
+- Phase-0 high-frequency D0/D2 uses only the frozen **6 selected Train events**.
+- Step3 production D0 at the frozen 300-s grid must cover **all 24 development events = 18 Train + 6 Validation**, because Step1 held-out acceptance requires real Validation trajectories.
+- D1 controlled exploration is **18 Train only**; no D1 on Validation or Final.
+- Step4 production D2/D3 must cover **Train and Validation development cohorts** sufficiently for Step2 training and held-out action-effect/ranking evidence; no Final rows are allowed pre-lock.
+- Step1 and Step2 fit only on **18 Train** and accept only on **6 Validation**.
+- Step6 development closed-loop comparison should use the **6 Validation** events as the held-out development comparison set; do not tune from those outcomes.
+- Step9 uses only the **6 untouched Final** events after Policy Lock.
+
 ## CLI scope — do not propagate the Phase-0 budget into production D2
 
 The small `4 checkpoints/event × 12 actuators/checkpoint` budget is **Phase-0 only**.
