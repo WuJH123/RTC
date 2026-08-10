@@ -25,11 +25,11 @@ BASELINE_TRUE_STATE_ADVANTAGE = ("internal_rtc", "auto_rbc", "efd")
 def validate_project7_runtime_config(config: Mapping[str, object]) -> dict[str, object]:
     """Validate the user-frozen Project7 methodology-testbed runtime contract.
 
-    This contract intentionally separates event initialization from control timing:
-    prepared events carry an effective 120-minute pre-rain warm-up, while the first
-    Proposed decision occurs 60 minutes after the SWMM simulation START, once the
-    13-frame, 5-minute causal history is complete. The prediction horizon is fixed at
-    360 minutes and is not re-inferred from Phase-0 censor diagnostics.
+    Prepared events carry an effective 120-minute pre-rain initialization, while the first
+    Proposed decision occurs 60 minutes after SWMM simulation START, when the 13-frame,
+    5-minute causal history is complete. The prediction horizon is fixed at 360 minutes.
+    Actuator commands are sequentially rate-bounded inside each horizon and across rolling
+    decision epochs; they are never reset to an initial/default value when a new horizon opens.
     """
 
     if str(config.get("contract", "")) != PRODUCTION_CONTROLLER_CONTRACT:
@@ -85,8 +85,10 @@ def validate_project7_runtime_config(config: Mapping[str, object]) -> dict[str, 
     delta = float(controller.get("max_setting_delta_per_update", -1.0))
     if abs(delta - MAX_SETTING_DELTA_PER_UPDATE) > 1e-12:
         raise ValueError("Project7 max setting delta must be 0.5 per 10-minute update")
-    if controller.get("shift_previous_plan_warm_start") is not True:
-        raise ValueError("Project7 requires shifted previous-plan warm start for rolling continuity")
+    if controller.get("enforce_cross_decision_target_continuity") is not True:
+        raise ValueError("Project7 requires cross-decision target continuity")
+    if controller.get("enforce_sequential_horizon_continuity") is not True:
+        raise ValueError("Project7 requires sequential continuity across the full MPC horizon")
 
     return {
         "contract": PROJECT7_RUNTIME_CONTRACT,
@@ -100,6 +102,11 @@ def validate_project7_runtime_config(config: Mapping[str, object]) -> dict[str, 
         "max_setting_delta_per_update": MAX_SETTING_DELTA_PER_UPDATE,
         "dwf_background_loading": True,
         "baseline_true_state_advantage": list(BASELINE_TRUE_STATE_ADVANTAGE),
+        "temporal_continuity": {
+            "within_horizon": "each 10-min control block is projected from the previous block",
+            "across_decisions": "new target is bounded from both current readback and previous issued target",
+            "between_decisions": "issued target is held until the next supervisory epoch",
+        },
         "timing": timing.as_dict(),
     }
 
