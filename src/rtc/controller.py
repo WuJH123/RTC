@@ -67,11 +67,11 @@ def hold_current_fallback(
 class TorchMPCController:
     """Step1 -> causal rainfall forecast -> Step2/MPC -> executable first move.
 
-    The rolling controller never resets actuator targets to an initial/default state between
-    horizons. Each new first move is constrained both by the current SWMM readback and by the
-    previously issued supervisory target. The latter cross-decision anchor prevents a device
-    that is still moving toward its previous target from being abruptly commanded back simply
-    because the optimizer was re-solved on a new horizon.
+    A rolling horizon never resets devices to their original/default state. The current SWMM
+    ``current_setting`` anchors physical travel, while the observed SWMM ``target_setting``
+    anchors the command trajectory carried over from the preceding decision. ``last_requested``
+    is retained only to verify that the previous Python write was accepted; the actual target
+    readback is the authority for the next continuity projection.
     """
 
     def __init__(
@@ -184,30 +184,27 @@ class TorchMPCController:
         diagnostics: dict[str, float | int | bool | str],
     ) -> ControllerAction:
         current = np.asarray(obs.actuator_current_setting, dtype=float).reshape(-1)
+        active_target = np.asarray(obs.actuator_target_setting, dtype=float).reshape(-1)
         decision = choose_first_move(
             optimized_sequence=fallback,
             surrogate_admissible=False,
             fallback_first_move=fallback[0],
             current_settings=current,
-            previous_requested_settings=self.last_requested,
+            previous_requested_settings=active_target,
             min_settings=0.0,
             max_settings=1.0,
             max_delta_per_update=self.config.max_setting_delta_per_update,
         )
-        previous = None if self.last_requested is None else self.last_requested.copy()
         self.last_requested = decision.requested.copy()
-        delta_previous = (
-            0.0
-            if previous is None
-            else float(np.abs(decision.requested - previous).max(initial=0.0))
-        )
         diagnostics = dict(diagnostics)
         diagnostics.update(
             {
                 "command_delta_from_current_max": float(
                     np.abs(decision.requested - current).max(initial=0.0)
                 ),
-                "command_delta_from_previous_target_max": delta_previous,
+                "command_delta_from_previous_target_max": float(
+                    np.abs(decision.requested - active_target).max(initial=0.0)
+                ),
             }
         )
         return ControllerAction(
@@ -227,11 +224,12 @@ class TorchMPCController:
                 raise ValueError("decision observation was not recorded at this model step")
         fallback = self._fallback(obs)
         current = np.asarray(obs.actuator_current_setting, dtype=float).reshape(-1)
+        active_target = np.asarray(obs.actuator_target_setting, dtype=float).reshape(-1)
 
         if self.last_requested is not None:
             readback = verify_setting_readback(
                 self.last_requested,
-                np.asarray(obs.actuator_target_setting, dtype=float),
+                active_target,
                 current,
                 target_tolerance=self.config.readback_target_tolerance,
                 current_tolerance=self.config.readback_current_tolerance,
@@ -336,13 +334,12 @@ class TorchMPCController:
             candidate_valid = bool(
                 getattr(result, "candidate_valid", getattr(result, "admissible", False))
             )
-            previous = None if self.last_requested is None else self.last_requested.copy()
             decision = choose_first_move(
                 optimized_sequence=result.settings.detach().cpu().numpy(),
                 surrogate_admissible=candidate_valid,
                 fallback_first_move=fallback[0],
                 current_settings=current,
-                previous_requested_settings=previous,
+                previous_requested_settings=active_target,
                 min_settings=0.0,
                 max_settings=1.0,
                 max_delta_per_update=self.config.max_setting_delta_per_update,
@@ -362,10 +359,8 @@ class TorchMPCController:
                 )
             self.last_requested = decision.requested.copy()
             setting_change = np.abs(decision.requested - current)
-            previous_change = (
-                0.0
-                if previous is None
-                else float(np.abs(decision.requested - previous).max(initial=0.0))
+            previous_change = float(
+                np.abs(decision.requested - active_target).max(initial=0.0)
             )
             settings_np = result.settings.detach().cpu().numpy()
             if settings_np.ndim != 2:
