@@ -5,7 +5,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from rtc.rainfall_design import validate_formal_rainfall_design
+from rtc.rainfall_design import (
+    validate_formal_rainfall_design,
+    validate_project7_v069_rainfall_design,
+)
 from rtc.splits import assign_rainfall_group_splits
 
 
@@ -58,7 +61,7 @@ def _active_registry(tmp_path: Path) -> pd.DataFrame:
 
 
 def test_active_30_event_split_is_exactly_18_6_6(tmp_path: Path) -> None:
-    evidence = validate_formal_rainfall_design(_active_registry(tmp_path))
+    evidence = validate_project7_v069_rainfall_design(_active_registry(tmp_path))
     assert evidence["rainfall_groups"] == 30
     assert evidence["role_group_counts"] == {"development": 24, "final": 6}
     assert evidence["development_train_groups"] == 18
