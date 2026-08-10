@@ -1,0 +1,14 @@
+{
+  "actuation_scope": "SWMM_MODEL_CONTINUOUS_SIMULATION_ONLY",
+  "actuator_count": 109,
+  "continuous_setting_range": [
+    0.0,
+    1.0
+  ],
+  "contract": "ACTUATOR_SCOPE_V1",
+  "field_deployment_claim": false,
+  "max_setting_delta_per_10min_update": 0.5,
+  "orifice_semantics": "continuous fractional opening; 10-min full travel time",
+  "pump_semantics": "PUMP4 depth-flow curves; SWMM setting is a continuous flow multiplier; methodology-testbed assumption",
+  "retrofit_storage_links": "RTC_IN_*/RTC_OUT_* are direction-specific and flap-gated"
+}
