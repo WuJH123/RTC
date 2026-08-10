@@ -11,6 +11,12 @@ import pandas as pd
 from .generation_contract import generation_key
 from .inp_runtime import build_runtime_inp, sha256_file
 from .replay_prefix import reference_trajectory_lineage
+from .simulation_assets import (
+    SimulationAssetRegistry,
+    assert_endpoint_available,
+    d2_identity,
+    register_d2_metadata,
+)
 
 
 D2_DATA_CONTRACT = "D2_CONTROLS_DISABLED_COMPACT_V3_PREFIX_VERIFIED"
@@ -70,11 +76,16 @@ def _stamp(metadata_path: str | Path, job: dict[str, object]) -> str:
                 hashes[field] = sha256_file(artifact)
     meta.update(
         {
-            "generation_contract": "RTC_GENERATION_KEY_V1",
+            "generation_contract": "RTC_GENERATION_KEY_V2_INPUT_CONFIG_BOUND",
             "generation_key_sha256": key,
             "rtc_source_tree_sha256": code_sha,
             "generation_lineage": lineage,
             "generated_artifact_sha256": hashes,
+            "simulation_identity_contract": "RTC_SIMULATION_IDENTITY_V1_STATE_ACTION_ENGINE_BOUND",
+            "simulation_identity_sha256": str(job["simulation_identity_sha256"]),
+            "simulation_family_sha256": str(job["simulation_family_sha256"]),
+            "simulation_identity": job["simulation_identity"],
+            "asset_qualification": "VALID_REUSABLE",
         }
     )
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -113,6 +124,32 @@ def _complete(metadata_path: Path, expected_key: str) -> bool:
         return False
 
 
+def _result_record(
+    *,
+    job: dict[str, object],
+    metadata_path: str,
+    status: str,
+    flow_routing_error_pct: float = float("nan"),
+    generation_key_sha256: str = "",
+) -> dict[str, object]:
+    return {
+        "branch_id": str(job["branch_id"]),
+        "metadata_path": str(metadata_path),
+        "candidate_action_sha256": str(job["candidate_action_sha256"]),
+        "generation_key_sha256": generation_key_sha256,
+        "simulation_identity_sha256": str(job["simulation_identity_sha256"]),
+        "simulation_family_sha256": str(job["simulation_family_sha256"]),
+        "checkpoint_minutes": int(job["checkpoint_minutes"]),
+        "checkpoint_id": str(job["checkpoint_id"]),
+        "event_id": str(job["event_id"]),
+        "rainfall_group": str(job["rainfall_group"]),
+        "scientific_split": str(job["scientific_split"]),
+        "development_fold": str(job["development_fold"]),
+        "flow_routing_error_pct": flow_routing_error_pct,
+        "status": status,
+    }
+
+
 def _run_job(job: dict[str, object]) -> dict[str, object]:
     from .swmm_data import run_independent_control_branch
 
@@ -129,25 +166,26 @@ def _run_job(job: dict[str, object]) -> dict[str, object]:
         keep_engine_files=bool(job["keep_engine_files"]),
     )
     key = _stamp(result.metadata_path, job)
-    return {
-        "branch_id": result.branch_id,
-        "metadata_path": result.metadata_path,
-        "candidate_action_sha256": str(job["candidate_action_sha256"]),
-        "generation_key_sha256": key,
-        "checkpoint_minutes": int(job["checkpoint_minutes"]),
-        "checkpoint_id": str(job["checkpoint_id"]),
-        "event_id": str(job["event_id"]),
-        "rainfall_group": str(job["rainfall_group"]),
-        "scientific_split": str(job["scientific_split"]),
-        "development_fold": str(job["development_fold"]),
-        "flow_routing_error_pct": result.flow_routing_error_pct,
-        "status": "completed",
-    }
+    return _result_record(
+        job=job,
+        metadata_path=result.metadata_path,
+        status="completed",
+        flow_routing_error_pct=result.flow_routing_error_pct,
+        generation_key_sha256=key,
+    )
+
+
+def _write_census(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run authoritative resumable D2 branches with exact No-control prefix verification"
+        description=(
+            "Run authoritative D2 branches with exact-prefix verification, endpoint preflight "
+            "and optional cross-directory local simulation-asset reuse"
+        )
     )
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--inp", help="default event INP; manifest inp_path takes precedence")
@@ -160,6 +198,14 @@ def main() -> None:
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--debug-raw", action="store_true")
     parser.add_argument("--keep-engine-files", action="store_true")
+    parser.add_argument(
+        "--asset-root",
+        help=(
+            "local large-data simulation asset store; when supplied, exact physical-state/action "
+            "identities are reused across output directories and studies"
+        ),
+    )
+    parser.add_argument("--census-out", help="pre-run request/dedup/cache/endpoint census JSON")
     args = parser.parse_args()
     if min(args.workers, args.swmm_threads_per_process, args.horizon_minutes, args.stride_seconds) <= 0:
         raise ValueError("workers/threads/horizon/stride must be positive")
@@ -183,17 +229,21 @@ def main() -> None:
     dedup_cols = ["candidate_action_sha256", "checkpoint_id"]
     if "event_id" in manifest.columns:
         dedup_cols.insert(0, "event_id")
+    requested_rows = len(manifest)
     rows = manifest.drop_duplicates(dedup_cols).reset_index(drop=True)
     if args.limit is not None:
         rows = rows.head(args.limit)
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    runtime_dir = out / "_runtime_inp"
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    runtime_cache: dict[str, str] = {}
-    jobs: list[dict[str, object]] = []
-    results: list[dict[str, object]] = []
+    census_path = Path(args.census_out) if args.census_out else out / "REQUEST_CENSUS.json"
+    registry = SimulationAssetRegistry(args.asset_root) if args.asset_root else None
+
+    # Build and validate the entire execution request before a single SWMM process is launched.
+    pre_jobs: list[dict[str, object]] = []
+    endpoint_failures: list[dict[str, object]] = []
+    exact_asset_hits = 0
+    covering_trajectory_hits = 0
     for _, row in rows.iterrows():
         source_raw = row.get("inp_path", "")
         source = "" if pd.isna(source_raw) else str(source_raw).strip()
@@ -201,29 +251,42 @@ def main() -> None:
             source = str(args.inp or "")
         if not source or not Path(source).is_file():
             raise ValueError(f"D2 source INP missing: {source}")
-        source_sha = sha256_file(source)
-        if source_sha not in runtime_cache:
-            runtime = runtime_dir / f"{source_sha[:20]}.d2.no_control.t{args.swmm_threads_per_process}.inp"
-            build_runtime_inp(
-                source,
-                runtime,
-                native_controls=False,
-                swmm_threads=args.swmm_threads_per_process,
-            )
-            runtime_cache[source_sha] = str(runtime)
-        runtime = runtime_cache[source_sha]
         event = str(row.get("event_id", "event"))
         action_sha = str(row["candidate_action_sha256"])
         checkpoint = int(row["checkpoint_minutes"])
+        checkpoint_seconds = checkpoint * 60
         reference_path = str(row["trajectory_metadata_path"])
         reference_lineage = reference_trajectory_lineage(reference_path)
+        try:
+            endpoint = assert_endpoint_available(
+                source,
+                checkpoint_seconds=checkpoint_seconds,
+                horizon_seconds=args.horizon_minutes * 60,
+            )
+        except ValueError as exc:
+            endpoint_failures.append(
+                {
+                    "event_id": event,
+                    "checkpoint_id": str(row["checkpoint_id"]),
+                    "checkpoint_minutes": checkpoint,
+                    "candidate_action_sha256": action_sha,
+                    "error": str(exc),
+                }
+            )
+            continue
+        sim_key, family_key, identity = d2_identity(
+            inp_path=source,
+            reference_metadata_path=reference_path,
+            checkpoint_seconds=checkpoint_seconds,
+            candidate_action_sha256=action_sha,
+            swmm_engine_version=str(reference_lineage["reference_swmm_engine_version"]),
+            stride_seconds=args.stride_seconds,
+            horizon_seconds=args.horizon_minutes * 60,
+        )
         branch_id = f"{event}__t{checkpoint:04d}__{action_sha[:16]}"
-        metadata = out / f"{branch_id}.json"
         job: dict[str, object] = {
-            "runtime_inp": runtime,
-            "runtime_inp_sha256": sha256_file(runtime),
-            "source_inp_sha256": source_sha,
-            "out_dir": str(out),
+            "source": source,
+            "source_inp_sha256": sha256_file(source),
             "branch_id": branch_id,
             "candidate_action_sha256": action_sha,
             "candidate_settings_json": str(row["candidate_settings_json"]),
@@ -238,45 +301,118 @@ def main() -> None:
             "swmm_threads_per_process": args.swmm_threads_per_process,
             "debug_raw": args.debug_raw,
             "keep_engine_files": args.keep_engine_files,
+            "simulation_identity_sha256": sim_key,
+            "simulation_family_sha256": family_key,
+            "simulation_identity": identity,
+            "endpoint_preflight": endpoint,
             **reference_lineage,
         }
+        if registry is not None and not args.no_resume:
+            hit = registry.lookup_exact(sim_key)
+            if hit is not None:
+                exact_asset_hits += 1
+                job["asset_hit_metadata_path"] = hit.metadata_path
+            elif registry.lookup_covering(family_key, horizon_seconds=args.horizon_minutes * 60):
+                # Report the opportunity, but do not silently use a longer branch as exact
+                # shorter-window cumulative SWMM truth. Timing can reuse it via
+                # rtc-phase0-timescale --analysis-horizon-minutes.
+                covering_trajectory_hits += 1
+        pre_jobs.append(job)
+
+    census = {
+        "contract": "RTC_D2_PRE_RUN_CENSUS_V1",
+        "manifest": str(Path(args.manifest).resolve()),
+        "requested_rows": int(requested_rows),
+        "unique_projected_actions": int(len(rows)),
+        "deduplicated_rows": int(requested_rows - len(rows)),
+        "endpoint_invalid": int(len(endpoint_failures)),
+        "endpoint_failures": endpoint_failures,
+        "asset_registry_enabled": registry is not None,
+        "exact_asset_hits": int(exact_asset_hits),
+        "covering_trajectory_hits": int(covering_trajectory_hits),
+        "covering_reuse_scope": (
+            "trajectory/timing prefix only unless an exact cumulative endpoint snapshot exists"
+        ),
+        "need_execution_before_local_resume": int(len(pre_jobs) - exact_asset_hits),
+        "horizon_minutes": int(args.horizon_minutes),
+        "stride_seconds": int(args.stride_seconds),
+    }
+    _write_census(census_path, census)
+    if endpoint_failures:
+        raise ValueError(
+            f"D2 preflight rejected {len(endpoint_failures)} branch identities before SWMM; "
+            f"see {census_path}"
+        )
+
+    runtime_dir = out / "_runtime_inp"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    runtime_cache: dict[str, str] = {}
+    jobs: list[dict[str, object]] = []
+    results: list[dict[str, object]] = []
+    for job in pre_jobs:
+        if job.get("asset_hit_metadata_path"):
+            results.append(
+                _result_record(
+                    job=job,
+                    metadata_path=str(job["asset_hit_metadata_path"]),
+                    status="asset_reused",
+                )
+            )
+            continue
+        source = str(job["source"])
+        source_sha = str(job["source_inp_sha256"])
+        if source_sha not in runtime_cache:
+            runtime = runtime_dir / f"{source_sha[:20]}.d2.no_control.t{args.swmm_threads_per_process}.inp"
+            build_runtime_inp(
+                source,
+                runtime,
+                native_controls=False,
+                swmm_threads=args.swmm_threads_per_process,
+            )
+            runtime_cache[source_sha] = str(runtime)
+        runtime = runtime_cache[source_sha]
+        job["runtime_inp"] = runtime
+        job["runtime_inp_sha256"] = sha256_file(runtime)
+        job["out_dir"] = str(out)
+        metadata = out / f"{job['branch_id']}.json"
         expected_key, _, _ = _generation(job)
         if not args.no_resume and _complete(metadata, expected_key):
             results.append(
-                {
-                    "branch_id": branch_id,
-                    "metadata_path": str(metadata),
-                    "candidate_action_sha256": action_sha,
-                    "generation_key_sha256": expected_key,
-                    "checkpoint_minutes": checkpoint,
-                    "checkpoint_id": job["checkpoint_id"],
-                    "event_id": event,
-                    "rainfall_group": job["rainfall_group"],
-                    "scientific_split": job["scientific_split"],
-                    "development_fold": job["development_fold"],
-                    "flow_routing_error_pct": float("nan"),
-                    "status": "resumed",
-                }
+                _result_record(
+                    job=job,
+                    metadata_path=str(metadata),
+                    status="resumed",
+                    generation_key_sha256=expected_key,
+                )
             )
+            if registry is not None:
+                register_d2_metadata(registry, metadata)
         else:
             jobs.append(job)
+
     if jobs:
         with ProcessPoolExecutor(max_workers=min(args.workers, len(jobs))) as pool:
             futures = [pool.submit(_run_job, job) for job in jobs]
             for future in as_completed(futures):
-                results.append(future.result())
+                result = future.result()
+                results.append(result)
+                if registry is not None:
+                    register_d2_metadata(registry, str(result["metadata_path"]))
     results.sort(key=lambda r: str(r["branch_id"]))
     summary = out / "RUN_SUMMARY.csv"
     pd.DataFrame(results).to_csv(summary, index=False)
     print(
         json.dumps(
             {
-                "contract": "D2_BATCH_PREFIX_VERIFIED_RESUME_V2",
+                "contract": "D2_BATCH_PREFIX_VERIFIED_ASSET_REUSE_V3",
                 "branches": len(results),
                 "computed": len(jobs),
-                "resumed": len(results) - len(jobs),
+                "local_resumed": sum(r["status"] == "resumed" for r in results),
+                "asset_reused": sum(r["status"] == "asset_reused" for r in results),
                 "workers": min(args.workers, max(1, len(jobs))),
+                "census": str(census_path),
                 "summary": str(summary),
+                "asset_root": None if registry is None else str(registry.root),
             },
             indent=2,
         )
