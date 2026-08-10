@@ -7,6 +7,7 @@ from pathlib import Path
 from .baselines import baseline_sensor_nodes, canonical_baseline_id, fixed_baseline_controller
 from .closed_loop import run_authoritative_closed_loop
 from .production_cli import _controls_disabled_runtime, run_policy_main as legacy_run_policy_main
+from .runtime_controller_guard import ContinuityGuardController
 
 
 def run_policy_main() -> None:
@@ -39,7 +40,9 @@ def run_policy_main() -> None:
     if not isinstance(controller_cfg, dict):
         controller_cfg = {}
     raw_delta = controller_cfg.get("max_setting_delta_per_update")
-    max_delta = None if raw_delta is None else float(raw_delta)
+    if raw_delta is None:
+        raise ValueError("Formal rule baselines require max_setting_delta_per_update")
+    max_delta = float(raw_delta)
 
     source_inp = Path(known.inp)
     cache_dir = (
@@ -53,10 +56,15 @@ def run_policy_main() -> None:
         swmm_threads=int(cfg.get("swmm_threads", 1)),
     )
     sensors = baseline_sensor_nodes(strategy, source_inp)
-    controller = fixed_baseline_controller(
+    raw_controller = fixed_baseline_controller(
         strategy,
         inp_path=source_inp,
         max_delta_per_update=max_delta,
+    )
+    controller = ContinuityGuardController(
+        raw_controller,
+        max_delta_per_update=max_delta,
+        allow_projection=True,
     )
     result = run_authoritative_closed_loop(
         inp_path=runtime_inp,
