@@ -1,0 +1,68 @@
+{
+  "contract": "MODEL_ACCEPTANCE_CONTRACT_V4_DIMENSIONLESS_PREREGISTERED",
+  "instruction": "Hard acceptance thresholds are frozen before fresh model fitting and use only the preregistered dimensionless metrics confirmed for Project7 v0.6.9. Absolute RMSE/MAE/regret metrics remain mandatory diagnostics and must be reported, but they are not converted into arbitrary hard thresholds after seeing validation results. Thresholds must never be lowered to make a model pass; Final is never used for acceptance or tuning.",
+  "step1": {
+    "minimum": {
+      "unobserved_depth_nse": 0.70
+    },
+    "maximum": {},
+    "required_diagnostics_no_hard_threshold": [
+      "unobserved_depth_rmse_m",
+      "all_state_normalized_rmse",
+      "priority_depth_rmse_m",
+      "priority_depth_nse",
+      "dry/wet/flood-high stratified reconstruction metrics"
+    ]
+  },
+  "step2": {
+    "minimum": {
+      "tfv_exact_truth_rank_correlation": 0.70
+    },
+    "maximum": {},
+    "required_diagnostics_no_hard_threshold": [
+      "depth_rmse_m",
+      "managed_flow_rmse_m3s",
+      "tfv_exact_truth_mae_m3",
+      "priority_flood_exact_truth_mae_m3",
+      "priority_flood_exact_truth_rank_correlation",
+      "negative/nonfinite physical plausibility diagnostics"
+    ]
+  },
+  "gradient": {
+    "minimum": {
+      "tfv_gradient_sign_accuracy": 0.70,
+      "tfv_gradient_cosine_similarity": 0.60
+    },
+    "maximum": {},
+    "required_diagnostics_no_hard_threshold": [
+      "tfv_gradient_mae",
+      "gradient_cases",
+      "gradient_rainfall_groups",
+      "central/forward-bound/backward-bound case counts"
+    ]
+  },
+  "candidate_ranking": {
+    "minimum": {
+      "d2_tfv_rank_correlation": 0.70,
+      "d2_tfv_top1_hit_rate": 0.50,
+      "d3_tfv_rank_correlation": 0.70,
+      "d3_tfv_top1_hit_rate": 0.50
+    },
+    "maximum": {},
+    "required_diagnostics_no_hard_threshold": [
+      "d2_tfv_selected_regret_m3",
+      "d3_tfv_selected_regret_m3",
+      "D2/D3 ranking checkpoint and rainfall-group counts",
+      "PFV ranking diagnostics"
+    ]
+  },
+  "threshold_policy": {
+    "nse_minimum": 0.70,
+    "rank_correlation_minimum": 0.70,
+    "gradient_sign_accuracy_minimum": 0.70,
+    "gradient_cosine_similarity_minimum": 0.60,
+    "top1_hit_rate_minimum": 0.50,
+    "absolute_error_thresholds_preregistered": false,
+    "absolute_error_metrics_required_for_reporting": true
+  }
+}
