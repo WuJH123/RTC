@@ -15,6 +15,7 @@ READINESS_CONTRACT = "WUHAN_RTC_PRETRAINING_READINESS_V1"
 SENSOR_PROVENANCE_CONTRACT = "SENSOR_LAYOUT_PROVENANCE_V1"
 RAINFALL_PROVENANCE_CONTRACT = "RAINFALL_PROVENANCE_V1"
 ACTUATOR_SCOPE_CONTRACT = "ACTUATOR_SCOPE_V1"
+METHOD_TESTBED_EVENT_CONTRACT = "WUHAN_RTC_METHOD_TESTBED_V067"
 
 
 def _json(path: str | Path) -> dict[str, object]:
@@ -88,8 +89,11 @@ def validate_pretraining_readiness(
         raise ValueError(f"prepared event registry lacks readiness fields: {missing}")
     if events.empty or events["event_id"].astype(str).duplicated().any():
         raise ValueError("prepared event registry must contain unique non-empty events")
-    if (events["event_preparation_contract"].astype(str) != EVENT_PREPARATION_CONTRACT).any():
-        raise ValueError("all events must use the current dry-prefix/recovery-tail preparation contract")
+    allowed_event_contracts = {EVENT_PREPARATION_CONTRACT, METHOD_TESTBED_EVENT_CONTRACT}
+    if not set(events["event_preparation_contract"].astype(str)).issubset(allowed_event_contracts):
+        raise ValueError(
+            "events must use the current event-preparation or v0.6.7 methodology-testbed contract"
+        )
     if (events["pre_rain_warmup_minutes"].astype(float) + 1e-9 < history_span_minutes).any():
         bad = events.loc[
             events["pre_rain_warmup_minutes"].astype(float) + 1e-9 < history_span_minutes,
@@ -162,9 +166,6 @@ def validate_pretraining_readiness(
         if not isinstance(capability, str) or len(capability) != 64:
             raise ValueError("field-validated actuation requires a hashed engineering capability map")
 
-    # The frozen network is the only valid native-controls template. Event sources are allowed to
-    # carry no controls because Internal-RTC receives this template at runtime; the template itself
-    # must contain an executable rule set.
     if not section_has_payload(frozen, "CONTROLS"):
         raise ValueError("frozen native-controls template contains no executable [CONTROLS]")
 
@@ -175,6 +176,9 @@ def validate_pretraining_readiness(
         "event_registry_sha256": sha256_file(events_path),
         "events": int(len(events)),
         "rainfall_groups": int(events["rainfall_group"].astype(str).nunique()),
+        "event_preparation_contracts": sorted(
+            set(events["event_preparation_contract"].astype(str))
+        ),
         "history_span_minutes": int(history_span_minutes),
         "minimum_pre_rain_warmup_minutes": float(events["pre_rain_warmup_minutes"].astype(float).min()),
         "minimum_post_rain_tail_minutes": float(events["post_rain_tail_minutes"].astype(float).min()),
@@ -196,7 +200,7 @@ def validate_pretraining_readiness(
         "field_deployment_claim": field_claim,
         "actuator_count": len(catalog.ids),
         "scientific_claim_scope": (
-            "MODEL-BASED SWMM RTC STUDY; field actuation is not certified unless the actuator scope is FIELD_ENGINEERING_VALIDATED"
+            "MODEL-BASED SWMM RTC METHODOLOGY TEST; field actuation and field digital-twin validity are not claimed"
         ),
     }
 

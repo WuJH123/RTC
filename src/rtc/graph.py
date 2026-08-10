@@ -77,7 +77,6 @@ def _curve_catalog(path: str | Path) -> dict[str, list[tuple[float, float]]]:
         if section != "CURVES" or len(tokens) < 3:
             continue
         curve_id = tokens[0]
-        # First row may include curve type (e.g. PUMP2); continuation rows do not.
         offset = 2 if len(tokens) >= 4 and not _is_number(tokens[1]) else 1
         if len(tokens) <= offset + 1:
             continue
@@ -107,14 +106,185 @@ def _xsections(path: str | Path) -> dict[str, tuple[str, tuple[float, float, flo
     return result
 
 
-def build_graph_schema(path: str | Path, *, bidirectional: bool = True) -> GraphSchema:
-    """Compile topology and SI hydraulic features from the frozen SWMM INP.
+def _trapz(points: list[tuple[float, float]], max_depth: float) -> tuple[float, float]:
+    if not points or max_depth <= 0:
+        return 0.0, 0.0
+    pts = sorted((max(0.0, float(x)), max(0.0, float(y))) for x, y in points)
+    if pts[0][0] > 0:
+        pts.insert(0, (0.0, pts[0][1]))
+    if pts[-1][0] < max_depth:
+        pts.append((max_depth, pts[-1][1]))
+    samples: list[tuple[float, float]] = []
+    for j, (x, area) in enumerate(pts):
+        if x <= max_depth:
+            samples.append((x, area))
+            continue
+        x0, a0 = pts[j - 1]
+        frac = 0.0 if x == x0 else (max_depth - x0) / (x - x0)
+        samples.append((max_depth, a0 + frac * (area - a0)))
+        break
+    if samples[-1][0] < max_depth:
+        samples.append((max_depth, samples[-1][1]))
+    volume = sum(
+        0.5 * (a0 + a1) * max(0.0, x1 - x0)
+        for (x0, a0), (x1, a1) in zip(samples[:-1], samples[1:], strict=False)
+    )
+    return volume, samples[-1][1]
 
-    The feature schema intentionally includes device capacity/geometry so dozens of pumps,
-    orifices and weirs are not indistinguishable merely because they share a device type.
-    A learned actuator-ID embedding is added separately by the Step2 model and is locked to
-    this stable actuator order.
+
+def _node_extra_features(
+    path: str | Path,
+    *,
+    node_ids: tuple[str, ...],
+    node_index: dict[str, int],
+    system_units: str,
+    curves: dict[str, list[tuple[float, float]]],
+) -> tuple[np.ndarray, tuple[str, ...]]:
+    """Expose INP hydraulic/hydrologic information that v0.6.6 discarded.
+
+    The topology contract stays stable. Step1/Step2 automatically consume these appended
+    node-static values because both models use the complete static feature matrix.
     """
+
+    names = (
+        "init_depth_m",
+        "surcharge_depth_m",
+        "ponded_area_m2",
+        "storage_capacity_m3",
+        "storage_area_full_m2",
+        "conduit_in_count",
+        "conduit_out_count",
+        "conduit_in_length_sum_m",
+        "conduit_out_length_sum_m",
+        "conduit_in_roughness_mean",
+        "conduit_out_roughness_mean",
+        "conduit_in_geom1_mean_m",
+        "conduit_out_geom1_mean_m",
+        "subcatchment_count",
+        "subcatchment_area_m2",
+        "subcatchment_impervious_area_m2",
+        "subcatchment_width_area_weighted_m",
+        "subcatchment_slope_area_weighted_pct",
+        "infiltration_max_rate_area_weighted_mmhr",
+        "infiltration_min_rate_area_weighted_mmhr",
+    )
+    out = np.zeros((len(node_ids), len(names)), dtype=np.float64)
+    cin_rough = [[] for _ in node_ids]
+    cout_rough = [[] for _ in node_ids]
+    cin_geom = [[] for _ in node_ids]
+    cout_geom = [[] for _ in node_ids]
+    sub_area_sum = np.zeros(len(node_ids), dtype=float)
+    sub_width_weighted = np.zeros(len(node_ids), dtype=float)
+    sub_slope_weighted = np.zeros(len(node_ids), dtype=float)
+    inf_max_weighted = np.zeros(len(node_ids), dtype=float)
+    inf_min_weighted = np.zeros(len(node_ids), dtype=float)
+    xsections = _xsections(path)
+    infiltration: dict[str, tuple[float, float]] = {}
+    subcatchments: list[tuple[str, str, float, float, float, float]] = []
+
+    for section, tokens in _iter_rows(path):
+        if section == "INFILTRATION" and len(tokens) >= 3:
+            infiltration[tokens[0]] = (_float(tokens[1]), _float(tokens[2]))
+        elif section == "SUBCATCHMENTS" and len(tokens) >= 7:
+            subcatchments.append(
+                (
+                    tokens[0],
+                    tokens[2],
+                    max(0.0, _float(tokens[3])),
+                    min(100.0, max(0.0, _float(tokens[4]))),
+                    max(0.0, _float(tokens[5])),
+                    max(0.0, _float(tokens[6])),
+                )
+            )
+        elif section == "JUNCTIONS" and tokens[0] in node_index:
+            idx = node_index[tokens[0]]
+            if len(tokens) > 3:
+                out[idx, 0] = float(length_to_m(_float(tokens[3]), system_units))
+            if len(tokens) > 4:
+                out[idx, 1] = float(length_to_m(_float(tokens[4]), system_units))
+            if len(tokens) > 5:
+                area = max(0.0, _float(tokens[5]))
+                out[idx, 2] = area if system_units == "SI" else area * 0.09290304
+        elif section == "STORAGE" and tokens[0] in node_index:
+            idx = node_index[tokens[0]]
+            max_depth_native = _float(tokens[2]) if len(tokens) > 2 else 0.0
+            if len(tokens) > 3:
+                out[idx, 0] = float(length_to_m(_float(tokens[3]), system_units))
+            shape = tokens[4].upper() if len(tokens) > 4 else ""
+            volume_native = area_full_native = 0.0
+            if shape == "TABULAR" and len(tokens) > 5:
+                volume_native, area_full_native = _trapz(
+                    curves.get(tokens[5], []), max_depth_native
+                )
+            elif shape == "FUNCTIONAL" and len(tokens) > 7:
+                a1, a2, a0 = _float(tokens[5]), _float(tokens[6]), _float(tokens[7])
+                depth = max(0.0, max_depth_native)
+                area_full_native = max(
+                    0.0, a1 * (depth ** a2 if depth > 0 or a2 != 0 else 1.0) + a0
+                )
+                if a2 > -1 and depth > 0:
+                    volume_native = max(
+                        0.0, a1 * depth ** (a2 + 1) / (a2 + 1) + a0 * depth
+                    )
+            if system_units == "SI":
+                out[idx, 3] = volume_native
+                out[idx, 4] = area_full_native
+            else:
+                out[idx, 3] = volume_native * 0.028316846592
+                out[idx, 4] = area_full_native * 0.09290304
+        elif section == "CONDUITS" and len(tokens) >= 6:
+            conduit_id, upstream, downstream = tokens[0], tokens[1], tokens[2]
+            if upstream not in node_index or downstream not in node_index:
+                continue
+            u, v = node_index[upstream], node_index[downstream]
+            length_m = float(length_to_m(max(0.0, _float(tokens[3])), system_units))
+            roughness = max(0.0, _float(tokens[4]))
+            shape, geom = xsections.get(conduit_id, ("", (0.0, 0.0, 0.0, 0.0)))
+            geom1_m = 0.0
+            if shape not in {"IRREGULAR", "CUSTOM"}:
+                geom1_m = float(length_to_m(max(0.0, geom[0]), system_units))
+            out[v, 5] += 1
+            out[u, 6] += 1
+            out[v, 7] += length_m
+            out[u, 8] += length_m
+            cin_rough[v].append(roughness)
+            cout_rough[u].append(roughness)
+            cin_geom[v].append(geom1_m)
+            cout_geom[u].append(geom1_m)
+
+    for i in range(len(node_ids)):
+        out[i, 9] = float(np.mean(cin_rough[i])) if cin_rough[i] else 0.0
+        out[i, 10] = float(np.mean(cout_rough[i])) if cout_rough[i] else 0.0
+        out[i, 11] = float(np.mean(cin_geom[i])) if cin_geom[i] else 0.0
+        out[i, 12] = float(np.mean(cout_geom[i])) if cout_geom[i] else 0.0
+
+    for sid, outlet, area_native, imperv, width_native, slope_pct in subcatchments:
+        if outlet not in node_index:
+            continue
+        idx = node_index[outlet]
+        area_m2 = area_native * (10000.0 if system_units == "SI" else 4046.8564224)
+        width_m = float(length_to_m(width_native, system_units))
+        out[idx, 13] += 1
+        out[idx, 14] += area_m2
+        out[idx, 15] += area_m2 * imperv / 100.0
+        sub_area_sum[idx] += area_m2
+        sub_width_weighted[idx] += width_m * area_m2
+        sub_slope_weighted[idx] += slope_pct * area_m2
+        max_rate, min_rate = infiltration.get(sid, (0.0, 0.0))
+        rate_factor = 1.0 if system_units == "SI" else 25.4
+        inf_max_weighted[idx] += max_rate * rate_factor * area_m2
+        inf_min_weighted[idx] += min_rate * rate_factor * area_m2
+
+    nonzero = sub_area_sum > 0
+    out[nonzero, 16] = sub_width_weighted[nonzero] / sub_area_sum[nonzero]
+    out[nonzero, 17] = sub_slope_weighted[nonzero] / sub_area_sum[nonzero]
+    out[nonzero, 18] = inf_max_weighted[nonzero] / sub_area_sum[nonzero]
+    out[nonzero, 19] = inf_min_weighted[nonzero] / sub_area_sum[nonzero]
+    return out.astype(np.float32), names
+
+
+def build_graph_schema(path: str | Path, *, bidirectional: bool = True) -> GraphSchema:
+    """Compile topology and SI hydraulic features from the frozen SWMM INP."""
 
     node_ids = discover_nodes(path)
     node_index = {node: i for i, node in enumerate(node_ids)}
@@ -124,7 +294,6 @@ def build_graph_schema(path: str | Path, *, bidirectional: bool = True) -> Graph
     curves = _curve_catalog(path)
     xsections = _xsections(path)
 
-    # [invert_elevation_m, max_depth_m, one-hot node type x4]
     static = np.zeros((len(node_ids), 6), dtype=np.float32)
     seen_nodes: set[str] = set()
     physical_edges: list[tuple[int, int]] = []
@@ -152,6 +321,15 @@ def build_graph_schema(path: str | Path, *, bidirectional: bool = True) -> Graph
         raise ValueError("no hydraulic graph edges discovered")
     edges = physical_edges + ([(v, u) for u, v in physical_edges] if bidirectional else [])
     edge_index = np.asarray(list(dict.fromkeys(edges)), dtype=np.int64).T
+
+    extra, extra_names = _node_extra_features(
+        path,
+        node_ids=tuple(node_ids),
+        node_index=node_index,
+        system_units=system_units,
+        curves=curves,
+    )
+    static = np.concatenate([static, extra], axis=1).astype(np.float32)
 
     up = np.array([node_index[a.upstream_node] for a in catalog.actuators], dtype=np.int64)
     down = np.array([node_index[a.downstream_node] for a in catalog.actuators], dtype=np.int64)
@@ -204,7 +382,13 @@ def build_graph_schema(path: str | Path, *, bidirectional: bool = True) -> Graph
         edge_index=edge_index,
         static_node_features=static,
         static_node_feature_names=(
-            "invert_elevation_m", "max_depth_m", "is_junction", "is_outfall", "is_storage", "is_divider",
+            "invert_elevation_m",
+            "max_depth_m",
+            "is_junction",
+            "is_outfall",
+            "is_storage",
+            "is_divider",
+            *extra_names,
         ),
         actuator_ids=tuple(catalog.ids),
         actuator_upstream=up,
