@@ -10,6 +10,13 @@ import pandas as pd
 
 from .causal_timing import timing_from_controller_config
 from .code_contract import rtc_source_tree_sha256
+from .project7_contract import (
+    EFFECTIVE_WARMUP_MINUTES,
+    MAX_SETTING_DELTA_PER_UPDATE,
+    PREDICTION_HORIZON_MINUTES,
+    validate_project7_runtime_config,
+)
+from .runtime_controller_guard import CONTINUITY_GUARD_CONTRACT
 
 
 def _sha(path: str | Path) -> str:
@@ -48,8 +55,11 @@ def build_runtime_acceptance(
     controller_config_path: str | Path,
 ) -> dict[str, object]:
     config = _json(controller_config_path)
+    project7 = validate_project7_runtime_config(config)
     timing = timing_from_controller_config(config)
     timing.validate(require_full_history_before_first_control=True)
+    if timing.horizon_seconds != PREDICTION_HORIZON_MINUTES * 60:
+        raise ValueError("runtime acceptance requires the frozen 360-minute horizon")
     controller_section = config.get("controller")
     if not isinstance(controller_section, dict):
         raise ValueError("controller config lacks controller section")
@@ -63,6 +73,9 @@ def build_runtime_acceptance(
         raise ValueError(
             "decision runtime budget must be positive and smaller than control interval"
         )
+    max_delta = float(controller_section["max_setting_delta_per_update"])
+    if abs(max_delta - MAX_SETTING_DELTA_PER_UPDATE) > 1e-12:
+        raise ValueError("runtime acceptance requires the frozen 0.5 setting delta")
 
     index = pd.read_csv(run_index_path)
     required = {"strategy", "metadata_path"}
@@ -80,6 +93,9 @@ def build_runtime_acceptance(
     grid_violations = 0
     first_decision_violations = 0
     missing_runtime_diagnostics = 0
+    continuity_violations = 0
+    continuity_missing = 0
+    horizon_path_violations = 0
     decisions_total = 0
     event_rows: list[dict[str, object]] = []
     start = timing.control_start_seconds
@@ -99,6 +115,13 @@ def build_runtime_acceptance(
             )
         if not meta.get("step1_model_sha256") or not meta.get("step2_model_sha256"):
             raise ValueError("Proposed run lacks locked Step1/Step2 model lineage")
+        event_clock = meta.get("prepared_event_clock")
+        if not isinstance(event_clock, dict):
+            raise ValueError("Proposed run lacks prepared_event_clock evidence")
+        if abs(float(event_clock.get("effective_warmup_minutes", -1.0)) - EFFECTIVE_WARMUP_MINUTES) > 1e-6:
+            raise ValueError("Proposed run was not executed on effective 120-minute warm-up event")
+        if not isinstance(meta.get("project7_runtime_contract"), dict):
+            raise ValueError("Proposed run lacks Project7 runtime-contract evidence")
         if int(meta.get("control_update_seconds", -1)) != update:
             raise ValueError(
                 "development run control_update differs from frozen controller config"
@@ -129,14 +152,43 @@ def build_runtime_acceptance(
         )
         grid_violations += event_grid
         event_runtime: list[float] = []
+        event_continuity_violations = 0
+        event_horizon_violations = 0
         for row in rows:
             source = str(row.get("source", ""))
             source_counts[source] = source_counts.get(source, 0) + 1
             diagnostics = row.get("diagnostics")
-            if (
-                not isinstance(diagnostics, dict)
-                or "decision_runtime_seconds" not in diagnostics
-            ):
+            if not isinstance(diagnostics, dict):
+                missing_runtime_diagnostics += 1
+                continuity_missing += 1
+                continue
+
+            if diagnostics.get("continuity_guard_contract") != CONTINUITY_GUARD_CONTRACT or diagnostics.get("continuity_guard_passed") is not True:
+                continuity_missing += 1
+            else:
+                current_delta = float(diagnostics.get("command_delta_from_current_max", np.inf))
+                previous_delta = float(
+                    diagnostics.get("command_delta_from_previous_target_max", np.inf)
+                )
+                if (
+                    not np.isfinite(current_delta)
+                    or not np.isfinite(previous_delta)
+                    or current_delta > max_delta + 1e-8
+                    or previous_delta > max_delta + 1e-8
+                ):
+                    continuity_violations += 1
+                    event_continuity_violations += 1
+
+            planned_delta = diagnostics.get("planned_sequence_max_step_delta")
+            if source == "MPC":
+                if planned_delta is None or not np.isfinite(float(planned_delta)):
+                    horizon_path_violations += 1
+                    event_horizon_violations += 1
+                elif float(planned_delta) > max_delta + 1e-8:
+                    horizon_path_violations += 1
+                    event_horizon_violations += 1
+
+            if "decision_runtime_seconds" not in diagnostics:
                 if source not in {"FALLBACK_HISTORY_WARMUP", "FALLBACK_READBACK"}:
                     missing_runtime_diagnostics += 1
                 continue
@@ -154,6 +206,8 @@ def build_runtime_acceptance(
                 "rainfall_group": str(item.get("rainfall_group", "")),
                 "decisions": len(rows),
                 "grid_violations": event_grid,
+                "continuity_violations": event_continuity_violations,
+                "horizon_path_violations": event_horizon_violations,
                 "max_runtime_seconds": (
                     max(event_runtime) if event_runtime else np.nan
                 ),
@@ -174,15 +228,19 @@ def build_runtime_acceptance(
         grid_violations == 0
         and first_decision_violations == 0
         and missing_runtime_diagnostics == 0
+        and continuity_missing == 0
+        and continuity_violations == 0
+        and horizon_path_violations == 0
         and fatal_count == 0
         and max_runtime <= budget
     )
     return {
-        "contract": "DEVELOPMENT_REALTIME_EXECUTION_ACCEPTANCE_V1",
+        "contract": "DEVELOPMENT_REALTIME_EXECUTION_ACCEPTANCE_V2_TEMPORAL_CONTINUITY",
         "passed": passed,
         "rtc_source_tree_sha256": current_code_sha,
         "controller_config_sha256": config_sha,
         "run_index_sha256": _sha(run_index_path),
+        "project7_runtime_contract": project7,
         "timing": timing.as_dict(),
         "decision_runtime_budget_seconds": budget,
         "metrics": {
@@ -194,6 +252,9 @@ def build_runtime_acceptance(
             "control_grid_violations": int(grid_violations),
             "first_decision_violations": int(first_decision_violations),
             "missing_runtime_diagnostics": int(missing_runtime_diagnostics),
+            "continuity_evidence_missing": int(continuity_missing),
+            "cross_decision_continuity_violations": int(continuity_violations),
+            "planned_horizon_continuity_violations": int(horizon_path_violations),
             "fatal_runtime_fallbacks": int(fatal_count),
             "optimizer_candidate_fallbacks": int(
                 source_counts.get("FALLBACK", 0)
@@ -203,16 +264,18 @@ def build_runtime_acceptance(
         "fatal_sources": sorted(fatal_sources),
         "events": event_rows,
         "interpretation": (
-            "Policy Lock requires real current-code development decisions on the frozen event clock, "
-            "complete causal history, successful write/readback, no runtime/deadline fallback, and "
-            "wall-clock compute within budget."
+            "Policy Lock requires real current-code Proposed decisions on the frozen event clock: "
+            "first control at elapsed 60 min, 360-min horizon, complete 13-frame history, "
+            "effective 120-min event warm-up, continuous setting evolution across the full MPC "
+            "path and across rolling decisions, successful write/readback, no runtime/deadline "
+            "fallback, and wall-clock compute within budget."
         ),
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Fail-closed real-time execution gate for Proposed development closed-loop runs"
+        description="Fail-closed real-time execution and temporal-continuity gate"
     )
     parser.add_argument("--run-index", required=True)
     parser.add_argument("--config", required=True)
