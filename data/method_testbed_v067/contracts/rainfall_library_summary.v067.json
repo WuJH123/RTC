@@ -1,0 +1,11 @@
+{
+  "chicago_r": 0.39,
+  "contract": "WUHAN_DB4201_T641_2020_CHICAGO_30_V1",
+  "durations_min": [60, 120, 180, 240, 300, 360],
+  "events": 30,
+  "fixed_evaluation_window_not_full_recovery_claim": true,
+  "network_inp_sha256": "75f04166429f87ae20327cc083d8e8d50a0ed27f5e0add87f77103dba54ec0ea",
+  "recession_minutes": 360,
+  "return_periods": [5, 10, 20, 50, 100],
+  "warmup_minutes": 60
+}
