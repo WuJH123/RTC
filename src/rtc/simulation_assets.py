@@ -14,7 +14,6 @@ from .inp_lineage import canonical_scientific_event_contract, physical_contract_
 from .inp_runtime import sha256_file
 from .replay_prefix import load_checkpoint_reference
 
-
 SIMULATION_IDENTITY_CONTRACT = "RTC_SIMULATION_IDENTITY_V1_STATE_ACTION_ENGINE_BOUND"
 ASSET_REGISTRY_CONTRACT = "RTC_SIMULATION_ASSET_REGISTRY_V1_LOCAL_ONLY"
 D2_EXECUTION_SEMANTICS = "D2_CONTROLS_DISABLED_COMPACT_V3_PREFIX_VERIFIED"
@@ -120,14 +119,18 @@ def simulation_available_seconds(inp_path: str | Path) -> int:
     return int(round((end - start).total_seconds()))
 
 
-def assert_endpoint_available(
-    inp_path: str | Path, *, checkpoint_seconds: int, horizon_seconds: int
+def endpoint_preflight_from_available(
+    inp_path: str | Path,
+    *,
+    available_end_seconds: int,
+    checkpoint_seconds: int,
+    horizon_seconds: int,
 ) -> dict[str, int | str]:
-    """Fail before launching SWMM if a requested exact endpoint cannot exist."""
+    """Build the endpoint evidence after the event OPTIONS clock was parsed once."""
 
     if checkpoint_seconds <= 0 or horizon_seconds <= 0:
         raise ValueError("checkpoint/horizon seconds must be positive")
-    available = simulation_available_seconds(inp_path)
+    available = int(available_end_seconds)
     required = int(checkpoint_seconds) + int(horizon_seconds)
     if required > available:
         raise ValueError(
@@ -144,19 +147,87 @@ def assert_endpoint_available(
     }
 
 
+def assert_endpoint_available(
+    inp_path: str | Path, *, checkpoint_seconds: int, horizon_seconds: int
+) -> dict[str, int | str]:
+    """Fail before launching SWMM if a requested exact endpoint cannot exist."""
+
+    return endpoint_preflight_from_available(
+        inp_path,
+        available_end_seconds=simulation_available_seconds(inp_path),
+        checkpoint_seconds=checkpoint_seconds,
+        horizon_seconds=horizon_seconds,
+    )
+
+
+def checkpoint_state_sha256_from_values(
+    *,
+    elapsed_seconds: int,
+    node_ids: tuple[str, ...],
+    state_si: np.ndarray,
+    actuator_ids: tuple[str, ...],
+    current_setting: np.ndarray,
+    swmm_engine_version: str,
+) -> str:
+    """Hash one exact checkpoint state using the frozen simulation identity contract."""
+
+    h = hashlib.sha256()
+    h.update(SIMULATION_IDENTITY_CONTRACT.encode("utf-8"))
+    h.update(str(int(elapsed_seconds)).encode("ascii"))
+    h.update(str(swmm_engine_version).encode("utf-8"))
+    h.update(canonical_json(tuple(node_ids)).encode("utf-8"))
+    h.update(np.asarray(state_si, dtype="<f8").tobytes(order="C"))
+    h.update(canonical_json(tuple(actuator_ids)).encode("utf-8"))
+    h.update(np.asarray(current_setting, dtype="<f8").tobytes(order="C"))
+    return h.hexdigest()
+
+
 def checkpoint_state_sha256(metadata_path: str | Path, *, elapsed_seconds: int) -> str:
     """Hash the exact pre-action hydraulic/readback state rather than its file location."""
 
     reference = load_checkpoint_reference(metadata_path, elapsed_seconds=elapsed_seconds)
-    h = hashlib.sha256()
-    h.update(SIMULATION_IDENTITY_CONTRACT.encode("utf-8"))
-    h.update(str(int(reference.elapsed_seconds)).encode("ascii"))
-    h.update(reference.swmm_engine_version.encode("utf-8"))
-    h.update(canonical_json(reference.node_ids).encode("utf-8"))
-    h.update(np.asarray(reference.state_si, dtype="<f8").tobytes(order="C"))
-    h.update(canonical_json(reference.actuator_ids).encode("utf-8"))
-    h.update(np.asarray(reference.current_setting, dtype="<f8").tobytes(order="C"))
-    return h.hexdigest()
+    return checkpoint_state_sha256_from_values(
+        elapsed_seconds=reference.elapsed_seconds,
+        node_ids=reference.node_ids,
+        state_si=reference.state_si,
+        actuator_ids=reference.actuator_ids,
+        current_setting=reference.current_setting,
+        swmm_engine_version=reference.swmm_engine_version,
+    )
+
+
+def d2_identity_from_precomputed(
+    *,
+    physical_network_sha256: str,
+    event_prefix_family_sha256: str,
+    checkpoint_seconds: int,
+    checkpoint_state_sha256_value: str,
+    candidate_action_sha256: str,
+    swmm_engine_version: str,
+    stride_seconds: int,
+    horizon_seconds: int,
+) -> tuple[str, str, dict[str, object]]:
+    """Return D2 identity from immutable preflight values without rereading source assets."""
+
+    if min(checkpoint_seconds, stride_seconds, horizon_seconds) <= 0:
+        raise ValueError("D2 identity timing values must be positive")
+    family = {
+        "identity_contract": SIMULATION_IDENTITY_CONTRACT,
+        "kind": "D2_LOCAL_STEP",
+        "execution_semantics": D2_EXECUTION_SEMANTICS,
+        "physical_network_sha256": str(physical_network_sha256),
+        "event_prefix_family_sha256": str(event_prefix_family_sha256),
+        "checkpoint_elapsed_seconds": int(checkpoint_seconds),
+        "checkpoint_state_sha256": str(checkpoint_state_sha256_value),
+        "candidate_action_sha256": str(candidate_action_sha256),
+        "native_controls_enabled": False,
+        "swmm_engine_version": str(swmm_engine_version),
+        "record_stride_seconds": int(stride_seconds),
+    }
+    family_key = sha256_json(family)
+    payload = {**family, "horizon_seconds": int(horizon_seconds)}
+    simulation_key = sha256_json(payload)
+    return simulation_key, family_key, payload
 
 
 def d2_identity(
@@ -173,25 +244,18 @@ def d2_identity(
 
     if min(checkpoint_seconds, stride_seconds, horizon_seconds) <= 0:
         raise ValueError("D2 identity timing values must be positive")
-    family = {
-        "identity_contract": SIMULATION_IDENTITY_CONTRACT,
-        "kind": "D2_LOCAL_STEP",
-        "execution_semantics": D2_EXECUTION_SEMANTICS,
-        "physical_network_sha256": physical_contract_sha256(inp_path),
-        "event_prefix_family_sha256": event_prefix_family_sha256(inp_path),
-        "checkpoint_elapsed_seconds": int(checkpoint_seconds),
-        "checkpoint_state_sha256": checkpoint_state_sha256(
+    return d2_identity_from_precomputed(
+        physical_network_sha256=physical_contract_sha256(inp_path),
+        event_prefix_family_sha256=event_prefix_family_sha256(inp_path),
+        checkpoint_seconds=checkpoint_seconds,
+        checkpoint_state_sha256_value=checkpoint_state_sha256(
             reference_metadata_path, elapsed_seconds=int(checkpoint_seconds)
         ),
-        "candidate_action_sha256": str(candidate_action_sha256),
-        "native_controls_enabled": False,
-        "swmm_engine_version": str(swmm_engine_version),
-        "record_stride_seconds": int(stride_seconds),
-    }
-    family_key = sha256_json(family)
-    payload = {**family, "horizon_seconds": int(horizon_seconds)}
-    simulation_key = sha256_json(payload)
-    return simulation_key, family_key, payload
+        candidate_action_sha256=candidate_action_sha256,
+        swmm_engine_version=swmm_engine_version,
+        stride_seconds=stride_seconds,
+        horizon_seconds=horizon_seconds,
+    )
 
 
 def artifact_hashes_from_metadata(metadata_path: str | Path) -> dict[str, str]:
@@ -230,6 +294,46 @@ class AssetHit:
     metadata_path: str
     qualification: str
     exact: bool
+
+
+class RegistrySnapshot:
+    """Read-only in-memory registry view for a single preflight pass.
+
+    SQLite is still the authority.  The snapshot only removes repeated connection/query setup;
+    metadata and artifact hashes are verified lazily on the first actual hit.
+    """
+
+    def __init__(self, registry: "SimulationAssetRegistry", rows: Iterable[Mapping[str, object]]):
+        self._registry = registry
+        self._exact: dict[str, Mapping[str, object]] = {}
+        self._families: dict[str, list[Mapping[str, object]]] = {}
+        self._verified: dict[tuple[str, bool], AssetHit | None] = {}
+        for row in rows:
+            simulation_key = str(row["simulation_key"])
+            family_key = str(row["family_key"])
+            self._exact[simulation_key] = row
+            self._families.setdefault(family_key, []).append(row)
+        for family_rows in self._families.values():
+            family_rows.sort(key=lambda row: int(row["horizon_seconds"]))
+
+    def _verify(self, row: Mapping[str, object], *, exact: bool) -> AssetHit | None:
+        key = (str(row["simulation_key"]), bool(exact))
+        if key not in self._verified:
+            self._verified[key] = self._registry._verified_hit(row, exact=exact)
+        return self._verified[key]
+
+    def lookup_exact(self, simulation_key: str) -> AssetHit | None:
+        row = self._exact.get(str(simulation_key))
+        return None if row is None else self._verify(row, exact=True)
+
+    def lookup_covering(self, family_key: str, *, horizon_seconds: int) -> AssetHit | None:
+        for row in self._families.get(str(family_key), ()):
+            if int(row["horizon_seconds"]) < int(horizon_seconds):
+                continue
+            hit = self._verify(row, exact=False)
+            if hit is not None:
+                return hit
+        return None
 
 
 class SimulationAssetRegistry:
@@ -284,14 +388,55 @@ class SimulationAssetRegistry:
         qualification: str = VALID_REUSABLE,
         qualification_reason: str = "verified generated hydraulic asset",
     ) -> None:
-        if qualification not in QUALIFICATIONS:
-            raise ValueError(f"unknown asset qualification: {qualification}")
-        path = Path(metadata_path).resolve()
-        if not path.is_file():
-            raise ValueError(f"cannot register missing metadata: {path}")
-        artifact_hashes = artifact_hashes_from_metadata(path)
+        self.register_many(
+            [
+                {
+                    "simulation_key": simulation_key,
+                    "family_key": family_key,
+                    "kind": kind,
+                    "horizon_seconds": horizon_seconds,
+                    "metadata_path": metadata_path,
+                    "identity": identity,
+                    "qualification": qualification,
+                    "qualification_reason": qualification_reason,
+                }
+            ]
+        )
+
+    def register_many(self, records: Iterable[Mapping[str, object]]) -> None:
+        """Register a batch with one connection/transaction."""
+
+        prepared: list[tuple[object, ...]] = []
+        for record in records:
+            qualification = str(record.get("qualification", VALID_REUSABLE))
+            if qualification not in QUALIFICATIONS:
+                raise ValueError(f"unknown asset qualification: {qualification}")
+            path = Path(str(record["metadata_path"])).resolve()
+            if not path.is_file():
+                raise ValueError(f"cannot register missing metadata: {path}")
+            identity = record.get("identity")
+            if not isinstance(identity, Mapping):
+                raise ValueError(f"asset identity must be a mapping: {path}")
+            artifact_hashes = artifact_hashes_from_metadata(path)
+            prepared.append(
+                (
+                    str(record["simulation_key"]),
+                    str(record["family_key"]),
+                    str(record["kind"]),
+                    int(record["horizon_seconds"]),
+                    str(path),
+                    sha256_file(path),
+                    qualification,
+                    str(record.get("qualification_reason", "verified generated hydraulic asset")),
+                    canonical_json(dict(identity)),
+                    canonical_json(artifact_hashes),
+                    datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                )
+            )
+        if not prepared:
+            return
         with self._connect() as conn:
-            conn.execute(
+            conn.executemany(
                 """
                 INSERT INTO simulations(
                     simulation_key,family_key,kind,horizon_seconds,metadata_path,
@@ -310,20 +455,15 @@ class SimulationAssetRegistry:
                     artifact_hashes_json=excluded.artifact_hashes_json,
                     registered_utc=excluded.registered_utc
                 """,
-                (
-                    simulation_key,
-                    family_key,
-                    str(kind),
-                    int(horizon_seconds),
-                    str(path),
-                    sha256_file(path),
-                    qualification,
-                    str(qualification_reason),
-                    canonical_json(dict(identity)),
-                    canonical_json(artifact_hashes),
-                    datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                ),
+                prepared,
             )
+
+    def preflight_snapshot(self) -> RegistrySnapshot:
+        """Load all registry rows once; actual artifact verification remains lazy."""
+
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM simulations").fetchall()
+        return RegistrySnapshot(self, [dict(row) for row in rows])
 
     def _verified_hit(self, row: sqlite3.Row, *, exact: bool) -> AssetHit | None:
         if str(row["qualification"]) != VALID_REUSABLE:
@@ -405,6 +545,95 @@ class SimulationAssetRegistry:
         }
 
 
+def _stamped_identity_record(
+    metadata_path: str | Path,
+    *,
+    expected_data_contract: str,
+    expected_kind: str,
+    qualification: str,
+    qualification_reason: str,
+) -> dict[str, object]:
+    """Validate an identity stamped by the branch runner without recomputing its inputs."""
+
+    path = Path(metadata_path).resolve()
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(meta, dict) or meta.get("data_contract") != expected_data_contract:
+        raise ValueError(f"unsupported stamped metadata contract: {path}")
+    verification = meta.get("same_prefix_verification")
+    if not isinstance(verification, dict) or verification.get("passed") is not True:
+        raise ValueError(f"metadata lacks passed exact-prefix verification: {path}")
+    identity = meta.get("simulation_identity")
+    if not isinstance(identity, dict):
+        raise ValueError(f"metadata lacks stamped simulation identity: {path}")
+    if meta.get("simulation_identity_contract") != SIMULATION_IDENTITY_CONTRACT:
+        raise ValueError(f"metadata lacks the frozen simulation identity contract: {path}")
+    if identity.get("identity_contract") != SIMULATION_IDENTITY_CONTRACT:
+        raise ValueError(f"metadata has incompatible simulation identity contract: {path}")
+    if identity.get("kind") != expected_kind:
+        raise ValueError(f"metadata has incompatible simulation identity kind: {path}")
+    simulation_key = str(meta.get("simulation_identity_sha256", ""))
+    family_key = str(meta.get("simulation_family_sha256", ""))
+    if not simulation_key or not family_key:
+        raise ValueError(f"metadata lacks stamped simulation identity hashes: {path}")
+    if sha256_json(identity) != simulation_key:
+        raise ValueError(f"stamped simulation identity hash mismatch: {path}")
+    family_payload = {key: value for key, value in identity.items() if key != "horizon_seconds"}
+    if sha256_json(family_payload) != family_key:
+        raise ValueError(f"stamped simulation family hash mismatch: {path}")
+    horizon_seconds = int(identity.get("horizon_seconds", 0))
+    if horizon_seconds <= 0:
+        raise ValueError(f"stamped simulation identity lacks a positive horizon: {path}")
+    return {
+        "simulation_key": simulation_key,
+        "family_key": family_key,
+        "kind": expected_kind,
+        "horizon_seconds": horizon_seconds,
+        "metadata_path": path,
+        "identity": identity,
+        "qualification": qualification,
+        "qualification_reason": qualification_reason,
+    }
+
+
+def register_stamped_d2_metadata(
+    registry: SimulationAssetRegistry,
+    metadata_path: str | Path,
+    *,
+    qualification: str = VALID_REUSABLE,
+    qualification_reason: str = "exact-prefix D2 branch verified",
+) -> tuple[str, str]:
+    record = _stamped_identity_record(
+        metadata_path,
+        expected_data_contract=D2_EXECUTION_SEMANTICS,
+        expected_kind="D2_LOCAL_STEP",
+        qualification=qualification,
+        qualification_reason=qualification_reason,
+    )
+    registry.register_many([record])
+    return str(record["simulation_key"]), str(record["family_key"])
+
+
+def register_stamped_d2_metadata_many(
+    registry: SimulationAssetRegistry,
+    metadata_paths: Iterable[str | Path],
+    *,
+    qualification: str = VALID_REUSABLE,
+    qualification_reason: str = "exact-prefix D2 branch verified",
+) -> list[tuple[str, str]]:
+    records = [
+        _stamped_identity_record(
+            path,
+            expected_data_contract=D2_EXECUTION_SEMANTICS,
+            expected_kind="D2_LOCAL_STEP",
+            qualification=qualification,
+            qualification_reason=qualification_reason,
+        )
+        for path in metadata_paths
+    ]
+    registry.register_many(records)
+    return [(str(record["simulation_key"]), str(record["family_key"])) for record in records]
+
+
 def register_d2_metadata(
     registry: SimulationAssetRegistry,
     metadata_path: str | Path,
@@ -416,6 +645,18 @@ def register_d2_metadata(
     meta = json.loads(path.read_text(encoding="utf-8"))
     if meta.get("data_contract") != D2_EXECUTION_SEMANTICS:
         raise ValueError(f"not a supported D2 metadata contract: {path}")
+    if (
+        isinstance(meta.get("simulation_identity"), dict)
+        and meta.get("simulation_identity_contract")
+        and meta.get("simulation_identity_sha256")
+        and meta.get("simulation_family_sha256")
+    ):
+        return register_stamped_d2_metadata(
+            registry,
+            path,
+            qualification=qualification,
+            qualification_reason=qualification_reason,
+        )
     verification = meta.get("same_prefix_verification")
     if not isinstance(verification, dict) or verification.get("passed") is not True:
         raise ValueError(f"D2 metadata lacks passed exact-prefix verification: {path}")

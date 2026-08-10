@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -10,14 +11,12 @@ import pandas as pd
 
 from .generation_contract import generation_key
 from .inp_runtime import build_runtime_inp, sha256_file
-from .replay_prefix import reference_trajectory_lineage
+from .preflight_identity_cache import PreflightIdentityCache, PreflightProgress
 from .simulation_assets import (
     SimulationAssetRegistry,
-    assert_endpoint_available,
-    d2_identity,
-    register_d2_metadata,
+    d2_identity_from_precomputed,
+    register_stamped_d2_metadata_many,
 )
-
 
 D2_DATA_CONTRACT = "D2_CONTROLS_DISABLED_COMPACT_V3_PREFIX_VERIFIED"
 
@@ -276,6 +275,11 @@ def main() -> None:
         ),
     )
     parser.add_argument("--census-out", help="pre-run request/dedup/cache/endpoint census JSON")
+    parser.add_argument(
+        "--census-only",
+        action="store_true",
+        help="complete identity/endpoint/asset preflight and exit without launching SWMM",
+    )
     args = parser.parse_args()
     if min(args.workers, args.swmm_threads_per_process, args.horizon_minutes, args.stride_seconds) <= 0:
         raise ValueError("workers/threads/horizon/stride must be positive")
@@ -312,29 +316,58 @@ def main() -> None:
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     census_path = Path(args.census_out) if args.census_out else out / "REQUEST_CENSUS.json"
+    progress = PreflightProgress(out / "PRECHECK_PROGRESS.json", total=len(rows))
     registry = SimulationAssetRegistry(args.asset_root) if args.asset_root else None
+    registry_snapshot = (
+        None if registry is None or args.no_resume else registry.preflight_snapshot()
+    )
 
-    pre_jobs: list[dict[str, object]] = []
-    endpoint_failures: list[dict[str, object]] = []
-    exact_asset_hits = 0
-    covering_trajectory_hits = 0
-    exact_hits_missing_snapshots = 0
-    for _, row in rows.iterrows():
+    def resolve_source(row: pd.Series) -> str:
         source_raw = row.get("inp_path", "")
         source = "" if pd.isna(source_raw) else str(source_raw).strip()
         if not source:
             source = str(args.inp or "")
         if not source or not Path(source).is_file():
             raise ValueError(f"D2 source INP missing: {source}")
+        return str(Path(source).resolve())
+
+    rows = rows.copy()
+    rows["_resolved_source"] = [resolve_source(row) for _, row in rows.iterrows()]
+    sort_columns = ["_resolved_source", "checkpoint_minutes", "candidate_action_sha256"]
+    if "event_id" in rows.columns:
+        sort_columns.insert(1, "event_id")
+    rows = rows.sort_values(sort_columns, kind="mergesort").reset_index(drop=True)
+
+    event_checkpoints: dict[str, set[int]] = defaultdict(set)
+    reference_checkpoints: dict[str, set[int]] = defaultdict(set)
+    for _, row in rows.iterrows():
+        event_checkpoints[str(row["_resolved_source"])].add(int(row["checkpoint_minutes"]) * 60)
+        reference_checkpoints[str(Path(row["trajectory_metadata_path"]).resolve())].add(
+            int(row["checkpoint_minutes"]) * 60
+        )
+    identity_cache = PreflightIdentityCache.build(
+        event_paths_to_checkpoints=event_checkpoints,
+        reference_paths_to_checkpoints=reference_checkpoints,
+        cache_path=out / "PRECHECK_CACHE.json",
+        progress=progress,
+    )
+
+    pre_jobs: list[dict[str, object]] = []
+    endpoint_failures: list[dict[str, object]] = []
+    exact_asset_hits = 0
+    covering_trajectory_hits = 0
+    exact_hits_missing_snapshots = 0
+    for processed, (_, row) in enumerate(rows.iterrows(), start=1):
+        source = str(row["_resolved_source"])
+        event_context = identity_cache.event(source)
         event = str(row.get("event_id", "event"))
         action_sha = str(row["candidate_action_sha256"])
         checkpoint = int(row["checkpoint_minutes"])
         checkpoint_seconds = checkpoint * 60
-        reference_path = str(row["trajectory_metadata_path"])
-        reference_lineage = reference_trajectory_lineage(reference_path)
+        reference_path = str(Path(row["trajectory_metadata_path"]).resolve())
+        reference_context = identity_cache.reference(reference_path)
         try:
-            endpoint = assert_endpoint_available(
-                source,
+            endpoint = event_context.endpoint_preflight(
                 checkpoint_seconds=checkpoint_seconds,
                 horizon_seconds=args.horizon_minutes * 60,
             )
@@ -348,20 +381,36 @@ def main() -> None:
                     "error": str(exc),
                 }
             )
+            progress.update(
+                stage="CANDIDATE_PREFLIGHT",
+                processed=processed,
+                events_cached=len(identity_cache.events),
+                references_cached=len(identity_cache.references),
+                checkpoints_cached=sum(
+                    len(context.checkpoint_state_sha256_by_elapsed)
+                    for context in identity_cache.references.values()
+                ),
+                endpoint_invalid=len(endpoint_failures),
+                exact_asset_candidates=exact_asset_hits,
+                covering_asset_candidates=covering_trajectory_hits,
+            )
             continue
-        sim_key, family_key, identity = d2_identity(
-            inp_path=source,
-            reference_metadata_path=reference_path,
+        sim_key, family_key, identity = d2_identity_from_precomputed(
+            physical_network_sha256=event_context.physical_network_sha256,
+            event_prefix_family_sha256=event_context.event_prefix_family_sha256,
             checkpoint_seconds=checkpoint_seconds,
+            checkpoint_state_sha256_value=reference_context.checkpoint_state_sha256(
+                checkpoint_seconds
+            ),
             candidate_action_sha256=action_sha,
-            swmm_engine_version=str(reference_lineage["reference_swmm_engine_version"]),
+            swmm_engine_version=reference_context.swmm_engine_version,
             stride_seconds=args.stride_seconds,
             horizon_seconds=args.horizon_minutes * 60,
         )
         branch_id = f"{event}__t{checkpoint:04d}__{action_sha[:16]}"
         job: dict[str, object] = {
             "source": source,
-            "source_inp_sha256": sha256_file(source),
+            "source_inp_sha256": event_context.source_file.sha256,
             "branch_id": branch_id,
             "candidate_action_sha256": action_sha,
             "candidate_settings_json": str(row["candidate_settings_json"]),
@@ -381,34 +430,51 @@ def main() -> None:
             "simulation_family_sha256": family_key,
             "simulation_identity": identity,
             "endpoint_preflight": endpoint,
-            **reference_lineage,
+            "reference_metadata_path": reference_context.metadata_path,
+            **reference_context.lineage,
         }
-        if registry is not None and not args.no_resume:
-            hit = registry.lookup_exact(sim_key)
+        if registry_snapshot is not None:
+            hit = registry_snapshot.lookup_exact(sim_key)
             if hit is not None and _supports_snapshots(hit.metadata_path, snapshots):
                 exact_asset_hits += 1
                 job["asset_hit_metadata_path"] = hit.metadata_path
             else:
                 if hit is not None:
                     exact_hits_missing_snapshots += 1
-                covering = registry.lookup_covering(
+                covering = registry_snapshot.lookup_covering(
                     family_key, horizon_seconds=args.horizon_minutes * 60
                 )
                 if covering is not None:
                     covering_trajectory_hits += 1
         pre_jobs.append(job)
+        if processed == 1 or processed % 100 == 0 or processed == len(rows):
+            progress.update(
+                stage="CANDIDATE_PREFLIGHT",
+                processed=processed,
+                events_cached=len(identity_cache.events),
+                references_cached=len(identity_cache.references),
+                checkpoints_cached=sum(
+                    len(context.checkpoint_state_sha256_by_elapsed)
+                    for context in identity_cache.references.values()
+                ),
+                endpoint_invalid=len(endpoint_failures),
+                exact_asset_candidates=exact_asset_hits,
+                covering_asset_candidates=covering_trajectory_hits,
+            )
 
+    identity_cache.assert_unchanged()
     census = {
         "contract": "RTC_D2_PRE_RUN_CENSUS_V2_SNAPSHOT_AWARE",
         "manifest": str(Path(args.manifest).resolve()),
         "requested_rows": int(requested_rows),
         "unique_projected_actions": int(unique_total),
-        "selected_unique_actions": int(len(rows)),
+        "selected_unique_actions": len(rows),
         "deduplicated_rows": int(requested_rows - unique_total),
         "limit_applied": args.limit,
-        "endpoint_invalid": int(len(endpoint_failures)),
+        "endpoint_invalid": len(endpoint_failures),
         "endpoint_failures": endpoint_failures,
         "asset_registry_enabled": registry is not None,
+        "registry_snapshot": registry_snapshot is not None,
         "exact_asset_hits": int(exact_asset_hits),
         "exact_hits_missing_requested_snapshots": int(exact_hits_missing_snapshots),
         "covering_trajectory_hits": int(covering_trajectory_hits),
@@ -416,22 +482,52 @@ def main() -> None:
             "trajectory/timing prefix only unless an exact cumulative endpoint snapshot exists"
         ),
         "need_execution_before_local_resume": int(len(pre_jobs) - exact_asset_hits),
+        "event_context_count": len(identity_cache.events),
+        "reference_context_count": len(identity_cache.references),
+        "checkpoint_context_count": int(
+            sum(
+                len(context.checkpoint_state_sha256_by_elapsed)
+                for context in identity_cache.references.values()
+            )
+        ),
+        "identity_contract": "RTC_SIMULATION_IDENTITY_V1_STATE_ACTION_ENGINE_BOUND",
         "horizon_minutes": int(args.horizon_minutes),
         "snapshot_horizons_minutes": list(snapshots),
         "stride_seconds": int(args.stride_seconds),
+        "census_only": bool(args.census_only),
     }
     _write_census(census_path, census)
+    progress.update(
+        stage="CENSUS_WRITTEN",
+        processed=len(rows),
+        endpoint_invalid=len(endpoint_failures),
+        exact_asset_candidates=exact_asset_hits,
+        covering_asset_candidates=covering_trajectory_hits,
+        event_context_count=len(identity_cache.events),
+        reference_context_count=len(identity_cache.references),
+        checkpoint_context_count=census["checkpoint_context_count"],
+    )
     if endpoint_failures:
         raise ValueError(
             f"D2 preflight rejected {len(endpoint_failures)} branch identities before SWMM; "
             f"see {census_path}"
         )
+    if args.census_only:
+        print(json.dumps({"census": str(census_path), "census_only": True}, indent=2))
+        return
 
     runtime_dir = out / "_runtime_inp"
     runtime_dir.mkdir(parents=True, exist_ok=True)
-    runtime_cache: dict[str, str] = {}
+    runtime_cache: dict[str, dict[str, str]] = {}
     jobs: list[dict[str, object]] = []
     results: list[dict[str, object]] = []
+    pending_registry_paths: list[str] = []
+
+    def flush_registry() -> None:
+        if registry is not None and pending_registry_paths:
+            register_stamped_d2_metadata_many(registry, pending_registry_paths)
+            pending_registry_paths.clear()
+
     for job in pre_jobs:
         if job.get("asset_hit_metadata_path"):
             results.append(
@@ -448,16 +544,20 @@ def main() -> None:
             runtime = runtime_dir / (
                 f"{source_sha[:20]}.d2.no_control.t{args.swmm_threads_per_process}.inp"
             )
-            build_runtime_inp(
+            contract = build_runtime_inp(
                 source,
                 runtime,
                 native_controls=False,
                 swmm_threads=args.swmm_threads_per_process,
+                source_sha256=source_sha,
             )
-            runtime_cache[source_sha] = str(runtime)
+            runtime_cache[source_sha] = {
+                "path": str(runtime.resolve()),
+                "sha256": contract.runtime_sha256,
+            }
         runtime = runtime_cache[source_sha]
-        job["runtime_inp"] = runtime
-        job["runtime_inp_sha256"] = sha256_file(runtime)
+        job["runtime_inp"] = runtime["path"]
+        job["runtime_inp_sha256"] = runtime["sha256"]
         job["out_dir"] = str(out)
         metadata = out / f"{job['branch_id']}.json"
         expected_key, _, _ = _generation(job)
@@ -471,18 +571,34 @@ def main() -> None:
                 )
             )
             if registry is not None:
-                register_d2_metadata(registry, metadata)
+                pending_registry_paths.append(str(metadata))
+                if len(pending_registry_paths) >= 32:
+                    flush_registry()
         else:
             jobs.append(job)
 
+    # Detect a source/reference mutation that happened during runtime-INP preparation before
+    # any worker can launch.  The identity cache remains the single content authority.
+    identity_cache.assert_unchanged()
     if jobs:
+        progress.update(stage="SWMM_EXECUTION", branches_total=len(jobs), branches_completed=0)
         with ProcessPoolExecutor(max_workers=min(args.workers, len(jobs))) as pool:
             futures = [pool.submit(_run_job, job) for job in jobs]
-            for future in as_completed(futures):
+            for completed, future in enumerate(as_completed(futures), start=1):
                 result = future.result()
                 results.append(result)
                 if registry is not None:
-                    register_d2_metadata(registry, str(result["metadata_path"]))
+                    pending_registry_paths.append(str(result["metadata_path"]))
+                    if len(pending_registry_paths) >= 32:
+                        flush_registry()
+                if completed == 1 or completed % 100 == 0 or completed == len(jobs):
+                    progress.update(
+                        stage="SWMM_EXECUTION",
+                        branches_total=len(jobs),
+                        branches_completed=completed,
+                        registry_pending=len(pending_registry_paths),
+                    )
+    flush_registry()
     results.sort(key=lambda r: str(r["branch_id"]))
     summary = out / "RUN_SUMMARY.csv"
     pd.DataFrame(results).to_csv(summary, index=False)

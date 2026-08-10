@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from rtc.pipeline_ledger_cli import record_pipeline_stage
-from rtc.tfv_pipeline import TFVPipelineLedger
+from rtc.tfv_pipeline import TFV_STAGES, TFVPipelineLedger
 
 
 def _evidence(path: Path, text: str) -> Path:
@@ -46,3 +46,9 @@ def test_pipeline_ledger_rejects_skipped_prerequisite(tmp_path: Path) -> None:
             evidence_paths=[evidence],
             passed=True,
         )
+
+
+def test_step1_acceptance_precedes_d2_d3_generation() -> None:
+    assert TFV_STAGES.index("step1_acceptance") < TFV_STAGES.index("d2_d3_generation")
+    assert TFV_STAGES.index("d2_d3_generation") < TFV_STAGES.index("step2_training")
+    assert TFV_STAGES.index("step2_training") < TFV_STAGES.index("step2_acceptance")
