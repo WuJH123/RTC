@@ -220,6 +220,16 @@ high-frequency record stride = 60 s
 one authoritative horizon = h360 only
 ```
 
+Use only the dedicated guarded Phase-0 design entrypoints:
+
+```text
+rtc-design-phase0-events
+rtc-design-phase0-checkpoints
+rtc-design-phase0-probes
+```
+
+These entrypoints fail closed if the frozen 6/4/12/epsilon design is changed. The 4-checkpoint/12-actuator budget is **not** the production Step4 D2 budget.
+
 Use the rotating all-actuator probe design so the pilot covers the 109-actuator catalog efficiently without shrinking the production action space.
 
 Do **not** launch separate h210/h240/h300 SWMM branches merely to inspect timing. For one identity-equivalent event/checkpoint/action family, use the h360 trajectory and derive shorter timing views in memory. Shorter-window exact TFV still requires an exact cumulative endpoint statistics snapshot and cannot be invented from the h360 final statistics.
@@ -233,6 +243,15 @@ Phase-0 pulse/release recovery is **conditional diagnostic only**. Do not run it
 Step1/Step2 first-run architecture and training parameters are frozen at the current code defaults recorded in `configs/project7_v069_parameter_register.json`. Broad architecture/training sweeps are forbidden by default.
 
 Step1 training uses development/train only, with rainfall-group-disjoint development/validation. Report event-balanced unobserved-node state/depth, wet/high-depth and priority diagnostics.
+
+Step4 production D2 must use the general design entrypoints:
+
+```text
+rtc-design-checkpoints
+rtc-design-probes-efficient
+```
+
+They are intentionally not forced to the small Phase-0 4/12 budget. Production D2/D3 must provide sufficient Train/Validation coverage for Step2 trajectory learning and D2/D3 ranking/gradient evidence while preserving the 109-actuator online action space. Use the normal production design once, with pre-run branch census/dedup/cache checks; do not turn checkpoint/probe counts into a hyperparameter sweep.
 
 Step2 trains on future hydraulic trajectories, actuator flows and exact cumulative SWMM flooding-volume truth. Require held-out D2/D3 evidence before closed-loop MPC.
 
@@ -314,10 +333,10 @@ Every one of the **6 Final events** runs all seven strategies on identical event
 
 ```text
 Step 0  adopt/build v0.6.7 physical inputs; overwrite local active split from the frozen v0.6.9 registry; readiness / graph / audit
-Step 1  prepare effective-120 events; Phase-0 6×4×12 exact-prefix h360 D2 with 60-s sampling
+Step 1  prepare effective-120 events; Phase-0 6×4×12 exact-prefix h360 D2 with 60-s sampling using dedicated Phase-0 design CLIs
 Step 2  sustained timing + control leverage; conditional pulse only if ambiguity remains; bind already-fixed 360-min timing
 Step 3  production D0/D1 on 18 Train + Step1 train; Step1 held-out acceptance on 6 Validation
-Step 4  temporally feasible production D2/D3; Step2 train on Train and held-out acceptance on Validation
+Step 4  production checkpoint/probe CLIs + temporally feasible D2/D3; Step2 train on Train and held-out acceptance on Validation
 Step 5  local gradient + joint D2/D3 ranking acceptance using preregistered dimensionless gates
 Step 6  development closed-loop Proposed vs No-control/Internal/Auto-RBC/EFD; no baseline tuning
 Step 7  one runtime/readback benchmark + full runtime/deadline/temporal-continuity acceptance with 300-s budget
