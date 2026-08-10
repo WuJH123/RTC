@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from . import policy_lock as legacy
 from .code_contract import rtc_source_tree_sha256
@@ -16,6 +17,8 @@ from .study_readiness import READINESS_CONTRACT
 from .tfv_pipeline import TFVPipelineLedger, sha256_file
 
 POLICY_LOCK_CONTRACT = legacy.POLICY_LOCK_CONTRACT
+SPLIT_CONTRACT = "PROJECT7_V069_30_EVENT_SPLIT_18TRAIN_6VALIDATION_6FINAL_V1"
+ACCEPTANCE_CONTRACT = "MODEL_ACCEPTANCE_CONTRACT_V4_DIMENSIONLESS_PREREGISTERED"
 EXPECTED_STRATEGIES = (
     "proposed",
     "no_control",
@@ -46,6 +49,8 @@ def _verify_runtime_acceptance_v2(
     ):
         raise ValueError("runtime acceptance was not generated with the locked controller config")
     budget = float(evidence.get("decision_runtime_budget_seconds", -1.0))
+    if not np.isclose(budget, 300.0, rtol=0.0, atol=1e-9):
+        raise ValueError("v0.6.9 Policy Lock requires the frozen 300 s decision runtime budget")
     if not 0 < budget < control_update_seconds:
         raise ValueError("runtime acceptance contains an invalid decision compute budget")
     metrics = evidence.get("metrics")
@@ -70,6 +75,104 @@ def _verify_runtime_acceptance_v2(
     return evidence
 
 
+def _verify_acceptance_v4(artefacts: dict[str, str], implementation_sha: str) -> None:
+    contract = legacy._json(artefacts["model_acceptance_contract"])
+    if contract.get("contract") != ACCEPTANCE_CONTRACT:
+        raise ValueError(f"Policy Lock requires {ACCEPTANCE_CONTRACT}")
+    step1_sha = sha256_file(artefacts["step1_model"])
+    step2_sha = sha256_file(artefacts["step2_model"])
+
+    for name, section in (
+        ("step1_acceptance", "step1"),
+        ("step2_acceptance", "step2"),
+        ("gradient_acceptance", "gradient"),
+    ):
+        gate = legacy._json(artefacts[name])
+        if gate.get("contract") != "PREREGISTERED_ACCEPTANCE_GATE_V4_SOURCE_BOUND":
+            raise ValueError(f"{name} is not a preregistered source-bound acceptance gate")
+        if gate.get("section") != section or gate.get("passed") is not True:
+            raise ValueError(f"{name} did not pass the expected section {section}")
+        if gate.get("rtc_source_tree_sha256") != implementation_sha:
+            raise ValueError(f"{name} uses an incompatible implementation contract")
+        if gate.get("source_metrics_contract") != legacy._EXPECTED_GATE_SOURCE_CONTRACTS[name]:
+            raise ValueError(f"{name} was computed from an incompatible metric contract")
+        if gate.get("source_metrics_aggregation") != legacy._EXPECTED_GATE_AGGREGATION[name]:
+            raise ValueError(f"{name} is not rainfall-group balanced")
+        legacy._verify_gate_source_file(gate)
+        if legacy._thresholds(contract.get(section)) != legacy._thresholds(
+            gate.get("thresholds", {})
+        ):
+            raise ValueError(f"{name} thresholds differ from the frozen acceptance contract")
+
+    if str(legacy._json(artefacts["step1_acceptance"]).get("model_sha256", "")) != step1_sha:
+        raise ValueError("Step1 acceptance does not belong to the locked Step1 model")
+    if str(legacy._json(artefacts["step2_acceptance"]).get("model_sha256", "")) != step2_sha:
+        raise ValueError("Step2 acceptance does not belong to the locked Step2 model")
+    if str(legacy._json(artefacts["gradient_acceptance"]).get("step2_sha256", "")) != step2_sha:
+        raise ValueError("gradient acceptance does not belong to the locked Step2 model")
+
+    ranking = legacy._json(artefacts["candidate_ranking_acceptance"])
+    if ranking.get("contract") != legacy.RANKING_CONTRACT or ranking.get("passed") is not True:
+        raise ValueError("D2 local + D3 joint candidate ranking acceptance must pass")
+    if ranking.get("rtc_source_tree_sha256") != implementation_sha:
+        raise ValueError("candidate ranking uses an incompatible implementation contract")
+    if ranking.get("aggregation") != "checkpoint_metrics_then_equal_weight_per_rainfall_group":
+        raise ValueError("candidate ranking is not rainfall-group balanced")
+    if str(ranking.get("step2_sha256", "")) != step2_sha:
+        raise ValueError("candidate ranking does not belong to the locked Step2 model")
+    if legacy._thresholds(contract.get("candidate_ranking")) != legacy._thresholds(
+        ranking.get("thresholds", {})
+    ):
+        raise ValueError("candidate-ranking thresholds differ from the frozen contract")
+
+
+def _verify_split_contract(
+    artefacts: dict[str, str], rainfall_design: dict[str, object]
+) -> dict[str, object]:
+    payload = legacy._json(artefacts["split_contract"])
+    if payload.get("contract") != SPLIT_CONTRACT:
+        raise ValueError(f"Policy Lock requires split contract {SPLIT_CONTRACT}")
+    counts = payload.get("counts")
+    if not isinstance(counts, dict) or {
+        "development_train": int(counts.get("development_train", -1)),
+        "development_validation": int(counts.get("development_validation", -1)),
+        "final": int(counts.get("final", -1)),
+    } != {"development_train": 18, "development_validation": 6, "final": 6}:
+        raise ValueError("Policy Lock split contract is not the frozen 18/6/6 allocation")
+
+    registry = pd.read_csv(artefacts["split_registry"], keep_default_na=False)
+    train = set(
+        registry.loc[
+            (registry["scientific_split"].astype(str) == "development")
+            & (registry["development_fold"].astype(str) == "train"),
+            "event_id",
+        ].astype(str)
+    )
+    validation = set(
+        registry.loc[
+            (registry["scientific_split"].astype(str) == "development")
+            & (registry["development_fold"].astype(str) == "validation"),
+            "event_id",
+        ].astype(str)
+    )
+    final = set(
+        registry.loc[registry["scientific_split"].astype(str) == "final", "event_id"].astype(str)
+    )
+    if train != set(str(x) for x in payload.get("development_train", [])):
+        raise ValueError("prepared Train event IDs differ from the frozen split contract")
+    if validation != set(str(x) for x in payload.get("development_validation", [])):
+        raise ValueError("prepared Validation event IDs differ from the frozen split contract")
+    if final != set(str(x) for x in payload.get("final", [])):
+        raise ValueError("prepared Final event IDs differ from the frozen split contract")
+    if int(rainfall_design.get("development_train_groups", -1)) != 18:
+        raise ValueError("rainfall-design evidence does not prove 18 Train groups")
+    if int(rainfall_design.get("development_validation_groups", -1)) != 6:
+        raise ValueError("rainfall-design evidence does not prove 6 Validation groups")
+    if int(rainfall_design.get("final_groups", -1)) != 6:
+        raise ValueError("rainfall-design evidence does not prove 6 Final groups")
+    return payload
+
+
 def create_policy_lock(
     *, ledger_path: str | Path, artefacts_path: str | Path, output_path: str | Path
 ) -> dict[str, object]:
@@ -77,17 +180,17 @@ def create_policy_lock(
     ledger.require_ready_for_lock()
     raw = legacy._json(artefacts_path)
     artefacts = {str(k): str(v) for k, v in raw.items()}
-    missing = sorted(legacy._REQUIRED - set(artefacts))
+    required = set(legacy._REQUIRED) | {"study_readiness", "split_contract"}
+    missing = sorted(required - set(artefacts))
     if missing:
         raise ValueError(f"Policy Lock missing required artifacts: {missing}")
-    if "study_readiness" not in artefacts:
-        raise ValueError("Policy Lock requires the pretraining study_readiness artifact")
     for name, path in artefacts.items():
         if not Path(path).is_file():
             raise ValueError(f"Policy Lock artifact missing: {name}: {path}")
 
     implementation_sha = rtc_source_tree_sha256()
     workspace, rainfall_design = legacy._verify_workspace_and_split(artefacts)
+    split_contract = _verify_split_contract(artefacts, rainfall_design)
     preflight = legacy._json(artefacts["inp_preflight"])
     if preflight.get("contract") != "LARGE_SWMM_INP_PREFLIGHT_V3_CAUSAL_RTC":
         raise ValueError("frozen INP must pass causal large-network preflight V3")
@@ -134,15 +237,21 @@ def create_policy_lock(
         "soft lexicographic secondary preference within TFV near-optimal set"
     ):
         raise ValueError("controller does not declare the frozen TFV-first objective")
+    controller_section = controller.get("controller")
+    if not isinstance(controller_section, dict):
+        raise ValueError("controller config lacks controller section")
+    if not np.isclose(float(controller_section.get("readback_target_tolerance", -1)), 1e-6):
+        raise ValueError("Policy Lock requires readback_target_tolerance=1e-6")
+    if not np.isclose(float(controller_section.get("readback_current_tolerance", -1)), 0.05):
+        raise ValueError("Policy Lock requires readback_current_tolerance=0.05")
+    if not np.isclose(float(controller_section.get("decision_runtime_budget_seconds", -1)), 300.0):
+        raise ValueError("Policy Lock requires decision_runtime_budget_seconds=300")
 
     timing = project7_runtime["timing"]
     assert isinstance(timing, dict)
     timing_obj = legacy.timing_from_controller_config(controller)
     if float(readiness.get("minimum_pre_rain_warmup_minutes", -1.0)) < 120.0:
         raise ValueError("prepared events do not satisfy the effective 120-minute warm-up contract")
-    controller_section = controller.get("controller")
-    if not isinstance(controller_section, dict):
-        raise ValueError("controller config lacks controller section")
     time_cfg = legacy._json(artefacts["time_scale_config"])
     for key in ("model_step_seconds", "control_update_seconds"):
         if int(controller[key]) != int(time_cfg[key]):
@@ -158,7 +267,7 @@ def create_policy_lock(
         history_steps=int(controller_section["history_steps"]),
         horizon_steps=int(controller_section["horizon_steps"]),
     )
-    legacy._verify_acceptance(artefacts, implementation_sha)
+    _verify_acceptance_v4(artefacts, implementation_sha)
     runtime_acceptance = _verify_runtime_acceptance_v2(
         artefacts["runtime_acceptance"],
         controller_config_path=artefacts["controller_config"],
@@ -195,7 +304,9 @@ def create_policy_lock(
         "project7_runtime_contract": project7_runtime,
         "model_contracts": model_contracts,
         "rainfall_design": rainfall_design,
-        "rainfall_sample_size_is_execution_gate": False,
+        "split_contract": split_contract,
+        "split_contract_sha256": sha256_file(artefacts["split_contract"]),
+        "rainfall_sample_size_is_execution_gate": True,
         "study_readiness": readiness,
         "actuation_scope": actuation_scope,
         "field_deployment_claim": field_claim,
@@ -218,16 +329,21 @@ def create_policy_lock(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Create seven-strategy TFV Policy Lock")
+    parser = argparse.ArgumentParser(description="Create v0.6.9 execution-frozen seven-strategy TFV Policy Lock")
     parser.add_argument("--ledger", required=True)
     parser.add_argument("--artifacts", required=True)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
-    print(json.dumps(create_policy_lock(
-        ledger_path=args.ledger,
-        artefacts_path=args.artifacts,
-        output_path=args.out,
-    ), indent=2))
+    print(
+        json.dumps(
+            create_policy_lock(
+                ledger_path=args.ledger,
+                artefacts_path=args.artifacts,
+                output_path=args.out,
+            ),
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
