@@ -172,6 +172,10 @@ def prepare_event_inp(
     non-zero rainfall interval plus ``post_rain_tail_minutes``. DWF patterns, rainfall intensities,
     hydraulic geometry, initial device definitions and any existing policy section are otherwise
     left untouched.
+
+    ``warmup_minutes`` is an initialization duration, not merely the Step1 history span. Large
+    Dynamic-Wave sewer systems with time-varying DWF should verify that the pre-rain hydraulic
+    state is no longer dominated by the artificial zero-state start; extend the warm-up if needed.
     """
 
     if warmup_minutes <= 0:
@@ -272,7 +276,15 @@ def main() -> None:
     parser.add_argument("--events", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--out-registry", required=True)
-    parser.add_argument("--warmup-minutes", type=int, default=60)
+    parser.add_argument(
+        "--warmup-minutes",
+        type=int,
+        default=360,
+        help=(
+            "pre-rain dry/DWF hydraulic initialization duration; default 360 min is a "
+            "conservative first attempt for the audited Wuhan network, not a proof of convergence"
+        ),
+    )
     parser.add_argument("--post-rain-tail-minutes", type=int, default=360)
     args = parser.parse_args()
     prepared = prepare_event_registry(
@@ -292,6 +304,7 @@ def main() -> None:
         "post_rain_tail_minutes": int(args.post_rain_tail_minutes),
         "storm_absolute_clock_preserved": True,
         "dwf_clock_phase_at_storm_preserved": True,
+        "warmup_is_initialization_not_convergence_proof": True,
         "output_registry": str(out.resolve()),
         "output_registry_sha256": sha256_file(out),
     }

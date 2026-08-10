@@ -81,11 +81,11 @@ The preparation contract:
 
 1. canonicalizes rainfall time-series rows to explicit absolute timestamps;
 2. preserves the original storm absolute clock and therefore the DWF phase at storm onset;
-3. moves simulation/report start earlier to provide a dry/DWF causal history;
+3. moves simulation/report start earlier to provide a dry/DWF hydraulic initialization plus causal history;
 4. extends simulation end to an explicit post-rain recovery tail;
 5. does not change rainfall intensity values, DWF values, hydraulic geometry or device definitions.
 
-The default first attempt is 60 min pre-rain warm-up and 360 min post-rain tail. These are not immutable scientific constants: if Phase-0 recovery remains right-censored, extend the tail before production training and create a new fresh study root.
+For the audited Wuhan Dynamic-Wave model, the default first engineering attempt is **360 min pre-rain dry/DWF warm-up** and **360 min post-rain tail**. The Step1 causal history remains only the latest 60 min. Warm-up length is not a universal constant and is not proven merely because it exceeds the history span: a small development/train No-control sensitivity must compare storm-onset hydraulics under the first warm-up against a longer candidate (normally 720 min, and 1440 min if still materially different). If the selected warm-up or recovery tail changes, re-prepare the full event suite and start a new fresh study root before production training.
 
 ## E. Pretraining readiness
 
@@ -153,6 +153,8 @@ Contract: `EXACT_NO_CONTROL_PREFIX_REPLAY_V1`. Any mismatch aborts before action
 Keep separate:
 
 ```text
+hydraulic dry/DWF initialization duration
+Step1 causal history span
 SWMM routing step
 SWMM native rule step
 model/observation step
@@ -175,6 +177,8 @@ runtime budget < supervisory control interval
 ```
 
 The previous h180 pilot was censored and is stale under v0.6.6. The new fresh pilot should test an evidence-motivated longer horizon (initially h210 is reasonable) and freeze only when `horizon_censored=false`.
+
+The default preparation starts Python supervisory control after the first complete 60 min causal history, while rainfall begins only after the selected hydraulic warm-up. Thus Proposed/Auto-RBC/EFD operate causally during most of the dry/DWF prefix as continuously running supervisory controllers; Internal remains a deliberately strong native comparator able to evaluate its native rules from simulation start.
 
 ## K. Step1 contract
 
@@ -207,7 +211,7 @@ Scientific event identity binds the event INP except policy-only `[CONTROLS]` an
 
 ```text
 Step 0  prepared inputs / readiness / split / graph / physical preflight
-Step 1  Phase-0 high-frequency No-control D0 + checkpoints + small exact-prefix D2
+Step 1  Phase-0 high-frequency No-control D0 + warm-up sensitivity + checkpoints + small exact-prefix D2
 Step 2  response timing + exact SWMM control leverage + non-censored timing freeze
 Step 3  production D0/D1 + Step1 train/held-out acceptance
 Step 4  production D2/D3 + Step2 train/held-out acceptance
