@@ -25,8 +25,8 @@
     "internal_rtc": "Strong native engineering comparator. The exact event forcing/DWF/initial conditions are paired with the frozen network [CONTROLS] payload at runtime. It may evaluate true SWMM rule variables on the native RULE_STEP and is therefore intentionally not an equal-information/equal-frequency comparator.",
     "auto_rbc": "Strong causal local rule comparator. Actuator-adjacent current true SWMM node depths are normalized by INP design max depth; no forecast or event-specific outcome tuning. Its local-sensor information budget may exceed the Proposed sparse layout and must be disclosed.",
     "efd": "Storage-aware Equal Filling Degree comparator using current true storage depths at controlled storages. No future information or event-specific outcome tuning. Its storage-sensor information budget is disclosed separately from Proposed.",
-    "all_open": "Diagnostic extreme: all eligible SWMM settings commanded to 1.0 from the common Python first control decision.",
-    "all_closed": "Diagnostic extreme: all eligible SWMM settings commanded to 0.0 from the common Python first control decision."
+    "all_open": "Diagnostic extreme: all eligible SWMM settings ramp toward 1.0 from the common Python first control decision under the frozen temporal-continuity envelope.",
+    "all_closed": "Diagnostic extreme: all eligible SWMM settings ramp toward 0.0 from the common Python first control decision under the frozen temporal-continuity envelope."
   },
   "policy_isolation": {
     "event_forcing_dwf_initial_conditions_identical_within_event": true,

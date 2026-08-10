@@ -1,0 +1,166 @@
+{
+  "contract": "PROJECT7_V069_PARAMETER_DECISION_REGISTER_V1",
+  "instruction": "Read before launching any expensive SWMM batch or model sweep. FROZEN values must not be retuned. HUMAN_DECISION_PENDING values should be decided once from methodology/engineering judgement unless a specifically named development-only sensitivity is scientifically necessary. ONE_TIME_BENCHMARK values require only a small runtime/readback benchmark, not broad hydrologic sweeps. DIAGNOSTIC_ONLY values must never become automatic controller-selection gates. Final data must never be used for tuning.",
+  "active_files": {
+    "formal_pipeline": "FORMAL_PIPELINE_LATEST.md",
+    "controller_template": "configs/formal_controller_v5.template.json",
+    "baseline_plan": "configs/formal_baseline_plan.v6.json",
+    "model_acceptance_template": "configs/model_acceptance_contract_v3.template.json",
+    "physical_testbed": "docs/METHOD_TESTBED_V067.md",
+    "simulation_asset_contract": "docs/SIMULATION_ASSET_MANAGEMENT_V068.md"
+  },
+  "frozen": {
+    "claim_scope": "IDEALIZED_METHODOLOGY_TESTBED_NOT_FIELD_DIGITAL_TWIN",
+    "primary_objective": "authoritative-SWMM system-wide cumulative TFV",
+    "priority_role": "soft lexicographic secondary/diagnostic",
+    "global_peak_role": "report_only",
+    "model_step_seconds": 300,
+    "record_stride_seconds": 300,
+    "control_update_seconds": 600,
+    "history_steps": 13,
+    "history_span_minutes": 60,
+    "first_proposed_control_minutes": 60,
+    "prediction_horizon_minutes": 360,
+    "horizon_steps": 72,
+    "control_blocks": 36,
+    "effective_warmup_minutes": 120,
+    "post_rain_formal_tail_minutes": 360,
+    "max_setting_delta_per_10min_update": 0.5,
+    "actuator_count": 109,
+    "actuator_setting_range": [0.0, 1.0],
+    "rainfall_return_period_years": [5, 10, 20, 50, 100],
+    "rainfall_duration_minutes": [60, 120, 180, 240, 300, 360],
+    "chicago_r": 0.39,
+    "rainfall_step_minutes": 5,
+    "formal_strategies": [
+      "proposed",
+      "no_control",
+      "internal_rtc",
+      "auto_rbc",
+      "efd",
+      "all_open",
+      "all_closed"
+    ],
+    "random_seed_default": 42
+  },
+  "human_decision_pending_controller": {
+    "rule": "Prefer one preregistered value. Do not launch Cartesian/grid searches by default.",
+    "forecast_quantile": {"code_default": 0.95, "suggested_no_sweep_start": 0.95},
+    "tfv_cvar_alpha": {"code_default": 0.90, "suggested_no_sweep_start": 0.90},
+    "tfv_near_opt_relative": {"code_default": 0.01, "suggested_no_sweep_start": 0.01},
+    "tfv_near_opt_absolute_m3": {"code_default": 1.0, "suggested_no_sweep_start": 1.0},
+    "near_opt_penalty": {"code_default": 10000.0, "suggested_no_sweep_start": 10000.0},
+    "movement_tiebreak": {"code_default": 1e-06, "suggested_no_sweep_start": 1e-06},
+    "min_predicted_tfv_improvement_m3": {"code_default": 0.0, "suggested_no_sweep_start": 0.0},
+    "min_predicted_tfv_improvement_relative": {"code_default": 0.0, "suggested_no_sweep_start": 0.0},
+    "forecast_decay_per_step": {"code_default": 0.92, "suggested_no_sweep_start": 0.92},
+    "forecast_scenario_multipliers": {"code_default": [0.75, 1.0, 1.25], "suggested_no_sweep_start": [0.75, 1.0, 1.25]},
+    "forecast_history_steps_for_level": {"code_default": 3, "suggested_no_sweep_start": 3},
+    "optimizer_iterations": {"code_default": 120, "suggested_no_sweep_start": 120},
+    "optimizer_learning_rate": {"code_default": 0.04, "suggested_no_sweep_start": 0.04}
+  },
+  "one_time_runtime_benchmark": {
+    "readback_target_tolerance": {
+      "code_default": 1e-06,
+      "instruction": "Measure write-target numerical consistency on a small development run; do not hydrologically tune."
+    },
+    "readback_current_tolerance": {
+      "code_default": 0.05,
+      "instruction": "Measure expected current-setting lag under the idealized actuator travel contract on a small development run; do not hydrologically tune."
+    },
+    "decision_runtime_budget_seconds": {
+      "hard_upper_bound": 600,
+      "instruction": "Set once after a short wall-clock benchmark with the intended hardware/model size. The locked budget must be <600 s."
+    }
+  },
+  "human_decision_pending_data_generation": {
+    "phase0_rainfall_groups": {"code_default": 8},
+    "checkpoints_per_event": {"code_default": 8},
+    "checkpoint_minimum_elapsed_minutes": {"code_default": 60},
+    "d2_epsilon_setting": {"code_default": 0.15},
+    "d2_actuators_per_checkpoint": {"code_default": 24},
+    "d2_include_center": {"code_default": true},
+    "d3_sequences_per_checkpoint": {"code_default": 8},
+    "d3_perturbation_std": {"code_default": 0.20},
+    "d3_change_probability": {"code_default": 0.25},
+    "d1_perturbation_std": {"code_default": 0.12},
+    "d1_change_probability": {"code_default": 0.35},
+    "d1_max_delta_per_update": {
+      "code_default": 0.20,
+      "note": "Development exploration choice, not the Formal runtime 0.5 limit. Freeze explicitly rather than silently inheriting it."
+    }
+  },
+  "human_decision_pending_training": {
+    "step1": {
+      "epochs": 30,
+      "batch_size": 4,
+      "grad_accum": 4,
+      "hidden_dim": 128,
+      "graph_layers": 3,
+      "learning_rate": 0.001,
+      "samples_per_trajectory_per_epoch": 256,
+      "hydraulic_stratified_windows": true
+    },
+    "step2": {
+      "epochs": 30,
+      "batch_size": 2,
+      "grad_accum": 4,
+      "hidden_dim": 160,
+      "actuator_embedding_dim": 16,
+      "learning_rate": 0.001,
+      "exact_flood_loss_weight": 0.5
+    },
+    "instruction": "Treat these as one preregistered architecture/training configuration first. Use early loss/held-out diagnostics and resume; do not launch broad architecture sweeps unless the corresponding acceptance gate fails for a diagnosed modeling reason."
+  },
+  "acceptance_thresholds_pending": {
+    "step1_minimum": ["unobserved_depth_nse"],
+    "step1_maximum": ["unobserved_depth_rmse_m", "all_state_normalized_rmse"],
+    "step2_minimum": ["tfv_exact_truth_rank_correlation"],
+    "step2_maximum": ["depth_rmse_m", "managed_flow_rmse_m3s", "tfv_exact_truth_mae_m3"],
+    "gradient_minimum": ["tfv_gradient_sign_accuracy", "tfv_gradient_cosine_similarity"],
+    "gradient_maximum": ["tfv_gradient_mae"],
+    "candidate_ranking_minimum": [
+      "d2_tfv_rank_correlation",
+      "d2_tfv_top1_hit_rate",
+      "d3_tfv_rank_correlation",
+      "d3_tfv_top1_hit_rate"
+    ],
+    "candidate_ranking_maximum": [
+      "d2_tfv_selected_regret_m3",
+      "d3_tfv_selected_regret_m3"
+    ],
+    "instruction": "These thresholds must be frozen before the gate is applied. They are scientific acceptance criteria, not hyperparameters to lower until a model passes."
+  },
+  "fixed_rule_baseline_defaults": {
+    "auto_rbc": {
+      "low_fill": 0.25,
+      "high_fill": 0.75,
+      "downstream_congestion_fill": 0.90,
+      "response": 0.60,
+      "instruction": "Keep fixed across events; no event-outcome tuning."
+    },
+    "efd": {
+      "equalization_gain": 1.0,
+      "response": 0.60,
+      "instruction": "Keep fixed across events; no event-outcome tuning."
+    }
+  },
+  "diagnostic_only_no_tuning": {
+    "phase0_max_sample_seconds": 60,
+    "phase0_peak_near_horizon_fraction": 0.90,
+    "phase0_horizon_censored_if_any_response_fraction_gt": 0.05,
+    "control_leverage_meaningful_absolute_m3": 1.0,
+    "control_leverage_meaningful_relative": 0.01,
+    "control_leverage_promising_fraction": 0.30,
+    "control_leverage_weak_fraction": 0.10,
+    "instruction": "Report these diagnostics. Do not repeatedly change them to force a favorable interpretation."
+  },
+  "compute_only_not_scientific": {
+    "swmm_threads_per_process": 1,
+    "worker_count": "choose from RAM/CPU benchmark; typically start 12-16 independent SWMM processes",
+    "step2_shard_size_default": 128,
+    "amp": "use when supported",
+    "resume_training": true,
+    "instruction": "These may be changed for speed without changing the scientific contract, provided deterministic/data-lineage guards remain satisfied."
+  }
+}
