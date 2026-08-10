@@ -205,8 +205,7 @@ def prepare_event_inp(
     Rainfall rows are canonicalized to explicit absolute dates/times anchored to the original
     event clock. A source INP may already contain a pre-rain prefix. New workflows should state
     the desired *total* pre-rain initialization with ``target_effective_warmup_minutes``; only
-    the missing additional prefix is then added. This prevents the v0.6.7 ambiguity where a
-    60-min source prefix plus ``--warmup-minutes 60`` was reported as if it were only 60 min.
+    the missing additional prefix is then added.
     """
 
     if post_rain_tail_minutes <= 0:
@@ -302,7 +301,6 @@ def prepare_event_registry(
         result["source_pre_rain_prefix_minutes"] = evidence["source_pre_rain_prefix_minutes"]
         result["additional_warmup_minutes"] = evidence["additional_warmup_minutes"]
         result["effective_warmup_minutes"] = evidence["effective_warmup_minutes"]
-        # Backward-compatible column now explicitly equals the effective physical prefix.
         result["pre_rain_warmup_minutes"] = evidence["effective_warmup_minutes"]
         result["post_rain_tail_minutes"] = int(post_rain_tail_minutes)
         result["rainfall_onset_elapsed_minutes"] = evidence["rainfall_onset_elapsed_minutes"]
@@ -327,7 +325,7 @@ def main() -> None:
         type=int,
         help=(
             "desired total pre-rain prefix after accounting for any prefix already present in "
-            "the source INP; preferred for Formal workflows"
+            "the source INP; active Project7 default is 120 min"
         ),
     )
     group.add_argument(
@@ -343,7 +341,7 @@ def main() -> None:
     target = args.target_effective_warmup_minutes
     legacy = args.warmup_minutes
     if target is None and legacy is None:
-        target = 360
+        target = 120
     prepared = prepare_event_registry(
         pd.read_csv(args.events),
         output_dir=args.out_dir,
