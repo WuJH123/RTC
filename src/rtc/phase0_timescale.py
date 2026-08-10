@@ -16,12 +16,39 @@ PEAK_CENSOR_FRACTION = 0.90
 
 
 def _branch_series(
-    metadata_path: str | Path, actuator_id: str
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return time, actuator flow/readback, network flood rate and max depth."""
+    metadata_path: str | Path,
+    actuator_id: str,
+    *,
+    analysis_horizon_minutes: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    """Return time, actuator flow/readback, network flood rate and max depth.
+
+    If ``analysis_horizon_minutes`` is supplied, a longer authoritative trajectory is sliced
+    at the exact requested endpoint in memory. No new SWMM branch and no duplicate compact file
+    is created. This reuse is valid for trajectory/timing analysis only; cumulative SWMM volume
+    truth continues to require an exact endpoint statistics snapshot.
+    """
 
     p = Path(metadata_path)
     meta = json.loads(p.read_text(encoding="utf-8"))
+    checkpoint_seconds = int(meta.get("checkpoint_minutes", 0)) * 60
+    source_horizon_seconds = int(meta.get("horizon_minutes", 0)) * 60
+    if source_horizon_seconds <= 0:
+        raise ValueError(f"branch metadata lacks a positive source horizon: {metadata_path}")
+    analysis_seconds = (
+        source_horizon_seconds
+        if analysis_horizon_minutes is None
+        else int(analysis_horizon_minutes) * 60
+    )
+    if analysis_seconds <= 0:
+        raise ValueError("analysis horizon must be positive")
+    if analysis_seconds > source_horizon_seconds:
+        raise ValueError(
+            f"requested {analysis_seconds}s timing view exceeds source trajectory "
+            f"horizon {source_horizon_seconds}s: {metadata_path}"
+        )
+    endpoint = checkpoint_seconds + analysis_seconds
+
     compact = meta.get("compact_file")
     if compact:
         with np.load(p.parent / str(compact), allow_pickle=False) as raw:
@@ -29,15 +56,22 @@ def _branch_series(
             if actuator_id not in ids:
                 raise ValueError(f"actuator {actuator_id} absent from compact branch {metadata_path}")
             idx = ids.index(actuator_id)
-            state = raw["state_si"].astype(float)
+            times = raw["elapsed_seconds"].astype(float)
+            keep = times <= endpoint
+            if not np.any(keep) or int(round(float(times[keep][-1]))) != endpoint:
+                raise ValueError(
+                    f"long trajectory lacks exact requested timing-view endpoint {endpoint}s: {metadata_path}"
+                )
+            state = raw["state_si"][keep].astype(float)
             if state.shape[-1] < 3:
                 raise ValueError("compact state lacks depth/flooding channels")
             return (
-                raw["elapsed_seconds"].astype(float),
-                raw["actuator_flow_m3s"][:, idx].astype(float),
-                raw["current_setting"][:, idx].astype(float),
+                times[keep],
+                raw["actuator_flow_m3s"][keep, idx].astype(float),
+                raw["current_setting"][keep, idx].astype(float),
                 np.clip(state[..., 2], 0.0, None).sum(axis=1),
                 state[..., 0].max(axis=1),
+                source_horizon_seconds,
             )
     name = meta.get("actuator_file")
     node_name = meta.get("node_file")
@@ -45,9 +79,13 @@ def _branch_series(
         raise ValueError(f"branch lacks compact data required for Phase0: {metadata_path}")
     act = pd.read_csv(p.parent / str(name), compression="infer")
     node = pd.read_csv(p.parent / str(node_name), compression="infer")
-    act = act[act["actuator_id"].astype(str) == str(actuator_id)].sort_values("elapsed_seconds")
-    if act.empty:
-        raise ValueError(f"actuator {actuator_id} absent from branch {metadata_path}")
+    act = act[
+        (act["actuator_id"].astype(str) == str(actuator_id))
+        & (act["elapsed_seconds"].astype(int) <= endpoint)
+    ].sort_values("elapsed_seconds")
+    node = node[node["elapsed_seconds"].astype(int) <= endpoint]
+    if act.empty or int(act["elapsed_seconds"].iloc[-1]) != endpoint:
+        raise ValueError(f"raw branch lacks exact requested timing-view endpoint: {metadata_path}")
     times = act["elapsed_seconds"].to_numpy(dtype=float)
     flow = flow_rate_to_m3s(act["flow"].to_numpy(dtype=float), str(meta["flow_units"]))
     setting = act["current_setting"].to_numpy(dtype=float)
@@ -58,7 +96,7 @@ def _branch_series(
     ])
     max_depth = np.asarray([float(g["depth"].astype(float).max()) for _, g in by_time])
     flood = flow_rate_to_m3s(flood, str(meta["flow_units"]))
-    return times, flow, setting, flood, max_depth
+    return times, flow, setting, flood, max_depth, source_horizon_seconds
 
 
 def _first_threshold_time(rel_t: np.ndarray, effect: np.ndarray, threshold: float) -> float:
@@ -69,13 +107,7 @@ def _first_threshold_time(rel_t: np.ndarray, effect: np.ndarray, threshold: floa
 def _step_response_times(
     t: np.ndarray, effect: np.ndarray
 ) -> tuple[float, float, float, float, float, bool, float]:
-    """Characterise a sustained step-action response without area/horizon confounding.
-
-    Returns peak magnitude, t10, t50, t90, peak time, peak-near-horizon censor flag and
-    endpoint/peak ratio. Area-mass metrics are deliberately avoided: under a sustained step
-    input the response area necessarily grows with the chosen horizon and is not a system
-    response constant.
-    """
+    """Characterise a sustained step-action response without area/horizon confounding."""
 
     effect = np.asarray(effect, dtype=float)
     rel_t = np.asarray(t, dtype=float) - float(t[0])
@@ -109,6 +141,7 @@ def build_timescale_report(
     run_summary_path: str | Path,
     split: str = "development",
     max_sample_seconds: int = MAX_FORMAL_PHASE0_SAMPLE_SECONDS,
+    analysis_horizon_minutes: int | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     if split != "development":
         raise ValueError("Formal Phase0 timing selection is development-only")
@@ -124,6 +157,7 @@ def build_timescale_report(
     rows: list[dict[str, object]] = []
     observed_sample_steps: set[int] = set()
     observed_horizons: set[int] = set()
+    source_horizons: set[int] = set()
 
     for _, group in merged.groupby(keys, sort=False):
         base_setting = float(group["base_setting"].iloc[0])
@@ -132,8 +166,10 @@ def build_timescale_report(
             continue
         base = base_rows.iloc[0]
         aid = str(base["actuator_id"])
-        base_t, base_q, base_u, base_flood, base_depth = _branch_series(
-            str(base["metadata_path"]), aid
+        base_t, base_q, base_u, base_flood, base_depth, source_h = _branch_series(
+            str(base["metadata_path"]),
+            aid,
+            analysis_horizon_minutes=analysis_horizon_minutes,
         )
         step = np.diff(base_t)
         if not step.size or np.any(step <= 0):
@@ -144,6 +180,7 @@ def build_timescale_report(
         horizon_seconds = int(round(float(base_t[-1] - base_t[0])))
         observed_sample_steps.add(sample_seconds)
         observed_horizons.add(horizon_seconds)
+        source_horizons.add(source_h)
         if sample_seconds > max_sample_seconds:
             raise ValueError(
                 f"Phase0 sampling is {sample_seconds}s; use <= {max_sample_seconds}s so sub-5-min responses are observable"
@@ -153,7 +190,12 @@ def build_timescale_report(
             requested = float(candidate["requested_setting"])
             if np.isclose(requested, base_setting):
                 continue
-            t, q, u, flood, depth = _branch_series(str(candidate["metadata_path"]), aid)
+            t, q, u, flood, depth, candidate_source_h = _branch_series(
+                str(candidate["metadata_path"]),
+                aid,
+                analysis_horizon_minutes=analysis_horizon_minutes,
+            )
+            source_horizons.add(candidate_source_h)
             if not np.array_equal(t, base_t):
                 raise ValueError("same-checkpoint D2 branches have different sampling grids")
             q_metrics = _step_response_times(t, np.abs(q - base_q))
@@ -168,6 +210,7 @@ def build_timescale_report(
                     "requested_setting": requested,
                     "sample_seconds": sample_seconds,
                     "horizon_seconds": horizon_seconds,
+                    "source_simulation_horizon_seconds": candidate_source_h,
                     "readback_separation_lag_seconds": _readback_lag_seconds(t, base_u, u, requested),
                     "peak_abs_flow_effect_m3s": q_metrics[0],
                     "flow_t10_seconds": q_metrics[1],
@@ -226,12 +269,16 @@ def build_timescale_report(
     }
     horizon_censored = any(value > 0.05 for value in censor.values())
     summary: dict[str, object] = {
-        "contract": "PHASE0_D2_STEP_RESPONSE_TIMESCALE_V5_HIGH_FREQUENCY",
+        "contract": "PHASE0_D2_STEP_RESPONSE_TIMESCALE_V6_LONG_TRAJECTORY_VIEW",
         "split": split,
         "response_cases": int(len(detail)),
         "actuators_tested": int(detail["actuator_id"].nunique()),
         "sampling_seconds": sorted(observed_sample_steps),
         "horizon_seconds": sorted(observed_horizons),
+        "source_simulation_horizon_seconds": sorted(source_horizons),
+        "analysis_horizon_minutes": analysis_horizon_minutes,
+        "trajectory_prefix_view": bool(analysis_horizon_minutes is not None),
+        "cumulative_volume_reuse_authorized": False,
         "formal_max_sampling_seconds": int(max_sample_seconds),
         "readback_separation_lag_seconds": quantiles(
             "readback_separation_lag_seconds", "peak_abs_flow_effect_m3s"
@@ -266,13 +313,15 @@ def build_timescale_report(
         "candidate_production_timing": {
             "model_observation_seconds": 300,
             "control_update_seconds": 600,
-            "status": "candidate only; freeze after measured step-response, readback and wall-clock runtime review",
+            "status": "candidate only; freeze after measured response/readback/runtime review",
         },
         "instruction": (
-            "Use <=60s Phase0 D2 sampling. Cadence selection should use readback/t10/t50/t90/peak timing, "
-            "not response-area mass90 under a sustained step. If >5% of active responses peak in the last 10% "
-            "of the Phase0 horizon, lengthen the pilot horizon before freezing the production horizon. Recovery/decay "
-            "after releasing an action must be evaluated with D3/pulse-style sequences because sustained D2 steps cannot identify it."
+            "Use <=60s Phase0 sampling. A longer D2 trajectory may be sliced for shorter timing "
+            "views instead of rerunning SWMM. Do not reuse its final cumulative node statistics "
+            "as shorter-horizon TFV truth unless an exact endpoint snapshot exists. If >5% of "
+            "active responses peak in the last 10% of the analysis horizon, the sustained-step "
+            "response remains censored. Recovery/decay after releasing an action must be evaluated "
+            "with D3/pulse-style sequences rather than by weakening this guard."
         ),
     }
     return detail, summary
@@ -280,7 +329,7 @@ def build_timescale_report(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="High-frequency D2 step-response audit of readback, actuator and network timing"
+        description="High-frequency D2 step-response audit with reusable long-trajectory views"
     )
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--run-summary", required=True)
@@ -288,12 +337,18 @@ def main() -> None:
     parser.add_argument("--summary-out", required=True)
     parser.add_argument("--split", default="development")
     parser.add_argument("--max-sample-seconds", type=int, default=MAX_FORMAL_PHASE0_SAMPLE_SECONDS)
+    parser.add_argument(
+        "--analysis-horizon-minutes",
+        type=int,
+        help="slice a longer source D2 trajectory at this exact horizon for timing analysis only",
+    )
     args = parser.parse_args()
     detail, summary = build_timescale_report(
         manifest_path=args.manifest,
         run_summary_path=args.run_summary,
         split=args.split,
         max_sample_seconds=args.max_sample_seconds,
+        analysis_horizon_minutes=args.analysis_horizon_minutes,
     )
     Path(args.detail_out).parent.mkdir(parents=True, exist_ok=True)
     detail.to_csv(args.detail_out, index=False)
