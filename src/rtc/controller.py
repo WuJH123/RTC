@@ -28,8 +28,8 @@ FallbackSequenceProvider = Callable[[CausalObservation, int], np.ndarray]
 @dataclass(frozen=True)
 class ControllerConfig:
     history_steps: int = 13
-    horizon_steps: int = 12
-    control_block_steps: int = 1
+    horizon_steps: int = 72
+    control_block_steps: int = 2
     optimizer_iterations: int = 120
     optimizer_learning_rate: float = 0.04
     max_setting_delta_per_update: float | None = None
@@ -65,7 +65,14 @@ def hold_current_fallback(
 
 
 class TorchMPCController:
-    """Step1 -> causal rainfall forecast -> Step2/MPC -> executable first move."""
+    """Step1 -> causal rainfall forecast -> Step2/MPC -> executable first move.
+
+    The rolling controller never resets actuator targets to an initial/default state between
+    horizons. Each new first move is constrained both by the current SWMM readback and by the
+    previously issued supervisory target. The latter cross-decision anchor prevents a device
+    that is still moving toward its previous target from being abruptly commanded back simply
+    because the optimizer was re-solved on a new horizon.
+    """
 
     def __init__(
         self,
@@ -168,6 +175,47 @@ class TorchMPCController:
             raise ValueError("fallback sequence contains invalid settings")
         return sequence
 
+    def _fallback_action(
+        self,
+        *,
+        obs: CausalObservation,
+        fallback: np.ndarray,
+        source: str,
+        diagnostics: dict[str, float | int | bool | str],
+    ) -> ControllerAction:
+        current = np.asarray(obs.actuator_current_setting, dtype=float).reshape(-1)
+        decision = choose_first_move(
+            optimized_sequence=fallback,
+            surrogate_admissible=False,
+            fallback_first_move=fallback[0],
+            current_settings=current,
+            previous_requested_settings=self.last_requested,
+            min_settings=0.0,
+            max_settings=1.0,
+            max_delta_per_update=self.config.max_setting_delta_per_update,
+        )
+        previous = None if self.last_requested is None else self.last_requested.copy()
+        self.last_requested = decision.requested.copy()
+        delta_previous = (
+            0.0
+            if previous is None
+            else float(np.abs(decision.requested - previous).max(initial=0.0))
+        )
+        diagnostics = dict(diagnostics)
+        diagnostics.update(
+            {
+                "command_delta_from_current_max": float(
+                    np.abs(decision.requested - current).max(initial=0.0)
+                ),
+                "command_delta_from_previous_target_max": delta_previous,
+            }
+        )
+        return ControllerAction(
+            settings=dict(zip(self.graph.actuator_ids, decision.requested, strict=True)),
+            source=source,
+            diagnostics=diagnostics,
+        )
+
     def decide(
         self, obs: CausalObservation, *, observation_already_recorded: bool = False
     ) -> ControllerAction:
@@ -189,11 +237,9 @@ class TorchMPCController:
                 current_tolerance=self.config.readback_current_tolerance,
             )
             if not readback.passed:
-                self.last_requested = fallback[0].copy()
-                return ControllerAction(
-                    settings=dict(
-                        zip(self.graph.actuator_ids, fallback[0], strict=True)
-                    ),
+                return self._fallback_action(
+                    obs=obs,
+                    fallback=fallback,
                     source="FALLBACK_READBACK",
                     diagnostics={
                         "fallback_policy": self.config.fallback_policy_id,
@@ -204,9 +250,9 @@ class TorchMPCController:
                 )
 
         if len(self.observed_history) < self.config.history_steps:
-            self.last_requested = fallback[0].copy()
-            return ControllerAction(
-                settings=dict(zip(self.graph.actuator_ids, fallback[0], strict=True)),
+            return self._fallback_action(
+                obs=obs,
+                fallback=fallback,
                 source="FALLBACK_HISTORY_WARMUP",
                 diagnostics={
                     "fallback_policy": self.config.fallback_policy_id,
@@ -290,11 +336,13 @@ class TorchMPCController:
             candidate_valid = bool(
                 getattr(result, "candidate_valid", getattr(result, "admissible", False))
             )
+            previous = None if self.last_requested is None else self.last_requested.copy()
             decision = choose_first_move(
                 optimized_sequence=result.settings.detach().cpu().numpy(),
                 surrogate_admissible=candidate_valid,
                 fallback_first_move=fallback[0],
                 current_settings=current,
+                previous_requested_settings=previous,
                 min_settings=0.0,
                 max_settings=1.0,
                 max_delta_per_update=self.config.max_setting_delta_per_update,
@@ -302,11 +350,9 @@ class TorchMPCController:
             runtime_seconds = float(time.perf_counter() - started)
             budget = self.config.decision_runtime_budget_seconds
             if budget is not None and runtime_seconds > budget:
-                self.last_requested = fallback[0].copy()
-                return ControllerAction(
-                    settings=dict(
-                        zip(self.graph.actuator_ids, fallback[0], strict=True)
-                    ),
+                return self._fallback_action(
+                    obs=obs,
+                    fallback=fallback,
                     source="FALLBACK_COMPUTE_DEADLINE",
                     diagnostics={
                         "fallback_policy": self.config.fallback_policy_id,
@@ -316,6 +362,17 @@ class TorchMPCController:
                 )
             self.last_requested = decision.requested.copy()
             setting_change = np.abs(decision.requested - current)
+            previous_change = (
+                0.0
+                if previous is None
+                else float(np.abs(decision.requested - previous).max(initial=0.0))
+            )
+            settings_np = result.settings.detach().cpu().numpy()
+            if settings_np.ndim != 2:
+                raise ValueError("MPC result settings must be [horizon, actuator]")
+            sequence_delta = np.diff(
+                np.vstack([current[None, :], settings_np]), axis=0
+            )
             diagnostics: dict[str, float | int | bool | str] = {
                 "fallback_policy": self.config.fallback_policy_id,
                 "control_block_steps": self.config.control_block_steps,
@@ -326,11 +383,16 @@ class TorchMPCController:
                 "decision_runtime_budget_seconds": (
                     float(budget) if budget is not None else -1.0
                 ),
-                # These are diagnostics only: no Top-K mask is imposed. The number of
-                # hydraulically selected facilities emerges from the optimized setting move.
                 "active_actuator_count_1e4": int((setting_change > 1e-4).sum()),
                 "setting_change_l1": float(setting_change.sum()),
                 "setting_change_max": float(setting_change.max(initial=0.0)),
+                "command_delta_from_previous_target_max": previous_change,
+                "planned_sequence_max_step_delta": float(
+                    np.abs(sequence_delta).max(initial=0.0)
+                ),
+                "planned_sequence_total_variation": float(
+                    np.abs(sequence_delta).sum()
+                ),
             }
             for name in (
                 "primary_tfv_reference_m3",
@@ -350,9 +412,9 @@ class TorchMPCController:
             )
         except Exception as exc:
             runtime_seconds = float(time.perf_counter() - started)
-            self.last_requested = fallback[0].copy()
-            return ControllerAction(
-                settings=dict(zip(self.graph.actuator_ids, fallback[0], strict=True)),
+            return self._fallback_action(
+                obs=obs,
+                fallback=fallback,
                 source="FALLBACK_RUNTIME_ERROR",
                 diagnostics={
                     "fallback_policy": self.config.fallback_policy_id,
