@@ -5,7 +5,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from rtc.checkpoint_design import _eligible_checkpoint_mask
 from rtc.phase0_design import design_phase0_events
@@ -87,32 +86,35 @@ def _phase0_summary(path: Path, *, censored: bool) -> Path:
     return path
 
 
-def test_timing_freeze_binds_non_censored_phase0_evidence(tmp_path: Path) -> None:
+def test_timing_freeze_binds_project7_fixed_360min_grid(tmp_path: Path) -> None:
     summary = _phase0_summary(tmp_path / "timescale.json", censored=False)
     payload = freeze_phase0_timing(
         phase0_summary_path=summary,
         model_step_seconds=300,
         control_update_seconds=600,
         history_steps=13,
-        horizon_minutes=120,
+        horizon_minutes=360,
         control_start_minutes=60,
-        max_setting_delta_per_update=0.20,
+        max_setting_delta_per_update=0.5,
     )
-    assert payload["contract"] == "RTC_PHASE0_TIMING_FREEZE_V1"
+    assert payload["contract"] == "RTC_PHASE0_TIMING_FREEZE_V2_PROJECT7_360MIN"
     assert payload["timing"]["history_span_seconds"] == 3600
-    assert payload["timing"]["horizon_steps"] == 24
-    assert payload["timing"]["d3_control_blocks"] == 12
-    assert payload["controller"]["max_setting_delta_per_update"] == 0.20
+    assert payload["timing"]["horizon_steps"] == 72
+    assert payload["timing"]["d3_control_blocks"] == 36
+    assert payload["controller"]["max_setting_delta_per_update"] == 0.5
 
 
-def test_timing_freeze_refuses_horizon_censored_pilot(tmp_path: Path) -> None:
+def test_timing_freeze_keeps_censored_finding_as_diagnostic(tmp_path: Path) -> None:
     summary = _phase0_summary(tmp_path / "timescale.json", censored=True)
-    with pytest.raises(ValueError, match="horizon-censored"):
-        freeze_phase0_timing(
-            phase0_summary_path=summary,
-            model_step_seconds=300,
-            control_update_seconds=600,
-            history_steps=13,
-            horizon_minutes=120,
-            control_start_minutes=60,
-        )
+    payload = freeze_phase0_timing(
+        phase0_summary_path=summary,
+        model_step_seconds=300,
+        control_update_seconds=600,
+        history_steps=13,
+        horizon_minutes=360,
+        control_start_minutes=60,
+        max_setting_delta_per_update=0.5,
+    )
+    assert payload["phase0_horizon_censored"] is True
+    assert payload["phase0_censor_role"] == "diagnostic_not_horizon_selection_gate"
+    assert payload["horizon_selection_basis"] == "USER_FROZEN_IDEALIZED_METHODOLOGY_TESTBED_360MIN"

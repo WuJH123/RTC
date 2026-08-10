@@ -21,25 +21,107 @@ class ReadbackResult:
     failed_indices: tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class CommandContinuityResult:
+    passed: bool
+    max_delta_from_current: float
+    max_delta_from_previous_command: float
+    failed_current_indices: tuple[int, ...]
+    failed_previous_indices: tuple[int, ...]
+
+
+def command_continuity(
+    requested: np.ndarray,
+    current_settings: np.ndarray,
+    *,
+    previous_requested_settings: np.ndarray | None,
+    max_delta_per_update: np.ndarray | float | None,
+    tolerance: float = 1e-9,
+) -> CommandContinuityResult:
+    """Audit one supervisory command against physical and command-history continuity.
+
+    ``current_settings`` represents the actual SWMM readback at the decision epoch.
+    ``previous_requested_settings`` represents the previously issued supervisory target.
+    A new command must stay within the frozen per-update movement bound of both anchors.
+    The second check prevents a rolling optimizer from abruptly undoing the previous target
+    merely because the physical device is still moving toward it.
+    """
+
+    requested = np.asarray(requested, dtype=float).reshape(-1)
+    current = np.asarray(current_settings, dtype=float).reshape(-1)
+    if requested.shape != current.shape:
+        raise ValueError("requested/current command shapes differ")
+    if not np.isfinite(requested).all() or not np.isfinite(current).all():
+        raise ValueError("requested/current settings must be finite")
+
+    previous: np.ndarray | None = None
+    if previous_requested_settings is not None:
+        previous = np.asarray(previous_requested_settings, dtype=float).reshape(-1)
+        if previous.shape != current.shape or not np.isfinite(previous).all():
+            raise ValueError("previous requested settings are invalid")
+
+    if max_delta_per_update is None:
+        return CommandContinuityResult(
+            passed=True,
+            max_delta_from_current=float(np.abs(requested - current).max(initial=0.0)),
+            max_delta_from_previous_command=(
+                0.0
+                if previous is None
+                else float(np.abs(requested - previous).max(initial=0.0))
+            ),
+            failed_current_indices=(),
+            failed_previous_indices=(),
+        )
+
+    delta = np.broadcast_to(np.asarray(max_delta_per_update, dtype=float), current.shape)
+    if np.any(delta < 0) or not np.isfinite(delta).all():
+        raise ValueError("max_delta_per_update must be finite and non-negative")
+    current_error = np.abs(requested - current)
+    previous_error = (
+        np.zeros_like(current_error) if previous is None else np.abs(requested - previous)
+    )
+    failed_current = np.flatnonzero(current_error > delta + tolerance)
+    failed_previous = (
+        np.asarray([], dtype=int)
+        if previous is None
+        else np.flatnonzero(previous_error > delta + tolerance)
+    )
+    return CommandContinuityResult(
+        passed=bool(failed_current.size == 0 and failed_previous.size == 0),
+        max_delta_from_current=float(current_error.max(initial=0.0)),
+        max_delta_from_previous_command=float(previous_error.max(initial=0.0)),
+        failed_current_indices=tuple(int(i) for i in failed_current),
+        failed_previous_indices=tuple(int(i) for i in failed_previous),
+    )
+
+
 def choose_first_move(
     *,
     optimized_sequence: np.ndarray,
     surrogate_admissible: bool,
     fallback_first_move: np.ndarray,
     current_settings: np.ndarray,
+    previous_requested_settings: np.ndarray | None = None,
     min_settings: np.ndarray | float = 0.0,
     max_settings: np.ndarray | float = 1.0,
     max_delta_per_update: np.ndarray | float | None = None,
 ) -> ExecutableDecision:
-    """Fail closed: an inadmissible/invalid MPC result executes fallback, never the candidate."""
+    """Fail closed and project the first MPC move to a continuous executable command."""
 
     candidate = np.asarray(optimized_sequence, dtype=float)
     fallback = np.asarray(fallback_first_move, dtype=float).reshape(-1)
     current = np.asarray(current_settings, dtype=float).reshape(-1)
+    previous = (
+        None
+        if previous_requested_settings is None
+        else np.asarray(previous_requested_settings, dtype=float).reshape(-1)
+    )
     if candidate.ndim != 2 or candidate.shape[1] != current.size:
         raise ValueError("optimized_sequence must be [horizon, actuator]")
     if fallback.shape != current.shape:
         raise ValueError("fallback/current shape mismatch")
+    if previous is not None and previous.shape != current.shape:
+        raise ValueError("previous requested/current shape mismatch")
 
     use_candidate = bool(surrogate_admissible and np.isfinite(candidate[0]).all())
     requested = candidate[0].copy() if use_candidate else fallback.copy()
@@ -55,9 +137,25 @@ def choose_first_move(
         delta = np.broadcast_to(np.asarray(max_delta_per_update, dtype=float), current.shape)
         if np.any(delta < 0):
             raise ValueError("max_delta_per_update must be non-negative")
-        requested = np.clip(requested, current - delta, current + delta)
-        requested = np.clip(requested, lo, hi)
+        lower = np.maximum(lo, current - delta)
+        upper = np.minimum(hi, current + delta)
+        if previous is not None:
+            lower = np.maximum(lower, previous - delta)
+            upper = np.minimum(upper, previous + delta)
+        if np.any(lower > upper + 1e-12):
+            raise ValueError(
+                "current readback and previous command leave no feasible continuous setting interval"
+            )
+        requested = np.minimum(np.maximum(requested, lower), upper)
     projected = not np.allclose(before, requested, rtol=0.0, atol=1e-12)
+    continuity = command_continuity(
+        requested,
+        current,
+        previous_requested_settings=previous,
+        max_delta_per_update=max_delta_per_update,
+    )
+    if not continuity.passed:
+        raise RuntimeError("first-move continuity projection failed")
     return ExecutableDecision(
         requested=requested,
         source=source,

@@ -10,8 +10,13 @@ import torch
 from .baselines import canonical_baseline_id
 from .causal_timing import timing_from_controller_config
 from .code_contract import rtc_source_tree_sha256
+from .event_clock import inspect_prepared_event_clock
 from .inp_runtime import build_runtime_inp, sha256_file
 from .production_cli_router import run_policy_main
+from .project7_contract import (
+    EFFECTIVE_WARMUP_MINUTES,
+    validate_project7_runtime_config,
+)
 
 
 def _model_engine(path: str, *, name: str) -> str:
@@ -53,6 +58,8 @@ def _stamp_run_metadata(
     step1: str | None,
     step2: str | None,
     expected_swmm_engine_version: str | None,
+    project7_runtime_contract: dict[str, object],
+    event_clock: dict[str, float | str],
 ) -> None:
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -70,6 +77,8 @@ def _stamp_run_metadata(
     payload["source_inp_sha256"] = sha256_file(source_inp)
     payload["controller_config_sha256"] = sha256_file(config_path)
     payload["expected_swmm_engine_version"] = expected_swmm_engine_version
+    payload["project7_runtime_contract"] = project7_runtime_contract
+    payload["prepared_event_clock"] = event_clock
     payload["native_controls_template_sha256"] = (
         None if native_controls_template is None else sha256_file(native_controls_template)
     )
@@ -110,8 +119,16 @@ def main() -> None:
     strategy = canonical_baseline_id(known.strategy)
     timing = timing_from_controller_config(raw)
     timing.validate(require_full_history_before_first_control=(strategy == "proposed"))
+    project7_evidence = validate_project7_runtime_config(raw)
 
     original_event_inp = str(Path(known.inp).resolve())
+    event_clock = inspect_prepared_event_clock(original_event_inp)
+    if abs(float(event_clock["effective_warmup_minutes"]) - EFFECTIVE_WARMUP_MINUTES) > 1e-6:
+        raise ValueError(
+            "Formal Project7 policy run requires an event prepared with effective 120-minute "
+            f"warm-up; got {event_clock['effective_warmup_minutes']} min"
+        )
+
     template: str | None = None
     if strategy == "internal_rtc":
         if not known.native_controls_template:
@@ -146,8 +163,6 @@ def main() -> None:
             )
         expected_engine = step1_engine
 
-    # --native-controls-template is consumed by this public guard; the legacy policy parser does
-    # not know about it and must not see an unknown argument.
     _remove_cli_pair("--native-controls-template")
     run_policy_main()
     metadata_path = Path(known.out_dir) / f"{known.run_id}.json"
@@ -165,6 +180,8 @@ def main() -> None:
         step1=known.step1,
         step2=known.step2,
         expected_swmm_engine_version=expected_engine,
+        project7_runtime_contract=project7_evidence,
+        event_clock=event_clock,
     )
 
 

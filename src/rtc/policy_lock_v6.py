@@ -8,10 +8,10 @@ from pathlib import Path
 import numpy as np
 
 from . import policy_lock as legacy
-from .causal_timing import timing_from_controller_config
 from .code_contract import rtc_source_tree_sha256
 from .control_lineage import section_payload_sha256
 from .inp_lineage import physical_contract_sha256
+from .project7_contract import PRODUCTION_CONTROLLER_CONTRACT, validate_project7_runtime_config
 from .study_readiness import READINESS_CONTRACT
 from .tfv_pipeline import TFVPipelineLedger, sha256_file
 
@@ -27,6 +27,49 @@ EXPECTED_STRATEGIES = (
 )
 
 
+def _verify_runtime_acceptance_v2(
+    path: str | Path,
+    *,
+    controller_config_path: str | Path,
+    control_update_seconds: int,
+    implementation_sha: str,
+) -> dict[str, object]:
+    evidence = legacy._json(path)
+    if evidence.get("contract") != "DEVELOPMENT_REALTIME_EXECUTION_ACCEPTANCE_V2_TEMPORAL_CONTINUITY":
+        raise ValueError("Policy Lock requires temporal-continuity runtime acceptance V2")
+    if evidence.get("passed") is not True:
+        raise ValueError("development runtime/continuity acceptance did not pass")
+    if evidence.get("rtc_source_tree_sha256") != implementation_sha:
+        raise ValueError("runtime acceptance uses an incompatible implementation contract")
+    if str(evidence.get("controller_config_sha256", "")) != sha256_file(
+        controller_config_path
+    ):
+        raise ValueError("runtime acceptance was not generated with the locked controller config")
+    budget = float(evidence.get("decision_runtime_budget_seconds", -1.0))
+    if not 0 < budget < control_update_seconds:
+        raise ValueError("runtime acceptance contains an invalid decision compute budget")
+    metrics = evidence.get("metrics")
+    if not isinstance(metrics, dict):
+        raise ValueError("runtime acceptance lacks metrics")
+    zero_required = (
+        "control_grid_violations",
+        "first_decision_violations",
+        "missing_runtime_diagnostics",
+        "continuity_evidence_missing",
+        "cross_decision_continuity_violations",
+        "planned_horizon_continuity_violations",
+        "fatal_runtime_fallbacks",
+    )
+    for key in zero_required:
+        if int(metrics.get(key, -1)) != 0:
+            raise ValueError(f"runtime acceptance contains nonzero {key}")
+    if float(metrics.get("decision_runtime_max_seconds", float("inf"))) > budget:
+        raise ValueError("development decision runtime exceeded the locked budget")
+    if not isinstance(evidence.get("project7_runtime_contract"), dict):
+        raise ValueError("runtime acceptance lacks Project7 runtime-contract evidence")
+    return evidence
+
+
 def create_policy_lock(
     *, ledger_path: str | Path, artefacts_path: str | Path, output_path: str | Path
 ) -> dict[str, object]:
@@ -38,7 +81,7 @@ def create_policy_lock(
     if missing:
         raise ValueError(f"Policy Lock missing required artifacts: {missing}")
     if "study_readiness" not in artefacts:
-        raise ValueError("Policy Lock requires the v0.6.6 pretraining study_readiness artifact")
+        raise ValueError("Policy Lock requires the pretraining study_readiness artifact")
     for name, path in artefacts.items():
         if not Path(path).is_file():
             raise ValueError(f"Policy Lock artifact missing: {name}: {path}")
@@ -79,8 +122,9 @@ def create_policy_lock(
         raise ValueError(f"priority/sensor nodes are absent from graph: {missing_nodes}")
 
     controller = legacy._json(artefacts["controller_config"])
-    if controller.get("contract") != "PRODUCTION_CONTROLLER_CONFIG_V4_TFV_FIRST":
-        raise ValueError("Policy Lock requires production TFV-first controller config V4")
+    if controller.get("contract") != PRODUCTION_CONTROLLER_CONTRACT:
+        raise ValueError("Policy Lock requires production controller config V5 temporal continuity")
+    project7_runtime = validate_project7_runtime_config(controller)
     if controller.get("exact_global_peak") is not False:
         raise ValueError("main control runs must keep exact_global_peak=false")
     if "flood_budget_m3" in controller or "depth_budget_m" in controller:
@@ -91,10 +135,11 @@ def create_policy_lock(
     ):
         raise ValueError("controller does not declare the frozen TFV-first objective")
 
-    timing = timing_from_controller_config(controller)
-    timing.validate(require_full_history_before_first_control=True)
-    if float(readiness.get("minimum_pre_rain_warmup_minutes", -1.0)) * 60 < timing.history_span_seconds:
-        raise ValueError("prepared events do not provide the full locked causal history before rainfall")
+    timing = project7_runtime["timing"]
+    assert isinstance(timing, dict)
+    timing_obj = legacy.timing_from_controller_config(controller)
+    if float(readiness.get("minimum_pre_rain_warmup_minutes", -1.0)) < 120.0:
+        raise ValueError("prepared events do not satisfy the effective 120-minute warm-up contract")
     controller_section = controller.get("controller")
     if not isinstance(controller_section, dict):
         raise ValueError("controller config lacks controller section")
@@ -109,15 +154,15 @@ def create_policy_lock(
     model_contracts = legacy._verify_model_timing(
         artefacts,
         implementation_sha=implementation_sha,
-        model_step_seconds=timing.model_step_seconds,
+        model_step_seconds=timing_obj.model_step_seconds,
         history_steps=int(controller_section["history_steps"]),
         horizon_steps=int(controller_section["horizon_steps"]),
     )
     legacy._verify_acceptance(artefacts, implementation_sha)
-    runtime_acceptance = legacy._verify_runtime_acceptance(
+    runtime_acceptance = _verify_runtime_acceptance_v2(
         artefacts["runtime_acceptance"],
         controller_config_path=artefacts["controller_config"],
-        control_update_seconds=timing.control_update_seconds,
+        control_update_seconds=timing_obj.control_update_seconds,
         implementation_sha=implementation_sha,
     )
 
@@ -146,7 +191,8 @@ def create_policy_lock(
         "priority_is_hard_constraint": False,
         "priority_nodes": list(priority),
         "sensor_nodes": list(sensors),
-        "causal_timing": timing.as_dict(),
+        "causal_timing": timing_obj.as_dict(),
+        "project7_runtime_contract": project7_runtime,
         "model_contracts": model_contracts,
         "rainfall_design": rainfall_design,
         "rainfall_sample_size_is_execution_gate": False,
@@ -158,6 +204,7 @@ def create_policy_lock(
         "formal_strategy_matrix": list(strategies),
         "competitive_baselines": ["no_control", "internal_rtc", "auto_rbc", "efd"],
         "diagnostic_extremes": ["all_open", "all_closed"],
+        "baseline_information_budget": "Internal RTC/Auto-RBC/EFD true-state advantage explicitly accepted and disclosed",
         "formal_metric_aggregation": "equal_weight_per_independent_rainfall_group",
         "workspace": workspace,
         "artifact_location_is_execution_gate": False,

@@ -19,6 +19,7 @@ from .graph import GraphSchema
 from .inp_runtime import sha256_file
 from .models import DifferentiableHydraulicWorldModel, SparseStateEstimator
 from .robust_tfv_mpc import ContinuousTFVFirstMPC
+from .runtime_controller_guard import ContinuityGuardController
 
 
 FORMAL_POLICY_STRATEGIES = (
@@ -285,6 +286,13 @@ def run_policy_main() -> None:
         raise ValueError("production record stride must equal model step")
     control_block_steps = control_update_seconds // model_step_seconds
     control_start_minutes = int(cfg.get("control_start_minutes", 0))
+    controller_cfg_raw = cfg.get("controller", {})
+    if not isinstance(controller_cfg_raw, dict):
+        raise ValueError("config controller must be an object")
+    raw_delta = controller_cfg_raw.get("max_setting_delta_per_update")
+    if raw_delta is None:
+        raise ValueError("Formal Project7 requires max_setting_delta_per_update")
+    max_delta_per_update = float(raw_delta)
     sensors = _load_lines(args.sensors)
     controller = None
     source_inp = Path(args.inp)
@@ -324,9 +332,6 @@ def run_policy_main() -> None:
             )
         step1 = _load_step1(args.step1, device)
         step2 = _load_step2(args.step2, device)
-        controller_cfg_raw = cfg.get("controller", {})
-        if not isinstance(controller_cfg_raw, dict):
-            raise ValueError("config controller must be an object")
         _validate_model_time_contracts(
             step1=step1,
             step2=step2,
@@ -399,6 +404,13 @@ def run_policy_main() -> None:
         controller = _constant_controller(1.0)
     elif strategy == "all_closed":
         controller = _constant_controller(0.0)
+
+    if controller is not None:
+        controller = ContinuityGuardController(
+            controller,
+            max_delta_per_update=max_delta_per_update,
+            allow_projection=(strategy != "proposed"),
+        )
 
     result = run_authoritative_closed_loop(
         inp_path=inp_for_run,

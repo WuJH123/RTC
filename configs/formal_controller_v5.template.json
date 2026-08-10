@@ -1,0 +1,48 @@
+{
+  "contract": "PRODUCTION_CONTROLLER_CONFIG_V5_TFV_FIRST_TEMPORAL_CONTINUITY",
+  "instruction": "Project7 methodology-testbed runtime contract: 5-min model/observation step, 10-min supervisory update, first Proposed control at simulation elapsed 60 min, 360-min prediction horizon, 13-frame causal history, and max setting delta 0.5 per 10-min update. Commands are held between decisions; each horizon is sequentially rate-bounded from the current readback; each new rolling target is also bounded from the previously issued target so a facility cannot reset or abruptly reverse when the horizon is re-solved. PFV/priority depth remain soft/reporting quantities; Global Peak is report-only. The claim is an idealized methodology testbed, not a field digital twin.",
+  "model_step_seconds": 300,
+  "control_update_seconds": 600,
+  "record_stride_seconds": 300,
+  "control_start_minutes": 60,
+  "swmm_threads": 1,
+  "exact_global_peak": false,
+  "depth_state_index": 0,
+  "flood_rate_state_index": 2,
+  "methodology_testbed": {
+    "claim_scope": "IDEALIZED_METHODOLOGY_TESTBED_NOT_FIELD_DIGITAL_TWIN",
+    "effective_warmup_minutes": 120,
+    "dwf_background_loading": true,
+    "baseline_true_state_advantage": ["internal_rtc", "auto_rbc", "efd"]
+  },
+  "objective": {
+    "primary": "minimize rainfall-ensemble risk-adjusted cumulative TFV",
+    "priority_role": "soft lexicographic secondary preference within TFV near-optimal set",
+    "forecast_quantile": "REPLACE_DEVELOPMENT_ONLY",
+    "tfv_cvar_alpha": "REPLACE_DEVELOPMENT_ONLY",
+    "tfv_near_opt_relative": "REPLACE_DEVELOPMENT_ONLY",
+    "tfv_near_opt_absolute_m3": "REPLACE_DEVELOPMENT_ONLY",
+    "near_opt_penalty": "REPLACE_DEVELOPMENT_ONLY",
+    "movement_tiebreak": "REPLACE_DEVELOPMENT_ONLY",
+    "min_predicted_tfv_improvement_m3": "REPLACE_DEVELOPMENT_ONLY",
+    "min_predicted_tfv_improvement_relative": "REPLACE_DEVELOPMENT_ONLY"
+  },
+  "forecast": {
+    "decay_per_step": "REPLACE_DEVELOPMENT_ONLY",
+    "scenario_multipliers": ["REPLACE_DEVELOPMENT_ONLY"],
+    "history_steps_for_level": "REPLACE_DEVELOPMENT_ONLY"
+  },
+  "controller": {
+    "history_steps": 13,
+    "horizon_steps": 72,
+    "optimizer_iterations": "REPLACE_DEVELOPMENT_ONLY",
+    "optimizer_learning_rate": "REPLACE_DEVELOPMENT_ONLY",
+    "max_setting_delta_per_update": 0.5,
+    "enforce_cross_decision_target_continuity": true,
+    "enforce_sequential_horizon_continuity": true,
+    "readback_target_tolerance": "REPLACE_FROM_ENGINEERING_RUNTIME_TEST",
+    "readback_current_tolerance": "REPLACE_FROM_ENGINEERING_RUNTIME_TEST",
+    "decision_runtime_budget_seconds": "REPLACE_AFTER_WALL_CLOCK_BENCHMARK__MUST_BE_LESS_THAN_CONTROL_UPDATE",
+    "fallback_policy_id": "CAUSAL_HOLD_CURRENT_V1"
+  }
+}
