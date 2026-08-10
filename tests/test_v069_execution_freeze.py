@@ -103,6 +103,16 @@ def test_dimensionless_acceptance_is_preregistered() -> None:
     assert contract["candidate_ranking"]["maximum"] == {}
 
 
+def test_phase0_budget_has_dedicated_cli_scope() -> None:
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'rtc-design-phase0-checkpoints = "rtc.execution_defaults_guard:checkpoint_design_main"' in pyproject
+    assert 'rtc-design-phase0-probes = "rtc.execution_defaults_guard:efficient_probe_design_main"' in pyproject
+    assert 'rtc-design-checkpoints = "rtc.checkpoint_design:main"' in pyproject
+    assert 'rtc-design-probes-efficient = "rtc.efficient_probe_design:main"' in pyproject
+    assert 'rtc-design-checkpoints = "rtc.execution_defaults_guard:checkpoint_design_main"' not in pyproject
+    assert 'rtc-design-probes-efficient = "rtc.execution_defaults_guard:efficient_probe_design_main"' not in pyproject
+
+
 def test_old_active_looking_contracts_are_absent() -> None:
     obsolete = [
         "configs/formal_controller_v5.template.json",
