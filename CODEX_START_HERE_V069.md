@@ -23,6 +23,8 @@ Do not search old versioned controller/baseline configs to decide current semant
 - `DIAGNOSTIC_ONLY` values are reported and must not be tuned to obtain a favorable result.
 - Reuse authoritative SWMM branches only through the simulation-identity/hash contract.
 - When a scientific gate fails, diagnose the failed model/data mechanism before increasing sample size or sweeping hyperparameters.
+- The source registry's `calibration` and `safety_audit` roles are optional under the active v0.6.9 rainfall-design code. Do not simulate those eight events merely because the legacy role labels exist; wait for the explicit split decision in the parameter register.
+- The `160 rainfall groups` value is a paper-strength recommendation only, never an instruction to generate 130 additional storms for the current 30-event methodology testbed.
 
 ## Current public CLI names
 

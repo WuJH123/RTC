@@ -43,6 +43,19 @@
     ],
     "random_seed_default": 42
   },
+  "rainfall_split_human_decision_before_expensive_runs": {
+    "current_source_registry_counts": {
+      "development_train": 14,
+      "development_validation": 4,
+      "calibration": 5,
+      "safety_audit": 3,
+      "final": 4
+    },
+    "current_code_semantics": "Calibration and safety-audit cohorts are optional unless a later analysis explicitly uses them; only group-disjoint development train/validation and untouched Final are correctness requirements.",
+    "decision_required": "Before generating production hydraulics, explicitly choose either to retain calibration/safety_audit as unused reserved cohorts or to create a new v0.6.9 split registry that reallocates them using forcing descriptors only. Do not run all eight optional events merely because the legacy role labels exist.",
+    "lineage_warning": "Any reallocation must be completed before fresh-workspace/data generation and becomes a new split-registry hash. Never select/reassign events using hydraulic outcomes.",
+    "paper_strength_160_groups_is_execution_gate": false
+  },
   "human_decision_pending_controller": {
     "rule": "Prefer one preregistered value. Do not launch Cartesian/grid searches by default.",
     "forecast_quantile": {"code_default": 0.95, "suggested_no_sweep_start": 0.95},
@@ -80,9 +93,17 @@
     "d2_epsilon_setting": {"code_default": 0.15},
     "d2_actuators_per_checkpoint": {"code_default": 24},
     "d2_include_center": {"code_default": true},
+    "phase0_pulse_model_step_seconds": {"code_default": 60, "role": "diagnostic_high_frequency_sampling"},
+    "phase0_pulses_per_checkpoint": {"code_default": 4},
+    "phase0_pulse_horizon_minutes": {"code_default": 360},
+    "phase0_recovery_fraction": {"code_default": 0.10, "meaning": "recovery to 10 percent of pulse peak"},
     "d3_sequences_per_checkpoint": {"code_default": 8},
     "d3_perturbation_std": {"code_default": 0.20},
     "d3_change_probability": {"code_default": 0.25},
+    "d1_control_start_minutes": {
+      "code_default": 0,
+      "decision_note": "D1 is development/train state-coverage data rather than the Formal Proposed runtime. Decide explicitly whether to preserve exploration from t=0 or align D1 actions to the 60-min Formal first-control epoch; never let the default silently define the production controller."
+    },
     "d1_perturbation_std": {"code_default": 0.12},
     "d1_change_probability": {"code_default": 0.35},
     "d1_max_delta_per_update": {
@@ -153,7 +174,9 @@
     "control_leverage_meaningful_relative": 0.01,
     "control_leverage_promising_fraction": 0.30,
     "control_leverage_weak_fraction": 0.10,
-    "instruction": "Report these diagnostics. Do not repeatedly change them to force a favorable interpretation."
+    "rainfall_paper_strength_total_groups_recommendation": 160,
+    "rainfall_paper_strength_recommendation_is_execution_gate": false,
+    "instruction": "Report these diagnostics/recommendations. Do not repeatedly change them or generate additional storms merely to force a favorable interpretation."
   },
   "compute_only_not_scientific": {
     "swmm_threads_per_process": 1,
