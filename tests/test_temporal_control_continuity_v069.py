@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
 from rtc.closed_loop import CausalObservation, ControllerAction
 from rtc.project7_contract import (
@@ -14,6 +15,7 @@ from rtc.project7_contract import (
 )
 from rtc.runtime import choose_first_move, command_continuity
 from rtc.runtime_controller_guard import ContinuityGuardController
+from rtc.tfv_mpc import _project_block_settings_
 from rtc.timing_freeze import freeze_phase0_timing
 
 
@@ -67,7 +69,6 @@ def test_first_move_cannot_abruptly_reverse_previous_target() -> None:
         previous_requested_settings=np.asarray([1.0]),
         max_delta_per_update=0.5,
     )
-    # Current readback alone would allow 0.0, but the prior target requires progressive reversal.
     assert decision.requested.tolist() == pytest.approx([0.5])
 
 
@@ -102,6 +103,18 @@ def test_command_continuity_reports_previous_target_violation() -> None:
     assert result.passed is False
     assert result.failed_current_indices == ()
     assert result.failed_previous_indices == (0,)
+
+
+def test_full_horizon_is_projected_as_one_sequential_path() -> None:
+    blocks = torch.tensor([[[1.0], [0.0], [1.0], [0.0]]], dtype=torch.float32)
+    _project_block_settings_(
+        blocks,
+        current_settings=torch.tensor([0.0]),
+        max_delta_per_update=0.5,
+    )
+    assert blocks[0, :, 0].tolist() == pytest.approx([0.5, 0.0, 0.5, 0.0])
+    delta = torch.diff(torch.cat([torch.tensor([0.0]), blocks[0, :, 0]]))
+    assert float(torch.abs(delta).max()) <= 0.5 + 1e-8
 
 
 class _ConstantController:
