@@ -112,6 +112,8 @@ The production runner must independently inspect the INP clock and fail if actua
 
 The 360-min post-rain evaluation tail and the 360-min prediction horizon are distinct quantities even though they currently share the same duration.
 
+The fresh workspace must be initialized **after** deterministic event preparation and must bind the prepared effective-120 registry. Binding the original 60-min source registry and replacing it later is forbidden because it would invalidate the Policy-Lock registry identity.
+
 ## D. Temporal actuator continuity — hard execution contract
 
 Opening a new MPC horizon must never reset an actuator to its original/default state.
@@ -332,8 +334,8 @@ Every one of the **6 Final events** runs all seven strategies on identical event
 ## M. Fresh acceptance flow
 
 ```text
-Step 0  adopt/build v0.6.7 physical inputs; overwrite local active split from the frozen v0.6.9 registry; readiness / graph / audit
-Step 1  prepare effective-120 events; Phase-0 6×4×12 exact-prefix h360 D2 with 60-s sampling using dedicated Phase-0 design CLIs
+Step 0  adopt/verify v0.6.7 source inputs and frozen 18/6/6 split; deterministically prepare all 30 events to effective-120 + tail360; initialize fresh workspace on the prepared registry; readiness / graph / preflight
+Step 1  Phase-0 6×4×12 exact-prefix h360 D2 with 60-s sampling using dedicated Phase-0 design CLIs
 Step 2  sustained timing + control leverage; conditional pulse only if ambiguity remains; bind already-fixed 360-min timing
 Step 3  production D0/D1 on 18 Train + Step1 train; Step1 held-out acceptance on 6 Validation
 Step 4  production checkpoint/probe CLIs + temporally feasible D2/D3; Step2 train on Train and held-out acceptance on Validation
