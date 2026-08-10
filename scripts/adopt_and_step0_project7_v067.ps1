@@ -6,12 +6,12 @@ param(
 $ErrorActionPreference = "Stop"
 $Repo = Join-Path $Base "repo"
 $Inputs = Join-Path $Base "inputs"
-$Study = Join-Path $Base "study_v067"
+$Study = Join-Path $Base "study_v069"
 $Logs = Join-Path $Base "logs"
 
 New-Item -ItemType Directory -Force $Base,$Logs | Out-Null
 if (-not (Test-Path -LiteralPath $Inputs -PathType Container)) {
-  throw "Expected extracted v0.6.7 bundle under $Inputs"
+  throw "Expected extracted v0.6.7 physical/rainfall bundle under $Inputs"
 }
 
 if (-not (Test-Path -LiteralPath (Join-Path $Repo ".git"))) {
@@ -29,18 +29,24 @@ python -m pip install -e ".[dev,swmm]"
 python -m pytest -q
 python -c "import importlib.metadata; print('wuhan-rtc', importlib.metadata.version('wuhan-rtc'))"
 
-$Adoption = Join-Path $Logs "input_adoption_v067.json"
+$Adoption = Join-Path $Logs "input_adoption_v069.json"
 rtc-adopt-method-testbed-v067 --input-root $Inputs --out $Adoption
 $Adopt = Get-Content -LiteralPath $Adoption -Raw | ConvertFrom-Json
-if (-not $Adopt.passed) { throw "v0.6.7 input adoption did not pass" }
+if (-not $Adopt.passed) { throw "Project7 v0.6.9 input adoption did not pass" }
 if ($Adopt.events_verified -ne 30 -or $Adopt.rainfall_files_verified -ne 30) {
   throw "Expected 30 verified event INPs and 30 verified rainfall files"
+}
+if ($Adopt.scientific_split_counts.development -ne 24 -or $Adopt.scientific_split_counts.final -ne 6) {
+  throw "Expected frozen top-level split development=24/final=6"
+}
+if ($Adopt.development_fold_counts.train -ne 18 -or $Adopt.development_fold_counts.validation -ne 6) {
+  throw "Expected frozen development split Train=18/Validation=6"
 }
 $InputRoot = [string]$Adopt.resolved_input_root
 
 if (Test-Path -LiteralPath $Study) {
   if (@(Get-ChildItem -LiteralPath $Study -Force).Count -gt 0) {
-    throw "$Study is not empty. Do not mix prior study artifacts into a fresh v0.6.7 run."
+    throw "$Study is not empty. Do not mix prior study artifacts into the fresh v0.6.9 execution."
   }
 } else {
   New-Item -ItemType Directory -Force $Study | Out-Null
@@ -57,7 +63,7 @@ $SensorProv = Join-Path $InputRoot "contracts\sensor_layout_provenance.project7.
 Copy-Item -LiteralPath (Join-Path $Repo "configs\sensor_layout_provenance.project7.v1.json") `
   -Destination $SensorProv -Force
 
-rtc-validate-rainfall-design --events $Events --out (Join-Path $Logs "rainfall_design_v067.json")
+rtc-validate-rainfall-design --events $Events --out (Join-Path $Logs "rainfall_design_v069.json")
 
 rtc-init-fresh-workspace `
   --root $Study `
@@ -85,9 +91,9 @@ rtc-check-study-readiness `
   --actuator-scope $ActScope `
   --history-span-minutes 60 `
   --minimum-post-rain-tail-minutes 360 `
-  --out (Join-Path $Logs "study_readiness_v067.json")
+  --out (Join-Path $Logs "study_readiness_v069.json")
 
-Write-Host "v0.6.7 extracted bundle adopted and Step 0 completed."
+Write-Host "Project7 v0.6.9 inputs adopted and Step 0 completed under the frozen 18/6/6 split."
 Write-Host "Repo:      $Repo"
 Write-Host "InputRoot: $InputRoot"
 Write-Host "Study:     $Study"
