@@ -21,7 +21,6 @@ swmm = ["pyswmm>=2.0"]
 [project.scripts]
 rtc-inp-audit-v2 = "rtc.inp_audit_v2:main"
 rtc-resolve-priority = "rtc.priority_resolver:main"
-rtc-split-groups = "rtc.pipeline_cli:split_groups_main"
 rtc-validate-rainfall-design = "rtc.rainfall_design:main"
 rtc-prepare-event-suite = "rtc.event_preparation:main"
 rtc-build-method-testbed-v067 = "rtc.method_testbed_v067:main"
