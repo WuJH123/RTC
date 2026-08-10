@@ -1,6 +1,21 @@
-# Wuhan RTC v0.6.8 — TFV-first methodology testbed with simulation-asset lineage
+# Wuhan RTC v0.6.9 — TFV-first methodology testbed with temporally continuous control
 
-This repository implements a **model-based urban-drainage real-time-control methodology test** on an idealized, simplified Wuhan SWMM network. v0.6.8 keeps the v0.6.7 physical/rainfall testbed unchanged and hardens event-time semantics, reusable SWMM simulation identity, endpoint preflight and response-timing diagnosis.
+This repository implements a **model-based urban-drainage real-time-control methodology test** on an idealized, simplified Wuhan SWMM network. It is deliberately **not** a field-calibrated Wuhan digital twin and does not certify field actuator capability.
+
+v0.6.9 keeps the v0.6.7 physical/rainfall testbed and v0.6.8 simulation-asset lineage, and freezes the runtime semantics that must not drift during later Codex runs:
+
+```text
+model/observation step                 = 5 min
+supervisory control update             = 10 min
+causal Step1 history                   = 13 frames = 0,5,...,60 min
+first Proposed control                 = simulation elapsed 60 min
+prediction horizon                     = 360 min = 72 model steps = 36 control blocks
+effective pre-rain warm-up             = 120 min
+max supervisory setting change         = 0.5 per 10-min update
+post-rain Formal evaluation tail       = 360 min
+```
+
+The 120-min effective warm-up and the 60-min first-control epoch are **different clocks**. For the Formal prepared event, SWMM starts at `t=0`, Proposed has a complete causal history at `t=60 min` and may issue its first command then, while positive design rainfall begins at `t=120 min`.
 
 ```text
 causal sparse observations + realised rainfall + actuator readback
@@ -12,122 +27,103 @@ causal sparse observations + realised rainfall + actuator readback
           Step2 differentiable hydraulic/action model
                               |
                               v
-             continuous receding-horizon MPC
+        360-min continuous receding-horizon MPC
                               |
-                       first move only
+                  execute first 10-min move
                               |
                               v
                        authoritative SWMM
+                              |
+                 observe actual readback
+                              |
+                        re-solve at t+10
 ```
 
-## Scientific claim
-
-The study is designed to demonstrate that the proposed sparse-sensing surrogate MPC can reduce **sewer-node overflow** in the frozen SWMM testbed. It is not a field-calibrated Wuhan digital twin and does not certify field actuator capability.
+## Scientific objective and claim
 
 Primary objective: minimize authoritative-SWMM system-wide cumulative **Total Flood Volume (TFV)**. PFV at the eight frozen priority nodes is a soft secondary/diagnostic quantity. Priority depth and Global Peak are report-only.
 
-## Active physical inputs
+The intended claim is:
 
-The source physical/rainfall bundle remains v0.6.7. It can be built from source-only assets with:
-
-```powershell
-rtc-build-method-testbed-v067 `
-  --source-inp E:\RTC_sewer\Project7\source\wuhan_with_controls.inp `
-  --sensors E:\RTC_sewer\Project7\source\sensor_nodes.txt `
-  --priority E:\RTC_sewer\Project7\source\priority_nodes.txt `
-  --out-root E:\RTC_sewer\Project7\inputs `
-  --warmup-minutes 60 `
-  --recession-minutes 360 `
-  --orifice-travel-minutes 10
+```text
+IDEALIZED_METHODOLOGY_TESTBED_NOT_FIELD_DIGITAL_TWIN
 ```
 
-The 60 min above is the **source-bundle pre-rain prefix**, not the complete v0.6.8 production initialization decision. `scripts/bootstrap_project7_v067.ps1` remains the source-bundle bootstrap/adoption helper.
+The supplied DWF is retained as **idealized background loading**. No claim is made that the DWF, continuous actuator capability or controller timing represents a field-calibrated Wuhan installation.
 
-Do not copy historical model checkpoints, training shards, acceptance evidence, Policy Locks or Final evidence into a fresh study. Existing authoritative v0.6.7 D2 computations may, however, be indexed and reused under the v0.6.8 simulation-identity/hash audit described below; this is not the same as treating old derived files as trusted merely because their paths exist.
+## Active physical/rainfall inputs
 
-## Rainfall contract
+The source physical/rainfall bundle remains v0.6.7:
 
-The active design library is exactly **30 events**:
+- 932 hydraulic nodes;
+- 109 writable actuators;
+- 57 pump curves migrated `PUMP2 -> PUMP4`, endpoint-preserving;
+- 42 continuously modelled orifices with 10-min full-travel assumption;
+- 41 FREE outfalls;
+- five retrofit storage curves and directional flap gates;
+- supplied DWF retained;
+- source SUBAREAS/infiltration retained.
+
+The design rainfall library remains exactly 30 Chicago events:
 
 ```text
 return periods: 5, 10, 20, 50, 100 years
 durations:      60, 120, 180, 240, 300, 360 min
-pattern:        Chicago only
 Chicago r:      0.39
 rain step:      5 min
-spatial mode:   one uniform design gage across all subcatchments
+spatial mode:   one uniform design gage
 ```
 
-The generator uses Wuhan DB4201/T 641-2020 directly:
+Wuhan DB4201/T 641-2020 formula:
 
 ```text
 i = 9.686 * (1 + 0.887 * log10(P)) / (t + 11.23)^0.658   [mm/min]
 ```
 
-No historical rainfall file is required. Five-minute block depths are analytically integrated from the Chicago curve and checked against the standard duration depth.
+## Event clock and effective warm-up
 
-## Event clock: source prefix != effective warm-up
-
-The source bundle carries:
-
-```text
-source pre-rain prefix          = 60 min
-fixed whole-event evaluation tail = 360 min
-```
-
-The completed v0.6.7 development sensitivity showed that initialization at the rainfall onset is materially different when the effective prefix is increased. The active production-data preparation target is therefore:
-
-```text
-effective pre-rain warm-up = 120 min
-```
-
-Use the explicit v0.6.8 interface:
+The v0.6.7 source bundle carries a 60-min pre-rain prefix. Production/formal events must be prepared to a **total effective 120-min pre-rain prefix**:
 
 ```powershell
 rtc-prepare-event-suite `
   --events E:\RTC_sewer\Project7\inputs\contracts\events_with_splits.csv `
-  --out-dir E:\RTC_sewer\Project7\study_v068\prepared_events\events `
-  --out-registry E:\RTC_sewer\Project7\study_v068\prepared_events\events_with_splits.csv `
+  --out-dir E:\RTC_sewer\Project7\study_v069\prepared_events\events `
+  --out-registry E:\RTC_sewer\Project7\study_v069\prepared_events\events_with_splits.csv `
   --target-effective-warmup-minutes 120 `
   --post-rain-tail-minutes 360
 ```
 
-The prepared registry records separately:
+For the current source bundle, preparation adds only the missing 60 min:
 
 ```text
-source_pre_rain_prefix_minutes
-additional_warmup_minutes
-effective_warmup_minutes
+source_pre_rain_prefix_minutes = 60
+additional_warmup_minutes      = 60
+effective_warmup_minutes       = 120
 ```
 
-For the current bundle this resolves to 60 + 60 = 120 min. The 120-min initialization is not a claim of complete dry-weather equilibrium.
+The production runner independently inspects the prepared INP and refuses a Formal Project7 policy run if the actual positive-rainfall onset is not 120 min after SWMM START.
 
-The 360-min post-rain tail remains the **Formal common evaluation window**. Longer 480/600-min event END extensions are allowed only for Phase-0 checkpoint+horizon executability and do not redefine Final TFV.
+The 360-min post-rain tail is the common Formal evaluation window. Longer END extensions remain Phase-0 diagnostics only and never redefine Final TFV.
 
-## Physical network contract
+## Temporal control continuity — mandatory
 
-v0.6.7/v0.6.8 preserves the user-frozen idealizations:
+A real-time controller must evolve actuator commands through time; opening a new MPC horizon must never reset a facility to its original/default state.
 
-- supplied DWF is retained as idealized background hydraulic loading;
-- all 41 source outfalls remain `FREE`;
-- SUBAREAS/infiltration source values are not recalibrated;
-- the five retrofit storage curves are preserved.
+v0.6.9 enforces three layers:
 
-Actuation is explicitly `SWMM_MODEL_CONTINUOUS_SIMULATION_ONLY`:
+1. **Between decision epochs** — the last issued `target_setting` is held until the next 10-min supervisory decision.
+2. **Inside every 360-min horizon** — all 36 control blocks form one sequential path. Block 0 is bounded from the actual current readback; every later block is bounded from the preceding block by `|Δsetting| <= 0.5`.
+3. **Across rolling horizons** — the next executed first move must be feasible relative to both the current SWMM `current_setting` **and the previous issued supervisory target**. A device that is still travelling toward a target therefore cannot be abruptly commanded back because a new horizon was solved.
 
-- 57 source two-point `PUMP2` depth-flow curves are migrated to `PUMP4` without changing their endpoints;
-- all 42 orifices remain continuously controllable on `[0,1]` and receive a 10-min full travel time;
-- `RTC_IN_01..05` and `RTC_OUT_01..05` receive flap gates so each storage connection is one-way in its declared direction;
-- the candidate 10-min supervisory contract uses `max_setting_delta_per_update = 0.5`;
-- four known copied OFF rules (`VP0600010.3/.4/.5`, `add300.1`) are repaired from `SETTING=1` to `SETTING=0`.
+Reversal is allowed when hydraulically useful, but it must happen progressively. For example, a target may evolve `1.0 -> 0.5 -> 0.0` over successive decisions; it cannot jump `1.0 -> 0.0` in one update under the frozen 0.5-per-10-min methodology assumption.
 
-## Graph/model physics
+The same Python-side continuity guard is applied to Proposed, Auto-RBC, EFD and the All-open/All-closed diagnostic extremes. All-open/All-closed therefore **ramp toward** their extreme target rather than teleporting all facilities at the first decision. No-control has no Python writes. Internal RTC is intentionally left under its frozen native SWMM `[CONTROLS]` semantics and is not overwritten by the Python continuity guard.
 
-The graph exposes the v0.6.7 26-D node-static physical/hydrologic vector, including storage capacity/area, incident conduit length/roughness/section scale, contributing subcatchment/impervious area, area-weighted width/slope and Horton infiltration rates. These are frozen INP properties and preserve online causality.
+`max_setting_delta_per_update = 0.5` is an **idealized simulation engineering-smoothing assumption**, not an EPA field-actuator standard.
 
-## Formal baselines
+## Formal information budgets
 
-Exactly seven Formal strategies remain:
+Exactly seven strategies remain:
 
 ```text
 proposed
@@ -139,9 +135,30 @@ all_open
 all_closed
 ```
 
-Competitive comparators are No-control, Internal RTC, Auto-RBC and EFD. All-open/all-closed are diagnostic extremes. No strategy may use future realised rainfall, future SWMM state/flooding, future Internal trajectory or untouched Final truth.
+Competitive comparators are No-control, Internal RTC, Auto-RBC and EFD. All-open/all-closed are diagnostic extremes.
 
-## Data roles
+The information advantage of the rule/native baselines is **accepted and disclosed rather than artificially removed**:
+
+- Proposed directly observes only the frozen sparse sensor layout, realised rainfall and actuator readback;
+- Internal RTC may use the true native SWMM variables used by its frozen rules;
+- Auto-RBC may use current true actuator-adjacent node depths;
+- EFD may use current true controlled-storage depths.
+
+No strategy may use future realised rainfall, future SWMM state/flooding, future Internal trajectory or untouched Final truth.
+
+## 360-min prediction horizon
+
+The Project7 production horizon is now a **pre-registered methodology design choice**:
+
+```text
+horizon = 360 min = 72 x 5-min model steps = 36 x 10-min control blocks
+```
+
+Phase-0 sustained-step censoring and pulse/release recovery remain scientific diagnostics and must still be reported. They no longer automatically lengthen or shorten the production horizon. In particular, a late depth response in h360 must not be hidden, but it also must not silently rewrite the user-frozen 360-min controller contract.
+
+Use `rtc-freeze-phase0-timing` to bind diagnostics to the fixed runtime grid.
+
+## Data roles and authoritative truth
 
 ```text
 D0  controls-disabled reference hydraulic trajectories
@@ -151,84 +168,46 @@ Phase0 pulse  one-block action then base-action release/recovery diagnostic
 D3  joint multi-actuator, multi-control-block sequences
 Step1 sparse causal history -> current full hydraulic state
 Step2 current state + future setting/rainfall sequence -> future hydraulic/action consequence
-MPC  optimize a future setting sequence, execute first move only, re-solve
+MPC  optimize a 360-min future path, execute the first 10-min move only, re-observe and re-solve
 ```
 
 Final TFV/PFV truth comes from authoritative SWMM cumulative node statistics. Global Peak is obtained by routing-step replay of the frozen executed decision schedule.
 
-## Simulation identity and local data reuse
+## Simulation identity and local large-data reuse
 
-Large hydraulic data stays on the local data disk. Use a persistent asset root, for example:
+Large hydraulic data stays on the local data disk. Use a persistent asset root such as:
 
 ```text
-E:\RTC_sewer\Project7\data_assets_v068
+E:\RTC_sewer\Project7\data_assets_v069
 ```
 
-D2/D3 assets are keyed by physical event/checkpoint state, complete action/sequence, engine and timing semantics rather than by directory name. Before SWMM starts, runners deduplicate requests, verify `checkpoint + horizon <= event END`, audit the local cache and write `REQUEST_CENSUS.json`.
+D2/D3 assets are keyed by physical event/checkpoint state, complete action/sequence, engine and timing semantics rather than by directory name. Before SWMM starts, runners deduplicate requests, verify endpoint executability, audit the local cache and write `REQUEST_CENSUS.json`.
 
-Example max-horizon Phase-0 D2:
-
-```powershell
-rtc-run-probes `
-  --manifest <d2_manifest.csv> `
-  --out-dir <phase0\d2_h360> `
-  --horizon-minutes 360 `
-  --snapshot-horizons-minutes 210,240,300,360 `
-  --stride-seconds 60 `
-  --workers 16 `
-  --swmm-threads-per-process 1 `
-  --asset-root E:\RTC_sewer\Project7\data_assets_v068
-```
-
-The same h360 compact trajectory can provide h210/h240/h300 **timing views** without three repeated SWMM simulations:
-
-```powershell
-rtc-phase0-timescale ... --analysis-horizon-minutes 210
-rtc-phase0-timescale ... --analysis-horizon-minutes 240
-rtc-phase0-timescale ... --analysis-horizon-minutes 300
-rtc-phase0-timescale ... --analysis-horizon-minutes 360
-```
-
-For exact shorter-horizon TFV, only stored cumulative SWMM endpoint snapshots are valid. A long branch's final h360 cumulative statistics must never be relabeled as h210/h240/h300 truth.
-
-Existing successful v0.6.7 D2 branches can be indexed in place with `rtc-index-existing-d2-assets`; the first endpoint-failed h240 partial lineage must remain invalid/quarantined. Audit the store with `rtc-audit-simulation-assets`.
-
-See `docs/SIMULATION_ASSET_MANAGEMENT_V068.md` for identity, qualification, invalidation and Git/local-storage rules.
-
-## Response timing
-
-The prior sustained-step Phase-0 evidence showed long hydraulic response tails. v0.6.8 does not lower the existing near-horizon censor guard. Instead:
-
-1. run the largest executable sustained D2 horizon once;
-2. derive shorter timing views from that trajectory;
-3. use a separate development-only pulse/release experiment to measure decay after one 10-min control block;
-4. freeze production timing only after sustained-response, post-release recovery, control-leverage and runtime evidence are jointly interpretable.
-
-Pulse sequences reconstruct and verify the exact complete base-action SHA and enforce `max_setting_delta_per_update = 0.5` before SWMM execution.
+Existing successful v0.6.7/v0.6.8 authoritative branches may be reused only after simulation-identity and artifact-hash verification. File names or folder similarity are never sufficient. See `docs/SIMULATION_ASSET_MANAGEMENT_V068.md`.
 
 ## Fresh acceptance flow
 
 ```text
-0  adopt/build v0.6.7 physical inputs / readiness / graph / audit
-1  high-frequency D0 + explicit warm-up sensitivity + longest-horizon exact-prefix D2
-2  sustained timing + pulse/recovery + exact control leverage + timing freeze
+0  adopt/build v0.6.7 physical inputs / graph / audit
+1  prepare effective-120-min events + high-frequency D0 / Phase-0 D2
+2  sustained timing + pulse/recovery + exact control leverage + bind fixed 360-min timing
 3  production D0/D1 + Step1 train/held-out acceptance
 4  production D2/D3 + Step2 train/held-out acceptance
 5  gradient + ranking/regret acceptance
-6  development closed-loop comparison
-7  runtime/readback/deadline acceptance
+6  development closed-loop comparison with temporally continuous commands
+7  runtime/readback/deadline + cross-decision/horizon-continuity acceptance
 8  Policy Lock
 9  untouched seven-strategy authoritative-SWMM Final
 ```
 
-Do not scale learned models when a physical/source-data/timing problem is unresolved.
+Policy Lock refuses the legacy V4 controller contract and the legacy runtime-acceptance V1 evidence. It binds the V5 controller, effective-120 event clock, fixed 60-min first-control epoch, 360-min horizon and zero continuity violations.
 
 ## Start here
 
 - `docs/METHOD_TESTBED_V067.md` — frozen physical/rainfall testbed.
-- `FORMAL_PIPELINE_LATEST.md` — active v0.6.8 fail-closed evidence contract.
+- `FORMAL_PIPELINE_LATEST.md` — active v0.6.9 fail-closed evidence contract.
 - `docs/SIMULATION_ASSET_MANAGEMENT_V068.md` — local large-data identity/reuse/invalidation contract.
-- `scripts/bootstrap_project7_v067.ps1` — v0.6.7 source-input bootstrap/adoption helper.
-- `configs/formal_controller_v4.template.json` — TFV-first production-controller template.
+- `configs/formal_controller_v5.template.json` — active TFV-first 60/120/360 temporal-continuity controller template.
+- `scripts/bootstrap_project7_v067.ps1` — source-input adoption helper only.
 
-Historical v0.6.6 and earlier learned evidence remains provenance only. v0.6.7 authoritative hydraulic branches are reusable in v0.6.8 only through explicit identity/hash verification; path/name similarity is never sufficient.
+Historical controller V4 and earlier learned evidence remain provenance only for the v0.6.9 runtime contract.
