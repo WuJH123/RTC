@@ -1,0 +1,66 @@
+{
+  "contract": "PROJECT7_V069_30_EVENT_SPLIT_18TRAIN_6VALIDATION_6FINAL_V1",
+  "instruction": "This split is frozen before fresh hydraulic generation. It was selected only from rainfall forcing descriptors (return period and duration); no SWMM hydraulic outcome, controller result, PFV, TFV, depth, or Final truth was used. Do not regenerate, reshuffle, or tune this split after any hydraulic evidence is observed.",
+  "portable_registry": "configs/project7_v069_events_with_splits.csv",
+  "portable_registry_sha256": "2dafcbe55db3181b233cc562d493beef83913bc1e21f5897205b259a97c0a50d",
+  "event_count": 30,
+  "rainfall_group_count": 30,
+  "counts": {
+    "development_train": 18,
+    "development_validation": 6,
+    "final": 6
+  },
+  "selection_basis": {
+    "hydraulic_outcomes_used": false,
+    "forcing_columns_used": [
+      "return_period_year",
+      "duration_minutes"
+    ],
+    "design": "Stratified forcing-only allocation. Train contains exactly three events at each duration (18 total). Validation contains exactly one event at each duration (6 total). Final contains exactly one event at each duration (6 total). Validation and Final each span all five return periods; one return period is necessarily represented twice because each cohort has six events but only five return-period levels."
+  },
+  "development_train": [
+    "T5_D60_chicago",
+    "T5_D120_chicago",
+    "T5_D240_chicago",
+    "T5_D300_chicago",
+    "T10_D120_chicago",
+    "T10_D180_chicago",
+    "T10_D240_chicago",
+    "T10_D360_chicago",
+    "T20_D120_chicago",
+    "T20_D300_chicago",
+    "T20_D360_chicago",
+    "T50_D60_chicago",
+    "T50_D180_chicago",
+    "T50_D300_chicago",
+    "T100_D60_chicago",
+    "T100_D180_chicago",
+    "T100_D240_chicago",
+    "T100_D360_chicago"
+  ],
+  "development_validation": [
+    "T5_D180_chicago",
+    "T10_D300_chicago",
+    "T20_D60_chicago",
+    "T50_D240_chicago",
+    "T50_D360_chicago",
+    "T100_D120_chicago"
+  ],
+  "final": [
+    "T5_D360_chicago",
+    "T10_D60_chicago",
+    "T20_D180_chicago",
+    "T20_D240_chicago",
+    "T50_D120_chicago",
+    "T100_D300_chicago"
+  ],
+  "invariants": {
+    "calibration_role_removed": true,
+    "safety_audit_role_removed": true,
+    "rainfall_groups_cross_scientific_splits": false,
+    "development_groups_cross_train_validation": false,
+    "final_untouched_before_policy_lock": true,
+    "final_used_for_tuning": false,
+    "validation_used_for_training": false
+  }
+}

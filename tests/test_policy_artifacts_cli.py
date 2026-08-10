@@ -22,7 +22,8 @@ def test_policy_artifact_builder_writes_complete_utf8_json(tmp_path: Path) -> No
     priority = tmp_path / "priority.txt"
     sensors = tmp_path / "sensors.txt"
     plan = tmp_path / "baseline.json"
-    for path in (inp, priority, sensors, plan):
+    split_contract = tmp_path / "split_contract.json"
+    for path in (inp, priority, sensors, plan, split_contract):
         _touch(path)
 
     out = root / "policy_lock" / "artifacts.json"
@@ -32,6 +33,7 @@ def test_policy_artifact_builder_writes_complete_utf8_json(tmp_path: Path) -> No
         priority_nodes=priority,
         sensor_layout=sensors,
         baseline_plan=plan,
+        split_contract=split_contract,
         output_path=out,
     )
     raw = out.read_bytes()
@@ -43,6 +45,7 @@ def test_policy_artifact_builder_writes_complete_utf8_json(tmp_path: Path) -> No
         "priority_nodes",
         "sensor_layout",
         "baseline_plan",
+        "split_contract",
     }
 
 
@@ -53,7 +56,8 @@ def test_policy_artifact_builder_fails_on_missing_required_file(tmp_path: Path) 
     priority = tmp_path / "priority.txt"
     sensors = tmp_path / "sensors.txt"
     plan = tmp_path / "baseline.json"
-    for path in (inp, priority, sensors, plan):
+    split_contract = tmp_path / "split_contract.json"
+    for path in (inp, priority, sensors, plan, split_contract):
         _touch(path)
     with pytest.raises(ValueError, match="required files are missing"):
         build_policy_artifact_map(
@@ -62,5 +66,6 @@ def test_policy_artifact_builder_fails_on_missing_required_file(tmp_path: Path) 
             priority_nodes=priority,
             sensor_layout=sensors,
             baseline_plan=plan,
+            split_contract=split_contract,
             output_path=root / "policy_lock" / "artifacts.json",
         )

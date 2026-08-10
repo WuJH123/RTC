@@ -31,6 +31,7 @@ def build_policy_artifact_map(
     priority_nodes: str | Path,
     sensor_layout: str | Path,
     baseline_plan: str | Path,
+    split_contract: str | Path,
     output_path: str | Path,
 ) -> dict[str, str]:
     root_path = Path(root).expanduser().resolve()
@@ -46,6 +47,7 @@ def build_policy_artifact_map(
             "priority_nodes": str(Path(priority_nodes).expanduser().resolve()),
             "sensor_layout": str(Path(sensor_layout).expanduser().resolve()),
             "baseline_plan": str(Path(baseline_plan).expanduser().resolve()),
+            "split_contract": str(Path(split_contract).expanduser().resolve()),
         }
     )
     missing = [f"{name}: {path}" for name, path in artefacts.items() if not Path(path).is_file()]
@@ -62,13 +64,14 @@ def build_policy_artifact_map(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build the canonical v0.6.6 Policy-Lock artifact map from a completed study root"
+        description="Build the canonical Project7 v0.6.9 execution-frozen Policy-Lock artifact map"
     )
     parser.add_argument("--root", required=True)
     parser.add_argument("--frozen-inp", required=True)
     parser.add_argument("--priority", required=True)
     parser.add_argument("--sensors", required=True)
     parser.add_argument("--baseline-plan", required=True)
+    parser.add_argument("--split-contract", required=True)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
     payload = build_policy_artifact_map(
@@ -77,9 +80,18 @@ def main() -> None:
         priority_nodes=args.priority,
         sensor_layout=args.sensors,
         baseline_plan=args.baseline_plan,
+        split_contract=args.split_contract,
         output_path=args.out,
     )
-    print(json.dumps({"contract": "POLICY_LOCK_ARTIFACT_MAP_V2_READINESS_BOUND", "artifacts": payload}, indent=2))
+    print(
+        json.dumps(
+            {
+                "contract": "POLICY_LOCK_ARTIFACT_MAP_V3_V069_SPLIT_BOUND",
+                "artifacts": payload,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

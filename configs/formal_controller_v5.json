@@ -1,0 +1,54 @@
+{
+  "contract": "PRODUCTION_CONTROLLER_CONFIG_V5_TFV_FIRST_TEMPORAL_CONTINUITY",
+  "instruction": "Project7 v0.6.9 execution-frozen controller. These controller/forecast values are preregistered and must not be grid-searched or retuned. Model/observation step=5 min, supervisory update=10 min, first Proposed control=elapsed 60 min, prediction horizon=360 min, causal history=13 frames, and max setting delta=0.5 per 10-min update. PFV/priority depth remain soft/reporting quantities; Global Peak is report-only. Runtime/readback thresholds are frozen below and may only be verified by one small development benchmark, not tuned hydrologically.",
+  "model_step_seconds": 300,
+  "control_update_seconds": 600,
+  "record_stride_seconds": 300,
+  "control_start_minutes": 60,
+  "swmm_threads": 1,
+  "exact_global_peak": false,
+  "depth_state_index": 0,
+  "flood_rate_state_index": 2,
+  "methodology_testbed": {
+    "claim_scope": "IDEALIZED_METHODOLOGY_TESTBED_NOT_FIELD_DIGITAL_TWIN",
+    "effective_warmup_minutes": 120,
+    "dwf_background_loading": true,
+    "baseline_true_state_advantage": ["internal_rtc", "auto_rbc", "efd"]
+  },
+  "objective": {
+    "primary": "minimize rainfall-ensemble risk-adjusted cumulative TFV",
+    "priority_role": "soft lexicographic secondary preference within TFV near-optimal set",
+    "forecast_quantile": 0.95,
+    "tfv_cvar_alpha": 0.90,
+    "tfv_near_opt_relative": 0.01,
+    "tfv_near_opt_absolute_m3": 1.0,
+    "near_opt_penalty": 10000.0,
+    "movement_tiebreak": 1e-06,
+    "min_predicted_tfv_improvement_m3": 0.0,
+    "min_predicted_tfv_improvement_relative": 0.0
+  },
+  "forecast": {
+    "decay_per_step": 0.92,
+    "scenario_multipliers": [0.75, 1.0, 1.25],
+    "history_steps_for_level": 3
+  },
+  "controller": {
+    "history_steps": 13,
+    "horizon_steps": 72,
+    "optimizer_iterations": 120,
+    "optimizer_learning_rate": 0.04,
+    "max_setting_delta_per_update": 0.5,
+    "enforce_cross_decision_target_continuity": true,
+    "enforce_sequential_horizon_continuity": true,
+    "readback_target_tolerance": 1e-06,
+    "readback_current_tolerance": 0.05,
+    "decision_runtime_budget_seconds": 300.0,
+    "fallback_policy_id": "CAUSAL_HOLD_CURRENT_V1"
+  },
+  "execution_freeze": {
+    "controller_forecast_sweep_allowed": false,
+    "runtime_benchmark_count": 1,
+    "runtime_benchmark_role": "verify fixed 300 s compute budget and fixed readback tolerances only",
+    "automatic_retuning_after_benchmark_failure": false
+  }
+}

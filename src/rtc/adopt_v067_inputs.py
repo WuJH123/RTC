@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 
-CONTRACT = "WUHAN_RTC_V067_INPUT_ADOPTION_V1"
+CONTRACT = "WUHAN_RTC_V069_INPUT_ADOPTION_18_6_6_SPLIT_LOCK_V2"
 NETWORK_NAME = "wuhan_method_testbed_v067.inp"
 
 
@@ -55,17 +55,62 @@ def _git_head(repo: Path) -> str:
     return value
 
 
+def _verify_active_split(registry: pd.DataFrame, split_contract: dict[str, object]) -> None:
+    if len(registry) != 30 or registry["rainfall_group"].astype(str).nunique() != 30:
+        raise ValueError("active v0.6.9 registry must contain exactly 30 rainfall groups")
+    allowed = {"development", "final"}
+    present = set(registry["scientific_split"].astype(str))
+    if not present.issubset(allowed) or present != allowed:
+        raise ValueError(f"active split must contain only development/final, got {sorted(present)}")
+    dev = registry[registry["scientific_split"].astype(str) == "development"].copy()
+    final = registry[registry["scientific_split"].astype(str) == "final"].copy()
+    train = dev[dev["development_fold"].astype(str) == "train"]
+    validation = dev[dev["development_fold"].astype(str) == "validation"]
+    if (len(train), len(validation), len(final)) != (18, 6, 6):
+        raise ValueError(
+            "active Project7 split must be exactly 18 Train / 6 Validation / 6 Final"
+        )
+    if (final["development_fold"].astype(str) != "").any():
+        raise ValueError("Final rows must not carry a development_fold")
+    if set(dev["development_fold"].astype(str)) != {"train", "validation"}:
+        raise ValueError("development rows must be exactly train/validation")
+    for cohort, name, expected_per_duration in (
+        (train, "Train", 3),
+        (validation, "Validation", 1),
+        (final, "Final", 1),
+    ):
+        counts = cohort.groupby("duration_minutes")["event_id"].count().to_dict()
+        if set(int(x) for x in counts) != {60, 120, 180, 240, 300, 360}:
+            raise ValueError(f"{name} does not cover every frozen duration")
+        if any(int(value) != expected_per_duration for value in counts.values()):
+            raise ValueError(f"{name} duration allocation differs from frozen split contract")
+    for cohort, name in ((validation, "Validation"), (final, "Final")):
+        if set(cohort["return_period_year"].astype(int)) != {5, 10, 20, 50, 100}:
+            raise ValueError(f"{name} must span all five return periods")
+
+    expected_counts = split_contract.get("counts")
+    if not isinstance(expected_counts, dict):
+        raise ValueError("split contract lacks counts")
+    if {
+        "development_train": int(expected_counts.get("development_train", -1)),
+        "development_validation": int(expected_counts.get("development_validation", -1)),
+        "final": int(expected_counts.get("final", -1)),
+    } != {"development_train": 18, "development_validation": 6, "final": 6}:
+        raise ValueError("split contract itself is not the frozen 18/6/6 contract")
+
+
 def adopt_inputs(
     *,
     input_root: str | Path,
     portable_registry: str | Path | None = None,
     method_contract: str | Path | None = None,
+    split_contract: str | Path | None = None,
 ) -> dict[str, object]:
     repo = _repo_root()
     bundle = _resolve_bundle_root(input_root)
     portable = Path(
         portable_registry
-        or repo / "data" / "method_testbed_v067" / "contracts" / "events_with_splits.csv"
+        or repo / "configs" / "project7_v069_events_with_splits.csv"
     ).resolve()
     method = Path(
         method_contract
@@ -75,13 +120,26 @@ def adopt_inputs(
         / "contracts"
         / "method_testbed_contract.v067.json"
     ).resolve()
-    if not portable.is_file() or not method.is_file():
-        raise ValueError("GitHub-pinned v0.6.7 registry/contract is missing from the local repo")
+    split_path = Path(
+        split_contract or repo / "configs" / "project7_v069_split_contract.json"
+    ).resolve()
+    if not portable.is_file() or not method.is_file() or not split_path.is_file():
+        raise ValueError("active GitHub registry/method/split contract is missing from the local repo")
 
     contract = json.loads(method.read_text(encoding="utf-8"))
+    split_payload = json.loads(split_path.read_text(encoding="utf-8"))
+    if not isinstance(split_payload, dict) or split_payload.get("contract") != (
+        "PROJECT7_V069_30_EVENT_SPLIT_18TRAIN_6VALIDATION_6FINAL_V1"
+    ):
+        raise ValueError("unexpected active Project7 split contract")
+    expected_registry_sha = str(split_payload.get("portable_registry_sha256", ""))
+    actual_registry_sha = _sha256(portable)
+    if not expected_registry_sha or actual_registry_sha != expected_registry_sha:
+        raise ValueError(
+            "active portable registry SHA differs from the preregistered split contract"
+        )
     registry = pd.read_csv(portable, keep_default_na=False)
-    if len(registry) != 30 or registry["rainfall_group"].astype(str).nunique() != 30:
-        raise ValueError("GitHub v0.6.7 portable registry must contain exactly 30 rainfall groups")
+    _verify_active_split(registry, split_payload)
 
     network = bundle / "network" / NETWORK_NAME
     network_sha = _sha256(network)
@@ -145,6 +203,10 @@ def adopt_inputs(
         "network_sha256": network_sha,
         "events_verified": verified_events,
         "rainfall_files_verified": verified_rainfall,
+        "portable_registry": str(portable),
+        "portable_registry_sha256": actual_registry_sha,
+        "split_contract": str(split_path),
+        "split_contract_sha256": _sha256(split_path),
         "active_registry": str(active_registry),
         "active_registry_sha256": _sha256(active_registry),
         "source_event_manifest": str(active_source),
@@ -160,19 +222,21 @@ def adopt_inputs(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify an already-extracted Project7 v0.6.7 input bundle against GitHub-pinned "
-            "hashes and rewrite only registry paths for the current machine"
+            "Verify the extracted v0.6.7 physical/rainfall bundle and overwrite its local active "
+            "registry with the preregistered v0.6.9 18/6/6 split"
         )
     )
     parser.add_argument("--input-root", required=True)
     parser.add_argument("--portable-registry")
     parser.add_argument("--method-contract")
+    parser.add_argument("--split-contract")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
     payload = adopt_inputs(
         input_root=args.input_root,
         portable_registry=args.portable_registry,
         method_contract=args.method_contract,
+        split_contract=args.split_contract,
     )
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

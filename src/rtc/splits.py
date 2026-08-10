@@ -8,6 +8,15 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class SplitFractions:
+    """Legacy generic split helper retained only for non-Formal utilities/tests.
+
+    **Do not use this helper for Project7 v0.6.9 Formal execution.** The public split CLI has
+    been removed and the active 30-event allocation is fixed by
+    ``configs/project7_v069_split_contract.json``. These historical four-role fractions remain
+    solely so generic workspace/regression utilities that are intentionally cohort-size agnostic
+    can still construct synthetic data.
+    """
+
     development: float = 0.60
     calibration: float = 0.15
     safety_audit: float = 0.10
@@ -16,9 +25,9 @@ class SplitFractions:
     def validate(self) -> None:
         values = (self.development, self.calibration, self.safety_audit, self.final)
         if any(v <= 0 for v in values):
-            raise ValueError("all split fractions must be positive")
+            raise ValueError("all legacy generic split fractions must be positive")
         if not np.isclose(sum(values), 1.0):
-            raise ValueError("split fractions must sum to 1")
+            raise ValueError("legacy generic split fractions must sum to 1")
 
 
 def assign_rainfall_group_splits(
@@ -29,13 +38,7 @@ def assign_rainfall_group_splits(
     fractions: SplitFractions = SplitFractions(),
     development_validation_fraction: float = 0.20,
 ) -> pd.DataFrame:
-    """Assign rainfall groups to scientific roles with a held-out dev-validation fold.
-
-    Top-level roles are mutually exclusive ``development``, ``calibration``,
-    ``safety_audit`` and ``final``. Development groups are then split, again by whole
-    rainfall group, into ``train`` and ``validation`` via ``development_fold``. This lets
-    model acceptance remain independent of fitting without consuming calibration data.
-    """
+    """Legacy synthetic/generic splitter; forbidden for the active v0.6.9 Formal registry."""
 
     fractions.validate()
     if not 0.0 < development_validation_fraction < 1.0:
@@ -112,7 +115,7 @@ def verify_disjoint_rainfall_splits(
     present = set(frame[split_col].dropna().astype(str))
     missing = sorted(required - present)
     if missing:
-        raise ValueError(f"missing scientific split roles: {missing}")
+        raise ValueError(f"missing legacy generic scientific split roles: {missing}")
 
 
 def verify_development_folds(

@@ -1,15 +1,19 @@
 {
-  "contract": "PROJECT7_V069_PARAMETER_DECISION_REGISTER_V1",
-  "instruction": "Read before launching any expensive SWMM batch or model sweep. FROZEN values must not be retuned. HUMAN_DECISION_PENDING values should be decided once from methodology/engineering judgement unless a specifically named development-only sensitivity is scientifically necessary. ONE_TIME_BENCHMARK values require only a small runtime/readback benchmark, not broad hydrologic sweeps. DIAGNOSTIC_ONLY values must never become automatic controller-selection gates. Final data must never be used for tuning.",
+  "contract": "PROJECT7_V069_PARAMETER_DECISION_REGISTER_V2_EXECUTION_FROZEN",
+  "instruction": "All scientific/controller/data-generation/training and dimensionless acceptance choices listed here are now preregistered. Do not grid-search, auto-retune, reshuffle rainfall groups, lower acceptance thresholds, or use Final for any choice. Only one small development runtime/readback benchmark is allowed to verify the already-frozen runtime budget/tolerances; failure is a blocker requiring explicit human review, not an invitation to tune automatically.",
+  "execution_status": "READY_FOR_STEP0_TO_STEP9_WITH_FAIL_CLOSED_GATES",
   "active_files": {
+    "codex_entrypoint": "CODEX_START_HERE_V069.md",
     "formal_pipeline": "FORMAL_PIPELINE_LATEST.md",
-    "controller_template": "configs/formal_controller_v5.template.json",
+    "split_registry": "configs/project7_v069_events_with_splits.csv",
+    "split_contract": "configs/project7_v069_split_contract.json",
+    "controller_config": "configs/formal_controller_v5.json",
     "baseline_plan": "configs/formal_baseline_plan.v6.json",
-    "model_acceptance_template": "configs/model_acceptance_contract_v3.template.json",
+    "model_acceptance_contract": "configs/model_acceptance_contract_v4.json",
     "physical_testbed": "docs/METHOD_TESTBED_V067.md",
     "simulation_asset_contract": "docs/SIMULATION_ASSET_MANAGEMENT_V068.md"
   },
-  "frozen": {
+  "frozen_scientific_runtime": {
     "claim_scope": "IDEALIZED_METHODOLOGY_TESTBED_NOT_FIELD_DIGITAL_TWIN",
     "primary_objective": "authoritative-SWMM system-wide cumulative TFV",
     "priority_role": "soft lexicographic secondary/diagnostic",
@@ -20,6 +24,7 @@
     "history_steps": 13,
     "history_span_minutes": 60,
     "first_proposed_control_minutes": 60,
+    "d1_first_action_minutes": 60,
     "prediction_horizon_minutes": 360,
     "horizon_steps": 72,
     "control_blocks": 36,
@@ -43,75 +48,88 @@
     ],
     "random_seed_default": 42
   },
-  "rainfall_split_human_decision_before_expensive_runs": {
-    "current_source_registry_counts": {
-      "development_train": 14,
-      "development_validation": 4,
-      "calibration": 5,
-      "safety_audit": 3,
-      "final": 4
-    },
-    "current_code_semantics": "Calibration and safety-audit cohorts are optional unless a later analysis explicitly uses them; only group-disjoint development train/validation and untouched Final are correctness requirements.",
-    "decision_required": "Before generating production hydraulics, explicitly choose either to retain calibration/safety_audit as unused reserved cohorts or to create a new v0.6.9 split registry that reallocates them using forcing descriptors only. Do not run all eight optional events merely because the legacy role labels exist.",
-    "lineage_warning": "Any reallocation must be completed before fresh-workspace/data generation and becomes a new split-registry hash. Never select/reassign events using hydraulic outcomes.",
-    "paper_strength_160_groups_is_execution_gate": false
+  "frozen_30_event_split": {
+    "development_train": 18,
+    "development_validation": 6,
+    "final": 6,
+    "calibration": 0,
+    "safety_audit": 0,
+    "selection_basis": "return period and duration only; no hydraulic outcomes",
+    "validation_duration_coverage": "one event at each of 60/120/180/240/300/360 min",
+    "final_duration_coverage": "one event at each of 60/120/180/240/300/360 min",
+    "train_duration_coverage": "three events at each of 60/120/180/240/300/360 min",
+    "final_untouched_until_policy_lock": true,
+    "reshuffle_allowed": false
   },
-  "human_decision_pending_controller": {
-    "rule": "Prefer one preregistered value. Do not launch Cartesian/grid searches by default.",
-    "forecast_quantile": {"code_default": 0.95, "suggested_no_sweep_start": 0.95},
-    "tfv_cvar_alpha": {"code_default": 0.90, "suggested_no_sweep_start": 0.90},
-    "tfv_near_opt_relative": {"code_default": 0.01, "suggested_no_sweep_start": 0.01},
-    "tfv_near_opt_absolute_m3": {"code_default": 1.0, "suggested_no_sweep_start": 1.0},
-    "near_opt_penalty": {"code_default": 10000.0, "suggested_no_sweep_start": 10000.0},
-    "movement_tiebreak": {"code_default": 1e-06, "suggested_no_sweep_start": 1e-06},
-    "min_predicted_tfv_improvement_m3": {"code_default": 0.0, "suggested_no_sweep_start": 0.0},
-    "min_predicted_tfv_improvement_relative": {"code_default": 0.0, "suggested_no_sweep_start": 0.0},
-    "forecast_decay_per_step": {"code_default": 0.92, "suggested_no_sweep_start": 0.92},
-    "forecast_scenario_multipliers": {"code_default": [0.75, 1.0, 1.25], "suggested_no_sweep_start": [0.75, 1.0, 1.25]},
-    "forecast_history_steps_for_level": {"code_default": 3, "suggested_no_sweep_start": 3},
-    "optimizer_iterations": {"code_default": 120, "suggested_no_sweep_start": 120},
-    "optimizer_learning_rate": {"code_default": 0.04, "suggested_no_sweep_start": 0.04}
+  "frozen_controller_forecast": {
+    "forecast_quantile": 0.95,
+    "tfv_cvar_alpha": 0.90,
+    "tfv_near_opt_relative": 0.01,
+    "tfv_near_opt_absolute_m3": 1.0,
+    "near_opt_penalty": 10000.0,
+    "movement_tiebreak": 1e-06,
+    "min_predicted_tfv_improvement_m3": 0.0,
+    "min_predicted_tfv_improvement_relative": 0.0,
+    "forecast_decay_per_step": 0.92,
+    "forecast_scenario_multipliers": [0.75, 1.0, 1.25],
+    "forecast_history_steps_for_level": 3,
+    "optimizer_iterations": 120,
+    "optimizer_learning_rate": 0.04,
+    "sweep_allowed": false
   },
-  "one_time_runtime_benchmark": {
-    "readback_target_tolerance": {
-      "code_default": 1e-06,
-      "instruction": "Measure write-target numerical consistency on a small development run; do not hydrologically tune."
-    },
-    "readback_current_tolerance": {
-      "code_default": 0.05,
-      "instruction": "Measure expected current-setting lag under the idealized actuator travel contract on a small development run; do not hydrologically tune."
-    },
-    "decision_runtime_budget_seconds": {
-      "hard_upper_bound": 600,
-      "instruction": "Set once after a short wall-clock benchmark with the intended hardware/model size. The locked budget must be <600 s."
+  "frozen_runtime_readback": {
+    "readback_target_tolerance": 1e-06,
+    "readback_current_tolerance": 0.05,
+    "decision_runtime_budget_seconds": 300.0,
+    "hard_control_interval_seconds": 600,
+    "verification_benchmark_allowed": true,
+    "verification_benchmark_count": 1,
+    "automatic_retuning_after_failure": false,
+    "instruction": "Use one small development benchmark only to verify that the fixed tolerances and 300 s budget are satisfied on intended hardware. If not, stop and report the blocker."
+  },
+  "frozen_phase0": {
+    "rainfall_groups": 6,
+    "events_per_rainfall_group": 1,
+    "selection_fold": "development/train",
+    "checkpoints_per_event": 4,
+    "checkpoint_minimum_elapsed_minutes": 60,
+    "checkpoint_minimum_tail_minutes": 360,
+    "d2_actuators_per_checkpoint": 12,
+    "d2_epsilon_setting": 0.15,
+    "d2_include_center": true,
+    "d2_horizon_minutes": 360,
+    "high_frequency_record_stride_seconds": 60,
+    "run_only_one_authoritative_h360_branch_per_unique_action": true,
+    "shorter_timing_views_from_h360_trajectory_allowed": true,
+    "shorter_window_exact_tfv_reuse_without_endpoint_snapshot_allowed": false,
+    "pulse_recovery": {
+      "status": "CONDITIONAL_DIAGNOSTIC_ONLY",
+      "run_automatically": false,
+      "model_step_seconds": 60,
+      "control_block_seconds": 600,
+      "horizon_minutes": 360,
+      "pulses_per_checkpoint_if_triggered": 4,
+      "recovery_fraction": 0.10,
+      "trigger": "run only if sustained h360 timing evidence remains materially ambiguous; do not run merely because the CLI exists"
     }
   },
-  "human_decision_pending_data_generation": {
-    "phase0_rainfall_groups": {"code_default": 8},
-    "checkpoints_per_event": {"code_default": 8},
-    "checkpoint_minimum_elapsed_minutes": {"code_default": 60},
-    "d2_epsilon_setting": {"code_default": 0.15},
-    "d2_actuators_per_checkpoint": {"code_default": 24},
-    "d2_include_center": {"code_default": true},
-    "phase0_pulse_model_step_seconds": {"code_default": 60, "role": "diagnostic_high_frequency_sampling"},
-    "phase0_pulses_per_checkpoint": {"code_default": 4},
-    "phase0_pulse_horizon_minutes": {"code_default": 360},
-    "phase0_recovery_fraction": {"code_default": 0.10, "meaning": "recovery to 10 percent of pulse peak"},
-    "d3_sequences_per_checkpoint": {"code_default": 8},
-    "d3_perturbation_std": {"code_default": 0.20},
-    "d3_change_probability": {"code_default": 0.25},
-    "d1_control_start_minutes": {
-      "code_default": 0,
-      "decision_note": "D1 is development/train state-coverage data rather than the Formal Proposed runtime. Decide explicitly whether to preserve exploration from t=0 or align D1 actions to the 60-min Formal first-control epoch; never let the default silently define the production controller."
-    },
-    "d1_perturbation_std": {"code_default": 0.12},
-    "d1_change_probability": {"code_default": 0.35},
-    "d1_max_delta_per_update": {
-      "code_default": 0.20,
-      "note": "Development exploration choice, not the Formal runtime 0.5 limit. Freeze explicitly rather than silently inheriting it."
-    }
+  "frozen_d1": {
+    "control_start_minutes": 60,
+    "perturbation_std": 0.12,
+    "change_probability": 0.35,
+    "max_delta_per_update": 0.20,
+    "scientific_role": "development/train state-coverage only"
   },
-  "human_decision_pending_training": {
+  "frozen_d3": {
+    "sequences_per_checkpoint": 8,
+    "perturbation_std": 0.20,
+    "change_probability": 0.25,
+    "seed": 42,
+    "max_setting_delta_per_update": 0.5,
+    "horizon_minutes": 360,
+    "sweep_allowed": false
+  },
+  "frozen_training": {
     "step1": {
       "epochs": 30,
       "batch_size": 4,
@@ -131,26 +149,21 @@
       "learning_rate": 0.001,
       "exact_flood_loss_weight": 0.5
     },
-    "instruction": "Treat these as one preregistered architecture/training configuration first. Use early loss/held-out diagnostics and resume; do not launch broad architecture sweeps unless the corresponding acceptance gate fails for a diagnosed modeling reason."
+    "architecture_or_training_sweep_allowed": false,
+    "failure_policy": "If a held-out gate fails, diagnose the failed mechanism first. Do not launch broad hyperparameter sweeps automatically."
   },
-  "acceptance_thresholds_pending": {
-    "step1_minimum": ["unobserved_depth_nse"],
-    "step1_maximum": ["unobserved_depth_rmse_m", "all_state_normalized_rmse"],
-    "step2_minimum": ["tfv_exact_truth_rank_correlation"],
-    "step2_maximum": ["depth_rmse_m", "managed_flow_rmse_m3s", "tfv_exact_truth_mae_m3"],
-    "gradient_minimum": ["tfv_gradient_sign_accuracy", "tfv_gradient_cosine_similarity"],
-    "gradient_maximum": ["tfv_gradient_mae"],
-    "candidate_ranking_minimum": [
-      "d2_tfv_rank_correlation",
-      "d2_tfv_top1_hit_rate",
-      "d3_tfv_rank_correlation",
-      "d3_tfv_top1_hit_rate"
-    ],
-    "candidate_ranking_maximum": [
-      "d2_tfv_selected_regret_m3",
-      "d3_tfv_selected_regret_m3"
-    ],
-    "instruction": "These thresholds must be frozen before the gate is applied. They are scientific acceptance criteria, not hyperparameters to lower until a model passes."
+  "frozen_dimensionless_acceptance": {
+    "step1_unobserved_depth_nse_min": 0.70,
+    "step2_tfv_rank_correlation_min": 0.70,
+    "gradient_tfv_sign_accuracy_min": 0.70,
+    "gradient_tfv_cosine_similarity_min": 0.60,
+    "d2_tfv_rank_correlation_min": 0.70,
+    "d2_tfv_top1_hit_rate_min": 0.50,
+    "d3_tfv_rank_correlation_min": 0.70,
+    "d3_tfv_top1_hit_rate_min": 0.50,
+    "absolute_rmse_mae_regret_hard_thresholds": false,
+    "absolute_metrics_still_required_for_reporting": true,
+    "lower_threshold_after_failure_allowed": false
   },
   "fixed_rule_baseline_defaults": {
     "auto_rbc": {
@@ -158,12 +171,12 @@
       "high_fill": 0.75,
       "downstream_congestion_fill": 0.90,
       "response": 0.60,
-      "instruction": "Keep fixed across events; no event-outcome tuning."
+      "event_outcome_tuning_allowed": false
     },
     "efd": {
       "equalization_gain": 1.0,
       "response": 0.60,
-      "instruction": "Keep fixed across events; no event-outcome tuning."
+      "event_outcome_tuning_allowed": false
     }
   },
   "diagnostic_only_no_tuning": {
@@ -174,16 +187,14 @@
     "control_leverage_meaningful_relative": 0.01,
     "control_leverage_promising_fraction": 0.30,
     "control_leverage_weak_fraction": 0.10,
-    "rainfall_paper_strength_total_groups_recommendation": 160,
-    "rainfall_paper_strength_recommendation_is_execution_gate": false,
-    "instruction": "Report these diagnostics/recommendations. Do not repeatedly change them or generate additional storms merely to force a favorable interpretation."
+    "instruction": "Report these diagnostics but do not change them to force a favorable interpretation. The old 160-group recommendation is not part of the active 30-event execution contract."
   },
   "compute_only_not_scientific": {
     "swmm_threads_per_process": 1,
-    "worker_count": "choose from RAM/CPU benchmark; typically start 12-16 independent SWMM processes",
+    "worker_count": "choose from RAM/CPU benchmark; start near 12-16 independent SWMM processes if memory permits",
     "step2_shard_size_default": 128,
     "amp": "use when supported",
     "resume_training": true,
-    "instruction": "These may be changed for speed without changing the scientific contract, provided deterministic/data-lineage guards remain satisfied."
+    "instruction": "Compute-only choices may change for speed without changing scientific semantics, provided lineage, hashes, and deterministic contracts remain satisfied."
   }
 }
