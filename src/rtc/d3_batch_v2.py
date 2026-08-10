@@ -11,6 +11,7 @@ import pandas as pd
 from .generation_contract import generation_key
 from .inp_runtime import build_runtime_inp, sha256_file
 from .replay_prefix import reference_trajectory_lineage
+from .simulation_assets import assert_endpoint_available
 
 
 D3_DATA_CONTRACT = "D3_CONTROLS_DISABLED_COMPACT_V3_PREFIX_VERIFIED"
@@ -60,11 +61,12 @@ def _stamp(metadata_path: str | Path, job: dict[str, object]) -> str:
         hashes[field] = sha256_file(artifact)
     meta.update(
         {
-            "generation_contract": "RTC_GENERATION_KEY_V1",
+            "generation_contract": "RTC_GENERATION_KEY_V2_INPUT_CONFIG_BOUND",
             "generation_key_sha256": key,
             "rtc_source_tree_sha256": code_sha,
             "generation_lineage": lineage,
             "generated_artifact_sha256": hashes,
+            "endpoint_preflight": job.get("endpoint_preflight"),
         }
     )
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -124,6 +126,8 @@ def _run(job: dict[str, object]) -> dict[str, object]:
         "development_fold": job["development_fold"],
         "checkpoint_id": job["checkpoint_id"],
         "data_role": job["data_role"],
+        "pulse_actuator_id": job.get("pulse_actuator_id", ""),
+        "pulse_delta": job.get("pulse_delta", 0.0),
         "sequence_sha256": job["sequence_sha256"],
         "generation_key_sha256": key,
         "metadata_path": result.metadata_path,
@@ -164,6 +168,53 @@ def run_d3_batch_main() -> None:
     if args.control_block_seconds % args.stride_seconds:
         raise ValueError("D3 control block must be a multiple of stride")
 
+    dedup = frame.drop_duplicates(["sequence_sha256", "checkpoint_id"]).reset_index(drop=True)
+    endpoint_failures: list[dict[str, object]] = []
+    sequence_lengths: dict[int, int] = {}
+    for idx, row in dedup.iterrows():
+        source = str(row["inp_path"])
+        if not Path(source).is_file():
+            raise ValueError(f"D3 source INP missing: {source}")
+        sequence = json.loads(str(row["settings_sequence_json"]))
+        sequence_lengths[idx] = len(sequence)
+        try:
+            assert_endpoint_available(
+                source,
+                checkpoint_seconds=int(row["checkpoint_minutes"]) * 60,
+                horizon_seconds=len(sequence) * args.control_block_seconds,
+            )
+        except ValueError as exc:
+            endpoint_failures.append(
+                {
+                    "event_id": str(row.get("event_id", "")),
+                    "checkpoint_id": str(row["checkpoint_id"]),
+                    "sequence_sha256": str(row["sequence_sha256"]),
+                    "error": str(exc),
+                }
+            )
+    if endpoint_failures:
+        out = Path(args.out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        census = out / "REQUEST_CENSUS.json"
+        census.write_text(
+            json.dumps(
+                {
+                    "contract": "RTC_D3_PRE_RUN_CENSUS_V1",
+                    "requested_rows": int(len(frame)),
+                    "unique_sequences": int(len(dedup)),
+                    "endpoint_invalid": len(endpoint_failures),
+                    "endpoint_failures": endpoint_failures,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        raise ValueError(
+            f"D3 endpoint preflight rejected {len(endpoint_failures)} sequences before SWMM; see {census}"
+        )
+
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     runtime_dir = out / "_runtime_inp"
@@ -171,10 +222,8 @@ def run_d3_batch_main() -> None:
     runtime_cache: dict[str, str] = {}
     jobs: list[dict[str, object]] = []
     results: list[dict[str, object]] = []
-    for _, row in frame.drop_duplicates(["sequence_sha256", "checkpoint_id"]).iterrows():
+    for idx, row in dedup.iterrows():
         source = str(row["inp_path"])
-        if not Path(source).is_file():
-            raise ValueError(f"D3 source INP missing: {source}")
         source_sha = sha256_file(source)
         if source_sha not in runtime_cache:
             runtime = runtime_dir / f"{source_sha[:16]}.no_control.t{args.swmm_threads_per_process}.inp"
@@ -192,6 +241,7 @@ def run_d3_batch_main() -> None:
         reference_lineage = reference_trajectory_lineage(str(row["trajectory_metadata_path"]))
         branch_id = f"{event}__t{checkpoint:04d}__seq_{seq[:16]}"
         metadata = out / f"{branch_id}.json"
+        sequence_length = sequence_lengths[idx]
         job: dict[str, object] = {
             "runtime_inp": runtime,
             "runtime_inp_sha256": sha256_file(runtime),
@@ -204,11 +254,18 @@ def run_d3_batch_main() -> None:
             "checkpoint_id": str(row["checkpoint_id"]),
             "checkpoint_minutes": checkpoint,
             "data_role": str(row.get("data_role", "D3_MULTI_ACTUATOR_ROLLOUT")),
+            "pulse_actuator_id": str(row.get("pulse_actuator_id", "")),
+            "pulse_delta": float(row.get("pulse_delta", 0.0)),
             "sequence_sha256": seq,
             "settings_sequence_json": str(row["settings_sequence_json"]),
             "control_block_seconds": args.control_block_seconds,
             "stride_seconds": args.stride_seconds,
             "swmm_threads_per_process": args.swmm_threads_per_process,
+            "endpoint_preflight": assert_endpoint_available(
+                source,
+                checkpoint_seconds=checkpoint * 60,
+                horizon_seconds=sequence_length * args.control_block_seconds,
+            ),
             **reference_lineage,
         }
         expected_key, _, _ = _generation(job)
@@ -221,6 +278,8 @@ def run_d3_batch_main() -> None:
                     "development_fold": job["development_fold"],
                     "checkpoint_id": job["checkpoint_id"],
                     "data_role": job["data_role"],
+                    "pulse_actuator_id": job["pulse_actuator_id"],
+                    "pulse_delta": job["pulse_delta"],
                     "sequence_sha256": job["sequence_sha256"],
                     "generation_key_sha256": expected_key,
                     "metadata_path": str(metadata),
@@ -242,7 +301,7 @@ def run_d3_batch_main() -> None:
     print(
         json.dumps(
             {
-                "contract": "D3_BATCH_PREFIX_VERIFIED_RESUME_V2",
+                "contract": "D3_BATCH_PREFIX_VERIFIED_RESUME_V3_ENDPOINT_PREFLIGHT",
                 "branches": len(results),
                 "computed": len(jobs),
                 "resumed": len(results) - len(jobs),
