@@ -1,0 +1,19 @@
+{
+  "claim_scope": "methodology test on an idealized simplified Wuhan SWMM; reduce sewer-node overflow",
+  "contract": "WUHAN_RTC_METHOD_TESTBED_V067",
+  "dwf": "retain supplied idealized DWF as background hydraulic loading",
+  "fixed_window_tf_volume_claim": true,
+  "global_peak_role": "report_only",
+  "network_contract": "WUHAN_METHOD_TESTBED_NETWORK_V1",
+  "network_sha256": "75f04166429f87ae20327cc083d8e8d50a0ed27f5e0add87f77103dba54ec0ea",
+  "objective": "minimize system-wide cumulative TFV",
+  "outfalls": "preserve all source FREE outfalls",
+  "pfv_role": "soft_secondary_diagnostic",
+  "post_rain_evaluation_tail_minutes": 360,
+  "pre_rain_warmup_minutes": 60,
+  "priority_nodes_sha256": "530c2978148f201a105b0f3b405501d5092da58f344284510c2fceb2081c516b",
+  "rainfall_contract": "WUHAN_DB4201_T641_2020_CHICAGO_30_V1",
+  "recovery_claim": false,
+  "sensor_layout_sha256": "0cd92500c9cfbdcb33abf5d6aebba78316f80217cb281ff18a7db41ba914e93e",
+  "subareas": "preserved unchanged"
+}
