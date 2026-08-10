@@ -1,0 +1,17 @@
+{
+  "chicago_peak_fraction_r": 0.39,
+  "contract": "RAINFALL_PROVENANCE_V1",
+  "duration_scope_minutes": [60, 120, 180, 240, 300, 360],
+  "event_count": 30,
+  "historical_observed_rainfall_claim": false,
+  "idf_applicability": {"duration_minutes": [5, 1440], "return_period_years": [2, 100]},
+  "idf_formula_mm_min": "9.686*(1+0.887*log10(P))/(t+11.23)^0.658",
+  "methodology_testbed_only": true,
+  "official_standard": "DB4201/T 641-2020",
+  "official_standard_claim": true,
+  "pattern_scope": ["chicago_r0.39"],
+  "rainfall_step_minutes": 5,
+  "return_period_scope_years": [5, 10, 20, 50, 100],
+  "source_kind": "design_storm_formula",
+  "spatial_mode": "uniform_single_design_gage_across_all_subcatchments"
+}
