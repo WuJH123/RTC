@@ -16,6 +16,18 @@ Before running SWMM or training, read exactly these active files:
 
 Do not search old versioned controller/split/acceptance files to decide current semantics. The active split contains only `development/train`, `development/validation`, and untouched `final`; calibration/safety-audit are no longer active roles.
 
+## Step0 event-clock lineage
+
+The authoritative Step0 bootstrap is `scripts/adopt_and_step0_project7_v067.ps1`. It must:
+
+1. verify the extracted v0.6.7 physical/rainfall source bundle and the frozen 18/6/6 source registry;
+2. deterministically prepare all 30 event INPs to **effective pre-rain warm-up = 120 min** with **post-rain tail = 360 min**;
+3. validate the prepared 18/6/6 registry;
+4. initialize `study_v069` against that **prepared effective-120 registry**, not against the original 60-min source registry;
+5. write canonical preflight/readiness evidence at the paths later consumed by Policy Lock.
+
+This ordering is mandatory. Initializing the fresh workspace against the original 60-min source registry and later replacing it with the prepared registry would create a registry-SHA mismatch at Policy Lock.
+
 ## Frozen choices — do not ask Codex to rediscover them
 
 - 30 events = **18 Train + 6 Validation + 6 Final**.
