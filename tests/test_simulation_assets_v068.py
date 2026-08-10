@@ -18,28 +18,31 @@ from rtc.simulation_assets import (
 
 
 def _inp(path: Path, *, start_time: str = "00:00:00", end_time: str = "12:00:00") -> Path:
-    path.write_text(
-        f"""[OPTIONS]\n"
-        f"FLOW_UNITS           CMS\n"
-        f"START_DATE           01/01/2020\n"
-        f"START_TIME           {start_time}\n"
-        f"REPORT_START_DATE    01/01/2020\n"
-        f"REPORT_START_TIME    {start_time}\n"
-        f"END_DATE             01/01/2020\n"
-        f"END_TIME             {end_time}\n"
-        f"REPORT_END_DATE      01/01/2020\n"
-        f"REPORT_END_TIME      {end_time}\n"
-        f"\n[JUNCTIONS]\n"
-        f"N1 0 5 0 0 0\n"
-        f"\n[RAINGAGES]\n"
-        f"RG1 INTENSITY 0:05 1.0 TIMESERIES TS1\n"
-        f"\n[TIMESERIES]\n"
-        f"TS1 01/01/2020 00:55:00 0\n"
-        f"TS1 01/01/2020 01:00:00 1\n"
-        f"TS1 01/01/2020 01:05:00 0\n"
-        f"\n[END]\n""",
-        encoding="utf-8",
-    )
+    text = f"""[OPTIONS]
+FLOW_UNITS           CMS
+START_DATE           01/01/2020
+START_TIME           {start_time}
+REPORT_START_DATE    01/01/2020
+REPORT_START_TIME    {start_time}
+END_DATE             01/01/2020
+END_TIME             {end_time}
+REPORT_END_DATE      01/01/2020
+REPORT_END_TIME      {end_time}
+
+[JUNCTIONS]
+N1 0 5 0 0 0
+
+[RAINGAGES]
+RG1 INTENSITY 0:05 1.0 TIMESERIES TS1
+
+[TIMESERIES]
+TS1 01/01/2020 00:55:00 0
+TS1 01/01/2020 01:00:00 1
+TS1 01/01/2020 01:05:00 0
+
+[END]
+"""
+    path.write_text(text, encoding="utf-8")
     return path
 
 
@@ -49,7 +52,9 @@ def _reference(tmp_path: Path) -> Path:
         compact,
         elapsed_seconds=np.asarray([0, 3600], dtype=np.int64),
         node_ids=np.asarray(["N1"]),
-        state_si=np.asarray([[[0, 0, 0, 0, 0, 0]], [[1, 1, 0, 1, 1, 1]]], dtype=np.float32),
+        state_si=np.asarray(
+            [[[0, 0, 0, 0, 0, 0]], [[1, 1, 0, 1, 1, 1]]], dtype=np.float32
+        ),
         actuator_ids=np.asarray(["P1"]),
         current_setting=np.asarray([[0.0], [0.5]], dtype=np.float32),
     )
@@ -85,7 +90,6 @@ def test_event_family_ignores_only_recovery_tail(tmp_path: Path) -> None:
     a = _inp(tmp_path / "a.inp", end_time="10:00:00")
     b = _inp(tmp_path / "b.inp", end_time="12:00:00")
     c = _inp(tmp_path / "c.inp", start_time="23:00:00", end_time="12:00:00")
-    # Adjust c to the preceding day so END remains after START and warm-up truly changes.
     text = c.read_text(encoding="utf-8").replace(
         "START_DATE           01/01/2020", "START_DATE           12/31/2019"
     ).replace(
