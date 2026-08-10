@@ -4,9 +4,7 @@ import json
 from pathlib import Path
 
 from .inp_lineage import physical_contract_sha256
-from .replay_prefix import reference_trajectory_lineage
 from .simulation_assets import (
-    D2_EXECUTION_SEMANTICS,
     SIMULATION_IDENTITY_CONTRACT,
     VALID_REUSABLE,
     SimulationAssetRegistry,
