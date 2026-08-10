@@ -36,6 +36,29 @@ Do not search old versioned controller/split/acceptance files to decide current 
 - Auto-RBC and EFD use their fixed defaults; **never event-tune them**.
 - Phase-0 pulse/recovery is conditional diagnostic only and is not an automatic batch.
 
+## CLI scope — do not propagate the Phase-0 budget into production D2
+
+The small `4 checkpoints/event × 12 actuators/checkpoint` budget is **Phase-0 only**.
+
+Use these guarded commands only for Phase-0:
+
+```text
+rtc-design-phase0-events
+rtc-design-phase0-checkpoints
+rtc-design-phase0-probes
+```
+
+For Step4 production D2 generation, use the general commands:
+
+```text
+rtc-design-checkpoints
+rtc-design-probes-efficient
+```
+
+The general Step4 commands are deliberately not forced to the Phase-0 4/12 budget. Their production design must provide sufficient Train/Validation coverage of the 109-actuator action space, use the current normal production defaults once unless the frozen workflow explicitly specifies otherwise, and must not be hyperparameter-swept.
+
+D1 and D3 values remain globally frozen by their guarded public CLIs because the user explicitly froze those settings for the study.
+
 ## Expensive-compute rules
 
 - Never grid-search controller, forecast, model architecture, training, D1/D2/D3 or baseline parameters unless the frozen contract is explicitly revised by the user before Final.
