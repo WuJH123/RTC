@@ -63,15 +63,26 @@ def efficient_probe_design_main() -> None:
     _delegate(main)
 
 
-def d1_batch_main() -> None:
+def _freeze_d1_arguments() -> None:
     _set_or_verify("--seed", "42", numeric=True)
     _set_or_verify("--control-start-minutes", "60", numeric=True)
     _set_or_verify("--perturbation-std", "0.12", numeric=True)
     _set_or_verify("--change-probability", "0.35", numeric=True)
     _set_or_verify("--max-delta", "0.20", numeric=True)
+
+
+def d1_batch_main() -> None:
+    _freeze_d1_arguments()
     from .large_data_cli import run_d1_batch_main
 
     _delegate(run_d1_batch_main)
+
+
+def d1_exploration_main() -> None:
+    _freeze_d1_arguments()
+    from .d1_exploration import main
+
+    _delegate(main)
 
 
 def d3_design_main() -> None:
