@@ -14,7 +14,8 @@ REQUIRED_DEV_TRAIN_GROUPS = 18
 REQUIRED_DEV_VALIDATION_GROUPS = 6
 FROZEN_DURATIONS = {60, 120, 180, 240, 300, 360}
 FROZEN_RETURN_PERIODS = {5, 10, 20, 50, 100}
-_ALLOWED_SPLITS = {"development", "final"}
+_GENERIC_SPLITS = {"development", "calibration", "safety_audit", "final"}
+_ACTIVE_SPLITS = {"development", "final"}
 
 
 def _normalize(frame: pd.DataFrame) -> pd.DataFrame:
@@ -52,12 +53,12 @@ def _descriptor_summary(data: pd.DataFrame) -> dict[str, object]:
 
 
 def validate_formal_rainfall_design(frame: pd.DataFrame) -> dict[str, object]:
-    """Validate generic current Project7 split invariants without imposing one cohort size.
+    """Generic leakage/readiness validator retained for reusable workspace utilities.
 
-    This validator is used by reusable workspace utilities and synthetic tests. It deliberately
-    does **not** recreate the Formal 30-event allocation. Active Project7 execution must also
-    pass :func:`validate_project7_v069_rainfall_design`, which binds exact 18/6/6 counts and
-    forcing balance.
+    This function is intentionally cohort-size agnostic and accepts historical synthetic
+    calibration/safety roles used by generic regression fixtures. It does **not** authorize
+    those roles for Project7 v0.6.9 Formal execution. The active workflow and CLI additionally
+    call :func:`validate_project7_v069_rainfall_design`, which rejects them and locks 18/6/6.
     """
 
     required = {
@@ -78,11 +79,9 @@ def validate_formal_rainfall_design(frame: pd.DataFrame) -> dict[str, object]:
     if (data["rainfall_group"] == "").any():
         raise ValueError("rainfall_group cannot be empty")
 
-    invalid_roles = sorted(set(data["scientific_split"]) - _ALLOWED_SPLITS)
+    invalid_roles = sorted(set(data["scientific_split"]) - _GENERIC_SPLITS)
     if invalid_roles:
-        raise ValueError(
-            f"obsolete/unsupported scientific_split values in current registry: {invalid_roles}"
-        )
+        raise ValueError(f"unsupported scientific_split values: {invalid_roles}")
     cross = data.groupby("rainfall_group")["scientific_split"].nunique()
     if (cross != 1).any():
         raise ValueError("rainfall-group leakage exists across scientific splits")
@@ -111,7 +110,7 @@ def validate_formal_rainfall_design(frame: pd.DataFrame) -> dict[str, object]:
         raise ValueError(f"event registry references missing INPs: {missing_inp[:10]}")
 
     return {
-        "contract": "PROJECT7_CURRENT_SPLIT_INVARIANTS_V3_DEVELOPMENT_FINAL_ONLY",
+        "contract": "GENERIC_RAINFALL_GROUP_SPLIT_INVARIANTS_V3_COMPATIBILITY_ONLY",
         "rainfall_groups": int(data["rainfall_group"].nunique()),
         "role_group_counts": role_counts,
         "development_train_groups": int(
@@ -122,8 +121,7 @@ def validate_formal_rainfall_design(frame: pd.DataFrame) -> dict[str, object]:
         ),
         "final_groups": int(role_counts.get("final", 0)),
         "descriptor_summary": _descriptor_summary(data),
-        "calibration_role_active": False,
-        "safety_audit_role_active": False,
+        "project7_v069_formal_authorization": False,
         "required_invariants_passed": True,
     }
 
@@ -140,6 +138,12 @@ def validate_project7_v069_rainfall_design(frame: pd.DataFrame) -> dict[str, obj
 
     generic = validate_formal_rainfall_design(frame)
     data = _normalize(frame)
+    present_roles = set(data["scientific_split"])
+    if present_roles != _ACTIVE_SPLITS:
+        raise ValueError(
+            "obsolete/unsupported roles in active Project7 v0.6.9 registry: "
+            f"{sorted(present_roles - _ACTIVE_SPLITS)}"
+        )
     required = {"return_period_year", "duration_minutes"}
     missing = sorted(required - set(data.columns))
     if missing:
@@ -194,6 +198,9 @@ def validate_project7_v069_rainfall_design(frame: pd.DataFrame) -> dict[str, obj
         "final_return_periods": sorted(set(final["return_period_year"].astype(int))),
         "forcing_only_split_preregistered": True,
         "hydraulic_outcomes_used_for_split": False,
+        "calibration_role_active": False,
+        "safety_audit_role_active": False,
+        "project7_v069_formal_authorization": True,
         "required_invariants_passed": True,
     }
 
