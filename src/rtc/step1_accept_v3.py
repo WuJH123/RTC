@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, Dataset
 from .code_contract import rtc_source_tree_sha256
 from .contracts import load_priority_nodes
 from .large_model_cli import _device, _filtered_index, _read_lines
-from .lazy_step1 import CausalStep1TrajectoryDataset, TrajectoryBatchSampler
+from .lazy_step1 import STEP1_STRATA, CausalStep1TrajectoryDataset, TrajectoryBatchSampler
 from .production_cli import _load_graph, _load_step1
 
 
@@ -47,6 +47,33 @@ def _agg() -> dict[str, float]:
     }
 
 
+def _accumulate(
+    agg: dict[str, float],
+    *,
+    pred: np.ndarray,
+    truth: np.ndarray,
+    unobserved: np.ndarray,
+    state_std: np.ndarray,
+    priority_idx: np.ndarray | None,
+) -> None:
+    y = truth[unobserved, 0].astype(float)
+    e = pred[unobserved, 0].astype(float) - y
+    agg["unobs_sse"] += float(np.square(e).sum())
+    agg["unobs_sum"] += float(y.sum())
+    agg["unobs_sum2"] += float(np.square(y).sum())
+    agg["unobs_n"] += float(y.size)
+    norm = (pred - truth) / state_std
+    agg["norm_sse"] += float(np.square(norm).sum())
+    agg["norm_n"] += float(norm.size)
+    if priority_idx is not None:
+        py = truth[priority_idx, 0].astype(float)
+        pe = pred[priority_idx, 0].astype(float) - py
+        agg["priority_sse"] += float(np.square(pe).sum())
+        agg["priority_sum"] += float(py.sum())
+        agg["priority_sum2"] += float(np.square(py).sum())
+        agg["priority_n"] += float(py.size)
+
+
 def _nse(sse: float, total: float, total2: float, count: float) -> float:
     if count <= 0:
         return float("nan")
@@ -54,6 +81,68 @@ def _nse(sse: float, total: float, total2: float, count: float) -> float:
     if sst <= 1e-12:
         return float("nan")
     return 1.0 - sse / sst
+
+
+def _row(group_id: str, agg: dict[str, float], *, has_priority: bool) -> dict[str, float | str]:
+    row: dict[str, float | str] = {
+        "rainfall_group": group_id,
+        "unobserved_depth_rmse_m": float(
+            np.sqrt(agg["unobs_sse"] / max(agg["unobs_n"], 1.0))
+        ),
+        "unobserved_depth_nse": _nse(
+            agg["unobs_sse"], agg["unobs_sum"], agg["unobs_sum2"], agg["unobs_n"]
+        ),
+        "all_state_normalized_rmse": float(
+            np.sqrt(agg["norm_sse"] / max(agg["norm_n"], 1.0))
+        ),
+    }
+    if has_priority:
+        row["priority_depth_rmse_m"] = float(
+            np.sqrt(agg["priority_sse"] / max(agg["priority_n"], 1.0))
+        )
+        row["priority_depth_nse"] = _nse(
+            agg["priority_sse"],
+            agg["priority_sum"],
+            agg["priority_sum2"],
+            agg["priority_n"],
+        )
+    return row
+
+
+def _rows(groups: dict[str, dict[str, float]], *, has_priority: bool) -> list[dict[str, float | str]]:
+    return [_row(group_id, agg, has_priority=has_priority) for group_id, agg in sorted(groups.items())]
+
+
+def _mean_finite(rows: list[dict[str, float | str]], name: str, *, required: bool) -> float | None:
+    values = np.asarray([float(row[name]) for row in rows if name in row], dtype=float)
+    values = values[np.isfinite(values)]
+    if not values.size:
+        if required:
+            raise ValueError(f"no finite rainfall-group values for Step1 metric {name}")
+        return None
+    return float(values.mean())
+
+
+def _metrics(rows: list[dict[str, float | str]], *, has_priority: bool, required: bool) -> dict[str, float | None]:
+    metrics: dict[str, float | None] = {
+        "unobserved_depth_rmse_m": _mean_finite(
+            rows, "unobserved_depth_rmse_m", required=required
+        ),
+        "unobserved_depth_nse": _mean_finite(
+            rows, "unobserved_depth_nse", required=required
+        ),
+        "all_state_normalized_rmse": _mean_finite(
+            rows, "all_state_normalized_rmse", required=required
+        ),
+    }
+    if has_priority:
+        metrics["priority_depth_rmse_m"] = _mean_finite(
+            rows, "priority_depth_rmse_m", required=required
+        )
+        metrics["priority_depth_nse"] = _mean_finite(
+            rows, "priority_depth_nse", required=required
+        )
+    return metrics
 
 
 def accept_step1_large_v3_main() -> None:
@@ -87,8 +176,10 @@ def accept_step1_large_v3_main() -> None:
         cache_trajectories=2,
     )
     indexed = _IndexedDataset(base)
+    # Held-out acceptance deliberately evaluates every validation window; stratification is a
+    # development/train sampling policy only.
     sampler = TrajectoryBatchSampler(
-        base, batch_size=args.batch_size, seed=0, shuffle=False
+        base, batch_size=args.batch_size, seed=0, shuffle=False, stratified=False
     )
     loader = DataLoader(
         indexed,
@@ -128,6 +219,9 @@ def accept_step1_large_v3_main() -> None:
     edges = torch.as_tensor(graph.edge_index, dtype=torch.long, device=device)
     state_std = model.state_std.detach().cpu().numpy()
     groups: dict[str, dict[str, float]] = {}
+    strata_groups: dict[str, dict[str, dict[str, float]]] = {
+        stratum: {} for stratum in STEP1_STRATA
+    }
     with torch.no_grad():
         for indices, obs, mask, context, target in loader:
             pred = model(
@@ -139,73 +233,48 @@ def accept_step1_large_v3_main() -> None:
             ).cpu().numpy()
             truth = target.numpy()
             for local, sample_index in enumerate(indices.numpy().astype(int)):
-                group_id = base.samples[int(sample_index)].rainfall_group
-                agg = groups.setdefault(group_id, _agg())
-                y = truth[local, unobserved, 0].astype(float)
-                e = pred[local, unobserved, 0].astype(float) - y
-                agg["unobs_sse"] += float(np.square(e).sum())
-                agg["unobs_sum"] += float(y.sum())
-                agg["unobs_sum2"] += float(np.square(y).sum())
-                agg["unobs_n"] += float(y.size)
-                norm = (pred[local] - truth[local]) / state_std
-                agg["norm_sse"] += float(np.square(norm).sum())
-                agg["norm_n"] += float(norm.size)
-                if pidx is not None:
-                    py = truth[local, pidx, 0].astype(float)
-                    pe = pred[local, pidx, 0].astype(float) - py
-                    agg["priority_sse"] += float(np.square(pe).sum())
-                    agg["priority_sum"] += float(py.sum())
-                    agg["priority_sum2"] += float(np.square(py).sum())
-                    agg["priority_n"] += float(py.size)
+                ref = base.samples[int(sample_index)]
+                group_id = ref.rainfall_group
+                overall = groups.setdefault(group_id, _agg())
+                _accumulate(
+                    overall,
+                    pred=pred[local],
+                    truth=truth[local],
+                    unobserved=unobserved,
+                    state_std=state_std,
+                    priority_idx=pidx,
+                )
+                stratum_agg = strata_groups[ref.stratum].setdefault(group_id, _agg())
+                _accumulate(
+                    stratum_agg,
+                    pred=pred[local],
+                    truth=truth[local],
+                    unobserved=unobserved,
+                    state_std=state_std,
+                    priority_idx=pidx,
+                )
     if not groups:
         raise ValueError("Step1 validation contains no rainfall groups")
 
-    group_metrics: list[dict[str, float | str]] = []
-    for group_id, agg in sorted(groups.items()):
-        row: dict[str, float | str] = {
-            "rainfall_group": group_id,
-            "unobserved_depth_rmse_m": float(
-                np.sqrt(agg["unobs_sse"] / max(agg["unobs_n"], 1.0))
+    group_metrics = _rows(groups, has_priority=pidx is not None)
+    metrics = _metrics(group_metrics, has_priority=pidx is not None, required=True)
+    stratified_metrics: dict[str, object] = {}
+    for stratum in STEP1_STRATA:
+        stratum_rows = _rows(strata_groups[stratum], has_priority=pidx is not None)
+        stratified_metrics[stratum] = {
+            "validation_windows": int(base.stratum_counts[stratum]),
+            "rainfall_groups": int(len(stratum_rows)),
+            "aggregation": "equal_weight_per_rainfall_group_within_stratum",
+            "metrics": (
+                _metrics(stratum_rows, has_priority=pidx is not None, required=False)
+                if stratum_rows
+                else {}
             ),
-            "unobserved_depth_nse": _nse(
-                agg["unobs_sse"],
-                agg["unobs_sum"],
-                agg["unobs_sum2"],
-                agg["unobs_n"],
-            ),
-            "all_state_normalized_rmse": float(
-                np.sqrt(agg["norm_sse"] / max(agg["norm_n"], 1.0))
-            ),
+            "group_metrics": stratum_rows,
         }
-        if pidx is not None:
-            row["priority_depth_rmse_m"] = float(
-                np.sqrt(agg["priority_sse"] / max(agg["priority_n"], 1.0))
-            )
-            row["priority_depth_nse"] = _nse(
-                agg["priority_sse"],
-                agg["priority_sum"],
-                agg["priority_sum2"],
-                agg["priority_n"],
-            )
-        group_metrics.append(row)
 
-    def mean_finite(name: str) -> float:
-        values = np.asarray([float(row[name]) for row in group_metrics], dtype=float)
-        values = values[np.isfinite(values)]
-        if not values.size:
-            raise ValueError(f"no finite rainfall-group values for Step1 metric {name}")
-        return float(values.mean())
-
-    metrics = {
-        "unobserved_depth_rmse_m": mean_finite("unobserved_depth_rmse_m"),
-        "unobserved_depth_nse": mean_finite("unobserved_depth_nse"),
-        "all_state_normalized_rmse": mean_finite("all_state_normalized_rmse"),
-    }
-    if pidx is not None:
-        metrics["priority_depth_rmse_m"] = mean_finite("priority_depth_rmse_m")
-        metrics["priority_depth_nse"] = mean_finite("priority_depth_nse")
     payload = {
-        "contract": "STEP1_HELDOUT_ACCEPTANCE_V4_GROUP_BALANCED_T0_ENGINE_BOUND",
+        "contract": "STEP1_HELDOUT_ACCEPTANCE_V5_GROUP_AND_HYDRAULIC_STRATA",
         "rtc_source_tree_sha256": rtc_source_tree_sha256(),
         "model_sha256": _sha(args.model),
         "run_index_sha256": _sha(args.run_index),
@@ -214,9 +283,11 @@ def accept_step1_large_v3_main() -> None:
         "swmm_engine_version": base.swmm_engine_version,
         "initial_observation_elapsed_seconds": 0,
         "validation_windows": len(base),
+        "validation_stratum_counts": base.stratum_counts,
         "rainfall_groups": len(group_metrics),
         "aggregation": "equal_weight_per_rainfall_group",
         "metrics": metrics,
+        "hydraulic_stratified_metrics": stratified_metrics,
         "priority_diagnostic_only": True,
         "group_metrics": group_metrics,
     }
