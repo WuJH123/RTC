@@ -337,10 +337,10 @@ Every one of the **6 Final events** runs all seven strategies on identical event
 Step 0  adopt/verify v0.6.7 source inputs and frozen 18/6/6 split; deterministically prepare all 30 events to effective-120 + tail360; initialize fresh workspace on the prepared registry; readiness / graph / preflight
 Step 1  Phase-0 6×4×12 exact-prefix h360 D2 with 60-s sampling using dedicated Phase-0 design CLIs
 Step 2  sustained timing + control leverage; conditional pulse only if ambiguity remains; bind already-fixed 360-min timing
-Step 3  production D0/D1 on 18 Train + Step1 train; Step1 held-out acceptance on 6 Validation
-Step 4  production checkpoint/probe CLIs + temporally feasible D2/D3; Step2 train on Train and held-out acceptance on Validation
+Step 3  production D0 at 300 s on all 24 development events; D1 only on 18 Train; Step1 fit on 18 Train and held-out acceptance on 6 Validation
+Step 4  production D2/D3 across development Train+Validation using general checkpoint/probe CLIs; Step2 fit on Train and held-out acceptance on Validation
 Step 5  local gradient + joint D2/D3 ranking acceptance using preregistered dimensionless gates
-Step 6  development closed-loop Proposed vs No-control/Internal/Auto-RBC/EFD; no baseline tuning
+Step 6  held-out development closed-loop on 6 Validation: Proposed vs No-control/Internal/Auto-RBC/EFD; no tuning
 Step 7  one runtime/readback benchmark + full runtime/deadline/temporal-continuity acceptance with 300-s budget
 Step 8  Policy Lock
 Step 9  untouched 6-event × 7-strategy authoritative-SWMM Final, then formalization/Global-Peak replay
