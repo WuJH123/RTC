@@ -1,6 +1,6 @@
-# Wuhan RTC v0.6.6 — event-paired baselines, causal dry prefix and TFV-first MPC
+# Wuhan RTC v0.6.7 — TFV-first methodology testbed
 
-This repository implements a **model-based** urban-drainage real-time-control workflow:
+This repository implements a **model-based urban-drainage real-time-control methodology test** on an idealized, simplified Wuhan SWMM network.
 
 ```text
 causal sparse observations + realised rainfall + actuator readback
@@ -20,44 +20,89 @@ causal sparse observations + realised rainfall + actuator readback
                        authoritative SWMM
 ```
 
-The primary objective is system-wide cumulative **Total Flood Volume (TFV)**. Priority Flood Volume (PFV) and priority depth are soft/reporting quantities rather than hard admission gates. Global Peak is report-only. Final truth comes from authoritative SWMM cumulative node statistics and routing-step replay.
+## Scientific claim
 
-## Start here
+The study is designed to demonstrate that the proposed sparse-sensing surrogate MPC can reduce **sewer-node overflow** in the frozen SWMM testbed. It is not a field-calibrated Wuhan digital twin and does not certify field actuator capability.
 
-Use:
+Primary objective: minimize authoritative-SWMM system-wide cumulative **Total Flood Volume (TFV)**. PFV at the eight frozen priority nodes is a soft secondary/diagnostic quantity. Priority depth and Global Peak are report-only.
 
-- `docs/LEAN_FRESH_RUN_V066.md` — current fresh-run contract;
-- `FORMAL_PIPELINE_LATEST.md` — scientific/Policy-Lock/Final evidence contract;
-- `configs/formal_controller_v4.template.json` — production-controller template;
-- `configs/formal_baseline_plan.v3.json` — seven-strategy event-paired comparison contract.
+## Active v0.6.7 inputs
 
-Historical v0.6.2–v0.6.5 runbooks remain useful provenance but are not the active contract.
+Fresh Project7 studies must be rebuilt from source-only assets with:
 
-## v0.6.6 corrections from the Project7 pre-training audit
-
-The pre-training audit found that copied event INPs carried the desired event forcing/DWF but no executable native `[CONTROLS]`. Using those files directly for `internal_rtc` would therefore mislabel a no-native-control event as the native comparator. It also found no pre-rain causal history, a 3 h recovery tail that was right-censored in all eight high-frequency pilot events, and no field metadata proving that 57 PUMP2 facilities are real VFD assets.
-
-v0.6.6 changes the contract accordingly:
-
-```text
-rtc-prepare-event-suite
-    -> preserves the absolute storm clock and DWF phase,
-       moves simulation start earlier to create a dry/DWF causal history,
-       and extends the post-rain recovery tail.
-
-rtc-check-study-readiness
-    -> fails closed on insufficient warm-up/tail, unresolved sensor/rainfall provenance,
-       or an invalid actuator-claim scope.
-
-Internal RTC runtime
-    -> exact prepared event forcing + DWF + initial conditions
-       plus ONLY the frozen network [CONTROLS] payload.
-
-Formal Final
-    -> hashes and verifies the native controls payload against Policy Lock.
+```powershell
+rtc-build-method-testbed-v067 `
+  --source-inp E:\RTC_sewer\Project7\source\wuhan_with_controls.inp `
+  --sensors E:\RTC_sewer\Project7\source\sensor_nodes.txt `
+  --priority E:\RTC_sewer\Project7\source\priority_nodes.txt `
+  --out-root E:\RTC_sewer\Project7\inputs `
+  --warmup-minutes 60 `
+  --recession-minutes 360 `
+  --orifice-travel-minutes 10
 ```
 
-## Formal baseline matrix
+Or use `scripts/bootstrap_project7_v067.ps1`, which syncs GitHub and refuses to mix a non-empty historical `inputs` or `study_v067` directory into the fresh study.
+
+Do **not** reuse historical D0/D1/D2/D3 trajectories, Step1/Step2 checkpoints, training shards, development runs, Policy Locks or Final evidence.
+
+## Rainfall contract
+
+The active design library is exactly **30 events**:
+
+```text
+return periods: 5, 10, 20, 50, 100 years
+durations:      60, 120, 180, 240, 300, 360 min
+pattern:        Chicago only
+Chicago r:      0.39
+rain step:      5 min
+spatial mode:   one uniform design gage across all subcatchments
+```
+
+The generator uses Wuhan DB4201/T 641-2020 directly:
+
+```text
+i = 9.686 * (1 + 0.887 * log10(P)) / (t + 11.23)^0.658   [mm/min]
+```
+
+No historical rainfall file is required. Five-minute block depths are analytically integrated from the Chicago curve and checked against the standard duration depth.
+
+## Event clock
+
+The fresh methodology-testbed event contract is:
+
+```text
+pre-rain causal warm-up/history = 60 min
+post-rain evaluation tail       = 360 min
+```
+
+The 60-min prefix supplies the default 13-frame `0,5,...,60 min` causal history. It is not a claim of complete dry-weather hydraulic equilibrium; a small development-only 60/120-min onset-state sensitivity should be checked before scaling production data.
+
+The 360-min tail is a **fixed evaluation window**, not evidence that flooding has returned to zero. Formal TFV is cumulative SWMM node flooding volume through the common event endpoint.
+
+## Physical network contract
+
+v0.6.7 preserves the user-frozen idealizations:
+
+- supplied DWF is retained as idealized background hydraulic loading;
+- all 41 source outfalls remain `FREE`;
+- SUBAREAS/infiltration source values are not recalibrated;
+- the five retrofit storage curves are preserved.
+
+Actuation is explicitly `SWMM_MODEL_CONTINUOUS_SIMULATION_ONLY`:
+
+- 57 source two-point `PUMP2` depth-flow curves are migrated to `PUMP4` without changing their endpoints;
+- all 42 orifices remain continuously controllable on `[0,1]` and receive a 10-min full travel time;
+- `RTC_IN_01..05` and `RTC_OUT_01..05` receive flap gates so each storage connection is one-way in its declared direction;
+- the candidate 10-min supervisory contract uses `max_setting_delta_per_update = 0.5`;
+- four known copied OFF rules (`VP0600010.3/.4/.5`, `add300.1`) are repaired from `SETTING=1` to `SETTING=0`.
+
+## Graph/model physics
+
+The v0.6.7 graph no longer exposes only invert/max depth and node type. The node-static vector now includes storage capacity/area, incident conduit length/roughness/section scale, contributing subcatchment area and impervious area, area-weighted width/slope, and Horton infiltration rates. These are frozen INP properties and therefore preserve online causality.
+
+## Formal baselines
+
+Exactly seven Formal strategies remain:
 
 ```text
 proposed
@@ -69,116 +114,44 @@ all_open
 all_closed
 ```
 
-The scientifically important competitive baselines are No-control, Internal RTC, Auto-RBC and EFD. All-open and All-closed are diagnostic extremes and are reported separately.
-
-- **No-control** — native supervisory `[CONTROLS]` disabled and no Python setting writes; exact event forcing, DWF, initial conditions and intrinsic/local equipment physics remain.
-- **Internal RTC** — a **strong native engineering comparator**. The same event forcing/DWF/initial state is paired at runtime with the frozen network native rules. It may access true SWMM rule variables on the native rule clock; this information/frequency advantage is disclosed rather than artificially removed.
-- **Auto-RBC** — causal local rule control from current actuator-adjacent true SWMM depths. Its direct local sensor budget may exceed the Proposed sparse layout and is disclosed.
-- **EFD** — causal storage-aware Equal Filling Degree from current controlled-storage depths.
-- **All-open / All-closed** — diagnostic extremes.
-
-No strategy may use future realised rainfall, future SWMM state/flooding, future Internal trajectory or untouched Final truth.
-
-## Actuation scope
-
-All 109 discovered SWMM-writable settings remain eligible in the simulation MPC. The default study contract is:
-
-```text
-SWMM_MODEL_CONTINUOUS_SIMULATION_ONLY
-```
-
-This is **not** a field certification that every pump has a VFD or that every regulator can move continuously. No artificial binary mask is introduced without engineering metadata. A field-deployment claim requires a separate hashed capability map describing control mode, bounds, ramp, dwell, interlock, readback and fail-safe behavior.
-
-## Rainfall scope
-
-The currently audited main library is an exact 180-event factorial over:
-
-```text
-return periods: 10, 20, 30, 50, 75, 100 years
-durations:      75, 105, 150, 210, 240, 300 min
-patterns:       block, chicago_center, chicago_early, chicago_late, double_peak
-spatial mode:   one uniform design gage across all subcatchments
-```
-
-The repository binds these actual event bytes but does **not** claim independent regeneration from an official Wuhan IDF standard unless an authoritative formula/generator provenance file is supplied. Missing 2–5 year, <75 min, >300 min and spatially heterogeneous storms are robustness/sensitivity gaps, not silently invented data.
-
-## Fresh-data execution logic
-
-Recommended directory separation:
-
-```text
-E:\RTC_sewer\Project7\repo
-E:\RTC_sewer\Project7\inputs
-E:\RTC_sewer\Project7\study_v066
-E:\RTC_sewer\Project7\logs
-```
-
-Do not overwrite the previous v0.6.5 study. v0.6.6 changes the scientific implementation contract, so D0/D1/D2/D3/models/acceptance/development/Policy Lock/Final evidence must be regenerated under the new contract.
-
-The ten-step flow is:
-
-```text
-0. prepared inputs / lineage / graph / actuator / split / readiness audit
-1. forcing-only Phase-0 cohort -> high-frequency No-control D0 -> checkpoints -> small D2
-2. exact-SWMM response timing + control leverage -> non-censored timing freeze
-3. production D0 + D1 -> Step1 train and held-out acceptance
-4. production D2 + D3 -> Step2 train and held-out acceptance
-5. D2 gradient + D2/D3 ranking/regret acceptance
-6. development closed-loop Proposed vs competitive baselines
-7. runtime/readback/deadline acceptance
-8. Policy Lock
-9. untouched seven-strategy authoritative-SWMM Final
-```
-
-Do not scale Step2 before exact SWMM demonstrates useful action-dependent TFV variation, and do not enter closed-loop MPC if Step2 action ranking/gradient acceptance fails.
+Competitive comparators are No-control, Internal RTC, Auto-RBC and EFD. All-open/all-closed are diagnostic extremes. No strategy may use future realised rainfall, future SWMM state/flooding, future Internal trajectory or untouched Final truth.
 
 ## Data roles
 
-- **D0:** controls-disabled reference hydraulic trajectories, including the causal dry/DWF prefix.
-- **D1:** development/train-only continuous controlled exploration for Step1 state coverage.
-- **Step1:** sparse causal history -> current full six-channel hydraulic state estimate.
-- **D2:** exact same-prefix single-actuator/local counterfactual effects; sampling budget does not shrink online action space.
-- **D3:** joint multi-actuator, multi-control-block sequences for interaction/ranking learning.
-- **Step2:** current state + future setting/rainfall sequence -> future hydraulic/actuator-flow/flood-volume trajectory.
-- **MPC:** optimize the future setting sequence online, retain best-so-far, require predicted hold dominance, execute only the first move and re-solve.
+```text
+D0  controls-disabled reference hydraulic trajectories
+D1  development/train-only controlled state exploration
+D2  exact same-prefix local actuator counterfactuals
+D3  joint multi-actuator, multi-control-block sequences
+Step1 sparse causal history -> current full hydraulic state
+Step2 current state + future setting/rainfall sequence -> future hydraulic/action consequence
+MPC  optimize a future setting sequence, execute first move only, re-solve
+```
 
-## Metrics
+Final TFV/PFV truth comes from authoritative SWMM cumulative node statistics. Global Peak is obtained by routing-step replay of the frozen executed decision schedule.
+
+## Fresh acceptance flow
 
 ```text
-TFV = sum over all hydraulic nodes of SWMM cumulative flooding-volume delta [m3]
-PFV = the same cumulative volume delta summed over the eight frozen priority nodes [m3]
-Global Peak = max_t sum_i max(flooding_rate_i(t), 0) [m3/s]
+0  build v0.6.7 inputs / readiness / graph / physical audit
+1  small high-frequency No-control D0 + exact-prefix D2
+2  response timing + exact SWMM control-leverage evidence
+3  production D0/D1 + Step1 train/held-out acceptance
+4  production D2/D3 + Step2 train/held-out acceptance
+5  gradient + ranking/regret acceptance
+6  development closed-loop comparison
+7  runtime/readback/deadline acceptance
+8  Policy Lock
+9  untouched seven-strategy authoritative-SWMM Final
 ```
 
-Formal aggregation gives each independent rainfall group equal weight.
+Do not scale learned models when a physical/source-data problem is unresolved.
 
-## Workstation defaults
+## Start here
 
-For a 16 GB RAM / RTX 4060 8 GB workstation:
+- `docs/METHOD_TESTBED_V067.md` — active scientific/physical contract.
+- `FORMAL_PIPELINE_LATEST.md` — active fail-closed evidence contract.
+- `scripts/bootstrap_project7_v067.ps1` — fresh Windows Project7 bootstrap.
+- `configs/formal_controller_v4.template.json` — TFV-first production-controller template.
 
-```text
-SWMM generation: 16 independent processes x 1 SWMM thread
-reduce to 12 workers if Windows begins paging
-Step1: batch 8, grad accumulation 2, AMP
-Step2: batch 2, grad accumulation 4, AMP
-Step2 shard size: about 128
-```
-
-## Install and self-test
-
-```powershell
-cd E:\RTC_sewer\Project7\repo
-git checkout main
-git pull --ff-only
-python -m pip install -e ".[dev,swmm]"
-python -m pytest -q
-python -c "import importlib.metadata; print(importlib.metadata.version('wuhan-rtc'))"
-```
-
-Expected release:
-
-```text
-0.6.6
-```
-
-Code and CI establish execution contracts, not Wuhan performance. Whether Proposed reduces TFV must be demonstrated by fresh authoritative-SWMM development and untouched Final runs.
+Historical v0.6.6 runbooks remain provenance only and must not be treated as the active fresh-study input contract.
