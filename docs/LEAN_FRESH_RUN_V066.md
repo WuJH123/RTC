@@ -17,18 +17,20 @@ This is the active fresh-run contract after the Project7 pre-training audit. It 
 
 Use the event-specific INPs as the authoritative source for rainfall, DWF and initial conditions. Do not use the frozen network INP as an event forcing source.
 
-Prepare a new v0.6.6 event suite:
+Prepare a new v0.6.6 event suite. For this large Wuhan Dynamic-Wave model the first engineering attempt uses a **6 h dry/DWF hydraulic warm-up**, while Step1 still uses only the latest 60 min causal history:
 
 ```powershell
 rtc-prepare-event-suite `
   --events E:\RTC_sewer\Project7\inputs\contracts\events_with_splits.csv `
   --out-dir E:\RTC_sewer\Project7\inputs\prepared_v066\events `
   --out-registry E:\RTC_sewer\Project7\inputs\prepared_v066\events_with_splits.csv `
-  --warmup-minutes 60 `
+  --warmup-minutes 360 `
   --post-rain-tail-minutes 360
 ```
 
 The preparation contract keeps each storm at the same absolute clock and therefore preserves its DWF phase. It moves only the simulation/report start earlier, canonicalizes rain time-series rows to explicit absolute timestamps and extends the simulation end. It does not change rainfall intensities or DWF values.
+
+`warmup_minutes` and `history_span_minutes` are different quantities. Six hours is a conservative first initialization attempt, **not proof of dry-weather convergence**. Before large D2/production data, compare the No-control hydraulic state at storm onset under 6 h versus a longer 12 h warm-up on a small forcing-only development/train pilot. If the storm-onset state is still materially dependent on warm-up length, test 24 h and adopt the shortest duration for which the hydraulic state is insensitive enough for the study. If the warm-up changes, re-prepare the full event registry and start a new fresh study root; do not mix evidence from different event clocks.
 
 Create/use:
 
@@ -90,7 +92,9 @@ Run fresh workspace initialization, INP preflight, rainfall-group validation and
 
 Select 8 development/train rainfall groups by forcing descriptors only.
 
-Run high-frequency No-control D0 at 60 s. Because rainfall now begins at elapsed 60 min, choose hydraulic checkpoints after rainfall has begun; the first useful flooded-state checkpoint should normally be no earlier than elapsed 90 min. Reserve enough future tail for the candidate horizon.
+Run high-frequency No-control D0 at 60 s. With the default 360 min warm-up, rainfall begins at elapsed 360 min. Hydraulic action-effect checkpoints must be selected after rainfall onset; the first useful flooded-state checkpoint should normally be no earlier than `rainfall_onset + 30 min` (390 min for the default preparation), not simply 30 min after simulation start. Reserve enough future tail for the candidate horizon.
+
+Before expensive D2, use one or a few development/train D0 runs to compare storm-onset hydraulics under 360 min versus 720 min warm-up. This is an initialization sensitivity check, not an outcome-based rainfall selection. If the difference is still material, repeat with 1440 min and regenerate the prepared suite using the selected initialization duration.
 
 Design rotating D2 local probes with 12 actuators/checkpoint, full 109-dimensional candidate vectors and exact No-control prefix replay.
 
@@ -102,16 +106,18 @@ Start the new pilot at 210 min because the earlier audit found p90 network-flood
 
 Run exact-SWMM control leverage and freeze timing only when `horizon_censored=false`.
 
-The likely starting clock remains:
+The likely starting clocks are:
 
 ```text
+hydraulic warm-up = 360 min first attempt; evidence may extend it
 model step = 300 s
 control update = 600 s
-history = 13 frames = 60 min
-first Python control = 60 min = rainfall onset in prepared events
+Step1 history = 13 frames = 60 min
+first Python supervisory control = 60 min after simulation start
+rainfall onset = warm-up duration (360 min in the first prepared suite)
 ```
 
-The prediction horizon is evidence-dependent, not fixed here.
+Starting the Python policies after the first complete 60 min history means they operate causally during most of the dry/DWF warm-up, as a continuously running RTC would. Internal RTC remains a deliberately strong native comparator and may evaluate its native rules from simulation start. The prediction horizon is evidence-dependent and is not the same as the whole-event control duration.
 
 Also inspect recovery at the 6 h post-rain tail. If the development pilot remains right-censored, re-prepare the event suite with a 12 h tail **before production training**, create a new study root and repeat Step 0–2. Do not call a censored endpoint recovered.
 
@@ -230,6 +236,7 @@ Stop before the next expensive stage when any of the following is unresolved:
 
 ```text
 prepared event/readiness contract fails
+pre-rain hydraulic state remains materially warm-up-dependent
 native Internal rule pairing fails
 response horizon remains censored
 recovery tail remains censored and has not been extended
