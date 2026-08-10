@@ -8,17 +8,23 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class SplitFractions:
-    development: float = 0.60
-    calibration: float = 0.15
-    safety_audit: float = 0.10
-    final: float = 0.15
+    """Generic two-role split utility for the active TFV-first Project7 design.
+
+    The active 30-event study does not use this random helper: its exact forcing-stratified
+    allocation is preregistered in ``configs/project7_v069_split_contract.json``. This helper
+    remains for non-Formal utilities and therefore mirrors the current 80% development / 20%
+    Final top-level semantics rather than the obsolete calibration/safety-audit design.
+    """
+
+    development: float = 0.80
+    final: float = 0.20
 
     def validate(self) -> None:
-        values = (self.development, self.calibration, self.safety_audit, self.final)
+        values = (self.development, self.final)
         if any(v <= 0 for v in values):
-            raise ValueError("all split fractions must be positive")
+            raise ValueError("development/final split fractions must be positive")
         if not np.isclose(sum(values), 1.0):
-            raise ValueError("split fractions must sum to 1")
+            raise ValueError("development/final split fractions must sum to 1")
 
 
 def assign_rainfall_group_splits(
@@ -27,14 +33,13 @@ def assign_rainfall_group_splits(
     rainfall_group_col: str = "rainfall_group",
     seed: int = 42,
     fractions: SplitFractions = SplitFractions(),
-    development_validation_fraction: float = 0.20,
+    development_validation_fraction: float = 0.25,
 ) -> pd.DataFrame:
-    """Assign rainfall groups to scientific roles with a held-out dev-validation fold.
+    """Assign generic development/final roles with held-out dev validation.
 
-    Top-level roles are mutually exclusive ``development``, ``calibration``,
-    ``safety_audit`` and ``final``. Development groups are then split, again by whole
-    rainfall group, into ``train`` and ``validation`` via ``development_fold``. This lets
-    model acceptance remain independent of fitting without consuming calibration data.
+    Do not use this random helper to replace the active 30-event Project7 split. The Formal
+    split is a fixed forcing-only contract. This function exists for generic utilities/tests
+    and intentionally has no calibration or safety-audit roles.
     """
 
     fractions.validate()
@@ -43,16 +48,14 @@ def assign_rainfall_group_splits(
     if rainfall_group_col not in frame.columns:
         raise ValueError(f"missing rainfall group column: {rainfall_group_col}")
     groups = pd.Series(frame[rainfall_group_col].dropna().astype(str).unique())
-    if len(groups) < 5:
-        raise ValueError("at least five rainfall groups are required")
+    if len(groups) < 3:
+        raise ValueError("at least three rainfall groups are required")
     rng = np.random.default_rng(seed)
     shuffled = groups.to_numpy(copy=True)
     rng.shuffle(shuffled)
 
     n = len(shuffled)
-    raw = np.array(
-        [fractions.development, fractions.calibration, fractions.safety_audit, fractions.final]
-    ) * n
+    raw = np.array([fractions.development, fractions.final]) * n
     counts = np.floor(raw).astype(int)
     counts = np.maximum(counts, 1)
     while counts.sum() > n:
@@ -63,7 +66,7 @@ def assign_rainfall_group_splits(
         remainder = raw - counts
         counts[int(np.argmax(remainder))] += 1
 
-    roles = ("development", "calibration", "safety_audit", "final")
+    roles = ("development", "final")
     mapping: dict[str, str] = {}
     start = 0
     for role, count in zip(roles, counts, strict=True):
@@ -108,11 +111,12 @@ def verify_disjoint_rainfall_splits(
     bad = cross[cross != 1]
     if not bad.empty:
         raise ValueError(f"rainfall-group leakage across splits: {bad.index.tolist()[:10]}")
-    required = {"development", "calibration", "safety_audit", "final"}
+    required = {"development", "final"}
     present = set(frame[split_col].dropna().astype(str))
-    missing = sorted(required - present)
-    if missing:
-        raise ValueError(f"missing scientific split roles: {missing}")
+    if present != required:
+        raise ValueError(
+            f"active split roles must be exactly development/final, got {sorted(present)}"
+        )
 
 
 def verify_development_folds(
