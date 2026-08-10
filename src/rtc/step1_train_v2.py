@@ -43,6 +43,17 @@ def train_step1_large_v2_main() -> None:
     parser.add_argument("--no-amp", action="store_true")
     parser.add_argument("--resume-state")
     parser.add_argument("--no-resume-training", action="store_true")
+    parser.add_argument(
+        "--samples-per-trajectory",
+        type=int,
+        default=256,
+        help="fixed Step1 epoch budget per D0/D1 trajectory under hydraulic-stratified sampling",
+    )
+    parser.add_argument(
+        "--no-stratified-windows",
+        action="store_true",
+        help="disable dry/wet/flood-high balanced development/train window sampling",
+    )
     args = parser.parse_args()
     if min(
         args.history_steps,
@@ -50,6 +61,7 @@ def train_step1_large_v2_main() -> None:
         args.epochs,
         args.batch_size,
         args.grad_accum,
+        args.samples_per_trajectory,
     ) <= 0:
         raise ValueError("Step1 timing/training dimensions must be positive")
 
@@ -76,8 +88,14 @@ def train_step1_large_v2_main() -> None:
         (state_mean, state_std),
         (static_mean, static_std),
     ) = _step1_normalization(index, graph, sensors)
+    stratified = not args.no_stratified_windows
     sampler = TrajectoryBatchSampler(
-        dataset, batch_size=args.batch_size, seed=args.seed, shuffle=True
+        dataset,
+        batch_size=args.batch_size,
+        seed=args.seed,
+        shuffle=True,
+        stratified=stratified,
+        samples_per_trajectory=(args.samples_per_trajectory if stratified else None),
     )
     loader = DataLoader(
         dataset,
@@ -128,6 +146,10 @@ def train_step1_large_v2_main() -> None:
         "learning_rate": args.learning_rate,
         "seed": args.seed,
         "amp": amp,
+        "hydraulic_stratified_windows": stratified,
+        "samples_per_trajectory": args.samples_per_trajectory if stratified else None,
+        "step1_stratum_weights": sampler.stratum_weights if stratified else None,
+        "step1_raw_stratum_counts": dataset.stratum_counts,
     }
     contract_sha, code_sha = training_contract_sha("step1", train_payload)
     resume_path = Path(args.resume_state or (str(args.out) + ".trainstate.pt"))
@@ -196,6 +218,9 @@ def train_step1_large_v2_main() -> None:
         "swmm_engine_version": dataset.swmm_engine_version,
         "context_contract": "NODE_LOCAL_CAUSAL_CONTEXT_V1",
         "training_contract_sha256": contract_sha,
+        "hydraulic_stratified_windows": stratified,
+        "samples_per_trajectory": args.samples_per_trajectory if stratified else None,
+        "step1_stratum_weights": sampler.stratum_weights if stratified else None,
     }
     meta = save_torch_checkpoint(
         model,
@@ -207,9 +232,15 @@ def train_step1_large_v2_main() -> None:
     print(
         json.dumps(
             {
-                "contract": "STEP1_TRAINING_V4_T0_ENGINE_BOUND_RESUMABLE",
+                "contract": "STEP1_TRAINING_V5_HYDRAULIC_STRATA_T0_ENGINE_BOUND",
                 "checkpoint": meta,
-                "windows": len(dataset),
+                "raw_windows": len(dataset),
+                "raw_stratum_counts": dataset.stratum_counts,
+                "stratified_windows": stratified,
+                "samples_per_trajectory_per_epoch": (
+                    args.samples_per_trajectory if stratified else None
+                ),
+                "trajectories": len(dataset.trajectories),
                 "swmm_engine_version": dataset.swmm_engine_version,
                 "completed_epochs": args.epochs,
                 "resumed_from_epoch": start_epoch,
