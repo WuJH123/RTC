@@ -89,15 +89,15 @@ def test_active_30_event_split_is_exactly_18_6_6(tmp_path: Path) -> None:
     assert evidence["required_invariants_passed"] is True
 
 
-def test_obsolete_calibration_or_safety_roles_are_rejected(tmp_path: Path) -> None:
+def test_obsolete_calibration_or_safety_roles_are_rejected_by_active_validator(tmp_path: Path) -> None:
     frame = _active_registry(tmp_path)
     frame.loc[0, "scientific_split"] = "calibration"
     frame.loc[0, "development_fold"] = ""
     with pytest.raises(ValueError, match="obsolete/unsupported"):
-        validate_formal_rainfall_design(frame)
+        validate_project7_v069_rainfall_design(frame)
 
 
-def test_generic_split_helper_no_longer_creates_calibration_or_safety(tmp_path: Path) -> None:
+def test_legacy_generic_splitter_cannot_authorize_formal_project7(tmp_path: Path) -> None:
     inp = tmp_path / "event.inp"
     inp.write_text("[OPTIONS]\nFLOW_UNITS CMS\n", encoding="utf-8")
     frame = pd.DataFrame(
@@ -108,9 +108,13 @@ def test_generic_split_helper_no_longer_creates_calibration_or_safety(tmp_path: 
         }
     )
     out = assign_rainfall_group_splits(frame, seed=42)
-    assert set(out["scientific_split"]) == {"development", "final"}
-    assert (out["scientific_split"] == "development").sum() == 24
-    assert (out["scientific_split"] == "final").sum() == 6
-    dev = out[out["scientific_split"] == "development"]
-    assert (dev["development_fold"] == "train").sum() == 18
-    assert (dev["development_fold"] == "validation").sum() == 6
+    assert set(out["scientific_split"]) == {
+        "development",
+        "calibration",
+        "safety_audit",
+        "final",
+    }
+    generic = validate_formal_rainfall_design(out)
+    assert generic["project7_v069_formal_authorization"] is False
+    with pytest.raises(ValueError, match="obsolete/unsupported"):
+        validate_project7_v069_rainfall_design(out)
