@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import torch
@@ -9,7 +10,7 @@ import torch
 from .baselines import canonical_baseline_id
 from .causal_timing import timing_from_controller_config
 from .code_contract import rtc_source_tree_sha256
-from .inp_runtime import sha256_file
+from .inp_runtime import build_runtime_inp, sha256_file
 from .production_cli_router import run_policy_main
 
 
@@ -23,12 +24,31 @@ def _model_engine(path: str, *, name: str) -> str:
     return engine
 
 
+def _replace_cli_value(flag: str, value: str) -> None:
+    if flag not in sys.argv:
+        raise RuntimeError(f"public production guard expected CLI flag {flag}")
+    pos = sys.argv.index(flag)
+    if pos + 1 >= len(sys.argv):
+        raise RuntimeError(f"CLI flag {flag} has no value")
+    sys.argv[pos + 1] = value
+
+
+def _remove_cli_pair(flag: str) -> None:
+    if flag not in sys.argv:
+        return
+    pos = sys.argv.index(flag)
+    if pos + 1 >= len(sys.argv):
+        raise RuntimeError(f"CLI flag {flag} has no value")
+    del sys.argv[pos : pos + 2]
+
+
 def _stamp_run_metadata(
     *,
     metadata_path: Path,
     strategy: str,
     config_path: str,
     source_inp: str,
+    native_controls_template: str | None,
     graph: str | None,
     step1: str | None,
     step2: str | None,
@@ -50,6 +70,12 @@ def _stamp_run_metadata(
     payload["source_inp_sha256"] = sha256_file(source_inp)
     payload["controller_config_sha256"] = sha256_file(config_path)
     payload["expected_swmm_engine_version"] = expected_swmm_engine_version
+    payload["native_controls_template_sha256"] = (
+        None if native_controls_template is None else sha256_file(native_controls_template)
+    )
+    payload["native_controls_template_path"] = (
+        None if native_controls_template is None else str(Path(native_controls_template).resolve())
+    )
     if graph:
         payload["graph_schema_sha256"] = sha256_file(graph)
     if step1:
@@ -70,6 +96,10 @@ def main() -> None:
     parser.add_argument("--inp", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument(
+        "--native-controls-template",
+        help="frozen network INP supplying native [CONTROLS]; required for internal_rtc",
+    )
     parser.add_argument("--graph")
     parser.add_argument("--step1")
     parser.add_argument("--step2")
@@ -80,6 +110,29 @@ def main() -> None:
     strategy = canonical_baseline_id(known.strategy)
     timing = timing_from_controller_config(raw)
     timing.validate(require_full_history_before_first_control=(strategy == "proposed"))
+
+    original_event_inp = str(Path(known.inp).resolve())
+    template: str | None = None
+    if strategy == "internal_rtc":
+        if not known.native_controls_template:
+            raise ValueError(
+                "Internal-RTC requires --native-controls-template. Event INPs are authoritative "
+                "for forcing/DWF/initial conditions; the frozen network is authoritative only for native rules."
+            )
+        template = str(Path(known.native_controls_template).resolve())
+        runtime_dir = Path(known.out_dir) / "_runtime_inp"
+        runtime = runtime_dir / (
+            f"{sha256_file(original_event_inp)[:20]}.internal."
+            f"{sha256_file(template)[:12]}.inp"
+        )
+        build_runtime_inp(
+            original_event_inp,
+            runtime,
+            native_controls=True,
+            swmm_threads=int(raw.get("swmm_threads", 1)),
+            native_controls_template=template,
+        )
+        _replace_cli_value("--inp", str(runtime.resolve()))
 
     expected_engine: str | None = None
     if strategy == "proposed":
@@ -93,6 +146,9 @@ def main() -> None:
             )
         expected_engine = step1_engine
 
+    # --native-controls-template is consumed by this public guard; the legacy policy parser does
+    # not know about it and must not see an unknown argument.
+    _remove_cli_pair("--native-controls-template")
     run_policy_main()
     metadata_path = Path(known.out_dir) / f"{known.run_id}.json"
     if not metadata_path.is_file():
@@ -103,7 +159,8 @@ def main() -> None:
         metadata_path=metadata_path,
         strategy=known.strategy,
         config_path=known.config,
-        source_inp=known.inp,
+        source_inp=original_event_inp,
+        native_controls_template=template,
         graph=known.graph,
         step1=known.step1,
         step2=known.step2,

@@ -10,7 +10,9 @@ import numpy as np
 from . import policy_lock as legacy
 from .causal_timing import timing_from_controller_config
 from .code_contract import rtc_source_tree_sha256
+from .control_lineage import section_payload_sha256
 from .inp_lineage import physical_contract_sha256
+from .study_readiness import READINESS_CONTRACT
 from .tfv_pipeline import TFVPipelineLedger, sha256_file
 
 POLICY_LOCK_CONTRACT = legacy.POLICY_LOCK_CONTRACT
@@ -35,6 +37,8 @@ def create_policy_lock(
     missing = sorted(legacy._REQUIRED - set(artefacts))
     if missing:
         raise ValueError(f"Policy Lock missing required artifacts: {missing}")
+    if "study_readiness" not in artefacts:
+        raise ValueError("Policy Lock requires the v0.6.6 pretraining study_readiness artifact")
     for name, path in artefacts.items():
         if not Path(path).is_file():
             raise ValueError(f"Policy Lock artifact missing: {name}: {path}")
@@ -47,6 +51,20 @@ def create_policy_lock(
     no_control = preflight.get("no_control_contract")
     if not isinstance(no_control, dict) or no_control.get("id") != "NO_SUPERVISORY_RTC_V2":
         raise ValueError("INP preflight lacks the No-supervisory-RTC V2 contract")
+
+    readiness = legacy._json(artefacts["study_readiness"])
+    if readiness.get("contract") != READINESS_CONTRACT or readiness.get("passed") is not True:
+        raise ValueError("Policy Lock requires a passed WUHAN_RTC_PRETRAINING_READINESS_V1 artifact")
+    if str(readiness.get("event_registry_sha256", "")) != sha256_file(artefacts["split_registry"]):
+        raise ValueError("study readiness belongs to a different prepared event registry")
+    if str(readiness.get("frozen_inp_sha256", "")) != sha256_file(artefacts["frozen_inp"]):
+        raise ValueError("study readiness belongs to a different frozen INP")
+    if str(readiness.get("sensor_layout_sha256", "")) != sha256_file(artefacts["sensor_layout"]):
+        raise ValueError("study readiness belongs to a different sensor layout")
+    actuation_scope = str(readiness.get("actuation_scope", ""))
+    field_claim = bool(readiness.get("field_deployment_claim", False))
+    if actuation_scope == "SWMM_MODEL_CONTINUOUS_SIMULATION_ONLY" and field_claim:
+        raise ValueError("simulation-only Policy Lock cannot make a field-deployment actuation claim")
 
     priority = legacy._lines(artefacts["priority_nodes"])
     sensors = legacy._lines(artefacts["sensor_layout"])
@@ -75,6 +93,8 @@ def create_policy_lock(
 
     timing = timing_from_controller_config(controller)
     timing.validate(require_full_history_before_first_control=True)
+    if float(readiness.get("minimum_pre_rain_warmup_minutes", -1.0)) * 60 < timing.history_span_seconds:
+        raise ValueError("prepared events do not provide the full locked causal history before rainfall")
     controller_section = controller.get("controller")
     if not isinstance(controller_section, dict):
         raise ValueError("controller config lacks controller section")
@@ -102,8 +122,8 @@ def create_policy_lock(
     )
 
     plan = legacy._json(artefacts["baseline_plan"])
-    if plan.get("contract") != "FORMAL_BASELINE_PLAN_V5_DYNAMIC_RULE_COMPARATORS":
-        raise ValueError("Policy Lock requires Formal baseline plan V5")
+    if plan.get("contract") != "FORMAL_BASELINE_PLAN_V6_EVENT_PAIRED_INFORMATION_DISCLOSED":
+        raise ValueError("Policy Lock requires Formal baseline plan V6 event-paired semantics")
     strategies = tuple(str(x) for x in plan.get("strategies", []))
     if strategies != EXPECTED_STRATEGIES:
         raise ValueError(f"Formal strategy matrix must be exactly {list(EXPECTED_STRATEGIES)}")
@@ -121,6 +141,7 @@ def create_policy_lock(
         "rtc_source_tree_sha256": implementation_sha,
         "implementation_binding": "semantic_scientific_contract_plus_exact_numerical_artifact_hashes",
         "physical_network_sha256": physical_contract_sha256(artefacts["frozen_inp"]),
+        "native_controls_payload_sha256": section_payload_sha256(artefacts["frozen_inp"], "CONTROLS"),
         "objective_contract": "TFV_PRIMARY__PRIORITY_PFV_SOFT_SECONDARY_V1",
         "priority_is_hard_constraint": False,
         "priority_nodes": list(priority),
@@ -129,9 +150,14 @@ def create_policy_lock(
         "model_contracts": model_contracts,
         "rainfall_design": rainfall_design,
         "rainfall_sample_size_is_execution_gate": False,
+        "study_readiness": readiness,
+        "actuation_scope": actuation_scope,
+        "field_deployment_claim": field_claim,
         "no_control_contract": no_control,
         "runtime_acceptance": runtime_acceptance,
         "formal_strategy_matrix": list(strategies),
+        "competitive_baselines": ["no_control", "internal_rtc", "auto_rbc", "efd"],
+        "diagnostic_extremes": ["all_open", "all_closed"],
         "formal_metric_aggregation": "equal_weight_per_independent_rainfall_group",
         "workspace": workspace,
         "artifact_location_is_execution_gate": False,

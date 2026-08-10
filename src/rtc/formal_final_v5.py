@@ -9,6 +9,7 @@ import pandas as pd
 
 from .code_contract import rtc_source_tree_sha256
 from .contracts import load_priority_nodes
+from .control_lineage import section_payload_sha256
 from .formal_run_verify import read_json as _json
 from .formal_run_verify import verify_formal_run_v4
 from .inp_lineage import physical_contract_sha256, scientific_event_contract_sha256
@@ -24,6 +25,8 @@ EXPECTED_STRATEGIES = (
     "all_open",
     "all_closed",
 )
+COMPETITIVE_BASELINES = {"no_control", "internal_rtc", "auto_rbc", "efd"}
+DIAGNOSTIC_EXTREMES = {"all_open", "all_closed"}
 
 
 def _verified_lock(path: str | Path) -> dict[str, object]:
@@ -58,6 +61,16 @@ def _group_detail(detail: pd.DataFrame, metric_cols: list[str]) -> pd.DataFrame:
     )
 
 
+def _strategy_role(strategy: str) -> str:
+    if strategy == "proposed":
+        return "proposed"
+    if strategy in COMPETITIVE_BASELINES:
+        return "competitive_baseline"
+    if strategy in DIAGNOSTIC_EXTREMES:
+        return "diagnostic_extreme"
+    return "other"
+
+
 def compile_final_v5(
     *, policy_lock_path: str | Path, run_index_path: str | Path
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, pd.DataFrame]]:
@@ -66,7 +79,9 @@ def compile_final_v5(
     hashes = lock["sha256"]
     model_contracts = lock["model_contracts"]
     assert isinstance(artefacts, dict) and isinstance(hashes, dict) and isinstance(model_contracts, dict)
-    physical_sha = physical_contract_sha256(str(artefacts["frozen_inp"]))
+    frozen_inp = str(artefacts["frozen_inp"])
+    physical_sha = physical_contract_sha256(frozen_inp)
+    native_controls_sha = section_payload_sha256(frozen_inp, "CONTROLS")
     priority = load_priority_nodes(str(artefacts["priority_nodes"]))
     plan = _json(str(artefacts["baseline_plan"]))
     strategies = tuple(str(x) for x in plan.get("strategies", []))
@@ -137,10 +152,12 @@ def compile_final_v5(
             expected_event_sha256=event_sha[eid],
             expected_swmm_engine_version=locked_engine,
             expected_proposed_artifact_sha256=proposed_hashes,
+            expected_native_controls_payload_sha256=native_controls_sha,
         )
         for key in ("event_id", "rainfall_group", "strategy"):
             if str(result[key]) != str(item[key]):
                 raise ValueError(f"Final index {key} differs from bound formal run")
+        result["strategy_role"] = _strategy_role(str(result["strategy"]))
         rows.append(result)
 
     detail = pd.DataFrame(rows)
@@ -158,6 +175,7 @@ def compile_final_v5(
         .sort_values("strategy")
         .reset_index(drop=True)
     )
+    summary["strategy_role"] = summary["strategy"].map(_strategy_role)
     summary["independent_rainfall_groups"] = int(grouped["rainfall_group"].nunique())
     summary["final_events"] = int(len(expected_events))
     summary["swmm_engine_version"] = locked_engine
@@ -173,7 +191,11 @@ def compile_final_v5(
             raise ValueError(f"unpaired Final rainfall groups for proposed vs {reference}")
         records: list[dict[str, object]] = []
         for rainfall_group in sorted(proposed.index):
-            row: dict[str, object] = {"rainfall_group": rainfall_group, "reference": reference}
+            row: dict[str, object] = {
+                "rainfall_group": rainfall_group,
+                "reference": reference,
+                "reference_role": _strategy_role(reference),
+            }
             for metric in ("tfv_m3", "priority_flood_volume_m3", "global_peak_flood_rate_m3s"):
                 p = float(proposed.loc[rainfall_group, metric])
                 b = float(base.loc[rainfall_group, metric])
@@ -213,9 +235,12 @@ def main() -> None:
         "independent_rainfall_groups": int(detail["rainfall_group"].nunique()),
         "aggregation": "equal_weight_per_rainfall_group",
         "strategies": list(EXPECTED_STRATEGIES),
+        "competitive_baselines": sorted(COMPETITIVE_BASELINES),
+        "diagnostic_extremes": sorted(DIAGNOSTIC_EXTREMES),
         "priority_pfv_is_hard_gate": False,
         "complete_locked_final_event_set": True,
         "strategy_execution_bound": True,
+        "native_rules_bound_to_frozen_template": True,
         "detail": str(out / "formal_final_detail.csv"),
         "summary": str(out / "formal_final_summary.csv"),
     }, indent=2))

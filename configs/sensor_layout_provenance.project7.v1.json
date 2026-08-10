@@ -1,0 +1,15 @@
+{
+  "contract": "SENSOR_LAYOUT_PROVENANCE_V1",
+  "sensor_layout_sha256": "0cd92500c9cfbdcb33abf5d6aebba78316f80217cb281ff18a7db41ba914e93e",
+  "sensor_count": 89,
+  "network_node_count": 932,
+  "observation_ratio": 0.0954935622,
+  "source_lineage": "Project5 topology-based sensor design copied byte-identically into Project7 inputs",
+  "selection_method": "10% of eligible junction/storage nodes; degree_in + degree_out ordering with seeded 0.01 random tie-break; priority/sentinel budget forced",
+  "selection_seed": 2026,
+  "priority_nodes_forced": 8,
+  "storage_nodes_forced": 0,
+  "hydraulic_outcomes_used_for_selection": false,
+  "validation_or_final_outcomes_used_for_selection": false,
+  "interpretation": "This manifest makes the previously cross-project but traceable layout an explicit Project7 scientific input. Regeneration is not required as long as the copied sensor file hash remains identical."
+}

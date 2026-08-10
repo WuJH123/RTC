@@ -1,0 +1,18 @@
+{
+  "contract": "RAINFALL_PROVENANCE_V1",
+  "source_kind": "EXISTING_PROJECT5_SYNTHETIC_DESIGN_STORM_LIBRARY_BYTES_HASHED_IN_EVENT_REGISTRY",
+  "official_standard_claim": false,
+  "official_standard": null,
+  "return_period_scope_years": [10, 20, 30, 50, 75, 100],
+  "duration_scope_minutes": [75, 105, 150, 210, 240, 300],
+  "pattern_scope": ["block", "chicago_center", "chicago_early", "chicago_late", "double_peak"],
+  "spatial_mode": "UNIFORM_SINGLE_DESIGN_GAGE_ACROSS_ALL_SUBCATCHMENTS",
+  "spatial_generalization_claim": false,
+  "event_count_expected": 180,
+  "factorial_design": "6_RETURN_PERIOD_X_6_DURATION_X_5_PATTERN",
+  "limitations": [
+    "No claim is made that the current event depths or Chicago parameters are independently regenerated from DB4201/T 641-2020 until an authoritative local formula/generator provenance file is supplied.",
+    "The current main experiment does not cover 2, 3 or 5 year events, durations below 75 minutes, durations above 300 minutes, or spatially heterogeneous rainfall.",
+    "These gaps are treated as external robustness/sensitivity scope rather than silently relabeling existing event bytes."
+  ]
+}

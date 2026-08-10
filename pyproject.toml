@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wuhan-rtc"
-version = "0.6.5"
+version = "0.6.6"
 description = "Sparse-sensing, actuator-agnostic differentiable MPC for large urban drainage networks"
 requires-python = ">=3.10"
 dependencies = [
@@ -23,6 +23,8 @@ rtc-inp-audit-v2 = "rtc.inp_audit_v2:main"
 rtc-resolve-priority = "rtc.priority_resolver:main"
 rtc-split-groups = "rtc.pipeline_cli:split_groups_main"
 rtc-validate-rainfall-design = "rtc.rainfall_design:main"
+rtc-prepare-event-suite = "rtc.event_preparation:main"
+rtc-check-study-readiness = "rtc.study_readiness:main"
 rtc-init-fresh-workspace = "rtc.fresh_workspace:main"
 rtc-validate-fresh-index = "rtc.fresh_model_guard:validate_index_main"
 rtc-build-graph = "rtc.pipeline_cli:build_graph_main"

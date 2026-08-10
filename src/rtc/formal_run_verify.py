@@ -26,18 +26,19 @@ def verify_formal_run_v4(
     expected_event_sha256: str | None = None,
     expected_swmm_engine_version: str | None = None,
     expected_proposed_artifact_sha256: dict[str, str] | None = None,
+    expected_native_controls_payload_sha256: str | None = None,
 ) -> dict[str, object]:
     manifest_path = Path(manifest_path)
     run = read_json(manifest_path)
     implementation_sha = rtc_source_tree_sha256()
-    if run.get("contract") != "FORMAL_CLOSED_LOOP_RUN_MANIFEST_V5_EVENT_ENGINE_BOUND":
-        raise ValueError(f"not a Formal run V5 event/engine-bound manifest: {manifest_path}")
+    if run.get("contract") != "FORMAL_CLOSED_LOOP_RUN_MANIFEST_V6_EVENT_RULE_ENGINE_BOUND":
+        raise ValueError(f"not a Formal run V6 event/rule/engine-bound manifest: {manifest_path}")
     if run.get("rtc_source_tree_sha256") != implementation_sha:
         raise ValueError(f"Formal run uses an incompatible implementation contract: {manifest_path}")
     strategy_evidence = run.get("strategy_execution")
     if not isinstance(strategy_evidence, dict) or strategy_evidence.get("passed") is not True:
         raise ValueError(f"Formal run lacks verified actual strategy semantics: {manifest_path}")
-    if strategy_evidence.get("contract") != "FORMAL_STRATEGY_EXECUTION_VERIFICATION_V1":
+    if strategy_evidence.get("contract") != "FORMAL_STRATEGY_EXECUTION_VERIFICATION_V2_EVENT_PAIRED":
         raise ValueError(f"Formal run uses an incompatible strategy verification contract: {manifest_path}")
     if str(run.get("physical_network_sha256", "")) != physical_sha:
         raise ValueError(f"physical network changed in run: {manifest_path}")
@@ -57,6 +58,16 @@ def verify_formal_run_v4(
         raise ValueError(f"control-update cadence differs from Policy Lock: {manifest_path}")
 
     strategy = str(run.get("strategy", ""))
+    if strategy == "internal_rtc":
+        actual_rules = str(strategy_evidence.get("native_controls_payload_sha256", ""))
+        if not actual_rules:
+            raise ValueError("Internal-RTC Formal run lacks native-controls payload identity")
+        if expected_native_controls_payload_sha256 is not None and actual_rules != str(
+            expected_native_controls_payload_sha256
+        ):
+            raise ValueError(
+                "Internal-RTC native rule payload differs from the Policy-Locked frozen network"
+            )
     if strategy == "proposed":
         if expected_proposed_artifact_sha256 is None:
             raise ValueError("Proposed Formal verification requires locked model/controller artifact hashes")
@@ -151,6 +162,10 @@ def verify_formal_run_v4(
         "truth_source_flood_volume": "SWMM_NODE_STATISTICS_CUMULATIVE_MAIN_RUN",
         "truth_source_global_peak": "ROUTING_STEP_FROZEN_DECISION_REPLAY_WRITE_CADENCE_PRESERVED",
     }
+    if strategy == "internal_rtc":
+        result["native_controls_payload_sha256"] = str(
+            strategy_evidence["native_controls_payload_sha256"]
+        )
     for node in priority:
         result[f"priority_flood_volume_m3:{node}"] = float(flood.loc[node])
         result[f"priority_max_depth_m:{node}"] = float(table.loc[node, "max_depth_m"])
