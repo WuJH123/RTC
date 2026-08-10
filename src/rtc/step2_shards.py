@@ -11,7 +11,7 @@ from .code_contract import rtc_source_tree_sha256
 from .dataset_compile import compile_branches_to_npz
 
 
-SHARD_CONTRACT = "STEP2_SHARDED_DATASET_V4_TIME_ENGINE_LOCKED"
+SHARD_CONTRACT = "STEP2_SHARDED_DATASET_V5_SIMULATION_IDENTITY_TIME_ENGINE_LOCKED"
 
 
 def sha256_file(path: str | Path) -> str:
@@ -27,6 +27,20 @@ def dataframe_sha256(frame: pd.DataFrame) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def simulation_identity_set_sha256(frame: pd.DataFrame) -> str:
+    if "simulation_identity_sha256" not in frame.columns:
+        return ""
+    values = frame["simulation_identity_sha256"].fillna("").astype(str)
+    if (values == "").all():
+        return ""
+    if (values == "").any():
+        raise ValueError("Step2 run index mixes simulation-identity-aware and legacy rows")
+    if values.duplicated().any():
+        raise ValueError("Step2 run index duplicates simulation identities")
+    canonical = "\n".join(sorted(values.tolist())) + "\n"
+    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
 def compile_step2_shards(
     run_index: pd.DataFrame,
     *,
@@ -35,7 +49,7 @@ def compile_step2_shards(
     expected_model_step_seconds: int | None = None,
     expected_horizon_steps: int | None = None,
 ) -> Path:
-    """Compile bounded-memory D2/D3 shards under one immutable time/engine contract."""
+    """Compile bounded-memory D2/D3 shards under one immutable identity/time/engine contract."""
 
     if shard_size <= 0:
         raise ValueError("shard_size must be positive")
@@ -45,6 +59,7 @@ def compile_step2_shards(
     out.mkdir(parents=True, exist_ok=True)
     shards: list[dict[str, object]] = []
     frame = run_index.reset_index(drop=True)
+    identity_set_sha = simulation_identity_set_sha256(frame)
     global_step: int | None = None
     global_horizon: int | None = None
     global_engine: str | None = None
@@ -75,6 +90,7 @@ def compile_step2_shards(
                 "model_step_seconds": step,
                 "horizon_steps": horizon,
                 "swmm_engine_version": engine,
+                "simulation_identity_set_sha256": simulation_identity_set_sha256(chunk),
             }
         )
     assert global_step is not None and global_horizon is not None and global_engine is not None
@@ -96,6 +112,8 @@ def compile_step2_shards(
         "horizon_steps": global_horizon,
         "swmm_engine_version": global_engine,
         "source_run_index_sha256": dataframe_sha256(frame),
+        "source_simulation_identity_set_sha256": identity_set_sha,
+        "simulation_identity_bound": bool(identity_set_sha),
         "rtc_source_tree_sha256": rtc_source_tree_sha256(),
         "shards": shards,
     }
@@ -111,10 +129,16 @@ def load_shard_manifest(path: str | Path) -> dict[str, object]:
     if payload.get("contract") != SHARD_CONTRACT:
         raise ValueError(f"not a {SHARD_CONTRACT} manifest")
     if payload.get("rtc_source_tree_sha256") != rtc_source_tree_sha256():
-        raise ValueError("Step2 shard manifest was compiled by a different RTC scientific implementation")
+        raise ValueError(
+            "Step2 shard manifest was compiled by a different RTC scientific implementation"
+        )
     step = int(payload.get("model_step_seconds", 0))
     horizon = int(payload.get("horizon_steps", 0))
     engine = str(payload.get("swmm_engine_version", "")).strip()
+    identity_bound = bool(payload.get("simulation_identity_bound", False))
+    identity_set_sha = str(payload.get("source_simulation_identity_set_sha256", ""))
+    if identity_bound != bool(identity_set_sha):
+        raise ValueError("Step2 shard manifest simulation-identity binding is inconsistent")
     if step <= 0 or horizon <= 0 or not engine:
         raise ValueError("Step2 shard manifest lacks a valid time/engine contract")
     shards = payload.get("shards")
@@ -132,6 +156,8 @@ def load_shard_manifest(path: str | Path) -> dict[str, object]:
             raise ValueError("Step2 shard horizon differs from manifest")
         if str(item.get("swmm_engine_version", "")) != engine:
             raise ValueError("Step2 shard SWMM engine differs from manifest")
+        if identity_bound and not str(item.get("simulation_identity_set_sha256", "")):
+            raise ValueError("identity-bound Step2 shard entry lacks an identity-set hash")
         with np.load(p, allow_pickle=False) as ds:
             if int(ds["model_step_seconds"].item()) != step:
                 raise ValueError(f"Step2 shard embedded time step differs: {p}")

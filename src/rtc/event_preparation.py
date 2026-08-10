@@ -11,7 +11,7 @@ from .inp_lineage import scientific_event_contract_sha256
 from .inp_runtime import sha256_file
 
 
-EVENT_PREPARATION_CONTRACT = "RTC_EVENT_PREPARATION_V1_DRY_PREFIX_RECOVERY_TAIL"
+EVENT_PREPARATION_CONTRACT = "RTC_EVENT_PREPARATION_V2_EXPLICIT_EFFECTIVE_WARMUP"
 _DATE_FORMATS = ("%m/%d/%Y", "%m-%d-%Y", "%m/%d/%y", "%m-%d-%y")
 _TIME_FORMATS = ("%H:%M:%S", "%H:%M")
 
@@ -157,29 +157,58 @@ def _canonicalize_rainfall_clock(
     return first_nonzero, last_nonzero
 
 
+def _resolve_warmup(
+    *,
+    source_prefix_minutes: float,
+    warmup_minutes: int | None,
+    target_effective_warmup_minutes: int | None,
+) -> tuple[int, float]:
+    """Return additional prefix to add and the resulting effective pre-rain duration.
+
+    ``warmup_minutes`` is retained only for API compatibility and means *additional* prefix,
+    matching v0.6.7 behavior. New Formal workflows should use
+    ``target_effective_warmup_minutes`` so a source INP that already carries a prefix is not
+    accidentally prefixed twice.
+    """
+
+    if warmup_minutes is not None and target_effective_warmup_minutes is not None:
+        raise ValueError("choose either legacy additional warmup or target effective warmup, not both")
+    if target_effective_warmup_minutes is not None:
+        target = float(target_effective_warmup_minutes)
+        if target <= 0:
+            raise ValueError("target_effective_warmup_minutes must be positive")
+        if target + 1e-9 < source_prefix_minutes:
+            raise ValueError(
+                "target effective warmup is shorter than the source INP's existing pre-rain "
+                f"prefix ({target} < {source_prefix_minutes:.6g} min); do not silently truncate source history"
+            )
+        additional = int(round(target - source_prefix_minutes))
+        if abs((source_prefix_minutes + additional) - target) > 1e-6:
+            raise ValueError("effective warmup must resolve to an integer-minute additional prefix")
+        return additional, source_prefix_minutes + additional
+    additional = 0 if warmup_minutes is None else int(warmup_minutes)
+    if additional < 0:
+        raise ValueError("additional warmup_minutes must be non-negative")
+    return additional, source_prefix_minutes + additional
+
+
 def prepare_event_inp(
     source: str | Path,
     destination: str | Path,
     *,
-    warmup_minutes: int,
+    warmup_minutes: int | None = None,
+    target_effective_warmup_minutes: int | None = None,
     post_rain_tail_minutes: int,
 ) -> dict[str, object]:
-    """Add an antecedent dry/DWF prefix and a recovery tail without changing storm clock/shape.
+    """Prepare one event with explicit source/additional/effective warm-up semantics.
 
     Rainfall rows are canonicalized to explicit absolute dates/times anchored to the original
-    event clock. The simulation start is moved earlier by ``warmup_minutes`` so the same storm
-    arrives after a causal dry/DWF history. The simulation end is moved to the end of the final
-    non-zero rainfall interval plus ``post_rain_tail_minutes``. DWF patterns, rainfall intensities,
-    hydraulic geometry, initial device definitions and any existing policy section are otherwise
-    left untouched.
-
-    ``warmup_minutes`` is an initialization duration, not merely the Step1 history span. Large
-    Dynamic-Wave sewer systems with time-varying DWF should verify that the pre-rain hydraulic
-    state is no longer dominated by the artificial zero-state start; extend the warm-up if needed.
+    event clock. A source INP may already contain a pre-rain prefix. New workflows should state
+    the desired *total* pre-rain initialization with ``target_effective_warmup_minutes``; only
+    the missing additional prefix is then added. This prevents the v0.6.7 ambiguity where a
+    60-min source prefix plus ``--warmup-minutes 60`` was reported as if it were only 60 min.
     """
 
-    if warmup_minutes <= 0:
-        raise ValueError("warmup_minutes must be positive")
     if post_rain_tail_minutes <= 0:
         raise ValueError("post_rain_tail_minutes must be positive")
     src = Path(source).resolve()
@@ -195,7 +224,13 @@ def prepare_event_inp(
     if first_rain < old_start:
         raise ValueError("rainfall begins before the original event simulation start")
 
-    new_start = old_start - timedelta(minutes=int(warmup_minutes))
+    source_prefix_minutes = (first_rain - old_start).total_seconds() / 60.0
+    additional_minutes, effective_minutes = _resolve_warmup(
+        source_prefix_minutes=source_prefix_minutes,
+        warmup_minutes=warmup_minutes,
+        target_effective_warmup_minutes=target_effective_warmup_minutes,
+    )
+    new_start = old_start - timedelta(minutes=additional_minutes)
     rain_end = last_rain + timedelta(minutes=rain_interval_minutes)
     new_end = rain_end + timedelta(minutes=int(post_rain_tail_minutes))
     _set_option(lines, "START_DATE", new_start.strftime("%m/%d/%Y"))
@@ -209,6 +244,8 @@ def prepare_event_inp(
     dst.write_text("".join(lines), encoding="utf-8")
     onset_elapsed = (first_rain - new_start).total_seconds() / 60.0
     end_elapsed = (rain_end - new_start).total_seconds() / 60.0
+    if abs(onset_elapsed - effective_minutes) > 1e-6:
+        raise RuntimeError("resolved effective warmup disagrees with prepared rainfall onset clock")
     return {
         "contract": EVENT_PREPARATION_CONTRACT,
         "source_inp": str(src),
@@ -217,7 +254,9 @@ def prepare_event_inp(
         "prepared_inp_sha256": sha256_file(dst),
         "source_scientific_event_sha256": scientific_event_contract_sha256(src),
         "prepared_scientific_event_sha256": scientific_event_contract_sha256(dst),
-        "warmup_minutes": int(warmup_minutes),
+        "source_pre_rain_prefix_minutes": float(source_prefix_minutes),
+        "additional_warmup_minutes": int(additional_minutes),
+        "effective_warmup_minutes": float(effective_minutes),
         "post_rain_tail_minutes": int(post_rain_tail_minutes),
         "rainfall_onset_elapsed_minutes": float(onset_elapsed),
         "rainfall_end_elapsed_minutes": float(end_elapsed),
@@ -231,7 +270,8 @@ def prepare_event_registry(
     events: pd.DataFrame,
     *,
     output_dir: str | Path,
-    warmup_minutes: int,
+    warmup_minutes: int | None = None,
+    target_effective_warmup_minutes: int | None = None,
     post_rain_tail_minutes: int,
 ) -> pd.DataFrame:
     required = {"event_id", "rainfall_group", "inp_path", "scientific_split"}
@@ -250,6 +290,7 @@ def prepare_event_registry(
             str(row["inp_path"]),
             dest,
             warmup_minutes=warmup_minutes,
+            target_effective_warmup_minutes=target_effective_warmup_minutes,
             post_rain_tail_minutes=post_rain_tail_minutes,
         )
         result = row.to_dict()
@@ -258,7 +299,11 @@ def prepare_event_registry(
         result["event_preparation_contract"] = EVENT_PREPARATION_CONTRACT
         result["source_inp_sha256"] = evidence["source_inp_sha256"]
         result["prepared_inp_sha256"] = evidence["prepared_inp_sha256"]
-        result["pre_rain_warmup_minutes"] = evidence["rainfall_onset_elapsed_minutes"]
+        result["source_pre_rain_prefix_minutes"] = evidence["source_pre_rain_prefix_minutes"]
+        result["additional_warmup_minutes"] = evidence["additional_warmup_minutes"]
+        result["effective_warmup_minutes"] = evidence["effective_warmup_minutes"]
+        # Backward-compatible column now explicitly equals the effective physical prefix.
+        result["pre_rain_warmup_minutes"] = evidence["effective_warmup_minutes"]
         result["post_rain_tail_minutes"] = int(post_rain_tail_minutes)
         result["rainfall_onset_elapsed_minutes"] = evidence["rainfall_onset_elapsed_minutes"]
         result["rainfall_end_elapsed_minutes"] = evidence["rainfall_end_elapsed_minutes"]
@@ -271,26 +316,39 @@ def prepare_event_registry(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Prepare event INPs with a causal dry/DWF prefix and explicit recovery tail"
+        description="Prepare event INPs with explicit effective warm-up and recovery-tail lineage"
     )
     parser.add_argument("--events", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--out-registry", required=True)
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--target-effective-warmup-minutes",
+        type=int,
+        help=(
+            "desired total pre-rain prefix after accounting for any prefix already present in "
+            "the source INP; preferred for Formal workflows"
+        ),
+    )
+    group.add_argument(
         "--warmup-minutes",
         type=int,
-        default=360,
         help=(
-            "pre-rain dry/DWF hydraulic initialization duration; default 360 min is a "
-            "conservative first attempt for the audited Wuhan network, not a proof of convergence"
+            "legacy compatibility: ADD this many minutes before the source START; use "
+            "--target-effective-warmup-minutes for new Formal workflows"
         ),
     )
     parser.add_argument("--post-rain-tail-minutes", type=int, default=360)
     args = parser.parse_args()
+    target = args.target_effective_warmup_minutes
+    legacy = args.warmup_minutes
+    if target is None and legacy is None:
+        target = 360
     prepared = prepare_event_registry(
         pd.read_csv(args.events),
         output_dir=args.out_dir,
-        warmup_minutes=args.warmup_minutes,
+        warmup_minutes=legacy,
+        target_effective_warmup_minutes=target,
         post_rain_tail_minutes=args.post_rain_tail_minutes,
     )
     out = Path(args.out_registry)
@@ -300,7 +358,15 @@ def main() -> None:
         "contract": EVENT_PREPARATION_CONTRACT,
         "events": int(len(prepared)),
         "rainfall_groups": int(prepared["rainfall_group"].astype(str).nunique()),
-        "warmup_minutes": int(args.warmup_minutes),
+        "source_pre_rain_prefix_minutes": sorted(
+            {float(v) for v in prepared["source_pre_rain_prefix_minutes"]}
+        ),
+        "additional_warmup_minutes": sorted(
+            {int(v) for v in prepared["additional_warmup_minutes"]}
+        ),
+        "effective_warmup_minutes": sorted(
+            {float(v) for v in prepared["effective_warmup_minutes"]}
+        ),
         "post_rain_tail_minutes": int(args.post_rain_tail_minutes),
         "storm_absolute_clock_preserved": True,
         "dwf_clock_phase_at_storm_preserved": True,

@@ -48,13 +48,25 @@ def sha256_file(path: str | Path) -> str:
     return h.hexdigest()
 
 
-def _node_state_si(node_obj: dict[str, object], node_ids: tuple[str, ...], *, system_units: str, flow_units: str) -> np.ndarray:
+def _node_state_si(
+    node_obj: dict[str, object],
+    node_ids: tuple[str, ...],
+    *,
+    system_units: str,
+    flow_units: str,
+) -> np.ndarray:
     depth = length_to_m(np.array([node_obj[n].depth for n in node_ids], dtype=float), system_units)
     head = length_to_m(np.array([node_obj[n].head for n in node_ids], dtype=float), system_units)
-    flooding = flow_rate_to_m3s(np.array([node_obj[n].flooding for n in node_ids], dtype=float), flow_units)
+    flooding = flow_rate_to_m3s(
+        np.array([node_obj[n].flooding for n in node_ids], dtype=float), flow_units
+    )
     volume = volume_to_m3(np.array([node_obj[n].volume for n in node_ids], dtype=float), system_units)
-    inflow = flow_rate_to_m3s(np.array([node_obj[n].total_inflow for n in node_ids], dtype=float), flow_units)
-    outflow = flow_rate_to_m3s(np.array([node_obj[n].total_outflow for n in node_ids], dtype=float), flow_units)
+    inflow = flow_rate_to_m3s(
+        np.array([node_obj[n].total_inflow for n in node_ids], dtype=float), flow_units
+    )
+    outflow = flow_rate_to_m3s(
+        np.array([node_obj[n].total_outflow for n in node_ids], dtype=float), flow_units
+    )
     return np.stack([depth, head, flooding, volume, inflow, outflow], axis=-1).astype(np.float32)
 
 
@@ -72,13 +84,14 @@ def run_independent_control_branch(
     replay_setting_atol: float = 1e-7,
     save_raw_csv: bool = False,
     keep_engine_files: bool = False,
+    snapshot_horizons_minutes: tuple[int, ...] = (),
 ) -> BranchResult:
     """Run one exact same-prefix D2 counterfactual on a controls-disabled INP.
 
-    Formal D2 supplies the saved No-control trajectory used to select the checkpoint. Before
-    the candidate is written, the full six-channel hydraulic state and all actuator readbacks
-    are compared to that saved checkpoint. Thus an engine/runtime/prefix drift cannot silently
-    masquerade as an action effect.
+    Optional ``snapshot_horizons_minutes`` stores exact cumulative SWMM node-statistics deltas
+    at intermediate endpoints during the same longest-horizon run. This is the only supported
+    way to reuse a long simulation as shorter-horizon cumulative TFV truth; compact-rate slicing
+    alone is insufficient for authoritative cumulative flooding volume.
     """
 
     try:
@@ -97,7 +110,8 @@ def run_independent_control_branch(
     supplied = set(candidate_settings)
     if supplied != expected:
         raise ValueError(
-            f"candidate must specify every actuator; missing={sorted(expected-supplied)}, extra={sorted(supplied-expected)}"
+            f"candidate must specify every actuator; missing={sorted(expected-supplied)}, "
+            f"extra={sorted(supplied-expected)}"
         )
     for aid, value in candidate_settings.items():
         if not 0.0 <= float(value) <= 1.0:
@@ -108,6 +122,12 @@ def run_independent_control_branch(
     horizon_seconds = horizon_minutes * 60
     if checkpoint_seconds % python_intervention_seconds or horizon_seconds % python_intervention_seconds:
         raise ValueError("checkpoint and horizon must align with Python intervention stride")
+    normalized_snapshots = tuple(sorted({int(v) for v in snapshot_horizons_minutes}))
+    for value in normalized_snapshots:
+        if value <= 0 or value > horizon_minutes:
+            raise ValueError("snapshot horizons must be positive and no longer than branch horizon")
+        if (value * 60) % python_intervention_seconds:
+            raise ValueError("snapshot horizons must align with Python intervention stride")
     stop_seconds = checkpoint_seconds + horizon_seconds
     reference = (
         load_checkpoint_reference(
@@ -133,6 +153,7 @@ def run_independent_control_branch(
     flow_values: list[np.ndarray] = []
     start_statistics: dict[str, dict[str, float]] | None = None
     end_statistics: dict[str, dict[str, float]] | None = None
+    snapshot_statistics: dict[int, dict[str, dict[str, float]]] = {}
     prefix_verification: dict[str, object] | None = None
 
     with ExitStack() as stack:
@@ -143,13 +164,22 @@ def run_independent_control_branch(
         node_writer = act_writer = None
         if save_raw_csv:
             node_fh = stack.enter_context(gzip.open(node_path, "wt", encoding="utf-8", newline=""))
-            act_fh = stack.enter_context(gzip.open(actuator_path, "wt", encoding="utf-8", newline=""))
+            act_fh = stack.enter_context(
+                gzip.open(actuator_path, "wt", encoding="utf-8", newline="")
+            )
             node_writer, act_writer = csv.writer(node_fh), csv.writer(act_fh)
             node_writer.writerow(["elapsed_seconds", "phase", "node_id", *STATE_CHANNELS])
-            act_writer.writerow([
-                "elapsed_seconds", "phase", "actuator_id", "requested_setting",
-                "target_setting", "current_setting", "flow_m3s",
-            ])
+            act_writer.writerow(
+                [
+                    "elapsed_seconds",
+                    "phase",
+                    "actuator_id",
+                    "requested_setting",
+                    "target_setting",
+                    "current_setting",
+                    "flow_m3s",
+                ]
+            )
 
         sim.step_advance(python_intervention_seconds)
         flow_units = str(sim.flow_units)
@@ -171,12 +201,18 @@ def run_independent_control_branch(
                 raise RuntimeError("SWMM callback stepped beyond an aligned D2 horizon endpoint")
 
             phase = "PRE_ACTION_CHECKPOINT" if elapsed == checkpoint_seconds else "POST_ACTION"
-            state = _node_state_si(node_obj, node_ids, system_units=system_units, flow_units=flow_units)
+            state = _node_state_si(
+                node_obj, node_ids, system_units=system_units, flow_units=flow_units
+            )
             rainfall = current_node_rainfall_mmhr(
                 sub_obj, resolved_outlets, node_ids, system_units
             )[:, None]
-            target = np.array([link_obj[a].target_setting for a in actuator_ids], dtype=np.float32)
-            current = np.array([link_obj[a].current_setting for a in actuator_ids], dtype=np.float32)
+            target = np.array(
+                [link_obj[a].target_setting for a in actuator_ids], dtype=np.float32
+            )
+            current = np.array(
+                [link_obj[a].current_setting for a in actuator_ids], dtype=np.float32
+            )
             flow = flow_rate_to_m3s(
                 np.array([link_obj[a].flow for a in actuator_ids], dtype=float), flow_units
             ).astype(np.float32)
@@ -192,11 +228,17 @@ def run_independent_control_branch(
                 for ni, nid in enumerate(node_ids):
                     node_writer.writerow([elapsed, phase, nid, *state[ni].tolist()])
                 for ai, aid in enumerate(actuator_ids):
-                    act_writer.writerow([
-                        elapsed, phase, aid,
-                        "" if phase == "PRE_ACTION_CHECKPOINT" else candidate_settings[aid],
-                        target[ai], current[ai], flow[ai],
-                    ])
+                    act_writer.writerow(
+                        [
+                            elapsed,
+                            phase,
+                            aid,
+                            "" if phase == "PRE_ACTION_CHECKPOINT" else candidate_settings[aid],
+                            target[ai],
+                            current[ai],
+                            flow[ai],
+                        ]
+                    )
 
             if elapsed == checkpoint_seconds and not checkpoint_recorded:
                 checkpoint_recorded = True
@@ -216,6 +258,15 @@ def run_independent_control_branch(
                     )
                 start_statistics = snapshot_node_statistics(node_obj)
 
+            relative_minutes = (elapsed - checkpoint_seconds) // 60
+            if (
+                start_statistics is not None
+                and relative_minutes in normalized_snapshots
+                and elapsed == checkpoint_seconds + relative_minutes * 60
+                and relative_minutes not in snapshot_statistics
+            ):
+                snapshot_statistics[relative_minutes] = snapshot_node_statistics(node_obj)
+
             if elapsed == stop_seconds:
                 end_statistics = snapshot_node_statistics(node_obj)
                 sim.terminate_simulation()
@@ -226,6 +277,9 @@ def run_independent_control_branch(
 
         if not checkpoint_recorded or start_statistics is None or end_statistics is None:
             raise RuntimeError("simulation did not produce exact checkpoint/end statistics")
+        missing_snapshots = [v for v in normalized_snapshots if v not in snapshot_statistics]
+        if missing_snapshots:
+            raise RuntimeError(f"simulation missed requested exact horizon snapshots: {missing_snapshots}")
         flow_error = float(sim.flow_routing_error)
 
     np.savez_compressed(
@@ -240,7 +294,9 @@ def run_independent_control_branch(
         target_setting=np.stack(target_values).astype(np.float32),
         current_setting=np.stack(current_values).astype(np.float32),
         actuator_flow_m3s=np.stack(flow_values).astype(np.float32),
-        candidate_setting=np.asarray([candidate_settings[a] for a in actuator_ids], dtype=np.float32),
+        candidate_setting=np.asarray(
+            [candidate_settings[a] for a in actuator_ids], dtype=np.float32
+        ),
     )
     write_node_statistics(
         statistics_path,
@@ -249,6 +305,17 @@ def run_independent_control_branch(
         system_units=system_units,
         flow_units=flow_units,
     )
+    horizon_snapshot_files: dict[str, str] = {}
+    for minutes, snapshot in snapshot_statistics.items():
+        snapshot_path = out / f"{branch_id}.h{minutes:04d}.node_statistics.csv.gz"
+        write_node_statistics(
+            snapshot_path,
+            start_statistics=start_statistics,
+            end_statistics=snapshot,
+            system_units=system_units,
+            flow_units=flow_units,
+        )
+        horizon_snapshot_files[str(minutes)] = snapshot_path.name
     if not keep_engine_files:
         report_path.unlink(missing_ok=True)
         engine_output_path.unlink(missing_ok=True)
@@ -273,14 +340,20 @@ def run_independent_control_branch(
         "flow_routing_error_pct": flow_error,
         "compact_file": compact_path.name,
         "node_statistics_file": statistics_path.name,
+        "horizon_snapshot_files": horizon_snapshot_files,
         "post_action_flood_volume_truth": "SWMM_node_statistics_delta_exact_horizon",
+        "shorter_horizon_truth_reuse": (
+            "authorized only for horizons listed in horizon_snapshot_files"
+        ),
         "same_prefix_required": reference is not None,
         "same_prefix_verification": prefix_verification,
         "raw_csv_saved": bool(save_raw_csv),
         "node_file": node_path.name if save_raw_csv else None,
         "actuator_file": actuator_path.name if save_raw_csv else None,
     }
-    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return BranchResult(
         branch_id=branch_id,
         compact_path=str(compact_path),

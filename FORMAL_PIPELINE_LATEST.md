@@ -1,6 +1,6 @@
-# Formal Pipeline — Wuhan RTC v0.6.7
+# Formal Pipeline — Wuhan RTC v0.6.8
 
-This is the current fail-closed scientific evidence contract for fresh Wuhan RTC methodology-testbed runs. `docs/METHOD_TESTBED_V067.md` defines the physical/input assumptions.
+This is the current fail-closed scientific evidence contract for the Project7 Wuhan methodology testbed. v0.6.8 does **not** change the TFV-first research question or the v0.6.7 physical testbed; it hardens time semantics, simulation identity, asset reuse and Phase-0 recovery diagnosis before production scaling.
 
 ## A. Objective and truth
 
@@ -12,13 +12,11 @@ Primary objective: minimize authoritative-SWMM system-wide cumulative **TFV**.
 - Final TFV/PFV truth: cumulative SWMM node flooding-volume statistics.
 - Final Global Peak: routing-step replay of the frozen executed decision schedule.
 
-Scientific claim scope is deliberately narrow: demonstrate control of sewer-node overflow in an idealized simplified SWMM testbed. No field digital-twin or field-deployment claim is permitted.
+Scientific claim scope remains narrow: demonstrate control of sewer-node overflow in an idealized simplified SWMM testbed. No field digital-twin or field-deployment claim is permitted.
 
 ## B. Active source/input contract
 
-A fresh study must be reconstructed from the current source-only network INP, the frozen 89-node sensor layout and the frozen eight priority nodes using `rtc-build-method-testbed-v067`.
-
-The generated network must preserve:
+The v0.6.7 method-testbed inputs remain the physical/input source contract:
 
 ```text
 932 hydraulic nodes
@@ -27,24 +25,14 @@ supplied idealized DWF
 41 FREE outfalls
 source SUBAREAS/infiltration
 five retrofit storage curves
-```
-
-It additionally enforces:
-
-```text
-57 pump curves: PUMP2 -> PUMP4, endpoints unchanged
-42 orifices: 10-min full travel time
-RTC_IN_*/RTC_OUT_*: direction-specific flap gates
-known copied OFF-rule defects repaired
+57 pump curves migrated PUMP2 -> PUMP4, endpoints unchanged
+42 orifices with 10-min full travel time
+RTC_IN_*/RTC_OUT_* direction-specific flap gates
 simulation-only continuous settings in [0,1]
 max supervisory setting delta = 0.5 per candidate 10-min update
 ```
 
-No historical D0/D1/D2/D3/model/shard/acceptance/Policy-Lock/Final artifact is valid input to a fresh v0.6.7 study.
-
-## C. Rainfall contract
-
-Exactly 30 design events:
+Exactly 30 Chicago design events remain frozen:
 
 ```text
 return periods = 5,10,20,50,100 years
@@ -61,22 +49,29 @@ Wuhan DB4201/T 641-2020 formula:
 i = 9.686 * (1 + 0.887 * log10(P)) / (t + 11.23)^0.658   [mm/min]
 ```
 
-Every five-minute Chicago block is generated analytically and checked against the formula-derived total depth. The rainfall library is a controlled design experiment, not observed historical rainfall.
+## C. Event time contract — no ambiguous `warmup_minutes`
 
-## D. Event time contract
-
-Default fresh events use:
+Keep separate:
 
 ```text
-pre-rain causal prefix = 60 min
-post-rain evaluation tail = 360 min
+source_pre_rain_prefix_minutes
+additional_warmup_minutes
+effective_warmup_minutes
+post-rain evaluation tail
+Phase-0 diagnostic extension tail
 ```
 
-The 60-min prefix provides the complete default 13-frame causal history on a 5-min model grid. It is not proof of full dry-weather convergence. Before production scaling, use a small development-only sensitivity comparing storm-onset hydraulics under 60 and 120 min; extend to 180 min only if the onset state remains materially warm-up dependent.
+The source v0.6.7 event bundle already carries a 60-min pre-rain causal prefix. Therefore a request for an **effective 120-min initialization** adds only 60 additional minutes. New Formal preparation must use:
 
-The 360-min post-rain tail is a **fixed evaluation endpoint**, not a recovery-to-zero criterion. A run may be hydrologically right-censored at that endpoint while still remaining valid for the pre-registered fixed-window TFV comparison, provided every strategy uses the identical event clock.
+```text
+--target-effective-warmup-minutes <target total prefix>
+```
 
-## E. Formal strategies
+and must record all three warm-up fields above. The legacy `--warmup-minutes` option means *additional* prefix only and must not be reported as total effective warm-up.
+
+The production/default whole-event evaluation tail remains 360 min. A longer 480/600-min tail may be used solely to make a Phase-0 checkpoint+horizon endpoint executable. Such a diagnostic extension must not silently redefine the Final evaluation clock.
+
+## D. Formal strategies
 
 Exactly:
 
@@ -92,11 +87,11 @@ all_closed
 
 Competitive baselines are No-control, Internal RTC, Auto-RBC and EFD. All-open/all-closed are diagnostic extremes.
 
-Internal RTC receives the prepared event forcing/DWF/initial conditions plus only the frozen network `[CONTROLS]` payload. No-control and Python policies use the same event with native supervisory controls disabled.
+No-control: native supervisory `[CONTROLS]` disabled and no Python actuator writes, while retaining physical device behavior and intrinsic pump logic.
 
-Information budgets remain disclosed rather than artificially equalized: Internal may use true native rule variables on the SWMM rule clock; Auto-RBC uses current actuator-adjacent true depths; EFD uses current controlled-storage true depths; Proposed directly observes only the frozen sparse sensor layout, realised rainfall and actuator readback.
+Internal RTC: prepared event forcing/DWF/initial conditions plus only the frozen network `[CONTROLS]` payload; no Python override. If the native-controls template contains no executable payload or is topologically incompatible, fail closed.
 
-## F. Causal boundary
+## E. Causal boundary
 
 Allowed online at decision time `t`:
 
@@ -119,35 +114,23 @@ Final/locked hydraulic truth
 offline future labels presented online
 ```
 
-## G. Static graph contract
+## F. Static graph and data roles
 
-The graph must preserve node/actuator ordering and expose the v0.6.7 physical feature vector, including:
+The graph preserves v0.6.7 node/actuator ordering and 26-D physical/hydrologic features.
 
-```text
-invert/max/initial/surcharge depth
-node type and ponded area
-storage capacity/full-depth area
-incident conduit count/length/roughness/primary section scale
-contributing subcatchment count/area/impervious area
-area-weighted subcatchment width/slope
-area-weighted Horton max/min infiltration rates
-actuator capacity/geometry/coefficient/flap-gate features
-```
+Data roles:
 
-These features are static INP properties and do not violate causality.
-
-## H. Data roles
-
-- D0: controls-disabled reference trajectories including the pre-rain prefix.
-- D1: development/train-only controlled exploration for Step1 state coverage.
-- D2: exact same-prefix local single-actuator perturbations; each branch still contains the complete 109-setting vector.
+- D0: controls-disabled reference trajectories including pre-rain initialization.
+- D1: development/train-only controlled exploration for Step1 coverage.
+- D2: exact same-prefix local single-actuator sustained step perturbations; complete 109-setting vectors.
+- Phase-0 pulse: development-only action-release diagnostic; one candidate control block then base action recovery.
 - D3: joint multi-actuator, multi-control-block sequences.
 - Step1: sparse causal history -> current full hydraulic state.
 - Step2: current state + future settings/rainfall -> future hydraulic state, actuator flow and flooding consequence.
 
-## I. Exact counterfactual prefix
+## G. Exact counterfactual prefix
 
-D2/D3 must replay the controls-disabled No-control source to the same checkpoint and match:
+D2/D3/Phase-0 pulse must replay controls-disabled No-control to the same checkpoint and match before any candidate write:
 
 ```text
 elapsed time
@@ -158,9 +141,57 @@ all actuator current settings/readback
 SWMM engine version
 ```
 
-Any mismatch aborts before candidate action.
+Any mismatch aborts.
 
-## J. Timing
+## H. Simulation identity and local data assets
+
+Large data stays outside Git. Use the local simulation asset contract defined in `docs/SIMULATION_ASSET_MANAGEMENT_V068.md`.
+
+D2 family identity binds:
+
+```text
+physical network
+event forcing + START/effective warm-up (but not tail-only END extension)
+exact checkpoint hydraulic/readback state
+complete candidate action
+native-controls-disabled execution semantics
+SWMM engine
+record stride
+```
+
+Simulation identity adds the requested horizon.
+
+Changing network/forcing/warm-up/checkpoint state/action/engine invalidates reuse automatically. Merely extending a recovery tail does not split an otherwise identical family.
+
+`VALID_REUSABLE` means a computation/artifact can satisfy an identity-matching request; it does not mean a scientific acceptance gate passed.
+
+Before any large D2/D3 run, write a pre-run census. At minimum report requested rows, projected/deduplicated unique actions, endpoint-invalid requests, exact cache hits, covering long-trajectory hits, new executions and expected output location.
+
+## I. Endpoint executability — before SWMM
+
+For every D2 request:
+
+```text
+required_end = checkpoint_elapsed + horizon
+```
+
+For every D3/pulse request:
+
+```text
+required_end = checkpoint_elapsed + len(sequence) * control_block
+```
+
+Require:
+
+```text
+required_end <= event END - event START
+```
+
+before launching any SWMM worker. Never discover endpoint insufficiency after hundreds of branches have run.
+
+Checkpoint design should still reserve an appropriate minimum tail, but the execution runner is the final fail-closed authority.
+
+## J. Phase-0 timing — longest run first, no duplicate shorter simulations
 
 Keep separate:
 
@@ -175,15 +206,55 @@ fixed post-rain evaluation tail
 whole-event control duration
 ```
 
-Candidate model/control cadence remains 300 s / 600 s with 13 history frames, but prediction horizon must be frozen only from fresh v0.6.7 Phase-0 evidence. Do not infer the MPC horizon from the 360-min evaluation tail.
+Phase-0 high-frequency sampling remains <=60 s. PySWMM callback stride is an observation/intervention cadence, not the SWMM routing-step definition.
 
-## K. Step1 acceptance
+For a fixed event/checkpoint/action family, if the event clock safely supports the largest candidate Phase-0 horizon, prefer **one longest D2 simulation** and derive shorter timing views from its compact trajectory:
 
-Training uses development/train only. Held-out development/validation rainfall groups must be disjoint. Acceptance emphasizes unobserved-node state/depth, wet/high-depth subsets, priority diagnostics and event-balanced performance.
+```text
+h210 view ⊂ h240 view ⊂ h300 view ⊂ h360 trajectory
+```
 
-## L. Step2 acceptance
+Use `rtc-phase0-timescale --analysis-horizon-minutes ...` to slice the same long trajectory. Do not rerun SWMM solely to observe a shorter prefix.
 
-Training supervises future hydraulic trajectory, actuator-flow trajectory and exact cumulative SWMM flooding-volume truth. Require action-effect evidence in addition to state error:
+This prefix reuse is valid for trajectory/timing metrics. Shorter-horizon authoritative cumulative TFV requires an exact SWMM cumulative-statistics endpoint snapshot. New long D2 generation should therefore retain explicitly requested intermediate horizon snapshots; old trajectories without snapshots cannot be retroactively promoted by coarse flooding-rate integration.
+
+Do not weaken the 5% sustained-step peak-near-horizon censor guard merely to pass timing.
+
+## K. Sustained-step censoring vs post-release recovery
+
+A sustained D2 step answers: “how does the system respond while this action remains applied?” It cannot determine how quickly the system decays after the action is removed.
+
+If long sustained D2 shows late depth response after flow/flooding have largely converged, run the development-only Phase-0 pulse/release diagnostic before mechanically extending to ever-longer horizons:
+
+```text
+candidate action for one 10-min control block
+then restore complete base action
+observe flow/flood/depth recovery
+```
+
+Commands:
+
+```text
+rtc-design-phase0-pulses
+rtc-run-d3-batch
+rtc-analyse-phase0-pulses
+```
+
+Pulse/recovery evidence complements, but does not erase, the sustained-step censor report. Timing freeze must explain both sustained response and post-release recovery.
+
+## L. Control leverage
+
+`rtc-control-leverage-audit` remains a diagnostic rather than a hard acceptance gate. It uses exact SWMM cumulative flooding-volume statistics to determine whether sampled actuator changes measurably alter future TFV.
+
+Do not solve weak leverage by generating an order of magnitude more neural-network data. First diagnose actuator semantics, controllable facilities, hydraulic connectivity, checkpoints and horizon.
+
+## M. Step1 acceptance
+
+Training uses development/train only. Held-out development/validation rainfall groups must remain disjoint. Acceptance emphasizes unobserved-node state/depth, wet/high-depth subsets, priority diagnostics and event-balanced performance.
+
+## N. Step2 acceptance
+
+Training supervises future hydraulic trajectory, actuator-flow trajectory and exact cumulative SWMM flooding-volume truth. Require:
 
 ```text
 D2 local finite-difference direction agreement
@@ -195,18 +266,18 @@ event-balanced held-out results
 
 Do not enter MPC if Step2 cannot rank actions reliably.
 
-## M. SWMM truth and units
+## O. SWMM truth and units
 
-Full-event TFV/PFV come from cumulative SWMM node flooding-volume statistics, not coarse sampled-rate integration. Branch outcomes use the cumulative-volume difference after the verified identical prefix. SI controller units are depth/head in m, flow in m3/s, rainfall in mm/h and flooding volume in m3.
+Full-event TFV/PFV use cumulative SWMM node flooding-volume statistics, not coarse sampled-rate integration. Branch outcomes use cumulative-volume differences after the verified identical prefix. SI controller units remain depth/head in m, flow in m3/s, rainfall in mm/h and flooding volume in m3.
 
 Step1 data/models, Step2 data/models, Proposed runtime and Final must use compatible SWMM engine lineage.
 
-## N. Fresh acceptance flow
+## P. Fresh acceptance flow
 
 ```text
-Step 0  source-only v0.6.7 input build / readiness / graph / physical audit
-Step 1  small high-frequency No-control D0 + warm-up sensitivity + exact-prefix D2
-Step 2  response timing + exact SWMM control leverage + timing freeze
+Step 0  source-only v0.6.7 physical input adoption / readiness / graph / audit
+Step 1  small high-frequency D0 + explicit warm-up sensitivity + exact-prefix longest-horizon D2
+Step 2  sustained-step timing + pulse/recovery timing + exact control leverage + timing freeze
 Step 3  production D0/D1 + Step1 train/held-out acceptance
 Step 4  production D2/D3 + Step2 train/held-out acceptance
 Step 5  local gradient + joint ranking/regret acceptance
@@ -216,16 +287,22 @@ Step 8  Policy Lock
 Step 9  untouched seven-strategy authoritative-SWMM Final
 ```
 
-Do not advance from a failed stage by weakening a guard or by reusing stale evidence.
+Do not advance from a failed stage by weakening a guard, using Final truth, or treating a reusable asset as if it had passed an unrelated scientific gate.
 
-## O. Policy Lock / Final
+## Q. Policy Lock / Final
 
-Policy Lock must bind the exact v0.6.7 generated network, 30-event registry/splits, rainfall provenance, sensor provenance, actuator scope, graph feature schema, timing contract, models, controller config, SWMM engine and source-tree identity.
+Policy Lock binds the exact generated network, 30-event registry/splits, rainfall/sensor/priority provenance, actuator scope, graph schema, **effective warm-up contract**, timing contract, simulation-asset identity schema, models, controller config, SWMM engine and implementation contract.
 
-Every locked Final event must run exactly the seven Formal strategies on the identical event forcing/DWF/clock/network. Aggregate first within rainfall group and then weight rainfall groups equally. All-open/all-closed remain diagnostic extremes.
+Every locked Final event runs exactly seven Formal strategies on the identical forcing/DWF/clock/network. Aggregate first within rainfall group and then weight rainfall groups equally.
 
-## P. Reuse rule
+## R. Reuse rule
 
-Old v0.6.6 and earlier hydraulic trajectories/models are provenance only. v0.6.7 changes the network actuator semantics, graph static-feature schema and rainfall/event contract, so **all learned models and scientific evidence must be regenerated**.
+v0.6.6 and earlier learned models/evidence remain provenance only because v0.6.7 changed physical actuator semantics, graph features and rainfall/event contract.
 
-Use `docs/METHOD_TESTBED_V067.md` and `scripts/bootstrap_project7_v067.ps1` for the active fresh workflow.
+Within the same v0.6.7 physical testbed, v0.6.8 may reuse an existing authoritative hydraulic simulation **only** when the new identity importer verifies the physical-state/action/engine family, exact prefix evidence and referenced artifact hashes. Orchestration/file-layout changes alone must not force an expensive identical SWMM rerun.
+
+The first endpoint-failed h240 partial lineage is invalid and must not be imported as reusable evidence. Successful h210/h240-tail480/h300/h360 branches may be indexed as reusable computations, while their original censor findings remain unchanged.
+
+## S. Acceleration boundary
+
+Hot-start and runoff-interface acceleration are not automatically part of Formal v0.6.8. They require a dedicated equivalence audit against exact-prefix replay before adoption. Exact-prefix correctness has priority over speed.

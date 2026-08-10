@@ -11,6 +11,8 @@ import pandas as pd
 from .generation_contract import generation_key
 from .inp_runtime import build_runtime_inp, sha256_file
 from .replay_prefix import reference_trajectory_lineage
+from .simulation_asset_types import d3_identity, register_d3_metadata
+from .simulation_assets import SimulationAssetRegistry, assert_endpoint_available
 
 
 D3_DATA_CONTRACT = "D3_CONTROLS_DISABLED_COMPACT_V3_PREFIX_VERIFIED"
@@ -60,11 +62,17 @@ def _stamp(metadata_path: str | Path, job: dict[str, object]) -> str:
         hashes[field] = sha256_file(artifact)
     meta.update(
         {
-            "generation_contract": "RTC_GENERATION_KEY_V1",
+            "generation_contract": "RTC_GENERATION_KEY_V2_INPUT_CONFIG_BOUND",
             "generation_key_sha256": key,
             "rtc_source_tree_sha256": code_sha,
             "generation_lineage": lineage,
             "generated_artifact_sha256": hashes,
+            "endpoint_preflight": job.get("endpoint_preflight"),
+            "simulation_identity_contract": "RTC_SIMULATION_IDENTITY_V1_STATE_ACTION_ENGINE_BOUND",
+            "simulation_identity_sha256": str(job["simulation_identity_sha256"]),
+            "simulation_family_sha256": str(job["simulation_family_sha256"]),
+            "simulation_identity": job["simulation_identity"],
+            "asset_qualification": "VALID_REUSABLE",
         }
     )
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -103,6 +111,26 @@ def _complete(metadata: Path, expected_key: str) -> bool:
         return False
 
 
+def _result(job: dict[str, object], *, metadata_path: str, status: str, generation_key: str = "", flow_error: float = float("nan")) -> dict[str, object]:
+    return {
+        "event_id": job["event_id"],
+        "rainfall_group": job["rainfall_group"],
+        "scientific_split": job["scientific_split"],
+        "development_fold": job["development_fold"],
+        "checkpoint_id": job["checkpoint_id"],
+        "data_role": job["data_role"],
+        "pulse_actuator_id": job.get("pulse_actuator_id", ""),
+        "pulse_delta": job.get("pulse_delta", 0.0),
+        "sequence_sha256": job["sequence_sha256"],
+        "simulation_identity_sha256": job["simulation_identity_sha256"],
+        "simulation_family_sha256": job["simulation_family_sha256"],
+        "generation_key_sha256": generation_key,
+        "metadata_path": metadata_path,
+        "flow_routing_error_pct": flow_error,
+        "status": status,
+    }
+
+
 def _run(job: dict[str, object]) -> dict[str, object]:
     from .swmm_sequence import run_control_sequence_branch
 
@@ -117,24 +145,18 @@ def _run(job: dict[str, object]) -> dict[str, object]:
         reference_trajectory_metadata_path=str(job["reference_metadata_path"]),
     )
     key = _stamp(result.metadata_path, job)
-    return {
-        "event_id": job["event_id"],
-        "rainfall_group": job["rainfall_group"],
-        "scientific_split": job["scientific_split"],
-        "development_fold": job["development_fold"],
-        "checkpoint_id": job["checkpoint_id"],
-        "data_role": job["data_role"],
-        "sequence_sha256": job["sequence_sha256"],
-        "generation_key_sha256": key,
-        "metadata_path": result.metadata_path,
-        "flow_routing_error_pct": result.flow_routing_error_pct,
-        "status": "completed",
-    }
+    return _result(
+        job,
+        metadata_path=result.metadata_path,
+        status="completed",
+        generation_key=key,
+        flow_error=result.flow_routing_error_pct,
+    )
 
 
 def run_d3_batch_main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run resumable D3 sequences with exact No-control prefix verification"
+        description="Run resumable/reusable D3 sequences with exact No-control prefix verification"
     )
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--out-dir", required=True)
@@ -143,6 +165,7 @@ def run_d3_batch_main() -> None:
     parser.add_argument("--workers", type=int, default=min(16, os.cpu_count() or 1))
     parser.add_argument("--swmm-threads-per-process", type=int, default=1)
     parser.add_argument("--no-resume", action="store_true")
+    parser.add_argument("--asset-root", help="local cross-directory simulation asset registry")
     args = parser.parse_args()
     frame = pd.read_csv(args.manifest)
     required = {
@@ -164,17 +187,125 @@ def run_d3_batch_main() -> None:
     if args.control_block_seconds % args.stride_seconds:
         raise ValueError("D3 control block must be a multiple of stride")
 
+    requested_rows = len(frame)
+    dedup = frame.drop_duplicates(["sequence_sha256", "checkpoint_id"]).reset_index(drop=True)
+    registry = SimulationAssetRegistry(args.asset_root) if args.asset_root else None
+    endpoint_failures: list[dict[str, object]] = []
+    preflight: dict[int, dict[str, object]] = {}
+    asset_hits = 0
+    for idx, row in dedup.iterrows():
+        source = str(row["inp_path"])
+        if not Path(source).is_file():
+            raise ValueError(f"D3 source INP missing: {source}")
+        sequence = json.loads(str(row["settings_sequence_json"]))
+        horizon_seconds = len(sequence) * args.control_block_seconds
+        checkpoint_seconds = int(row["checkpoint_minutes"]) * 60
+        reference_path = str(row["trajectory_metadata_path"])
+        reference_lineage = reference_trajectory_lineage(reference_path)
+        try:
+            endpoint = assert_endpoint_available(
+                source,
+                checkpoint_seconds=checkpoint_seconds,
+                horizon_seconds=horizon_seconds,
+            )
+        except ValueError as exc:
+            endpoint_failures.append(
+                {
+                    "event_id": str(row.get("event_id", "")),
+                    "checkpoint_id": str(row["checkpoint_id"]),
+                    "sequence_sha256": str(row["sequence_sha256"]),
+                    "error": str(exc),
+                }
+            )
+            continue
+        sim_key, family_key, identity = d3_identity(
+            inp_path=source,
+            reference_metadata_path=reference_path,
+            checkpoint_seconds=checkpoint_seconds,
+            sequence_sha256=str(row["sequence_sha256"]),
+            swmm_engine_version=str(reference_lineage["reference_swmm_engine_version"]),
+            stride_seconds=args.stride_seconds,
+            control_block_seconds=args.control_block_seconds,
+            horizon_seconds=horizon_seconds,
+        )
+        hit = None if registry is None or args.no_resume else registry.lookup_exact(sim_key)
+        if hit is not None:
+            asset_hits += 1
+        preflight[idx] = {
+            "sequence_length": len(sequence),
+            "endpoint": endpoint,
+            "simulation_identity_sha256": sim_key,
+            "simulation_family_sha256": family_key,
+            "simulation_identity": identity,
+            "asset_hit_metadata_path": None if hit is None else hit.metadata_path,
+            **reference_lineage,
+        }
+
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    census = out / "REQUEST_CENSUS.json"
+    census.write_text(
+        json.dumps(
+            {
+                "contract": "RTC_D3_PRE_RUN_CENSUS_V2_ASSET_AWARE",
+                "requested_rows": int(requested_rows),
+                "unique_sequences": int(len(dedup)),
+                "deduplicated_rows": int(requested_rows - len(dedup)),
+                "endpoint_invalid": len(endpoint_failures),
+                "endpoint_failures": endpoint_failures,
+                "asset_registry_enabled": registry is not None,
+                "exact_asset_hits": int(asset_hits),
+                "need_execution_before_local_resume": int(len(preflight) - asset_hits),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    if endpoint_failures:
+        raise ValueError(
+            f"D3 endpoint preflight rejected {len(endpoint_failures)} sequences before SWMM; see {census}"
+        )
+
     runtime_dir = out / "_runtime_inp"
     runtime_dir.mkdir(exist_ok=True)
     runtime_cache: dict[str, str] = {}
     jobs: list[dict[str, object]] = []
     results: list[dict[str, object]] = []
-    for _, row in frame.drop_duplicates(["sequence_sha256", "checkpoint_id"]).iterrows():
+    for idx, row in dedup.iterrows():
+        info = preflight[idx]
+        event = str(row.get("event_id", "event"))
+        checkpoint = int(row["checkpoint_minutes"])
+        seq = str(row["sequence_sha256"])
+        branch_id = f"{event}__t{checkpoint:04d}__seq_{seq[:16]}"
+        job: dict[str, object] = {
+            "branch_id": branch_id,
+            "event_id": event,
+            "rainfall_group": str(row.get("rainfall_group", "")),
+            "scientific_split": str(row.get("scientific_split", "")),
+            "development_fold": str(row.get("development_fold", "")),
+            "checkpoint_id": str(row["checkpoint_id"]),
+            "checkpoint_minutes": checkpoint,
+            "data_role": str(row.get("data_role", "D3_MULTI_ACTUATOR_ROLLOUT")),
+            "pulse_actuator_id": str(row.get("pulse_actuator_id", "")),
+            "pulse_delta": float(row.get("pulse_delta", 0.0)),
+            "sequence_sha256": seq,
+            "settings_sequence_json": str(row["settings_sequence_json"]),
+            "control_block_seconds": args.control_block_seconds,
+            "stride_seconds": args.stride_seconds,
+            "swmm_threads_per_process": args.swmm_threads_per_process,
+            "endpoint_preflight": info["endpoint"],
+            "simulation_identity_sha256": info["simulation_identity_sha256"],
+            "simulation_family_sha256": info["simulation_family_sha256"],
+            "simulation_identity": info["simulation_identity"],
+            **{k: v for k, v in info.items() if k.startswith("reference_")},
+        }
+        asset_path = info.get("asset_hit_metadata_path")
+        if asset_path:
+            results.append(_result(job, metadata_path=str(asset_path), status="asset_reused"))
+            continue
         source = str(row["inp_path"])
-        if not Path(source).is_file():
-            raise ValueError(f"D3 source INP missing: {source}")
         source_sha = sha256_file(source)
         if source_sha not in runtime_cache:
             runtime = runtime_dir / f"{source_sha[:16]}.no_control.t{args.swmm_threads_per_process}.inp"
@@ -186,55 +317,32 @@ def run_d3_batch_main() -> None:
             )
             runtime_cache[source_sha] = str(runtime)
         runtime = runtime_cache[source_sha]
-        event = str(row.get("event_id", "event"))
-        checkpoint = int(row["checkpoint_minutes"])
-        seq = str(row["sequence_sha256"])
-        reference_lineage = reference_trajectory_lineage(str(row["trajectory_metadata_path"]))
-        branch_id = f"{event}__t{checkpoint:04d}__seq_{seq[:16]}"
+        job["runtime_inp"] = runtime
+        job["runtime_inp_sha256"] = sha256_file(runtime)
+        job["out_dir"] = str(out)
         metadata = out / f"{branch_id}.json"
-        job: dict[str, object] = {
-            "runtime_inp": runtime,
-            "runtime_inp_sha256": sha256_file(runtime),
-            "out_dir": str(out),
-            "branch_id": branch_id,
-            "event_id": event,
-            "rainfall_group": str(row.get("rainfall_group", "")),
-            "scientific_split": str(row.get("scientific_split", "")),
-            "development_fold": str(row.get("development_fold", "")),
-            "checkpoint_id": str(row["checkpoint_id"]),
-            "checkpoint_minutes": checkpoint,
-            "data_role": str(row.get("data_role", "D3_MULTI_ACTUATOR_ROLLOUT")),
-            "sequence_sha256": seq,
-            "settings_sequence_json": str(row["settings_sequence_json"]),
-            "control_block_seconds": args.control_block_seconds,
-            "stride_seconds": args.stride_seconds,
-            "swmm_threads_per_process": args.swmm_threads_per_process,
-            **reference_lineage,
-        }
         expected_key, _, _ = _generation(job)
         if not args.no_resume and _complete(metadata, expected_key):
             results.append(
-                {
-                    "event_id": job["event_id"],
-                    "rainfall_group": job["rainfall_group"],
-                    "scientific_split": job["scientific_split"],
-                    "development_fold": job["development_fold"],
-                    "checkpoint_id": job["checkpoint_id"],
-                    "data_role": job["data_role"],
-                    "sequence_sha256": job["sequence_sha256"],
-                    "generation_key_sha256": expected_key,
-                    "metadata_path": str(metadata),
-                    "flow_routing_error_pct": float("nan"),
-                    "status": "resumed",
-                }
+                _result(
+                    job,
+                    metadata_path=str(metadata),
+                    status="resumed",
+                    generation_key=expected_key,
+                )
             )
+            if registry is not None:
+                register_d3_metadata(registry, metadata)
         else:
             jobs.append(job)
     if jobs:
         with ProcessPoolExecutor(max_workers=min(args.workers, len(jobs))) as pool:
             futures = [pool.submit(_run, job) for job in jobs]
             for future in as_completed(futures):
-                results.append(future.result())
+                result = future.result()
+                results.append(result)
+                if registry is not None:
+                    register_d3_metadata(registry, str(result["metadata_path"]))
     summary = out / "D3_RUN_SUMMARY.csv"
     pd.DataFrame(results).sort_values(
         ["event_id", "checkpoint_id", "sequence_sha256"]
@@ -242,12 +350,15 @@ def run_d3_batch_main() -> None:
     print(
         json.dumps(
             {
-                "contract": "D3_BATCH_PREFIX_VERIFIED_RESUME_V2",
+                "contract": "D3_BATCH_PREFIX_VERIFIED_ASSET_REUSE_V4",
                 "branches": len(results),
                 "computed": len(jobs),
-                "resumed": len(results) - len(jobs),
+                "local_resumed": sum(r["status"] == "resumed" for r in results),
+                "asset_reused": sum(r["status"] == "asset_reused" for r in results),
                 "workers": min(args.workers, max(1, len(jobs))),
+                "census": str(census),
                 "summary": str(summary),
+                "asset_root": None if registry is None else str(registry.root),
             },
             indent=2,
         )
