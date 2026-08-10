@@ -24,7 +24,10 @@ class GraphMessageBlock(nn.Module):
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         src, dst = edge_index.long()
         msg = self.message(torch.cat([x[:, src], x[:, dst]], dim=-1))
-        agg = torch.zeros_like(x).index_add(1, dst, msg)
+        # AMP can produce half-precision messages while the node activation remains float32.
+        # Accumulate in the activation dtype so index_add receives matching tensors and the
+        # graph reduction retains float32 numerical stability.
+        agg = torch.zeros_like(x).index_add(1, dst, msg.to(dtype=x.dtype))
         degree = torch.zeros(x.shape[1], device=x.device, dtype=x.dtype)
         degree = degree.index_add(0, dst, torch.ones_like(dst, dtype=x.dtype))
         agg = agg / degree.clamp_min(1.0).view(1, -1, 1)
