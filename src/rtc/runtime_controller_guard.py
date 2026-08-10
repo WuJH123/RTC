@@ -8,17 +8,17 @@ from .closed_loop import CausalObservation, ControllerAction
 from .runtime import choose_first_move, command_continuity
 
 
-CONTINUITY_GUARD_CONTRACT = "RTC_SUPERVISORY_TEMPORAL_CONTINUITY_V1"
+CONTINUITY_GUARD_CONTRACT = "RTC_SUPERVISORY_TEMPORAL_CONTINUITY_V2_TARGET_READBACK"
 
 
 class ContinuityGuardController:
-    """Wrap a Python policy with cross-decision setting continuity.
+    """Wrap a Python policy with physical and command-path continuity.
 
-    For Proposed, ``allow_projection`` should be False because the MPC controller itself is
-    required to emit an already executable first move; any mismatch is a software error. For
-    deterministic rule/diagnostic baselines, projection may be enabled so that an idealized
-    target (for example All-open) is approached through the same physical per-update movement
-    envelope instead of jumping instantaneously.
+    The authoritative cross-decision anchor is the SWMM ``target_setting`` observed immediately
+    before the new decision. Internal memory is retained only to audit whether the target readback
+    matches the command issued at the preceding epoch. For Proposed, projection is forbidden:
+    the MPC controller itself must emit an executable first move. Rule/diagnostic baselines may
+    be projected so an idealized target is approached through the same movement envelope.
     """
 
     def __init__(
@@ -65,12 +65,23 @@ class ContinuityGuardController:
             raise ValueError("continuity guard requires a complete actuator setting vector")
         raw = np.asarray([float(action.settings[aid]) for aid in expected], dtype=float)
         current = np.asarray(obs.actuator_current_setting, dtype=float).reshape(-1)
+        active_target = np.asarray(obs.actuator_target_setting, dtype=float).reshape(-1)
+        if active_target.shape != current.shape:
+            raise ValueError("target/current readback shapes differ")
+
+        previous_write_mismatch = (
+            0.0
+            if self.previous_requested is None
+            else float(
+                np.abs(active_target - self.previous_requested).max(initial=0.0)
+            )
+        )
         decision = choose_first_move(
             optimized_sequence=raw[None, :],
             surrogate_admissible=True,
             fallback_first_move=current,
             current_settings=current,
-            previous_requested_settings=self.previous_requested,
+            previous_requested_settings=active_target,
             min_settings=0.0,
             max_settings=1.0,
             max_delta_per_update=self.max_delta_per_update,
@@ -83,13 +94,12 @@ class ContinuityGuardController:
         continuity = command_continuity(
             decision.requested,
             current,
-            previous_requested_settings=self.previous_requested,
+            previous_requested_settings=active_target,
             max_delta_per_update=self.max_delta_per_update,
         )
         if not continuity.passed:
             raise RuntimeError("supervisory continuity guard failed after projection")
 
-        previous = self.previous_requested
         self.previous_requested = decision.requested.copy()
         diagnostics = dict(action.diagnostics or {})
         diagnostics.update(
@@ -98,12 +108,9 @@ class ContinuityGuardController:
                 "continuity_guard_passed": True,
                 "continuity_projection_applied": bool(raw_projection > 1e-9),
                 "continuity_raw_to_projected_max": raw_projection,
+                "previous_write_target_readback_mismatch_max": previous_write_mismatch,
                 "command_delta_from_current_max": continuity.max_delta_from_current,
-                "command_delta_from_previous_target_max": (
-                    0.0
-                    if previous is None
-                    else continuity.max_delta_from_previous_command
-                ),
+                "command_delta_from_previous_target_max": continuity.max_delta_from_previous_command,
                 "max_setting_delta_per_update": self.max_delta_per_update,
             }
         )
