@@ -10,7 +10,7 @@ from .flood_volume import trapezoid_node_flood_volume
 
 
 PAIRING_CONTRACT = "STEP2_COUNTERFACTUAL_PAIRING_V2_VECTOR_BATCHED"
-LOSS_CONTRACT = "STEP2_COUNTERFACTUAL_ACTION_LOSS_V2_VECTOR_BATCHED"
+LOSS_CONTRACT = "STEP2_COUNTERFACTUAL_ACTION_LOSS_V3_RESPONSE_WEIGHTED"
 
 
 @dataclass(frozen=True)
@@ -110,7 +110,9 @@ def rotated_reference_pairs(
 
 def _as_pairs(value: torch.Tensor) -> torch.Tensor:
     if value.shape[0] < 2 or value.shape[0] % 2:
-        raise ValueError("counterfactual branch batch must contain consecutive reference/candidate pairs")
+        raise ValueError(
+            "counterfactual branch batch must contain consecutive reference/candidate pairs"
+        )
     return value.reshape(value.shape[0] // 2, 2, *value.shape[1:])
 
 
@@ -139,22 +141,37 @@ def _normalized_delta_loss(
     *,
     floor_scale: torch.Tensor,
 ) -> torch.Tensor:
+    """Response-weighted candidate-minus-reference loss.
+
+    Same-state action effects are sparse in space/time. A plain mean lets unaffected nodes
+    dominate. We therefore weight each target element by ``1 + |delta| / pair_scale`` and
+    renormalize the weights to mean one for every pair. This preserves overall loss scale
+    while concentrating gradient on actuator/node/time locations that SWMM shows are
+    actually responsive to the action.
+    """
+
     pred_pair = _as_pairs(predicted)
     true_pair = _as_pairs(target)
     true_delta = true_pair[:, 1] - true_pair[:, 0]
     pred_delta = pred_pair[:, 1] - pred_pair[:, 0]
-    # Keep pair and channel dimensions; normalize each pair by its own observed
-    # counterfactual response magnitude so large storms cannot drown small action effects.
     reduce_dims = tuple(range(1, true_delta.dim() - 1))
     rms = true_delta.detach().square().mean(dim=reduce_dims).sqrt()
     floor = floor_scale.reshape(1, -1).to(device=rms.device, dtype=rms.dtype)
     scale = torch.maximum(rms, floor)
     expand = [scale.shape[0]] + [1] * (true_delta.dim() - 2) + [scale.shape[-1]]
     scale = scale.reshape(*expand)
-    return F.smooth_l1_loss(
-        (pred_delta - true_delta) / scale,
-        torch.zeros_like(pred_delta),
+    normalized_error = (pred_delta - true_delta) / scale
+    element_loss = F.smooth_l1_loss(
+        normalized_error,
+        torch.zeros_like(normalized_error),
+        reduction="none",
     )
+    response_weight = 1.0 + true_delta.detach().abs() / scale
+    normalize_dims = tuple(range(1, response_weight.dim()))
+    response_weight = response_weight / response_weight.mean(
+        dim=normalize_dims, keepdim=True
+    ).clamp_min(1e-6)
+    return (element_loss * response_weight).mean()
 
 
 def counterfactual_action_loss(
@@ -241,7 +258,9 @@ def counterfactual_action_loss(
     true_delta_tfv = true_tfv_pair[:, 1] - true_tfv_pair[:, 0]
     delta_scale = true_delta_tfv.detach().abs().clamp_min(1.0)
     normalized_error = (pred_delta_tfv - true_delta_tfv) / delta_scale
-    delta_tfv = F.smooth_l1_loss(normalized_error, torch.zeros_like(normalized_error))
+    delta_tfv = F.smooth_l1_loss(
+        normalized_error, torch.zeros_like(normalized_error)
+    )
 
     meaningful = true_delta_tfv.detach().abs() > 1e-6
     if bool(meaningful.any()):
@@ -258,9 +277,12 @@ def counterfactual_action_loss(
     exact_flood = zero
     if full_horizon and exact_node_flood_volume_m3 is not None:
         exact = exact_node_flood_volume_m3.clamp_min(0.0)
-        node_loss = torch.square(torch.log1p(pred_node) - torch.log1p(exact)).mean()
+        node_loss = torch.square(
+            torch.log1p(pred_node) - torch.log1p(exact)
+        ).mean()
         total_loss = torch.square(
-            torch.log1p(pred_node.sum(dim=-1)) - torch.log1p(exact.sum(dim=-1))
+            torch.log1p(pred_node.sum(dim=-1))
+            - torch.log1p(exact.sum(dim=-1))
         ).mean()
         exact_flood = node_loss + total_loss
 
