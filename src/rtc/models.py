@@ -398,8 +398,10 @@ class DifferentiableHydraulicWorldModel(nn.Module):
         actuator_count=0,
         actuator_embedding_dim=16,
         direct_action_context: bool = False,
+        **runtime_metadata,
     ):
         super().__init__()
+        self.runtime_metadata = dict(runtime_metadata)
         self.direct_action_context = bool(direct_action_context)
         self.actuator = ActuatorFlowModel(
             state_dim,
