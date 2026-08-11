@@ -11,7 +11,7 @@ from .code_contract import rtc_source_tree_sha256
 from .dataset_compile import compile_branches_to_npz
 
 
-SHARD_CONTRACT = "STEP2_SHARDED_DATASET_V5_SIMULATION_IDENTITY_TIME_ENGINE_LOCKED"
+SHARD_CONTRACT = "STEP2_SHARDED_DATASET_V6_COUNTERFACTUAL_GROUP_PRESERVING"
 
 
 def sha256_file(path: str | Path) -> str:
@@ -41,6 +41,71 @@ def simulation_identity_set_sha256(frame: pd.DataFrame) -> str:
     return hashlib.sha256(canonical.encode("ascii")).hexdigest()
 
 
+def _group_columns(frame: pd.DataFrame) -> list[str]:
+    keys = [
+        name
+        for name in ("source_kind", "rainfall_group", "event_id", "checkpoint_id")
+        if name in frame.columns
+    ]
+    if "checkpoint_id" not in keys:
+        return []
+    return keys
+
+
+def _action_sort_column(frame: pd.DataFrame) -> str | None:
+    for name in ("candidate_action_sha256", "sequence_sha256", "simulation_identity_sha256"):
+        if name in frame.columns:
+            return name
+    return None
+
+
+def _group_preserving_chunks(
+    frame: pd.DataFrame,
+    *,
+    shard_size: int,
+) -> tuple[pd.DataFrame, list[pd.DataFrame], list[str]]:
+    """Sort by counterfactual group and never split a checkpoint group across shards."""
+
+    group_keys = _group_columns(frame)
+    if not group_keys:
+        ordered = frame.reset_index(drop=True)
+        chunks = [
+            ordered.iloc[start : start + shard_size].reset_index(drop=True)
+            for start in range(0, len(ordered), shard_size)
+        ]
+        return ordered, chunks, []
+
+    sort_cols = list(group_keys)
+    action_col = _action_sort_column(frame)
+    if action_col:
+        sort_cols.append(action_col)
+    ordered = frame.sort_values(sort_cols, kind="mergesort").reset_index(drop=True)
+
+    groups = [
+        group.reset_index(drop=True)
+        for _, group in ordered.groupby(group_keys, sort=False, dropna=False)
+    ]
+    if any(len(group) > shard_size for group in groups):
+        largest = max(len(group) for group in groups)
+        raise ValueError(
+            f"counterfactual checkpoint group ({largest} rows) exceeds shard_size={shard_size}"
+        )
+
+    chunks: list[pd.DataFrame] = []
+    pending: list[pd.DataFrame] = []
+    pending_rows = 0
+    for group in groups:
+        if pending and pending_rows + len(group) > shard_size:
+            chunks.append(pd.concat(pending, ignore_index=True))
+            pending = []
+            pending_rows = 0
+        pending.append(group)
+        pending_rows += len(group)
+    if pending:
+        chunks.append(pd.concat(pending, ignore_index=True))
+    return ordered, chunks, group_keys
+
+
 def compile_step2_shards(
     run_index: pd.DataFrame,
     *,
@@ -49,7 +114,7 @@ def compile_step2_shards(
     expected_model_step_seconds: int | None = None,
     expected_horizon_steps: int | None = None,
 ) -> Path:
-    """Compile bounded-memory D2/D3 shards under one immutable identity/time/engine contract."""
+    """Compile bounded-memory D2/D3 shards while keeping same-prefix groups intact."""
 
     if shard_size <= 0:
         raise ValueError("shard_size must be positive")
@@ -57,15 +122,20 @@ def compile_step2_shards(
         raise ValueError("non-empty run index with metadata_path is required")
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    shards: list[dict[str, object]] = []
-    frame = run_index.reset_index(drop=True)
+
+    frame, chunks, group_keys = _group_preserving_chunks(
+        run_index.reset_index(drop=True),
+        shard_size=shard_size,
+    )
     identity_set_sha = simulation_identity_set_sha256(frame)
+    shards: list[dict[str, object]] = []
     global_step: int | None = None
     global_horizon: int | None = None
     global_engine: str | None = None
-    for start in range(0, len(frame), shard_size):
-        chunk = frame.iloc[start : start + shard_size].reset_index(drop=True)
-        shard = out / f"step2_{start // shard_size:05d}.npz"
+    start_row = 0
+
+    for shard_index, chunk in enumerate(chunks):
+        shard = out / f"step2_{shard_index:05d}.npz"
         compile_branches_to_npz(
             chunk["metadata_path"].astype(str).tolist(),
             shard,
@@ -86,13 +156,15 @@ def compile_step2_shards(
                 "path": str(shard.resolve()),
                 "sha256": sha256_file(shard),
                 "rows": int(len(chunk)),
-                "start_row": int(start),
+                "start_row": int(start_row),
                 "model_step_seconds": step,
                 "horizon_steps": horizon,
                 "swmm_engine_version": engine,
                 "simulation_identity_set_sha256": simulation_identity_set_sha256(chunk),
             }
         )
+        start_row += len(chunk)
+
     assert global_step is not None and global_horizon is not None and global_engine is not None
     if expected_model_step_seconds is not None and global_step != int(expected_model_step_seconds):
         raise ValueError(
@@ -104,6 +176,7 @@ def compile_step2_shards(
             f"Step2 data horizon {global_horizon} differs from frozen production horizon "
             f"{expected_horizon_steps}"
         )
+
     manifest = {
         "contract": SHARD_CONTRACT,
         "row_count": int(len(frame)),
@@ -115,11 +188,14 @@ def compile_step2_shards(
         "source_simulation_identity_set_sha256": identity_set_sha,
         "simulation_identity_bound": bool(identity_set_sha),
         "rtc_source_tree_sha256": rtc_source_tree_sha256(),
+        "counterfactual_groups_preserved": bool(group_keys),
+        "counterfactual_group_columns": group_keys,
         "shards": shards,
     }
     manifest_path = out / "manifest.json"
     manifest_path.write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
     return manifest_path
 

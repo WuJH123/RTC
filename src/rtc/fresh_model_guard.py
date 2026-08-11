@@ -37,8 +37,6 @@ def _stamp_metrics(path: str | Path) -> None:
 def _validate_shard_manifest(
     manifest_path: str, workspace_manifest: str
 ) -> dict[str, object]:
-    # The workspace binds the canonical event/split design; the data itself may live on a
-    # different disk/volume. Scientific validity comes from shard/data hashes and lineage.
     load_fresh_workspace(workspace_manifest)
     manifest_file = Path(manifest_path).expanduser().resolve()
     manifest = load_shard_manifest(manifest_file)
@@ -66,7 +64,7 @@ def _guard_step1(delegate: Callable[[], None], *, acceptance: bool) -> None:
         reject_final=True,
     )
     if acceptance and not Path(known.model).is_file():
-        raise ValueError(f"Step1 model is missing: {known.model}")
+        raise ValueError("Step1 model is missing: " + str(known.model))
     _strip_option("--workspace-manifest")
     delegate()
     if acceptance:
@@ -87,7 +85,10 @@ def accept_step1_main() -> None:
 
 def compile_step2_shards_main() -> None:
     parser = argparse.ArgumentParser(
-        description="Compile lineage-valid D2/D3 branches into one frozen-time Step2 shard set"
+        description=(
+            "Compile lineage-valid D2/D3 branches into one frozen-time, "
+            "counterfactual-group-preserving Step2 shard set"
+        )
     )
     parser.add_argument("--workspace-manifest", required=True)
     parser.add_argument("--run-index", required=True)
@@ -115,6 +116,10 @@ def compile_step2_shards_main() -> None:
         ].copy()
     if frame.empty:
         raise ValueError("no Step2 branches remain after split/fold filtering")
+    if "source_kind" not in frame.columns:
+        raise ValueError(
+            "action-sensitive Step2 compile requires source_kind to distinguish D2 and D3"
+        )
     manifest = compile_step2_shards(
         frame,
         output_dir=args.out_dir,
@@ -125,11 +130,12 @@ def compile_step2_shards_main() -> None:
     print(
         json.dumps(
             {
-                "contract": "STEP2_SHARD_COMPILE_TIME_LOCKED_V1",
+                "contract": "STEP2_SHARD_COMPILE_COUNTERFACTUAL_GROUPED_V2",
                 "manifest": str(manifest),
                 "branches": len(frame),
                 "model_step_seconds": args.model_step_seconds,
                 "horizon_steps": args.horizon_steps,
+                "counterfactual_groups_preserved": True,
             },
             indent=2,
         )
@@ -155,9 +161,9 @@ def _guard_step2(delegate: Callable[[], None], *, acceptance: bool) -> None:
 
 
 def train_step2_main() -> None:
-    from .step2_train_v2 import train_step2_large_v2_main
+    from .step2_train_v3 import train_step2_large_v3_main
 
-    _guard_step2(train_step2_large_v2_main, acceptance=False)
+    _guard_step2(train_step2_large_v3_main, acceptance=False)
 
 
 def accept_step2_main() -> None:
