@@ -51,15 +51,42 @@ class DifferentiableCounterfactualResponseModelV43(
         self.topology_state_head = nn.Linear(rank, self.state_dim)
         self.topology_hidden_head = nn.Linear(rank, hidden)
         self._topology_graph_enabled = True
+        self._topology_endpoint_state_enabled = True
+        self._topology_message_state_enabled = True
+        # Backward-compatible alias retained for the V4.3 audit scripts.
         self._topology_local_state_enabled = True
 
     def set_topology_ablation(
-        self, *, graph_enabled: bool = True, local_state_enabled: bool = True
+        self,
+        *,
+        graph_enabled: bool = True,
+        endpoint_state_enabled: bool | None = None,
+        message_state_enabled: bool | None = None,
+        local_state_enabled: bool | None = None,
     ) -> None:
-        """Toggle read-only ablations without changing learned parameters."""
+        """Toggle independent graph/state paths without changing parameters.
 
+        ``local_state_enabled`` is kept as a compatibility shorthand for the
+        original V4.3 two-way ablation.  V4.3.1 uses the explicit endpoint and
+        message switches so the two local-state pathways cannot be conflated.
+        """
+
+        if local_state_enabled is not None:
+            if endpoint_state_enabled is None:
+                endpoint_state_enabled = local_state_enabled
+            if message_state_enabled is None:
+                message_state_enabled = local_state_enabled
+        if endpoint_state_enabled is None:
+            endpoint_state_enabled = True
+        if message_state_enabled is None:
+            message_state_enabled = True
         self._topology_graph_enabled = bool(graph_enabled)
-        self._topology_local_state_enabled = bool(local_state_enabled)
+        self._topology_endpoint_state_enabled = bool(endpoint_state_enabled)
+        self._topology_message_state_enabled = bool(message_state_enabled)
+        self._topology_local_state_enabled = (
+            self._topology_endpoint_state_enabled
+            and self._topology_message_state_enabled
+        )
 
     def _topology_interaction(
         self,
@@ -83,8 +110,13 @@ class DifferentiableCounterfactualResponseModelV43(
 
         upstream = reference.actuator_upstream.to(device=device)
         downstream = reference.actuator_downstream.to(device=device)
-        upstream_context = reference.node_context[:, :, upstream, :]
-        downstream_context = reference.node_context[:, :, downstream, :]
+        if self._topology_endpoint_state_enabled:
+            upstream_context = reference.node_context[:, :, upstream, :]
+            downstream_context = reference.node_context[:, :, downstream, :]
+        else:
+            endpoint_neutral = reference.global_context[:, :, None, :]
+            upstream_context = endpoint_neutral.expand(-1, -1, actuators, -1)
+            downstream_context = endpoint_neutral.expand(-1, -1, actuators, -1)
         upstream_context = upstream_context[:, None].expand(batch, candidates, -1, -1, -1)
         downstream_context = downstream_context[:, None].expand(batch, candidates, -1, -1, -1)
         actuator_static = reference.actuator_static.to(device=device, dtype=dtype)
@@ -110,7 +142,7 @@ class DifferentiableCounterfactualResponseModelV43(
         node_latent = outgoing + incoming
 
         local_state = reference.node_context
-        if not self._topology_local_state_enabled:
+        if not self._topology_message_state_enabled:
             local_state = reference.global_context.unsqueeze(2).expand(-1, -1, nodes, -1)
         static_context = reference.node_static_context.to(device=device, dtype=dtype)
         context = torch.cat(
