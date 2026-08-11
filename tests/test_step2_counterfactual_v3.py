@@ -5,6 +5,8 @@ import pandas as pd
 import torch
 
 from rtc.data_index import build_d2_run_index
+from rtc.dataset_compile import compile_branches_to_npz
+from rtc.dataset_compile import BranchTensors
 from rtc.models import DifferentiableHydraulicWorldModel, GraphMessageBlock, _inverse_degree
 from rtc.step2_counterfactual import (
     CounterfactualLossWeights,
@@ -174,3 +176,40 @@ def test_d2_index_preserves_base_action_sha_for_pair_reference():
     )
     result = build_d2_run_index(manifest, runs)
     assert result["base_action_sha256"].tolist() == ["base", "base"]
+
+
+def test_step2_shard_provenance_is_unicode_and_pickle_free(tmp_path, monkeypatch):
+    branch = BranchTensors(
+        initial_state=np.zeros((2, 6), dtype=np.float32),
+        rainfall=np.zeros((1, 2, 1), dtype=np.float32),
+        settings=np.zeros((1, 1), dtype=np.float32),
+        previous_actuator_flow=np.zeros((1,), dtype=np.float32),
+        target_states=np.zeros((1, 2, 6), dtype=np.float32),
+        target_actuator_flows=np.zeros((1, 1), dtype=np.float32),
+        elapsed_seconds=np.asarray([0, 300], dtype=np.int64),
+        node_ids=("N1", "N2"),
+        actuator_ids=("A1",),
+        action_or_sequence_sha256="action",
+        swmm_engine_version="5.2.4",
+        exact_node_flood_volume_m3=np.zeros((2,), dtype=np.float32),
+    )
+    monkeypatch.setattr("rtc.dataset_compile.compile_branch_tensors", lambda _: branch)
+    provenance = pd.DataFrame(
+        {
+            "metadata_path": ["branch.json"],
+            "event_id": ["event"],
+            "rainfall_group": ["rain"],
+            "scientific_split": ["development"],
+            "development_fold": ["train"],
+            "data_role": ["counterfactual"],
+            "checkpoint_id": ["cp0"],
+            "base_action_sha256": ["base"],
+            "source_kind": ["D2"],
+        }
+    )
+    out = tmp_path / "step2.npz"
+    compile_branches_to_npz(["branch.json"], out, provenance=provenance)
+    with np.load(out, allow_pickle=False) as ds:
+        assert ds["event_id"].dtype.kind == "U"
+        assert ds["source_kind"].dtype.kind == "U"
+        assert counterfactual_groups(ds) == {"D2::rain::event::cp0": [0]}

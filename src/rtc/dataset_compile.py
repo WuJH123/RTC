@@ -333,7 +333,13 @@ def compile_branches_to_npz(
             "source_kind",
         ):
             if column in provenance.columns:
-                payload[column] = provenance[column].fillna("").astype(str).to_numpy()
+                # Keep shard provenance readable with allow_pickle=False.  Pandas
+                # may return an object array for ``Series.astype(str).to_numpy()``;
+                # object arrays force NumPy readers to enable pickle and made the
+                # V6 training loader fail before the first epoch.
+                payload[column] = provenance[column].fillna("").astype(str).to_numpy(
+                    dtype=str
+                )
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(out, **payload)
