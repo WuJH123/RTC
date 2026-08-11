@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 
 from rtc.data_index import build_d2_run_index
-from rtc.dataset_compile import compile_branches_to_npz
-from rtc.dataset_compile import BranchTensors
+from rtc.dataset_compile import BranchTensors, compile_branches_to_npz
 from rtc.models import DifferentiableHydraulicWorldModel, GraphMessageBlock, _inverse_degree
 from rtc.step2_counterfactual import (
     CounterfactualLossWeights,
@@ -42,6 +42,45 @@ def test_counterfactual_group_and_reference_use_provenance_not_outcomes():
     pairs = rotated_reference_pairs(ds, indices, epoch=0, budget=2)
     assert len(pairs) == 2
     assert all(left == 1 and right != 1 for left, right in pairs)
+
+
+def _d3_reference_dataset(roles: list[str]) -> FakeDataset:
+    count = len(roles)
+    return FakeDataset(
+        initial_state=np.zeros((count, 2, 6), dtype=np.float32),
+        event_id=np.asarray(["e"] * count),
+        rainfall_group=np.asarray(["r"] * count),
+        checkpoint_id=np.asarray(["c"] * count),
+        source_kind=np.asarray(["D3"] * count),
+        action_or_sequence_sha256=np.asarray([f"a{i}" for i in range(count)]),
+        base_action_sha256=np.asarray([""] * count),
+        data_role=np.asarray(roles),
+    )
+
+
+def test_d3_reference_is_explicit_hold_sequence():
+    ds = _d3_reference_dataset(
+        ["D3_MULTI_ACTUATOR_ROLLOUT", "D3_HOLD_REFERENCE", "D3_MULTI_ACTUATOR_ROLLOUT"]
+    )
+    indices = [0, 1, 2]
+    assert reference_index(ds, indices) == 1
+    assert all(left == 1 for left, _ in rotated_reference_pairs(ds, indices, epoch=0, budget=2))
+
+
+def test_d3_group_without_hold_fails_closed():
+    ds = _d3_reference_dataset(
+        ["D3_MULTI_ACTUATOR_ROLLOUT", "D3_MULTI_ACTUATOR_ROLLOUT"]
+    )
+    with pytest.raises(ValueError, match="exactly one D3_HOLD_REFERENCE"):
+        reference_index(ds, [0, 1])
+
+
+def test_d3_group_with_multiple_holds_fails_closed():
+    ds = _d3_reference_dataset(
+        ["D3_HOLD_REFERENCE", "D3_HOLD_REFERENCE", "D3_MULTI_ACTUATOR_ROLLOUT"]
+    )
+    with pytest.raises(ValueError, match="exactly one D3_HOLD_REFERENCE"):
+        reference_index(ds, [0, 1, 2])
 
 
 def test_counterfactual_loss_penalizes_action_collapse():
@@ -107,6 +146,45 @@ def test_counterfactual_loss_vectorizes_multiple_pairs():
     assert metrics.predicted_delta_tfv_m3.shape == (2,)
     assert torch.isfinite(metrics.total)
     assert float(metrics.sign_correct) == 1.0
+
+
+def test_counterfactual_loss_decouples_trajectory_and_exact_endpoint_truth():
+    initial = torch.zeros(2, 2, 6)
+    target_state = torch.zeros(2, 1, 2, 6)
+    target_state[0, :, :, 2] = 1.0
+    target_state[1, :, :, 2] = 2.0
+    predicted = target_state.clone()
+    predicted[1, :, :, 2] = 3.0
+    target_flow = torch.zeros(2, 1, 1)
+    exact = torch.zeros(2, 2)
+    exact[0] = 10.0
+    exact[1] = 30.0
+    kwargs = dict(
+        initial_state=initial,
+        rollout_states=predicted,
+        rollout_flows=target_flow,
+        target_states=target_state,
+        target_flows=target_flow,
+        exact_node_flood_volume_m3=exact,
+        dt_seconds=torch.full((2, 1), 300.0),
+        state_std=torch.ones(6),
+        flow_std=torch.ones(1),
+        full_horizon=True,
+        weights=CounterfactualLossWeights(),
+    )
+    trajectory = counterfactual_action_loss(
+        **kwargs,
+        use_authoritative_endpoint_truth=False,
+        use_exact_flood_loss=False,
+    )
+    endpoint = counterfactual_action_loss(
+        **kwargs,
+        use_authoritative_endpoint_truth=True,
+        use_exact_flood_loss=True,
+    )
+    assert float(trajectory.true_delta_tfv_m3) != float(endpoint.true_delta_tfv_m3)
+    assert float(trajectory.exact_flood) == 0.0
+    assert float(endpoint.exact_flood) > 0.0
 
 
 def test_direct_setting_context_keeps_setting_gradient():

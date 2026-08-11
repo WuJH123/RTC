@@ -1,0 +1,51 @@
+{
+  "amendment": "PROJECT7_V069_STEP2_STABILITY_AMENDMENT_V2",
+  "status": "single_fixed_pre_formal_amendment",
+  "scientific_scope": "development_train_only",
+  "swmm_regeneration": false,
+  "validation_access_before_smoke_green": false,
+  "final_access": false,
+  "training_contract": "STEP2_COUNTERFACTUAL_STABILITY_TRAINING_V3_BOUNDED_V2",
+  "model_contract": "STEP2_BOUNDED_COUNTERFACTUAL_DYNAMICS_V2",
+  "bounded_state_residual": true,
+  "bounded_flow_residual": true,
+  "state_delta_scale": {
+    "definition": "max(6 * Train-only RMS transition delta, 0.01 * Train-only state_std)",
+    "source": "development/train V6 shards only"
+  },
+  "flow_delta_scale": {
+    "definition": "max(6 * Train-only actuator-aware RMS flow delta, 0.01 * Train-only flow_std)",
+    "source": "development/train V6 shards only"
+  },
+  "curriculum_contract": "FLOW_H1_TO_H72_EXPLICIT_STABILITY_V2",
+  "curriculum": [
+    {"epochs": "1-2", "stage": "flow_h1", "horizon_steps": 1, "d3_enabled": false, "endpoint_truth": false, "exact_flood_loss": false},
+    {"epochs": "3-4", "stage": "joint_h1", "horizon_steps": 1, "d3_enabled": false, "endpoint_truth": false, "exact_flood_loss": false},
+    {"epochs": "5-6", "stage": "h2", "horizon_steps": 2, "d3_enabled": false, "endpoint_truth": false, "exact_flood_loss": false},
+    {"epochs": "7-8", "stage": "h6", "horizon_steps": 6, "d3_enabled": false, "endpoint_truth": false, "exact_flood_loss": false},
+    {"epochs": "9-10", "stage": "h12", "horizon_steps": 12, "d3_enabled": false, "endpoint_truth": false, "exact_flood_loss": false},
+    {"epochs": "11-13", "stage": "h24", "horizon_steps": 24, "d3_enabled": true, "endpoint_truth": false, "exact_flood_loss": false},
+    {"epochs": "14-15", "stage": "h36", "horizon_steps": 36, "d3_enabled": true, "endpoint_truth": false, "exact_flood_loss": false},
+    {"epochs": "16-17", "stage": "h48", "horizon_steps": 48, "d3_enabled": true, "endpoint_truth": false, "exact_flood_loss": false},
+    {"epochs": "18-20", "stage": "h60", "horizon_steps": 60, "d3_enabled": true, "endpoint_truth": false, "exact_flood_loss": false},
+    {"epochs": "21-22", "stage": "h72_trajectory", "horizon_steps": 72, "d3_enabled": true, "endpoint_truth": false, "exact_flood_loss": false},
+    {"epochs": "23-24", "stage": "h72_exact", "horizon_steps": 72, "d3_enabled": true, "endpoint_truth": true, "exact_flood_loss": true}
+  ],
+  "fixed_parameters": {
+    "epochs": 24,
+    "hidden_dim": 160,
+    "actuator_embedding_dim": 16,
+    "learning_rate": 0.001,
+    "gradient_clip": 1.0,
+    "branch_batch_size": 4,
+    "grad_accum": 2,
+    "d2_pairs_per_group": 8,
+    "d3_pairs_per_group": 4,
+    "exact_flood_loss_weight": 0.5,
+    "seed": 42,
+    "precision": "auto"
+  },
+  "thresholds_changed": false,
+  "data_contract_changed": false,
+  "step2_training_cache_contract": "STEP2_REBUILDABLE_TRAINING_CACHE_V1"
+}

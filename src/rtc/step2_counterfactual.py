@@ -8,7 +8,6 @@ import torch.nn.functional as F
 
 from .flood_volume import trapezoid_node_flood_volume
 
-
 PAIRING_CONTRACT = "STEP2_COUNTERFACTUAL_PAIRING_V2_VECTOR_BATCHED"
 LOSS_CONTRACT = "STEP2_COUNTERFACTUAL_ACTION_LOSS_V3_RESPONSE_WEIGHTED"
 
@@ -43,7 +42,8 @@ class PairMetrics:
 
 
 def _array(ds, name: str, default: str = "") -> np.ndarray:
-    if name in ds.files:
+    files = ds.files if hasattr(ds, "files") else ds.keys()
+    if name in files:
         return ds[name].astype(str)
     return np.asarray([default] * int(ds["initial_state"].shape[0]))
 
@@ -74,9 +74,29 @@ def reference_index(ds, indices: list[int]) -> int:
 
     if not indices:
         raise ValueError("counterfactual group is empty")
+    source_values = {
+        str(value).strip().upper()
+        for value in _array(ds, "source_kind", "D2")[indices]
+    }
+    if len(source_values) != 1:
+        raise ValueError(
+            f"counterfactual group mixes source kinds: {sorted(source_values)}"
+        )
     action_sha = _array(ds, "action_or_sequence_sha256")
     base_sha = _array(ds, "base_action_sha256")
-    data_role = np.char.lower(_array(ds, "data_role"))
+    data_role = [str(value).strip().lower() for value in _array(ds, "data_role")]
+    if next(iter(source_values)) == "D3":
+        hold_indices = [
+            int(idx)
+            for idx in indices
+            if data_role[idx] == "d3_hold_reference"
+        ]
+        if len(hold_indices) != 1:
+            raise ValueError(
+                "D3 counterfactual group requires exactly one D3_HOLD_REFERENCE; "
+                f"found {len(hold_indices)}"
+            )
+        return hold_indices[0]
     for idx in indices:
         if base_sha[idx] and base_sha[idx] == action_sha[idx]:
             return int(idx)
@@ -188,6 +208,8 @@ def counterfactual_action_loss(
     full_horizon: bool,
     weights: CounterfactualLossWeights,
     flow_only: bool = False,
+    use_authoritative_endpoint_truth: bool | None = None,
+    use_exact_flood_loss: bool | None = None,
 ) -> PairMetrics:
     """Action-sensitive loss for one or more vectorized same-prefix pairs.
 
@@ -196,6 +218,16 @@ def counterfactual_action_loss(
     """
 
     _ = _as_pairs(initial_state)
+    endpoint_truth_enabled = (
+        bool(full_horizon)
+        if use_authoritative_endpoint_truth is None
+        else bool(use_authoritative_endpoint_truth)
+    )
+    exact_flood_enabled = (
+        bool(full_horizon)
+        if use_exact_flood_loss is None
+        else bool(use_exact_flood_loss)
+    )
     if rollout_states.shape != target_states.shape:
         raise ValueError("predicted/target state shapes differ")
     if rollout_flows.shape != target_flows.shape:
@@ -249,7 +281,7 @@ def counterfactual_action_loss(
     )
     truth_node = (
         exact_node_flood_volume_m3.clamp_min(0.0)
-        if full_horizon and exact_node_flood_volume_m3 is not None
+        if endpoint_truth_enabled and exact_node_flood_volume_m3 is not None
         else true_traj_node.detach()
     )
     pred_tfv_pair = _as_pairs(pred_node.sum(dim=-1))
@@ -275,7 +307,7 @@ def counterfactual_action_loss(
         sign_correct = torch.ones((), device=zero.device, dtype=torch.float32)
 
     exact_flood = zero
-    if full_horizon and exact_node_flood_volume_m3 is not None:
+    if exact_flood_enabled and exact_node_flood_volume_m3 is not None:
         exact = exact_node_flood_volume_m3.clamp_min(0.0)
         node_loss = torch.square(
             torch.log1p(pred_node) - torch.log1p(exact)
