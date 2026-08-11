@@ -1,0 +1,101 @@
+{
+  "contract": "PROJECT7_V069_STEP2_COUNTERFACTUAL_TRAINING_AMENDMENT_V1",
+  "status": "PRE_FORMAL_DIAGNOSTIC_DRIVEN_AMENDMENT",
+  "scope": "Step2 training/model pathway only; D2/D3 generation, rainfall split, controller objective, acceptance thresholds, Policy Lock and Final contracts are unchanged.",
+  "trigger_evidence": {
+    "mechanism_diagnostic": "STEP2_MECHANISM_DIAG_V1",
+    "primary_root_cause": "ACTION_LOSS_PATHWAY",
+    "reason": "Same-prefix D2 contains strong hydraulic/TFV action signal, while the original absolute trajectory objective fails to preserve same-checkpoint sensitivity/ranking even at H60; H360 recurrence alone is therefore not the primary failure mechanism.",
+    "new_swmm_data_required": false
+  },
+  "scientific_guardrails": {
+    "train_fold": "development/train only",
+    "accept_fold": "development/validation only",
+    "final_for_training_or_tuning": false,
+    "lower_existing_acceptance_thresholds": false,
+    "architecture_or_hyperparameter_sweep": false,
+    "single_fixed_amendment_before_formal_fit": true
+  },
+  "model_pathway": {
+    "direct_action_context": true,
+    "direct_action_context_channels": [
+      "sum_outgoing_actuator_setting",
+      "sum_incoming_actuator_setting"
+    ],
+    "predicted_actuator_flow_injection_retained": true,
+    "counterfactual_pairing": "same event + rainfall group + checkpoint + source kind",
+    "preferred_reference": "base_action_sha256 when present, otherwise deterministic non-outcome reference"
+  },
+  "loss": {
+    "contract": "STEP2_COUNTERFACTUAL_ACTION_LOSS_V2_VECTOR_BATCHED",
+    "weights": {
+      "absolute_state": 0.5,
+      "absolute_flow": 0.5,
+      "delta_state": 1.0,
+      "delta_flow": 1.0,
+      "delta_tfv": 2.0,
+      "same_checkpoint_ranking": 1.0,
+      "exact_h360_flood": 0.5,
+      "physical_nonnegativity": 0.1
+    },
+    "delta_loss": "Smooth-L1 on candidate-minus-reference response normalized by pair-specific response scale with a fixed small floor",
+    "ranking_loss": "signed pairwise softplus using authoritative SWMM candidate-minus-reference TFV",
+    "short_horizon_flood_truth": "trajectory-integrated SWMM flooding-rate diagnostic",
+    "full_horizon_flood_truth": "authoritative SWMM node cumulative flooding volume"
+  },
+  "curriculum": {
+    "contract": "FLOW_H1_TO_COUNTERFACTUAL_H360_V1",
+    "stages_by_training_fraction": [
+      {"end_fraction": 0.10, "name": "flow_h1", "horizon_steps": 1, "role": "actuator flow + delta-flow pretrain"},
+      {"end_fraction": 0.20, "name": "joint_h1", "horizon_steps": 1},
+      {"end_fraction": 0.30, "name": "h2", "horizon_steps": 2},
+      {"end_fraction": 0.40, "name": "h6", "horizon_steps": 6},
+      {"end_fraction": 0.50, "name": "h12", "horizon_steps": 12},
+      {"end_fraction": 0.60, "name": "h24", "horizon_steps": 24},
+      {"end_fraction": 1.00, "name": "hfull", "horizon_steps": 72}
+    ],
+    "d3_enters_from_h24": true
+  },
+  "fixed_training": {
+    "epochs": 30,
+    "hidden_dim": 160,
+    "actuator_embedding_dim": 16,
+    "learning_rate": 0.001,
+    "gradient_clip_norm": 1.0,
+    "branch_batch_size_default": 4,
+    "gradient_accumulation_default": 2,
+    "effective_branch_batch_default": 8,
+    "d2_pairs_per_group_per_epoch": 8,
+    "d3_pairs_per_group_per_epoch": 4,
+    "d2_d3_group_balancing": true,
+    "pair_rotation_across_epochs": true,
+    "precision": "auto: BF16 on supported CUDA hardware, otherwise FP32; FP16 only by explicit diagnostic override"
+  },
+  "efficiency_only_changes": {
+    "counterfactual_pair_vectorization": true,
+    "cache_inverse_graph_degree_per_rollout": true,
+    "cache_static_node_normalization_per_rollout": true,
+    "cache_actuator_physics_normalization_per_rollout": true,
+    "cache_actuator_identity_embedding_per_rollout": true,
+    "same_checkpoint_groups_never_split_across_step2_shards": true
+  },
+  "unchanged_acceptance": {
+    "step2_tfv_exact_truth_rank_correlation_min": 0.70,
+    "gradient_tfv_sign_accuracy_min": 0.70,
+    "gradient_tfv_cosine_similarity_min": 0.60,
+    "d2_tfv_rank_correlation_min": 0.70,
+    "d2_tfv_top1_hit_rate_min": 0.50,
+    "d3_tfv_rank_correlation_min": 0.70,
+    "d3_tfv_top1_hit_rate_min": 0.50
+  },
+  "post_d3_execution_order": [
+    "wait for complete D3 RUN_SUMMARY without interrupting the current D3 process",
+    "build one final D2+D3 Step2 run index with Final excluded",
+    "compile V6 counterfactual-group-preserving Train18 and Validation6 shards",
+    "run a bounded Train-only action-sensitivity smoke using the fixed amendment",
+    "if the smoke shows action collapse or non-finite gradients, fail closed and diagnose; do not tune Validation",
+    "fit one Formal Step2 model on Train18 using this fixed amendment",
+    "run the unchanged Validation6 Step2, gradient and D2/D3 ranking gates",
+    "only after all gates pass may downstream closed-loop/runtime/Policy Lock proceed"
+  ]
+}
