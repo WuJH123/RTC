@@ -36,6 +36,7 @@ class ReferenceEncodingV41:
     reference_states_physical: torch.Tensor
     reference_flows_physical: torch.Tensor
     reference_flood_latent: torch.Tensor
+    node_static_context: torch.Tensor
     actuator_static: torch.Tensor
     actuator_upstream: torch.Tensor
     actuator_downstream: torch.Tensor
@@ -370,6 +371,7 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
             reference_states_physical=physical,
             reference_flows_physical=reference_flows,
             reference_flood_latent=flood_latent,
+            node_static_context=node_static,
             actuator_static=actuator_static,
             actuator_upstream=upstream,
             actuator_downstream=downstream,
@@ -384,6 +386,21 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         if source == "D3":
             return True
         raise ValueError("source_kind must be D2 or D3")
+
+    def _topology_interaction(
+        self,
+        *,
+        hidden_delta: torch.Tensor,
+        delta_u: torch.Tensor,
+        interaction_hidden: torch.Tensor,
+        reference: ReferenceEncodingV41,
+        prepared: PreparedStaticV41,
+        interaction_time_gate: torch.Tensor,
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """Optional D3 spatial hook; V4.1/V4.2 deliberately use no graph path."""
+
+        del hidden_delta, delta_u, interaction_hidden, reference, prepared, interaction_time_gate
+        return None, None
 
     def _candidate_tokens(
         self,
@@ -598,6 +615,16 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
             interaction_hidden = interaction_hidden + self.interaction_magnitude_residual(
                 magnitude_hidden
             )
+        topology_state_raw, topology_hidden = self._topology_interaction(
+            hidden_delta=hidden_delta,
+            delta_u=delta_u,
+            interaction_hidden=interaction_hidden,
+            reference=reference,
+            prepared=prepared,
+            interaction_time_gate=interaction_time_gate,
+        )
+        if topology_hidden is not None:
+            interaction_hidden = interaction_hidden + topology_hidden
         gate_h = interaction_time_gate[..., None]
         interaction_hidden = interaction_hidden * gate_h
 
@@ -613,6 +640,8 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         interaction_state_raw = torch.einsum(
             "bchrs,bhnr->bchns", interaction_coefficients, node_basis
         )
+        if topology_state_raw is not None:
+            interaction_state_raw = interaction_state_raw + topology_state_raw
         interaction_state_raw = (
             interaction_state_raw * self.d3_state_scale * gate_h.unsqueeze(-1)
         )
