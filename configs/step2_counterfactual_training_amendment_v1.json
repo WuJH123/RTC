@@ -27,7 +27,7 @@
     "preferred_reference": "base_action_sha256 when present, otherwise deterministic non-outcome reference"
   },
   "loss": {
-    "contract": "STEP2_COUNTERFACTUAL_ACTION_LOSS_V2_VECTOR_BATCHED",
+    "contract": "STEP2_COUNTERFACTUAL_ACTION_LOSS_V3_RESPONSE_WEIGHTED",
     "weights": {
       "absolute_state": 0.5,
       "absolute_flow": 0.5,
@@ -38,7 +38,7 @@
       "exact_h360_flood": 0.5,
       "physical_nonnegativity": 0.1
     },
-    "delta_loss": "Smooth-L1 on candidate-minus-reference response normalized by pair-specific response scale with a fixed small floor",
+    "delta_loss": "Response-weighted Smooth-L1 on candidate-minus-reference response. Each pair/channel is normalized by its own response RMS with a fixed small floor; element weights are 1 + |true delta|/scale and are renormalized to pair mean 1 so sparse responsive nodes/actuators receive gradient without changing the overall loss scale.",
     "ranking_loss": "signed pairwise softplus using authoritative SWMM candidate-minus-reference TFV",
     "short_horizon_flood_truth": "trajectory-integrated SWMM flooding-rate diagnostic",
     "full_horizon_flood_truth": "authoritative SWMM node cumulative flooding volume"
