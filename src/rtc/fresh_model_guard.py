@@ -161,9 +161,9 @@ def _guard_step2(delegate: Callable[[], None], *, acceptance: bool) -> None:
 
 
 def train_step2_main() -> None:
-    from .step2_train_v3 import train_step2_large_v3_main
+    from .step2_train_v4 import train_step2_large_v4_main
 
-    _guard_step2(train_step2_large_v3_main, acceptance=False)
+    _guard_step2(train_step2_large_v4_main, acceptance=False)
 
 
 def accept_step2_main() -> None:
