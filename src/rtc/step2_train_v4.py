@@ -51,9 +51,10 @@ def _stage(epoch: int, total_epochs: int) -> tuple[str, int, bool, bool, bool]:
 
     The model first learns local H1/H2/H6/H12 dynamics. Full 360-min action sequences are
     then trained by multiple shooting: every 60-min segment starts from authoritative
-    Train-only state/flow, so no backward path exceeds 12 recurrent steps. The final two
-    epochs add authoritative H360 flood-volume calibration to the sum of the six segment
-    predictions. Validation/Final are never consulted here.
+    Train-only state/flow, so no backward path exceeds 12 recurrent steps. The last two
+    epochs additionally *report* teacher-forced H360 exact-volume mismatch; authoritative
+    endpoint truth is not backpropagated because the previous full-horizon endpoint loss
+    was one of the long-gradient failure paths. Validation/Final are never consulted here.
     """
 
     if total_epochs != 18:
@@ -66,11 +67,11 @@ def _stage(epoch: int, total_epochs: int) -> tuple[str, int, bool, bool, bool]:
         (8, "h6", 6, False, False, False),
         (10, "h12", 12, False, False, False),
         (16, "h72_multishooting", 72, False, True, False),
-        (18, "h72_multishooting_exact", 72, False, True, True),
+        (18, "h72_multishooting_exact_diagnostic", 72, False, True, True),
     )
-    for end_epoch, name, horizon, flow_only, use_d3, exact_calibration in schedule:
+    for end_epoch, name, horizon, flow_only, use_d3, exact_diagnostic in schedule:
         if completed <= end_epoch:
-            return name, horizon, flow_only, use_d3, exact_calibration
+            return name, horizon, flow_only, use_d3, exact_diagnostic
     raise AssertionError("multishooting schedule did not cover epoch")
 
 
@@ -130,7 +131,7 @@ def _pack_segment_chunk(
     return result
 
 
-def _exact_segment_sum_loss(
+def _exact_segment_sum_metric(
     *,
     predicted_node_volume: torch.Tensor,
     exact_node_volume: torch.Tensor,
@@ -315,7 +316,7 @@ def train_step2_large_v4_main() -> None:
         resume_path.unlink()
 
     for epoch in range(start_epoch, args.epochs):
-        stage, horizon, flow_only, use_d3, exact_calibration = _stage(epoch, args.epochs)
+        stage, horizon, flow_only, use_d3, exact_diagnostic = _stage(epoch, args.epochs)
         source_balance = use_d3 and source_counts["D2"] > 0 and source_counts["D3"] > 0
         model.train()
         optimizer.zero_grad(set_to_none=True)
@@ -377,7 +378,6 @@ def train_step2_large_v4_main() -> None:
                             raise ValueError("counterfactual pair violates frozen model step")
 
                         metric_acc = {name: 0.0 for name in totals}
-                        exact_loss_tensor = pair["initial_state"].sum() * 0.0
                         if horizon <= SEGMENT_STEPS:
                             segment_chunks = [[0]]
                             segment_steps = horizon
@@ -436,11 +436,19 @@ def train_step2_large_v4_main() -> None:
                                 )
                                 fraction = float(len(starts)) / float(total_segments)
                                 segment_loss = metrics.total * source_factor * fraction
+                                loss = segment_loss / args.grad_accum
 
-                                if exact_calibration and not flow_only:
+                            if not torch.isfinite(segment_loss):
+                                raise RuntimeError(
+                                    f"non-finite Step2 segment loss epoch={epoch + 1} stage={stage}"
+                                )
+                            scaler.scale(loss).backward()
+
+                            if exact_diagnostic and not flow_only:
+                                with torch.no_grad():
                                     node_volume = trapezoid_node_flood_volume(
                                         segment_pair["initial_state"],
-                                        rollout.states,
+                                        rollout.states.detach(),
                                         flood_rate_index=2,
                                         dt_seconds=dt,
                                     )
@@ -455,14 +463,7 @@ def train_step2_large_v4_main() -> None:
                                         else pred_exact_node_total + node_volume
                                     )
 
-                                loss = segment_loss / args.grad_accum
-                            if not torch.isfinite(segment_loss):
-                                raise RuntimeError(
-                                    f"non-finite Step2 segment loss epoch={epoch + 1} stage={stage}"
-                                )
-                            scaler.scale(loss).backward()
                             for name, metric_name in (
-                                ("total_loss", "total"),
                                 ("absolute_state_loss", "absolute_state"),
                                 ("absolute_flow_loss", "absolute_flow"),
                                 ("delta_state_loss", "delta_state"),
@@ -472,6 +473,7 @@ def train_step2_large_v4_main() -> None:
                                 ("physical_loss", "physical"),
                             ):
                                 metric_acc[name] += float(getattr(metrics, metric_name).detach()) * fraction
+                            metric_acc["total_loss"] += float(segment_loss.detach())
                             if not flow_only:
                                 metric_acc["sensitivity_ratio"] += float(
                                     metrics.sensitivity_ratio.detach()
@@ -480,22 +482,13 @@ def train_step2_large_v4_main() -> None:
                                     metrics.sign_correct.detach()
                                 ) * fraction
 
-                        if exact_calibration and pred_exact_node_total is not None:
-                            with torch.autocast(
-                                device_type=device.type,
-                                dtype=autocast_dtype,
-                                enabled=autocast_enabled,
-                            ):
-                                exact_loss_tensor = _exact_segment_sum_loss(
+                        if exact_diagnostic and pred_exact_node_total is not None:
+                            with torch.no_grad():
+                                exact_metric = _exact_segment_sum_metric(
                                     predicted_node_volume=pred_exact_node_total,
                                     exact_node_volume=pair["exact_node_flood_volume_m3"],
                                 )
-                                exact_weighted = (
-                                    weights.exact_flood * exact_loss_tensor * source_factor
-                                )
-                            scaler.scale(exact_weighted / args.grad_accum).backward()
-                            metric_acc["exact_flood_loss"] = float(exact_loss_tensor.detach())
-                            metric_acc["total_loss"] += float(exact_weighted.detach())
+                                metric_acc["exact_flood_loss"] = float(exact_metric)
 
                         micro_step += 1
                         pairs_seen += pair_count
@@ -561,6 +554,7 @@ def train_step2_large_v4_main() -> None:
         row["training_mode"] = "multishooting" if horizon > SEGMENT_STEPS else "recurrent"
         row["segment_steps"] = SEGMENT_STEPS if horizon > SEGMENT_STEPS else horizon
         row["parallel_segments"] = MAX_PARALLEL_SEGMENTS if horizon > SEGMENT_STEPS else 1
+        row["exact_endpoint_role"] = "diagnostic_only" if exact_diagnostic else "off"
         for source in ("D2", "D3"):
             count = int(source_metric_sum[source]["pairs"])
             row[f"{source.lower()}_sensitivity_ratio"] = (
@@ -598,6 +592,8 @@ def train_step2_large_v4_main() -> None:
         "bounded_state_residual": True,
         "bounded_flow_residual": True,
         "counterfactual_tfv_proxy": "softplus_train_only_scale",
+        "authoritative_endpoint_training": False,
+        "authoritative_endpoint_role": "diagnostic_and_formal_acceptance_only",
     }
     meta = save_torch_checkpoint(
         model,
