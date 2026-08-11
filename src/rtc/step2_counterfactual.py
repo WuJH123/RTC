@@ -9,8 +9,8 @@ import torch.nn.functional as F
 from .flood_volume import trapezoid_node_flood_volume
 
 
-PAIRING_CONTRACT = "STEP2_COUNTERFACTUAL_PAIRING_V1"
-LOSS_CONTRACT = "STEP2_COUNTERFACTUAL_ACTION_LOSS_V1"
+PAIRING_CONTRACT = "STEP2_COUNTERFACTUAL_PAIRING_V2_VECTOR_BATCHED"
+LOSS_CONTRACT = "STEP2_COUNTERFACTUAL_ACTION_LOSS_V2_VECTOR_BATCHED"
 
 
 @dataclass(frozen=True)
@@ -51,9 +51,8 @@ def _array(ds, name: str, default: str = "") -> np.ndarray:
 def counterfactual_groups(ds) -> dict[str, list[int]]:
     """Return same-prefix group row indices from one Step2 shard.
 
-    The compiler is expected to preserve checkpoint groups within shards. Group identity
-    includes source kind, rainfall/event identity and checkpoint. This function deliberately
-    does not use target values to construct groups.
+    The compiler preserves checkpoint groups within shards. Group identity includes
+    source kind, rainfall/event identity and checkpoint; outcome values are never used.
     """
 
     count = int(ds["initial_state"].shape[0])
@@ -100,19 +99,19 @@ def rotated_reference_pairs(
         return []
     ref = reference_index(ds, indices)
     action_sha = _array(ds, "action_or_sequence_sha256")
-    alternatives = sorted(
-        (i for i in indices if i != ref),
-        key=lambda i: action_sha[i],
-    )
+    alternatives = sorted((i for i in indices if i != ref), key=lambda i: action_sha[i])
     if not alternatives:
         return []
     take = min(int(budget), len(alternatives))
     offset = (int(epoch) * take) % len(alternatives)
-    chosen = [
-        alternatives[(offset + j) % len(alternatives)]
-        for j in range(take)
-    ]
+    chosen = [alternatives[(offset + j) % len(alternatives)] for j in range(take)]
     return [(ref, int(idx)) for idx in chosen]
+
+
+def _as_pairs(value: torch.Tensor) -> torch.Tensor:
+    if value.shape[0] < 2 or value.shape[0] % 2:
+        raise ValueError("counterfactual branch batch must contain consecutive reference/candidate pairs")
+    return value.reshape(value.shape[0] // 2, 2, *value.shape[1:])
 
 
 def same_prefix_diagnostic(
@@ -122,14 +121,15 @@ def same_prefix_diagnostic(
     *,
     atol: float = 1e-6,
 ) -> None:
-    if initial_state.shape[0] != 2:
-        raise ValueError("counterfactual training batch must contain exactly one pair")
+    """Fail closed if any vectorized reference/candidate pair has a different prefix."""
+
     for name, value in (
         ("initial_state", initial_state),
         ("rainfall", rainfall),
         ("previous_actuator_flow", previous_flow),
     ):
-        if not torch.allclose(value[0], value[1], atol=atol, rtol=0.0):
+        paired = _as_pairs(value)
+        if not torch.allclose(paired[:, 0], paired[:, 1], atol=atol, rtol=0.0):
             raise ValueError(f"counterfactual pair violates same-prefix {name}")
 
 
@@ -139,11 +139,18 @@ def _normalized_delta_loss(
     *,
     floor_scale: torch.Tensor,
 ) -> torch.Tensor:
-    true_delta = target[1] - target[0]
-    pred_delta = predicted[1] - predicted[0]
-    reduce_dims = tuple(range(true_delta.dim() - 1))
+    pred_pair = _as_pairs(predicted)
+    true_pair = _as_pairs(target)
+    true_delta = true_pair[:, 1] - true_pair[:, 0]
+    pred_delta = pred_pair[:, 1] - pred_pair[:, 0]
+    # Keep pair and channel dimensions; normalize each pair by its own observed
+    # counterfactual response magnitude so large storms cannot drown small action effects.
+    reduce_dims = tuple(range(1, true_delta.dim() - 1))
     rms = true_delta.detach().square().mean(dim=reduce_dims).sqrt()
-    scale = torch.maximum(rms, floor_scale)
+    floor = floor_scale.reshape(1, -1).to(device=rms.device, dtype=rms.dtype)
+    scale = torch.maximum(rms, floor)
+    expand = [scale.shape[0]] + [1] * (true_delta.dim() - 2) + [scale.shape[-1]]
+    scale = scale.reshape(*expand)
     return F.smooth_l1_loss(
         (pred_delta - true_delta) / scale,
         torch.zeros_like(pred_delta),
@@ -165,23 +172,21 @@ def counterfactual_action_loss(
     weights: CounterfactualLossWeights,
     flow_only: bool = False,
 ) -> PairMetrics:
-    """Action-sensitive pair loss for one same-prefix reference/candidate pair."""
+    """Action-sensitive loss for one or more vectorized same-prefix pairs.
 
-    if initial_state.shape[0] != 2:
-        raise ValueError("counterfactual loss requires a two-branch pair")
+    Consecutive rows are interpreted as ``[reference, candidate]``. This permits larger
+    CUDA batches without losing the counterfactual pairing contract.
+    """
+
+    _ = _as_pairs(initial_state)
     if rollout_states.shape != target_states.shape:
         raise ValueError("predicted/target state shapes differ")
     if rollout_flows.shape != target_flows.shape:
         raise ValueError("predicted/target flow shapes differ")
 
     zero = rollout_states.sum() * 0.0
-    absolute_state = (
-        ((rollout_states - target_states) / state_std) ** 2
-    ).mean()
-    absolute_flow = (
-        ((rollout_flows - target_flows) / flow_std) ** 2
-    ).mean()
-
+    absolute_state = (((rollout_states - target_states) / state_std) ** 2).mean()
+    absolute_flow = (((rollout_flows - target_flows) / flow_std) ** 2).mean()
     delta_flow = _normalized_delta_loss(
         rollout_flows,
         target_flows,
@@ -190,7 +195,7 @@ def counterfactual_action_loss(
 
     if flow_only:
         total = weights.absolute_flow * absolute_flow + weights.delta_flow * delta_flow
-        nan = zero.detach()
+        nan = torch.full((), float("nan"), device=zero.device)
         return PairMetrics(
             total=total,
             absolute_state=zero,
@@ -230,21 +235,22 @@ def counterfactual_action_loss(
         if full_horizon and exact_node_flood_volume_m3 is not None
         else true_traj_node.detach()
     )
-    pred_tfv = pred_node.sum(dim=-1)
-    true_tfv = truth_node.sum(dim=-1)
-    pred_delta_tfv = pred_tfv[1] - pred_tfv[0]
-    true_delta_tfv = true_tfv[1] - true_tfv[0]
+    pred_tfv_pair = _as_pairs(pred_node.sum(dim=-1))
+    true_tfv_pair = _as_pairs(truth_node.sum(dim=-1))
+    pred_delta_tfv = pred_tfv_pair[:, 1] - pred_tfv_pair[:, 0]
+    true_delta_tfv = true_tfv_pair[:, 1] - true_tfv_pair[:, 0]
     delta_scale = true_delta_tfv.detach().abs().clamp_min(1.0)
-    delta_tfv = F.smooth_l1_loss(
-        (pred_delta_tfv - true_delta_tfv) / delta_scale,
-        torch.zeros_like(pred_delta_tfv),
-    )
+    normalized_error = (pred_delta_tfv - true_delta_tfv) / delta_scale
+    delta_tfv = F.smooth_l1_loss(normalized_error, torch.zeros_like(normalized_error))
 
     meaningful = true_delta_tfv.detach().abs() > 1e-6
-    if bool(meaningful):
+    if bool(meaningful.any()):
         sign = true_delta_tfv.detach().sign()
-        ranking = F.softplus(-sign * pred_delta_tfv / delta_scale)
-        sign_correct = (pred_delta_tfv.detach().sign() == sign).to(dtype=torch.float32)
+        per_pair_ranking = F.softplus(-sign * pred_delta_tfv / delta_scale)
+        ranking = per_pair_ranking[meaningful].mean()
+        sign_correct = (
+            pred_delta_tfv.detach().sign()[meaningful] == sign[meaningful]
+        ).to(dtype=torch.float32).mean()
     else:
         ranking = zero
         sign_correct = torch.ones((), device=zero.device, dtype=torch.float32)
@@ -252,12 +258,9 @@ def counterfactual_action_loss(
     exact_flood = zero
     if full_horizon and exact_node_flood_volume_m3 is not None:
         exact = exact_node_flood_volume_m3.clamp_min(0.0)
-        node_loss = torch.square(
-            torch.log1p(pred_node) - torch.log1p(exact)
-        ).mean()
+        node_loss = torch.square(torch.log1p(pred_node) - torch.log1p(exact)).mean()
         total_loss = torch.square(
-            torch.log1p(pred_node.sum(dim=-1))
-            - torch.log1p(exact.sum(dim=-1))
+            torch.log1p(pred_node.sum(dim=-1)) - torch.log1p(exact.sum(dim=-1))
         ).mean()
         exact_flood = node_loss + total_loss
 
@@ -280,7 +283,7 @@ def counterfactual_action_loss(
         + weights.exact_flood * exact_flood
         + weights.physical * physical
     )
-    sensitivity = pred_delta_tfv.detach().abs() / delta_scale
+    sensitivity = (pred_delta_tfv.detach().abs() / delta_scale).mean()
     return PairMetrics(
         total=total,
         absolute_state=absolute_state,
