@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import torch
 
+from rtc.data_index import build_d2_run_index
 from rtc.models import DifferentiableHydraulicWorldModel, GraphMessageBlock, _inverse_degree
 from rtc.step2_counterfactual import (
     CounterfactualLossWeights,
@@ -10,6 +12,7 @@ from rtc.step2_counterfactual import (
     counterfactual_groups,
     reference_index,
     rotated_reference_pairs,
+    same_prefix_diagnostic,
 )
 from rtc.step2_shards import _group_preserving_chunks
 
@@ -70,6 +73,40 @@ def test_counterfactual_loss_penalizes_action_collapse():
     assert float(good.sensitivity_ratio) > float(collapsed.sensitivity_ratio)
 
 
+def test_counterfactual_loss_vectorizes_multiple_pairs():
+    initial = torch.zeros(4, 2, 6)
+    target_state = torch.zeros(4, 2, 2, 6)
+    target_state[1, :, 0, 2] = 1.0
+    target_state[3, :, 1, 2] = 2.0
+    target_flow = torch.zeros(4, 2, 2)
+    target_flow[1, :, 0] = 0.5
+    target_flow[3, :, 1] = -0.25
+    predicted = target_state.clone()
+    flow_pred = target_flow.clone()
+    same_prefix_diagnostic(
+        initial,
+        torch.zeros(4, 2, 2, 1),
+        torch.zeros(4, 2),
+    )
+    metrics = counterfactual_action_loss(
+        initial_state=initial,
+        rollout_states=predicted,
+        rollout_flows=flow_pred,
+        target_states=target_state,
+        target_flows=target_flow,
+        exact_node_flood_volume_m3=None,
+        dt_seconds=torch.full((4, 2), 300.0),
+        state_std=torch.ones(6),
+        flow_std=torch.ones(1),
+        full_horizon=False,
+        weights=CounterfactualLossWeights(),
+    )
+    assert metrics.true_delta_tfv_m3.shape == (2,)
+    assert metrics.predicted_delta_tfv_m3.shape == (2,)
+    assert torch.isfinite(metrics.total)
+    assert float(metrics.sign_correct) == 1.0
+
+
 def test_direct_setting_context_keeps_setting_gradient():
     setting = torch.tensor([[0.2, 0.8]], requires_grad=True)
     up = torch.tensor([0, 1])
@@ -95,8 +132,6 @@ def test_cached_inverse_degree_matches_uncached_message_passing():
 
 
 def test_group_preserving_shards_never_split_checkpoint_group():
-    import pandas as pd
-
     frame = pd.DataFrame(
         {
             "source_kind": ["D2"] * 9,
@@ -115,3 +150,27 @@ def test_group_preserving_shards_never_split_checkpoint_group():
             chunk for chunk in chunks if checkpoint in set(chunk["checkpoint_id"])
         ]
         assert len(containing) == 1
+
+
+def test_d2_index_preserves_base_action_sha_for_pair_reference():
+    manifest = pd.DataFrame(
+        {
+            "candidate_action_sha256": ["base", "cand"],
+            "base_action_sha256": ["base", "base"],
+            "checkpoint_id": ["c", "c"],
+            "event_id": ["e", "e"],
+            "rainfall_group": ["r", "r"],
+            "scientific_split": ["development", "development"],
+            "development_fold": ["train", "train"],
+        }
+    )
+    runs = pd.DataFrame(
+        {
+            "candidate_action_sha256": ["base", "cand"],
+            "checkpoint_id": ["c", "c"],
+            "event_id": ["e", "e"],
+            "metadata_path": ["a.json", "b.json"],
+        }
+    )
+    result = build_d2_run_index(manifest, runs)
+    assert result["base_action_sha256"].tolist() == ["base", "base"]
