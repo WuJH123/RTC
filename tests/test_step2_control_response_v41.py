@@ -6,9 +6,10 @@ import pytest
 import torch
 
 from rtc.step2_control_response_v41 import DifferentiableCounterfactualResponseModelV41
+from rtc.step2_d3_magnitude_pathway_audit_v42 import action_descriptors_v42
 
 
-def _fixture(*, actuators: int = 20, horizon: int = 8, candidates: int = 3):
+def _fixture(*, actuators: int = 20, horizon: int = 8, candidates: int = 3, magnitude: bool = False):
     torch.manual_seed(17)
     nodes = 7
     state_dim = 6
@@ -42,6 +43,7 @@ def _fixture(*, actuators: int = 20, horizon: int = 8, candidates: int = 3):
         d2_tfv_scale=100.0,
         d3_tfv_scale=1000.0,
         max_horizon_steps=horizon,
+        interaction_magnitude_features_enabled=magnitude,
     )
     prepared = model.prepare_static(
         static_node_features=static,
@@ -80,6 +82,47 @@ def test_group_forward_encodes_reference_once_and_zero_action_is_exact_zero():
     assert torch.equal(output.delta_flows_physical, torch.zeros_like(output.delta_flows_physical))
     assert torch.equal(output.direct_delta_tfv_m3, torch.zeros_like(output.direct_delta_tfv_m3))
     assert torch.equal(output.trajectory_delta_tfv_m3, torch.zeros_like(output.trajectory_delta_tfv_m3))
+
+
+def test_interaction_exact_zero_for_zero_action():
+    model, prepared, initial, rainfall, reference, candidate, previous, elapsed = _fixture(candidates=1)
+    output = model.forward_group(
+        initial, rainfall, reference, candidate, previous, prepared, elapsed, source_kind="D3"
+    )
+    assert torch.equal(output.interaction_delta_states_physical, torch.zeros_like(output.interaction_delta_states_physical))
+    assert torch.equal(output.interaction_delta_flows_physical, torch.zeros_like(output.interaction_delta_flows_physical))
+    assert torch.equal(output.direct_interaction_delta_tfv_m3, torch.zeros_like(output.direct_interaction_delta_tfv_m3))
+
+
+def test_interaction_magnitude_features_increase_with_action_energy():
+    model, *_ = _fixture()
+    small = torch.zeros(1, 1, 8, 20)
+    large = torch.zeros_like(small)
+    small[:, :, :, 0] = 0.05
+    large[:, :, :, :5] = 0.25
+    small_features = model.interaction_magnitude_features(small)
+    large_features = model.interaction_magnitude_features(large)
+    assert small_features.shape[-1] == len(model.interaction_magnitude_feature_names)
+    assert torch.isfinite(large_features).all()
+    assert large_features.abs().sum() > small_features.abs().sum()
+
+
+def test_magnitude_branch_is_zero_initialized_to_preserve_v41_response():
+    model, *_ = _fixture(magnitude=True)
+    # The production V4.2 constructor must expose a zero-start residual branch;
+    # this characterization test intentionally fails until that contract exists.
+    assert hasattr(model, "interaction_magnitude_residual")
+    assert torch.equal(model.interaction_magnitude_residual.weight, torch.zeros_like(model.interaction_magnitude_residual.weight))
+
+
+def test_36_control_blocks_expand_to_72_model_steps():
+    delta = torch.zeros(72, 109).numpy()
+    delta[::2, :2] = 0.1
+    delta[1::2, :2] = 0.1
+    descriptors = action_descriptors_v42(delta)
+    assert descriptors["model_step_count"] == 72
+    assert descriptors["changed_control_blocks"] == 36
+    assert len(descriptors["active_actuator_count_per_control_block"]) == 36
 
 
 def test_scalar_full_train_flow_std_expands_to_all_actuators():

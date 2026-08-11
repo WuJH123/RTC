@@ -484,6 +484,9 @@ def tfv_loss_components_v41(
     authoritative_delta_tfv: torch.Tensor,
     *,
     source_scale: torch.Tensor,
+    magnitude_calibration: bool = False,
+    magnitude_q33: float | None = None,
+    magnitude_q67: float | None = None,
 ) -> dict[str, torch.Tensor]:
     """Exact-TFV, within-group, ranking, and trajectory/direct consistency losses."""
 
@@ -499,23 +502,57 @@ def tfv_loss_components_v41(
     ranking, _ = weighted_pairwise_ranking_loss(
         predicted_direct, authoritative_delta_tfv, group_scale=group_scale
     )
+    direct_error = F.smooth_l1_loss(
+        normalized_direct_error, torch.zeros_like(normalized_direct_error), reduction="none"
+    )
+    trajectory_error = F.smooth_l1_loss(
+        (predicted_trajectory - authoritative_delta_tfv) / scale,
+        torch.zeros_like(predicted_trajectory),
+        reduction="none",
+    )
+    if magnitude_calibration:
+        if magnitude_q33 is None or magnitude_q67 is None:
+            raise ValueError("D3 magnitude calibration requires fixed q33 and q67")
+        absolute_truth = authoritative_delta_tfv.detach().abs()
+        small = absolute_truth < float(magnitude_q33)
+        medium = (absolute_truth >= float(magnitude_q33)) & (absolute_truth < float(magnitude_q67))
+        large = absolute_truth >= float(magnitude_q67)
+        strata = torch.stack((small, medium, large), dim=0)
+        counts = strata.sum(dim=1).to(predicted_direct.dtype).clamp_min(1.0)
+        stratum_weights = torch.zeros_like(absolute_truth)
+        for index, mask in enumerate((small, medium, large)):
+            stratum_weights = torch.where(mask, 3.0 / counts[index], stratum_weights)
+        stratum_weights = stratum_weights / stratum_weights.mean().clamp_min(1e-6)
+        direct_loss = (direct_error * stratum_weights).sum() / stratum_weights.sum().clamp_min(1e-6)
+        trajectory_loss = (trajectory_error * stratum_weights).sum() / stratum_weights.sum().clamp_min(1e-6)
+        normalized_true_magnitude = torch.log1p(absolute_truth / scale)
+        normalized_predicted_magnitude = torch.log1p(predicted_direct.abs() / scale)
+        log_magnitude = F.smooth_l1_loss(
+            normalized_predicted_magnitude,
+            normalized_true_magnitude,
+            reduction="none",
+        )
+        log_magnitude = (log_magnitude * stratum_weights).sum() / stratum_weights.sum().clamp_min(1e-6)
+        magnitude_weight_mean = stratum_weights.mean().detach()
+    else:
+        direct_loss = direct_error.mean()
+        trajectory_loss = trajectory_error.mean()
+        log_magnitude = predicted_direct.sum() * 0.0
+        magnitude_weight_mean = predicted_direct.new_tensor(0.0)
     return {
-        "absolute_direct": F.smooth_l1_loss(
-            normalized_direct_error, torch.zeros_like(normalized_direct_error)
-        ),
+        "absolute_direct": direct_loss,
         "group_centered_direct": F.smooth_l1_loss(
             (direct_centered - truth_centered) / group_scale[:, None],
             torch.zeros_like(direct_centered),
         ),
-        "authoritative_trajectory": F.smooth_l1_loss(
-            (predicted_trajectory - authoritative_delta_tfv) / scale,
-            torch.zeros_like(predicted_trajectory),
-        ),
+        "authoritative_trajectory": trajectory_loss,
         "direct_trajectory_consistency": F.smooth_l1_loss(
             (predicted_direct - predicted_trajectory) / scale,
             torch.zeros_like(predicted_direct),
         ),
         "ranking": ranking,
+        "log_magnitude_calibration": log_magnitude,
+        "magnitude_stratum_weight_mean": magnitude_weight_mean,
     }
 
 
@@ -604,6 +641,108 @@ def group_metrics_v41(
     }
 
 
+def magnitude_strata_metrics_v41(
+    contributions: list[dict[str, Any]], *, q33: float, q67: float
+) -> dict[str, dict[str, float | int]]:
+    """Summarise D3 response calibration separately for fixed Train-only strata."""
+
+    result: dict[str, dict[str, float | int]] = {}
+    for stratum in ("small", "medium", "large"):
+        rows = [
+            row
+            for row in contributions
+            if row.get("source_kind", "").upper() == "D3"
+            and (
+                abs(float(row["true_delta_tfv_m3"])) < q33
+                if stratum == "small"
+                else abs(float(row["true_delta_tfv_m3"])) < q67
+                if stratum == "medium"
+                else abs(float(row["true_delta_tfv_m3"])) >= q67
+            )
+        ]
+        truth = np.asarray([float(row["true_delta_tfv_m3"]) for row in rows], dtype=np.float64)
+        predicted = np.asarray(
+            [float(row["predicted_final_delta_tfv_m3"]) for row in rows], dtype=np.float64
+        )
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(str(row.get("group", "")), []).append(row)
+        ranks = []
+        pairs = []
+        for group_rows in grouped.values():
+            if len(group_rows) < 2:
+                continue
+            metrics = group_metrics_v41(
+                predicted=np.asarray([float(row["predicted_final_delta_tfv_m3"]) for row in group_rows]),
+                truth=np.asarray([float(row["true_delta_tfv_m3"]) for row in group_rows]),
+                group="magnitude-stratum",
+                source_kind="D3",
+            )
+            if np.isfinite(metrics["rank"]):
+                ranks.append(float(metrics["rank"]))
+            if np.isfinite(metrics["pairwise"]):
+                pairs.append(float(metrics["pairwise"]))
+        result[stratum] = {
+            "count": int(truth.size),
+            "mae_m3": float(np.mean(np.abs(predicted - truth))) if truth.size else float("nan"),
+            "bias_m3": float(np.mean(predicted - truth)) if truth.size else float("nan"),
+            "response_ratio": float(np.mean(np.abs(predicted)) / max(np.mean(np.abs(truth)), 1e-12)) if truth.size else float("nan"),
+            "rank": float(np.mean(ranks)) if ranks else float("nan"),
+            "pairwise": float(np.mean(pairs)) if pairs else float("nan"),
+            "sign": float(np.mean(np.sign(predicted) == np.sign(truth))) if truth.size else float("nan"),
+        }
+    return result
+
+
+def calibration_selection_score_v41(
+    metric: dict[str, Any],
+    *,
+    policy: str = "calibration",
+    large_response_floor: float = 0.4113782853,
+    d3_max_regret_reference_m3: float = 372115.0,
+) -> float:
+    """Return the deterministic checkpoint-selection score for one group summary."""
+
+    spread = abs(np.log10(max(float(metric["spread_ratio"]), 1e-8)))
+    rank = 1.0 - float(metric["rank"]) if np.isfinite(metric["rank"]) else 1.0
+    pairwise = 1.0 - float(metric["pairwise"]) if np.isfinite(metric["pairwise"]) else 1.0
+    sign = 1.0 - float(metric["sign"]) if np.isfinite(metric["sign"]) else 1.0
+    top1 = 0.0 if bool(metric["top1"]) else 1.0
+    normalized_mae = float(metric.get("normalized_mae", 0.0))
+    if policy == "rank_first":
+        return 4.0 * rank + 4.0 * pairwise + 2.0 * top1 + spread + 0.25 * sign + normalized_mae
+    if policy == "d3_magnitude":
+        strata = metric.get("d3_magnitude_strata", {})
+        large = strata.get("large", {})
+        large_ratio = float(large.get("response_ratio", 0.0))
+        large_rank = float(large.get("rank", float("nan")))
+        large_pairwise = float(large.get("pairwise", float("nan")))
+        large_ratio_error = abs(np.log10(max(large_ratio, 1e-8)))
+        large_rank_error = 1.0 - large_rank if np.isfinite(large_rank) else 1.0
+        large_pairwise_error = 1.0 - large_pairwise if np.isfinite(large_pairwise) else 1.0
+        d3_max_regret = float(metric.get("d3_max_regret_m3", d3_max_regret_reference_m3))
+        regret_ratio = max(d3_max_regret, 0.0) / max(d3_max_regret_reference_m3, 1e-6)
+        large_floor_penalty = (
+            20.0 + 10.0 * (large_response_floor - large_ratio)
+            if large_ratio < large_response_floor
+            else 0.0
+        )
+        return (
+            large_floor_penalty
+            + 0.5 * large_ratio_error
+            + 4.0 * large_rank_error
+            + 4.0 * large_pairwise_error
+            + 0.25 * rank
+            + 0.25 * pairwise
+            + 0.25 * sign
+            + 0.5 * max(0.0, 1.0 - float(metric.get("top1_fraction", 1.0)))
+            + regret_ratio
+        )
+    if policy != "calibration":
+        raise ValueError("unknown V4.1 selection policy")
+    return spread + rank + pairwise + sign + top1 + normalized_mae
+
+
 @dataclass(frozen=True)
 class ResponseLossWeightsV41:
     reference_state: float = 0.05
@@ -616,6 +755,7 @@ class ResponseLossWeightsV41:
     consistency: float = 1.0
     ranking: float = 5.0
     interaction_energy: float = 0.01
+    magnitude_calibration: float = 1.0
 
 
 def response_group_loss_v41(
@@ -625,6 +765,7 @@ def response_group_loss_v41(
     normalization: ResponseNormalizationV4,
     *,
     weights: ResponseLossWeightsV41 | None = None,
+    magnitude_calibration: bool = False,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """One equally weighted group loss; the reference term is evaluated once."""
 
@@ -666,6 +807,9 @@ def response_group_loss_v41(
         output.trajectory_delta_tfv_m3,
         batch.true_delta_tfv_m3,
         source_scale=torch.tensor(source_scales.tfv_scale_m3, device=device, dtype=dtype),
+        magnitude_calibration=magnitude_calibration and batch.source_kind.upper() == "D3",
+        magnitude_q33=source_scales.tfv_abs_quantiles_m3.get("q33"),
+        magnitude_q67=source_scales.tfv_abs_quantiles_m3.get("q67"),
     )
     interaction_energy = (
         output.interaction_delta_states_physical.div(delta_state_scale).square().mean()
@@ -682,6 +826,7 @@ def response_group_loss_v41(
         + w.consistency * tfv["direct_trajectory_consistency"]
         + w.ranking * tfv["ranking"]
         + w.interaction_energy * interaction_energy
+        + w.magnitude_calibration * tfv["log_magnitude_calibration"]
     )
     components = {
         "loss": float(total.detach()),
@@ -695,6 +840,7 @@ def response_group_loss_v41(
         "consistency_loss": float(tfv["direct_trajectory_consistency"].detach()),
         "ranking_loss": float(tfv["ranking"].detach()),
         "interaction_energy_loss": float(interaction_energy.detach()),
+        "magnitude_calibration_loss": float(tfv["log_magnitude_calibration"].detach()),
     }
     return total, components
 
@@ -798,6 +944,8 @@ def train_response_v41(
     seed: int = 42,
     device: str = "cuda",
     early_stop_patience: int = 25,
+    magnitude_calibration: bool = False,
+    selection_policy: str = "calibration",
 ) -> dict[str, Any]:
     """Fit complete groups in FP32 and record calibration metrics every epoch."""
 
@@ -858,6 +1006,7 @@ def train_response_v41(
                 batch,
                 scales.by_source[batch.source_kind],
                 normalization,
+                magnitude_calibration=magnitude_calibration,
             )
             if target_device.type == "cuda":
                 torch.cuda.synchronize()
@@ -886,7 +1035,7 @@ def train_response_v41(
             for name, value in components.items():
                 component_sums[name] = component_sums.get(name, 0.0) + value
 
-        group_rows, _ = evaluate_response_groups_v41(
+        group_rows, epoch_contributions = evaluate_response_groups_v41(
             model=model,
             grouped_pairs=grouped_pairs,
             prepared=prepared,
@@ -902,23 +1051,28 @@ def train_response_v41(
             "pairwise": float(np.nanmean([item["pairwise"] for item in group_rows])),
             "sign": float(np.nanmean([item["sign"] for item in group_rows])),
             "top1": float(np.mean([item["top1"] for item in group_rows])),
+            "top1_fraction": float(np.mean([item["top1"] for item in group_rows])),
             "gradient_norm": float(np.mean(gradient_norms)),
         }
         row.update({name: value / len(order) for name, value in component_sums.items()})
-        history.append(row)
-        calibration_score = float(
-            np.mean(
-                [
-                    abs(np.log10(max(item["spread_ratio"], 1e-8)))
-                    + (1.0 - item["rank"])
-                    + (1.0 - item["pairwise"])
-                    + (1.0 - item["sign"] if np.isfinite(item["sign"]) else 1.0)
-                    + (0.0 if item["top1"] else 1.0)
-                    + item["normalized_mae"]
-                    for item in group_rows
-                ]
+        d3_rows = [item for item in group_rows if item["source_kind"] == "D3"]
+        row["d3_rank"] = float(np.nanmean([item["rank"] for item in d3_rows])) if d3_rows else float("nan")
+        row["d3_pairwise"] = float(np.nanmean([item["pairwise"] for item in d3_rows])) if d3_rows else float("nan")
+        row["d3_sign"] = float(np.nanmean([item["sign"] for item in d3_rows])) if d3_rows else float("nan")
+        row["d3_top1_fraction"] = float(np.mean([item["top1"] for item in d3_rows])) if d3_rows else float("nan")
+        row["d3_max_regret_m3"] = float(max((item["regret_m3"] for item in d3_rows), default=float("nan")))
+        if magnitude_calibration:
+            q = scales.by_source["D3"].tfv_abs_quantiles_m3
+            row["d3_magnitude_strata"] = magnitude_strata_metrics_v41(
+                epoch_contributions, q33=float(q["q33"]), q67=float(q["q67"])
             )
-        )
+        history.append(row)
+        if selection_policy == "d3_magnitude" and magnitude_calibration:
+            calibration_score = calibration_selection_score_v41(row, policy=selection_policy)
+        else:
+            calibration_score = float(
+                np.mean([calibration_selection_score_v41(item, policy=selection_policy) for item in group_rows])
+            )
         if calibration_score + 1e-5 < best_score:
             best_score = calibration_score
             stale = 0
@@ -976,6 +1130,7 @@ def train_response_v41(
         ),
         "gpu_utilization": gpu_utilization,
         "loss_weights": asdict(ResponseLossWeightsV41()),
+        "selection_policy": selection_policy,
     }
     out.with_suffix(out.suffix + ".history.json").write_text(
         json.dumps(payload, indent=2, allow_nan=True) + "\n", encoding="utf-8"
@@ -994,6 +1149,8 @@ __all__ = [
     "derive_counterfactual_delta_scales_v41",
     "evaluate_response_groups_v41",
     "group_metrics_v41",
+    "magnitude_strata_metrics_v41",
+    "calibration_selection_score_v41",
     "load_or_derive_train_only_scales_v41",
     "prepare_graph_v41",
     "response_group_loss_v41",

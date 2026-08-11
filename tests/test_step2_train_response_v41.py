@@ -9,6 +9,8 @@ from rtc.step2_train_response_v41 import (
     ScaleDeltaBlockV41,
     derive_counterfactual_delta_scales_v41,
     group_metrics_v41,
+    magnitude_strata_metrics_v41,
+    calibration_selection_score_v41,
     source_parameter_is_trainable,
     stack_response_group_v41,
     tfv_loss_components_v41,
@@ -87,6 +89,67 @@ def test_tfv_loss_uses_authoritative_exact_target_and_centered_group_term():
     assert torch.isfinite(predicted_trajectory.grad).all()
 
 
+def test_tfv_loss_has_fixed_d3_magnitude_calibration_and_balanced_strata():
+    predicted_direct = torch.tensor([[10.0, 20.0, 50.0, 120.0]], requires_grad=True)
+    predicted_trajectory = torch.tensor([[12.0, 18.0, 55.0, 110.0]], requires_grad=True)
+    authoritative = torch.tensor([[5.0, 25.0, 60.0, 240.0]])
+    losses = tfv_loss_components_v41(
+        predicted_direct,
+        predicted_trajectory,
+        authoritative,
+        source_scale=torch.tensor(100.0),
+        magnitude_calibration=True,
+        magnitude_q33=30.0,
+        magnitude_q67=100.0,
+    )
+    assert "log_magnitude_calibration" in losses
+    assert torch.isfinite(losses["log_magnitude_calibration"])
+    assert losses["magnitude_stratum_weight_mean"].item() == pytest.approx(1.0)
+    total = losses["log_magnitude_calibration"] + losses["absolute_direct"]
+    total.backward()
+    assert torch.isfinite(predicted_direct.grad).all()
+
+
+def test_magnitude_strata_metrics_are_reported_separately():
+    rows = [
+        {"source_kind": "D3", "true_delta_tfv_m3": 5.0, "predicted_final_delta_tfv_m3": 4.0, "group": "g1"},
+        {"source_kind": "D3", "true_delta_tfv_m3": 50.0, "predicted_final_delta_tfv_m3": 40.0, "group": "g1"},
+        {"source_kind": "D3", "true_delta_tfv_m3": 150.0, "predicted_final_delta_tfv_m3": 100.0, "group": "g1"},
+    ]
+    result = magnitude_strata_metrics_v41(rows, q33=20.0, q67=100.0)
+    assert set(result) == {"small", "medium", "large"}
+    assert result["small"]["count"] == 1
+    assert result["large"]["response_ratio"] == pytest.approx(100.0 / 150.0)
+
+
+def test_rank_first_selection_prioritizes_group_ranking_over_signed_bias():
+    rank_good = {"spread_ratio": 1.5, "rank": 1.0, "pairwise": 1.0, "sign": 0.5, "top1": True, "normalized_mae": 0.8}
+    rank_bad = {"spread_ratio": 1.0, "rank": 0.7, "pairwise": 0.7, "sign": 1.0, "top1": True, "normalized_mae": 0.1}
+    assert calibration_selection_score_v41(rank_good, policy="rank_first") < calibration_selection_score_v41(rank_bad, policy="rank_first")
+
+
+def test_d3_magnitude_selection_penalizes_large_effect_compression():
+    better_large = {
+        "spread_ratio": 1.0,
+        "rank": 0.45,
+        "pairwise": 0.67,
+        "sign": 0.7,
+        "top1": False,
+        "normalized_mae": 0.4,
+        "d3_magnitude_strata": {"large": {"response_ratio": 0.52, "rank": 0.24, "pairwise": 0.61}},
+    }
+    worse_large = {
+        "spread_ratio": 1.0,
+        "rank": 0.51,
+        "pairwise": 0.69,
+        "sign": 0.7,
+        "top1": False,
+        "normalized_mae": 0.4,
+        "d3_magnitude_strata": {"large": {"response_ratio": 0.20, "rank": 0.46, "pairwise": 0.67}},
+    }
+    assert calibration_selection_score_v41(better_large, policy="d3_magnitude") < calibration_selection_score_v41(worse_large, policy="d3_magnitude")
+
+
 def _row(value: float) -> dict[str, np.ndarray]:
     return {
         "initial_state": np.full((2, 3), value, dtype=np.float32),
@@ -120,6 +183,17 @@ def test_source_parameter_partition_prevents_d3_from_retraining_single_effect():
     assert source_parameter_is_trainable("interaction_encoder.0.weight", "D3")
     assert source_parameter_is_trainable("reference_encoder.0.weight", "D2")
     assert source_parameter_is_trainable("reference_encoder.0.weight", "D3")
+
+
+def test_d2_single_branch_parameters_are_not_trainable_during_d3_update():
+    for name in (
+        "single_effect_encoder.0.weight",
+        "single_flow_head.weight",
+        "single_state_head.weight",
+        "direct_single_tfv_head.0.weight",
+    ):
+        assert source_parameter_is_trainable(name, "D2")
+        assert not source_parameter_is_trainable(name, "D3")
 
 
 def test_group_metrics_report_rank_pairwise_top1_and_regret():

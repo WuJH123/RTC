@@ -147,6 +147,7 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         d3_tfv_scale: float,
         max_horizon_steps: int,
         effect_rank: int = 12,
+        interaction_magnitude_features_enabled: bool = False,
     ) -> None:
         super().__init__()
         if state_dim < 3:
@@ -161,6 +162,25 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         self.temporal_embedding_dim = int(temporal_embedding_dim)
         self.max_horizon_steps = int(max_horizon_steps)
         self.effect_rank = int(effect_rank)
+        self.interaction_magnitude_features_enabled = bool(interaction_magnitude_features_enabled)
+        self.interaction_magnitude_feature_names = (
+            "active_actuator_count",
+            "delta_u_l1",
+            "delta_u_l2",
+            "delta_u_linf",
+            "signed_delta_sum",
+            "sum_delta_squared",
+            "cumulative_l1_action_energy",
+            "cumulative_l2_action_energy",
+            "changed_control_blocks",
+            "duration_since_first_action",
+            "maximum_simultaneous_changed_actuators",
+        )
+        self.interaction_magnitude_dim = (
+            len(self.interaction_magnitude_feature_names)
+            if self.interaction_magnitude_features_enabled
+            else 0
+        )
         if self.effect_rank <= 0:
             raise ValueError("effect_rank must be positive")
 
@@ -201,7 +221,17 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         self.single_node_basis_head = nn.Linear(hidden_dim, self.effect_rank)
         self.direct_single_tfv_head = _mlp(2 * hidden_dim, hidden_dim, 1)
 
+        # Keep the V4.1 normalized interaction encoder shape unchanged.  V4.2
+        # learns absolute action magnitude through a zero-start residual branch,
+        # so loading an old V4.1 checkpoint preserves its initial response.
         self.interaction_encoder = _mlp(4 * hidden_dim + 3, hidden_dim, hidden_dim)
+        if self.interaction_magnitude_features_enabled:
+            self.interaction_magnitude_encoder = _mlp(
+                self.interaction_magnitude_dim, hidden_dim, hidden_dim
+            )
+            self.interaction_magnitude_residual = nn.Linear(hidden_dim, hidden_dim)
+            nn.init.zeros_(self.interaction_magnitude_residual.weight)
+            nn.init.zeros_(self.interaction_magnitude_residual.bias)
         self.interaction_flow_head = nn.Linear(2 * hidden_dim, 1)
         self.interaction_state_head = nn.Linear(
             hidden_dim, self.effect_rank * self.state_dim
@@ -372,6 +402,56 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         zero_input = torch.cat((static, temporal, reference, reference, torch.zeros_like(delta[..., None])), dim=-1)
         return self.single_effect_encoder(actual_input), self.single_effect_encoder(zero_input), delta
 
+    def interaction_magnitude_features(self, delta_u: torch.Tensor) -> torch.Tensor:
+        """Build causal, absolute action descriptors for the D3 interaction branch."""
+
+        if delta_u.dim() != 4:
+            raise ValueError("delta_u must be [batch, candidate, horizon, actuator]")
+        absolute = delta_u.abs()
+        active = delta_u.detach().ne(0.0)
+        active_count = active.sum(dim=-1).to(delta_u.dtype)
+        l1 = absolute.sum(dim=-1)
+        l2 = delta_u.square().sum(dim=-1).sqrt()
+        linf = absolute.amax(dim=-1)
+        signed_sum = delta_u.sum(dim=-1)
+        square_sum = delta_u.square().sum(dim=-1)
+        cumulative_l1 = l1.cumsum(dim=2)
+        cumulative_l2 = square_sum.cumsum(dim=2).sqrt()
+        step_has_action = active_count.gt(0.0)
+        horizon = delta_u.shape[2]
+        block_count = (horizon + 1) // 2
+        padded = step_has_action
+        if horizon % 2:
+            padded = torch.cat((padded, torch.zeros_like(padded[..., :1])), dim=2)
+        block_has_action = padded.reshape(*padded.shape[:2], block_count, 2).any(dim=-1)
+        changed_blocks = block_has_action.cumsum(dim=2).repeat_interleave(2, dim=2)[..., :horizon]
+        time = torch.arange(horizon, device=delta_u.device, dtype=delta_u.dtype)
+        time = time.reshape(1, 1, horizon)
+        first_candidates = torch.where(
+            step_has_action,
+            time.expand_as(step_has_action),
+            torch.full_like(time.expand_as(step_has_action), float(horizon)),
+        )
+        first_action = torch.cummin(first_candidates, dim=2).values
+        duration_since_first = (time - first_action).clamp_min(0.0)
+        maximum_simultaneous = torch.cummax(active_count, dim=2).values
+        return torch.stack(
+            (
+                active_count,
+                l1,
+                l2,
+                linf,
+                signed_sum,
+                square_sum,
+                cumulative_l1,
+                cumulative_l2,
+                changed_blocks,
+                duration_since_first,
+                maximum_simultaneous,
+            ),
+            dim=-1,
+        )
+
     def forward_group(
         self,
         initial_state: torch.Tensor,
@@ -494,20 +574,26 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         pooled_abs = delta_u.abs().sum(dim=3, keepdim=True) / active_normalizer
         pooled_signed = delta_u.sum(dim=3, keepdim=True) / active_normalizer
         pooled_square = delta_u.square().sum(dim=3, keepdim=True) / active_normalizer
+        magnitude_features = self.interaction_magnitude_features(delta_u)
         context = reference.global_context[:, None].expand(-1, candidates, -1, -1)
         interaction_input = torch.cat(
             (
-                pooled_hidden,
-                pair_moment,
-                identity_moment,
-                context,
-                pooled_abs,
-                pooled_signed,
-                pooled_square,
+            pooled_hidden,
+            pair_moment,
+            identity_moment,
+            context,
+            pooled_abs,
+            pooled_signed,
+            pooled_square,
             ),
             dim=-1,
         )
         interaction_hidden = self.interaction_encoder(interaction_input)
+        if self.interaction_magnitude_features_enabled:
+            magnitude_hidden = self.interaction_magnitude_encoder(magnitude_features)
+            interaction_hidden = interaction_hidden + self.interaction_magnitude_residual(
+                magnitude_hidden
+            )
         gate_h = interaction_time_gate[..., None]
         interaction_hidden = interaction_hidden * gate_h
 
