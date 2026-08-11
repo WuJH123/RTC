@@ -435,19 +435,23 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         first_action = torch.cummin(first_candidates, dim=2).values
         duration_since_first = (time - first_action).clamp_min(0.0)
         maximum_simultaneous = torch.cummax(active_count, dim=2).values
+        actuator_scale = float(max(self.actuator_count, 1))
+        step_scale = (time + 1.0).clamp_min(1.0)
+        block_scale = float(max((self.max_horizon_steps + 1) // 2, 1))
+        duration_scale = float(max(self.max_horizon_steps - 1, 1))
         return torch.stack(
             (
-                active_count,
-                l1,
-                l2,
+                active_count / actuator_scale,
+                l1 / actuator_scale,
+                l2 / actuator_scale**0.5,
                 linf,
-                signed_sum,
-                square_sum,
-                cumulative_l1,
-                cumulative_l2,
-                changed_blocks,
-                duration_since_first,
-                maximum_simultaneous,
+                signed_sum / actuator_scale,
+                square_sum / actuator_scale,
+                cumulative_l1 / (actuator_scale * step_scale),
+                cumulative_l2 / (actuator_scale * step_scale).sqrt(),
+                changed_blocks / block_scale,
+                duration_since_first / duration_scale,
+                maximum_simultaneous / actuator_scale,
             ),
             dim=-1,
         )

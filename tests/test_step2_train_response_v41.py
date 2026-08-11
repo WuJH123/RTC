@@ -7,6 +7,7 @@ import torch
 from rtc.step2_train_response_v4 import ResponsePairV4
 from rtc.step2_train_response_v41 import (
     ScaleDeltaBlockV41,
+    balanced_magnitude_stratum_weights,
     derive_counterfactual_delta_scales_v41,
     group_metrics_v41,
     magnitude_strata_metrics_v41,
@@ -110,6 +111,83 @@ def test_tfv_loss_has_fixed_d3_magnitude_calibration_and_balanced_strata():
     assert torch.isfinite(predicted_direct.grad).all()
 
 
+def test_balanced_magnitude_weights_equalize_unbalanced_strata_per_group():
+    authoritative = torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 30.0, 40.0, 100.0]])
+    result = balanced_magnitude_stratum_weights(authoritative, q33=20.0, q67=100.0)
+    weights = result["weights"]
+    assert result["counts"].tolist() == [[8, 2, 1]]
+    totals = [weights[result[f"{name}_mask"]].sum().item() for name in ("small", "medium", "large")]
+    assert totals[0] == pytest.approx(totals[1])
+    assert totals[1] == pytest.approx(totals[2])
+    assert weights.mean().item() == pytest.approx(1.0)
+
+
+def test_balanced_magnitude_weights_are_independent_for_each_batch_group():
+    authoritative = torch.tensor(
+        [[1.0, 2.0, 30.0, 100.0, 101.0], [0.0, 1.0, 30.0, 31.0, 100.0]]
+    )
+    result = balanced_magnitude_stratum_weights(authoritative, q33=20.0, q67=100.0)
+    assert result["counts"].tolist() == [[2, 1, 2], [2, 2, 1]]
+    for batch_index in range(2):
+        weights = result["weights"][batch_index]
+        totals = [
+            weights[result[f"{name}_mask"][batch_index]].sum().item()
+            for name in ("small", "medium", "large")
+        ]
+        assert totals[0] == pytest.approx(totals[1])
+        assert totals[1] == pytest.approx(totals[2])
+        assert weights.mean().item() == pytest.approx(1.0)
+
+
+def test_balanced_magnitude_weights_handle_missing_stratum_without_nan():
+    authoritative = torch.tensor([[1.0, 2.0, 100.0, 110.0]])
+    result = balanced_magnitude_stratum_weights(authoritative, q33=20.0, q67=100.0)
+    assert result["counts"].tolist() == [[2, 0, 2]]
+    assert torch.isfinite(result["weights"]).all()
+    assert result["weights"].mean().item() == pytest.approx(1.0)
+    assert result["weights"][result["small_mask"]].sum().item() == pytest.approx(
+        result["weights"][result["large_mask"]].sum().item()
+    )
+
+
+def test_balanced_magnitude_weights_use_exact_boundary_partition():
+    authoritative = torch.tensor([[29.0, 30.0, 99.0, 100.0]])
+    result = balanced_magnitude_stratum_weights(authoritative, q33=30.0, q67=100.0)
+    assert result["small_mask"].tolist() == [[True, False, False, False]]
+    assert result["medium_mask"].tolist() == [[False, True, True, False]]
+    assert result["large_mask"].tolist() == [[False, False, False, True]]
+
+
+def test_magnitude_reporting_partition_is_exhaustive_and_non_overlapping():
+    rows = [
+        {"source_kind": "D3", "true_delta_tfv_m3": value, "predicted_final_delta_tfv_m3": value, "group": "g1"}
+        for value in (29.0, 30.0, 99.0, 100.0)
+    ]
+    result = magnitude_strata_metrics_v41(rows, q33=30.0, q67=100.0)
+    assert sum(result[name]["count"] for name in ("small", "medium", "large")) == len(rows)
+    assert [result[name]["count"] for name in ("small", "medium", "large")] == [1, 2, 1]
+
+
+def test_balanced_magnitude_loss_has_finite_nonzero_gradient_for_multiple_groups():
+    predicted_direct = torch.tensor([[10.0, 20.0, 50.0, 120.0], [5.0, 15.0, 80.0, 130.0]], requires_grad=True)
+    predicted_trajectory = torch.tensor([[12.0, 18.0, 55.0, 110.0], [6.0, 13.0, 75.0, 125.0]], requires_grad=True)
+    authoritative = torch.tensor([[5.0, 25.0, 60.0, 240.0], [5.0, 30.0, 70.0, 220.0]])
+    losses = tfv_loss_components_v41(
+        predicted_direct,
+        predicted_trajectory,
+        authoritative,
+        source_scale=torch.tensor(100.0),
+        magnitude_calibration=True,
+        magnitude_q33=30.0,
+        magnitude_q67=100.0,
+    )
+    total = losses["absolute_direct"] + losses["authoritative_trajectory"] + losses["log_magnitude_calibration"]
+    total.backward()
+    assert torch.isfinite(total)
+    assert torch.isfinite(predicted_direct.grad).all()
+    assert torch.count_nonzero(predicted_direct.grad) > 0
+
+
 def test_magnitude_strata_metrics_are_reported_separately():
     rows = [
         {"source_kind": "D3", "true_delta_tfv_m3": 5.0, "predicted_final_delta_tfv_m3": 4.0, "group": "g1"},
@@ -119,6 +197,8 @@ def test_magnitude_strata_metrics_are_reported_separately():
     result = magnitude_strata_metrics_v41(rows, q33=20.0, q67=100.0)
     assert set(result) == {"small", "medium", "large"}
     assert result["small"]["count"] == 1
+    assert result["medium"]["count"] == 1
+    assert result["large"]["count"] == 1
     assert result["large"]["response_ratio"] == pytest.approx(100.0 / 150.0)
 
 

@@ -164,7 +164,9 @@ def _gradient_diagnostic(model: torch.nn.Module, pairs: list[Any], prepared: Any
     }
 
 
-def run_stage(stage: str, *, device_name: str = "cuda") -> dict[str, Any]:
+def run_stage(
+    stage: str, *, device_name: str = "cuda", output_root: Path = OUT
+) -> dict[str, Any]:
     if stage not in STAGES:
         raise ValueError(f"unknown stage: {stage}")
     _validate_cache()
@@ -181,10 +183,10 @@ def run_stage(stage: str, *, device_name: str = "cuda") -> dict[str, Any]:
         parent = OLD_COMBINED
     elif stage == "tiny-combined":
         selected = d2_tiny + d3_tiny
-        parent = OUT / STAGES["tiny-d3"][0] / STAGES["tiny-d3"][1]
+        parent = output_root / STAGES["tiny-d3"][0] / STAGES["tiny-d3"][1]
     else:
         selected = micro_groups
-        parent = OUT / STAGES["tiny-combined"][0] / STAGES["tiny-combined"][1]
+        parent = output_root / STAGES["tiny-combined"][0] / STAGES["tiny-combined"][1]
     if not parent.is_file():
         raise RuntimeError(f"V4.2 preceding checkpoint missing: {parent}")
     scales = CounterfactualDeltaScalesV41.from_json_dict(json.loads(SCALE_JSON.read_text(encoding="utf-8")))
@@ -198,7 +200,7 @@ def run_stage(stage: str, *, device_name: str = "cuda") -> dict[str, Any]:
     prepared = prepare_graph_v41(model, graph, normalization, device)
     d2_equivalence = _d2_equivalence(graph, normalization, scales, groups[d2_tiny[0]], parent, device)
     single_before = _sha256_state(model, ("single_", "direct_single_tfv_head"))
-    output_path = OUT / STAGES[stage][0] / STAGES[stage][1]
+    output_path = output_root / STAGES[stage][0] / STAGES[stage][1]
     training = train_response_v41(
         model=model,
         grouped_pairs=training_groups,
@@ -257,7 +259,7 @@ def run_stage(stage: str, *, device_name: str = "cuda") -> dict[str, Any]:
         "fixed_memory_rho": 0.65,
         "next_bounded_action": "Proceed only to the next frozen V4.2 stage if D2 remains non-degraded and D3 large/rank evidence improves.",
     }
-    result_path = OUT / STAGES[stage][0] / "stage_result.json"
+    result_path = output_root / STAGES[stage][0] / "stage_result.json"
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(json.dumps(result, indent=2, allow_nan=True) + "\n", encoding="utf-8")
     print(json.dumps({
@@ -277,8 +279,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--stage", choices=sorted(STAGES), required=True)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--output-root", type=Path, default=OUT)
     args = parser.parse_args()
-    run_stage(args.stage, device_name=args.device)
+    run_stage(args.stage, device_name=args.device, output_root=args.output_root)
     return 0
 
 

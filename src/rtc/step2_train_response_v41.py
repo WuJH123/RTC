@@ -478,6 +478,57 @@ def _within_group_scale(truth: torch.Tensor, source_scale: torch.Tensor) -> torc
     return torch.maximum(spread, floor).clamp_min(1e-6)
 
 
+def balanced_magnitude_stratum_weights(
+    authoritative_delta_tfv: torch.Tensor, *, q33: float, q67: float
+) -> dict[str, torch.Tensor]:
+    """Return per-group equal-stratum weights and one shared partition.
+
+    ``authoritative_delta_tfv`` is ``[B, C]``.  Each present magnitude stratum
+    receives the same total weight *within each group*, while each group's mean
+    candidate weight remains one.  Missing strata contribute no weight and do
+    not create a divide-by-zero path.
+    """
+
+    if authoritative_delta_tfv.ndim != 2:
+        raise ValueError("authoritative_delta_tfv must be [B, C]")
+    if not np.isfinite(float(q33)) or not np.isfinite(float(q67)) or not 0.0 <= q33 < q67:
+        raise ValueError("magnitude thresholds must satisfy 0 <= q33 < q67")
+    if authoritative_delta_tfv.shape[1] == 0:
+        raise ValueError("magnitude weighting requires at least one candidate")
+    absolute_truth = authoritative_delta_tfv.detach().abs()
+    masks = {
+        "small": absolute_truth < float(q33),
+        "medium": (absolute_truth >= float(q33)) & (absolute_truth < float(q67)),
+        "large": absolute_truth >= float(q67),
+    }
+    ordered_masks = (masks["small"], masks["medium"], masks["large"])
+    mask_stack = torch.stack(ordered_masks, dim=1)  # [B, 3, C]
+    counts = torch.stack(
+        [mask.sum(dim=1) for mask in ordered_masks], dim=1
+    )  # [B, 3]
+    present = counts.gt(0)
+    present_count = present.sum(dim=1, keepdim=True).to(authoritative_delta_tfv.dtype)
+    raw_weights = torch.zeros_like(authoritative_delta_tfv)
+    for index, mask in enumerate(ordered_masks):
+        denominator = counts[:, index : index + 1].clamp_min(1).to(authoritative_delta_tfv.dtype)
+        raw_weights = raw_weights + mask.to(authoritative_delta_tfv.dtype) / denominator
+    candidate_count = float(authoritative_delta_tfv.shape[1])
+    weights = raw_weights * (candidate_count / present_count.clamp_min(1.0))
+    return {
+        "weights": weights,
+        "small_mask": masks["small"],
+        "medium_mask": masks["medium"],
+        "large_mask": masks["large"],
+        "counts": counts,
+        "small_count": counts[:, 0],
+        "medium_count": counts[:, 1],
+        "large_count": counts[:, 2],
+        "partition_valid": mask_stack.sum(dim=1).eq(1).all(dim=1),
+        "balanced_valid": torch.isfinite(weights).all(dim=1)
+        & torch.isclose(weights.mean(dim=1), torch.ones_like(weights.mean(dim=1)), atol=1e-6, rtol=0.0),
+    }
+
+
 def tfv_loss_components_v41(
     predicted_direct: torch.Tensor,
     predicted_trajectory: torch.Tensor,
@@ -514,15 +565,12 @@ def tfv_loss_components_v41(
         if magnitude_q33 is None or magnitude_q67 is None:
             raise ValueError("D3 magnitude calibration requires fixed q33 and q67")
         absolute_truth = authoritative_delta_tfv.detach().abs()
-        small = absolute_truth < float(magnitude_q33)
-        medium = (absolute_truth >= float(magnitude_q33)) & (absolute_truth < float(magnitude_q67))
-        large = absolute_truth >= float(magnitude_q67)
-        strata = torch.stack((small, medium, large), dim=0)
-        counts = strata.sum(dim=1).to(predicted_direct.dtype).clamp_min(1.0)
-        stratum_weights = torch.zeros_like(absolute_truth)
-        for index, mask in enumerate((small, medium, large)):
-            stratum_weights = torch.where(mask, 3.0 / counts[index], stratum_weights)
-        stratum_weights = stratum_weights / stratum_weights.mean().clamp_min(1e-6)
+        strata = balanced_magnitude_stratum_weights(
+            authoritative_delta_tfv,
+            q33=float(magnitude_q33),
+            q67=float(magnitude_q67),
+        )
+        stratum_weights = strata["weights"].to(dtype=predicted_direct.dtype)
         direct_loss = (direct_error * stratum_weights).sum() / stratum_weights.sum().clamp_min(1e-6)
         trajectory_loss = (trajectory_error * stratum_weights).sum() / stratum_weights.sum().clamp_min(1e-6)
         normalized_true_magnitude = torch.log1p(absolute_truth / scale)
@@ -647,18 +695,36 @@ def magnitude_strata_metrics_v41(
     """Summarise D3 response calibration separately for fixed Train-only strata."""
 
     result: dict[str, dict[str, float | int]] = {}
+    d3_rows = [
+        row for row in contributions if row.get("source_kind", "").upper() == "D3"
+    ]
+    if not d3_rows:
+        return {
+            stratum: {
+                "count": 0,
+                "mae_m3": float("nan"),
+                "bias_m3": float("nan"),
+                "response_ratio": float("nan"),
+                "rank": float("nan"),
+                "pairwise": float("nan"),
+                "sign": float("nan"),
+            }
+            for stratum in ("small", "medium", "large")
+        }
+    truth_tensor = torch.tensor(
+        [[float(row["true_delta_tfv_m3"]) for row in d3_rows]], dtype=torch.float64
+    )
+    partition = balanced_magnitude_stratum_weights(truth_tensor, q33=q33, q67=q67)
+    partition_masks = {
+        "small": partition["small_mask"][0].tolist(),
+        "medium": partition["medium_mask"][0].tolist(),
+        "large": partition["large_mask"][0].tolist(),
+    }
     for stratum in ("small", "medium", "large"):
         rows = [
             row
-            for row in contributions
-            if row.get("source_kind", "").upper() == "D3"
-            and (
-                abs(float(row["true_delta_tfv_m3"])) < q33
-                if stratum == "small"
-                else abs(float(row["true_delta_tfv_m3"])) < q67
-                if stratum == "medium"
-                else abs(float(row["true_delta_tfv_m3"])) >= q67
-            )
+            for row, selected in zip(d3_rows, partition_masks[stratum], strict=True)
+            if selected
         ]
         truth = np.asarray([float(row["true_delta_tfv_m3"]) for row in rows], dtype=np.float64)
         predicted = np.asarray(
@@ -692,6 +758,72 @@ def magnitude_strata_metrics_v41(
             "sign": float(np.mean(np.sign(predicted) == np.sign(truth))) if truth.size else float("nan"),
         }
     return result
+
+
+def magnitude_weight_epoch_audit_v41(
+    batches: dict[str, ResponseGroupBatchV41], *, q33: float, q67: float
+) -> dict[str, Any]:
+    """Record per-group weight totals so every magnitude-calibration epoch is auditable."""
+
+    group_rows: list[dict[str, Any]] = []
+    for group, batch in sorted(batches.items()):
+        if batch.source_kind.upper() != "D3":
+            continue
+        partition = balanced_magnitude_stratum_weights(
+            batch.true_delta_tfv_m3.detach(), q33=q33, q67=q67
+        )
+        for batch_index in range(batch.true_delta_tfv_m3.shape[0]):
+            counts = {
+                name: int(partition[f"{name}_count"][batch_index].item())
+                for name in ("small", "medium", "large")
+            }
+            totals = {
+                name: float(
+                    (
+                        partition["weights"][batch_index]
+                        * partition[f"{name}_mask"][batch_index]
+                    ).sum()
+                )
+                for name in ("small", "medium", "large")
+            }
+            present = [totals[name] for name in counts if counts[name] > 0]
+            group_rows.append(
+                {
+                    "group": group if batch.true_delta_tfv_m3.shape[0] == 1 else f"{group}#{batch_index}",
+                    "small_count": counts["small"],
+                    "medium_count": counts["medium"],
+                    "large_count": counts["large"],
+                    "small_total_weight": totals["small"],
+                    "medium_total_weight": totals["medium"],
+                    "large_total_weight": totals["large"],
+                    "partition_valid": bool(partition["partition_valid"][batch_index].item()),
+                    "balanced_valid": bool(
+                        partition["balanced_valid"][batch_index].item()
+                    )
+                    and max(present) - min(present) <= 1e-6,
+                }
+            )
+    return {
+        "d3_group_count": len(group_rows),
+        "small_total_weight_mean": float(
+            np.mean([row["small_total_weight"] for row in group_rows])
+        )
+        if group_rows
+        else 0.0,
+        "medium_total_weight_mean": float(
+            np.mean([row["medium_total_weight"] for row in group_rows])
+        )
+        if group_rows
+        else 0.0,
+        "large_total_weight_mean": float(
+            np.mean([row["large_total_weight"] for row in group_rows])
+        )
+        if group_rows
+        else 0.0,
+        "all_groups_partition_valid": all(row["partition_valid"] for row in group_rows),
+        "all_groups_balanced_valid": all(row["balanced_valid"] for row in group_rows),
+        "groups": group_rows,
+    }
 
 
 def calibration_selection_score_v41(
@@ -842,6 +974,16 @@ def response_group_loss_v41(
         "interaction_energy_loss": float(interaction_energy.detach()),
         "magnitude_calibration_loss": float(tfv["log_magnitude_calibration"].detach()),
     }
+    if magnitude_calibration and batch.source_kind.upper() == "D3":
+        weight_audit = balanced_magnitude_stratum_weights(
+            batch.true_delta_tfv_m3.detach(),
+            q33=float(source_scales.tfv_abs_quantiles_m3["q33"]),
+            q67=float(source_scales.tfv_abs_quantiles_m3["q67"]),
+        )
+        for name in ("small", "medium", "large"):
+            components[f"magnitude_{name}_weight_total"] = float(
+                (weight_audit["weights"] * weight_audit[f"{name}_mask"]).sum(dim=1).mean()
+            )
     return total, components
 
 
@@ -1066,6 +1208,9 @@ def train_response_v41(
             row["d3_magnitude_strata"] = magnitude_strata_metrics_v41(
                 epoch_contributions, q33=float(q["q33"]), q67=float(q["q67"])
             )
+            row["magnitude_weight_audit"] = magnitude_weight_epoch_audit_v41(
+                batches, q33=float(q["q33"]), q67=float(q["q67"])
+            )
         history.append(row)
         if selection_policy == "d3_magnitude" and magnitude_calibration:
             calibration_score = calibration_selection_score_v41(row, policy=selection_policy)
@@ -1145,11 +1290,13 @@ __all__ = [
     "ResponseLossWeightsV41",
     "ScaleDeltaBlockV41",
     "SourceCounterfactualScalesV41",
+    "balanced_magnitude_stratum_weights",
     "clear_disallowed_source_gradients",
     "derive_counterfactual_delta_scales_v41",
     "evaluate_response_groups_v41",
     "group_metrics_v41",
     "magnitude_strata_metrics_v41",
+    "magnitude_weight_epoch_audit_v41",
     "calibration_selection_score_v41",
     "load_or_derive_train_only_scales_v41",
     "prepare_graph_v41",

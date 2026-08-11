@@ -107,6 +107,18 @@ def test_interaction_magnitude_features_increase_with_action_energy():
     assert large_features.abs().sum() > small_features.abs().sum()
 
 
+def test_interaction_magnitude_features_use_action_contract_normalization():
+    model, *_ = _fixture(actuators=20, horizon=8, magnitude=True)
+    zero = torch.zeros(1, 1, 8, 20)
+    full = torch.ones_like(zero)
+    zero_features = model.interaction_magnitude_features(zero)
+    full_features = model.interaction_magnitude_features(full)
+    assert torch.equal(zero_features, torch.zeros_like(zero_features))
+    assert torch.isfinite(full_features).all()
+    assert float(full_features.max()) <= 1.0 + 1e-6
+    assert float(full_features.min()) >= -1e-6
+
+
 def test_magnitude_branch_is_zero_initialized_to_preserve_v41_response():
     model, *_ = _fixture(magnitude=True)
     # The production V4.2 constructor must expose a zero-start residual branch;
