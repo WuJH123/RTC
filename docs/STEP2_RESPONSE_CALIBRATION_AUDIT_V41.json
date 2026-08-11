@@ -1,0 +1,67 @@
+{
+  "contract": "STEP2_RESPONSE_CALIBRATION_AUDIT_V41",
+  "status": "AUDIT_COMPLETE_NO_TRAINING",
+  "git_head_audited": "e2fd9fbc046f7e20332330c02e51b5fd9483b17e",
+  "current_v4_checkpoint_sha256": "cf6c5a15676cdaaaff8fb932556f59ac8c77831d0f0425d28531d25c6cd1a711",
+  "full_train_manifest_sha256": "7c69211823f5419a7fabcae03c68f6578b364d1f948f0dbfd76534c0cc48f20d",
+  "boundary": {
+    "swmm_launched": false,
+    "d2_regenerated": false,
+    "d3_regenerated": false,
+    "validation_outcomes_accessed": false,
+    "final_accessed": false,
+    "formal_step2_run": false,
+    "closed_loop_run": false,
+    "new_model_trained": false
+  },
+  "cohort": {
+    "D2_groups": 6,
+    "D2_candidates": 144,
+    "D3_groups": 6,
+    "D3_candidates": 48,
+    "selection_reused_without_reselection": true
+  },
+  "root_cause": "TARGET_AND_LOSS_MISALIGNMENT",
+  "tfv_target_alignment": {
+    "D2": {
+      "mean_surrogate_authoritative_spearman": 0.14231884057971014,
+      "mean_surrogate_authoritative_spread_ratio": 4.8661652614650714,
+      "top1_fraction": 0.0
+    },
+    "D3": {
+      "mean_surrogate_authoritative_spearman": 0.8650793650793651,
+      "mean_surrogate_authoritative_spread_ratio": 0.9388229269135943,
+      "top1_fraction": 0.6666666666666666
+    }
+  },
+  "D3_to_D2_authoritative_delta_tfv_rms_ratio": 22.52443294046047,
+  "dominant_effect_gradient": {
+    "source_kind": "D2",
+    "loss_component": "delta_tfv_rate_rectangle",
+    "parameter_group": "trajectory_effect_head",
+    "gradient_norm": 104.38435419723827
+  },
+  "strongest_near_zero_alignment": {
+    "source_kind": "D2",
+    "loss_component": "delta_flow",
+    "parameter_group": "trajectory_effect_head",
+    "effect_energy_gradient_cosine": 0.9762199459311516
+  },
+  "current_contract_failures": {
+    "absolute_std_used_for_delta_effect": true,
+    "loaded_delta_scales_used_by_effect_loss": false,
+    "authoritative_delta_tfv_used_by_training": false,
+    "group_aware_ranking": false,
+    "single_interaction_separation": false,
+    "direct_delta_tfv_head": false,
+    "reference_deduplicated": false,
+    "D2_reference_forward_rows_per_group": 48,
+    "D3_reference_forward_rows_per_group": 16
+  },
+  "head_depth_consistency": {
+    "D2_max_abs_residual_m": 1.9073486328125e-6,
+    "D3_max_abs_residual_m": 1.9073486328125e-6
+  },
+  "flooding_occurrence_gate_authorized": false,
+  "need_new_swmm": false
+}
