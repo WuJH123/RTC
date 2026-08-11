@@ -11,6 +11,26 @@ from .generation_contract import generation_key
 TRAIN_STATE_CONTRACT = "RTC_TRAIN_STATE_V1_CODE_BOUND"
 
 
+def _cpu_cuda_rng_states(value: object) -> list[torch.Tensor] | None:
+    """Normalize serialized CUDA RNG states before restoring them.
+
+    ``torch.load(..., map_location=cuda)`` can move the saved byte tensors onto
+    CUDA.  ``torch.cuda.set_rng_state_all`` expects CPU ByteTensors on the
+    current PyTorch runtime, so resume must explicitly normalize the payload.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("training CUDA RNG state must be a list of tensors")
+    states: list[torch.Tensor] = []
+    for state in value:
+        if not isinstance(state, torch.Tensor):
+            raise ValueError("training CUDA RNG state contains a non-tensor value")
+        states.append(state.detach().to(device="cpu", dtype=torch.uint8))
+    return states
+
+
 def training_contract_sha(kind: str, payload: Mapping[str, object]) -> tuple[str, str]:
     return generation_key(
         f"training:{kind}",
@@ -77,7 +97,7 @@ def restore_training_state(
     if scaler is not None and "scaler_state_dict" in payload and hasattr(scaler, "load_state_dict"):
         scaler.load_state_dict(payload["scaler_state_dict"])
     torch.set_rng_state(payload["torch_rng_state"].cpu())
-    cuda_state = payload.get("cuda_rng_state_all")
+    cuda_state = _cpu_cuda_rng_states(payload.get("cuda_rng_state_all"))
     if torch.cuda.is_available() and cuda_state is not None:
         torch.cuda.set_rng_state_all(cuda_state)
     extra = payload.get("extra_state", {})
