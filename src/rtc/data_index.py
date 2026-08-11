@@ -12,7 +12,9 @@ def _invariant(group: pd.DataFrame, column: str, *, default: str = "") -> str:
         return default
     values = group[column].fillna("").astype(str).unique().tolist()
     if len(values) != 1:
-        raise ValueError(f"D2 manifest is inconsistent within one executed action for {column}: {values}")
+        raise ValueError(
+            f"D2 manifest is inconsistent within one executed action for {column}: {values}"
+        )
     return values[0]
 
 
@@ -35,7 +37,9 @@ def _validate_identity_columns(frame: pd.DataFrame, *, source: str) -> None:
     identity = frame["simulation_identity_sha256"].fillna("").astype(str)
     family = frame["simulation_family_sha256"].fillna("").astype(str)
     if (identity == "").any() or (family == "").any():
-        raise ValueError(f"{source} mixes identity-aware and legacy rows; normalize before Step2")
+        raise ValueError(
+            f"{source} mixes identity-aware and legacy rows; normalize before Step2"
+        )
     if identity.duplicated().any():
         duplicates = identity[identity.duplicated(keep=False)].head().tolist()
         raise ValueError(f"{source} duplicates simulation identities: {duplicates}")
@@ -75,28 +79,38 @@ def build_d2_run_index(manifest: pd.DataFrame, run_summary: pd.DataFrame) -> pd.
                 row[column] = _invariant(group, column)
             else:
                 _invariant(group, column, default=str(row[column]))
+        row["base_action_sha256"] = _invariant(group, "base_action_sha256")
         row["data_role"] = "D2_SINGLE_ACTUATOR_COUNTERFACTUAL"
         row["manifest_rows_collapsed"] = int(len(group))
         if "actuator_id" in group.columns:
-            probe_actuators = sorted(set(group["actuator_id"].fillna("").astype(str)) - {""})
+            probe_actuators = sorted(
+                set(group["actuator_id"].fillna("").astype(str)) - {""}
+            )
         else:
             probe_actuators = []
-        row["probe_actuator_ids_json"] = json.dumps(probe_actuators, separators=(",", ":"))
+        row["probe_actuator_ids_json"] = json.dumps(
+            probe_actuators, separators=(",", ":")
+        )
         provenance_rows.append(row)
     provenance = pd.DataFrame(provenance_rows)
 
     if run_summary.duplicated(keys).any():
         dup = run_summary.loc[run_summary.duplicated(keys, keep=False), keys]
         raise ValueError(
-            f"D2 run summary contains duplicate executed branches: {dup.head().to_dict('records')}"
+            "D2 run summary contains duplicate executed branches: "
+            f"{dup.head().to_dict('records')}"
         )
     joined = run_summary.merge(
         provenance, on=keys, how="inner", validate="one_to_one", suffixes=("_run", "")
     )
     if len(joined) != len(run_summary):
-        missing_runs = run_summary.merge(provenance[keys], on=keys, how="left", indicator=True)
+        missing_runs = run_summary.merge(
+            provenance[keys], on=keys, how="left", indicator=True
+        )
         missing_runs = missing_runs[missing_runs["_merge"] != "both"]
-        raise ValueError(f"D2 run summary contains branches absent from manifest: {len(missing_runs)}")
+        raise ValueError(
+            f"D2 run summary contains branches absent from manifest: {len(missing_runs)}"
+        )
 
     for column in (
         "event_id",
@@ -125,15 +139,20 @@ def build_d2_run_index(manifest: pd.DataFrame, run_summary: pd.DataFrame) -> pd.
             ),
             "checkpoint_id": _series(joined, "checkpoint_id"),
             "candidate_action_sha256": _series(joined, "candidate_action_sha256"),
+            "base_action_sha256": _series(joined, "base_action_sha256"),
             "action_or_sequence_sha256": _series(joined, "candidate_action_sha256"),
             "simulation_identity_sha256": _series(
                 joined, "simulation_identity_sha256"
             ),
-            "simulation_family_sha256": _series(joined, "simulation_family_sha256"),
+            "simulation_family_sha256": _series(
+                joined, "simulation_family_sha256"
+            ),
             "asset_status": _series(joined, "status", "legacy_unindexed"),
             "metadata_path": _series(joined, "metadata_path"),
             "manifest_rows_collapsed": joined["manifest_rows_collapsed"].astype(int),
-            "probe_actuator_ids_json": _series(joined, "probe_actuator_ids_json", "[]"),
+            "probe_actuator_ids_json": _series(
+                joined, "probe_actuator_ids_json", "[]"
+            ),
             "source_kind": "D2",
         }
     )
@@ -172,11 +191,14 @@ def standardize_d3_run_index(run_summary: pd.DataFrame) -> pd.DataFrame:
             ),
             "checkpoint_id": _series(run_summary, "checkpoint_id"),
             "candidate_action_sha256": "",
+            "base_action_sha256": _series(run_summary, "base_action_sha256"),
             "action_or_sequence_sha256": _series(run_summary, "sequence_sha256"),
             "simulation_identity_sha256": _series(
                 run_summary, "simulation_identity_sha256"
             ),
-            "simulation_family_sha256": _series(run_summary, "simulation_family_sha256"),
+            "simulation_family_sha256": _series(
+                run_summary, "simulation_family_sha256"
+            ),
             "asset_status": _series(run_summary, "status", "legacy_unindexed"),
             "metadata_path": _series(run_summary, "metadata_path"),
             "manifest_rows_collapsed": 1,
@@ -217,7 +239,9 @@ def build_step2_run_index(
         if identities.duplicated().any():
             raise ValueError("Step2 index contains duplicate simulation identities")
     if not allow_final and (result["scientific_split"].astype(str) == "final").any():
-        raise ValueError("Final rainfall branches are forbidden in the Step2 training/validation index")
+        raise ValueError(
+            "Final rainfall branches are forbidden in the Step2 training/validation index"
+        )
     for path in result["metadata_path"].astype(str):
         if not Path(path).is_file():
             raise ValueError(f"Step2 branch metadata is missing: {path}")
@@ -257,7 +281,7 @@ def main() -> None:
     print(
         json.dumps(
             {
-                "contract": "STEP2_RUN_INDEX_V2_SIMULATION_IDENTITY_BOUND",
+                "contract": "STEP2_RUN_INDEX_V3_COUNTERFACTUAL_REFERENCE_BOUND",
                 "rows": int(len(result)),
                 "d2_rows": int((result["source_kind"] == "D2").sum()),
                 "d3_rows": int((result["source_kind"] == "D3").sum()),
@@ -268,7 +292,12 @@ def main() -> None:
                     if identity_aware
                     else 0
                 ),
-                "splits": result.groupby("scientific_split")["metadata_path"].count().to_dict(),
+                "base_action_reference_rows": int(
+                    (result["base_action_sha256"].astype(str) != "").sum()
+                ),
+                "splits": result.groupby("scientific_split")[
+                    "metadata_path"
+                ].count().to_dict(),
                 "out": str(out),
             },
             indent=2,
