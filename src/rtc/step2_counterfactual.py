@@ -6,10 +6,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .flood_volume import trapezoid_node_flood_volume
+from .flood_volume import (
+    smooth_trapezoid_node_flood_volume,
+    trapezoid_node_flood_volume,
+)
 
 PAIRING_CONTRACT = "STEP2_COUNTERFACTUAL_PAIRING_V2_VECTOR_BATCHED"
-LOSS_CONTRACT = "STEP2_COUNTERFACTUAL_ACTION_LOSS_V3_RESPONSE_WEIGHTED"
+LOSS_CONTRACT = "STEP2_COUNTERFACTUAL_ACTION_LOSS_V4_SMOOTH_TFV_PROXY"
 
 
 @dataclass(frozen=True)
@@ -49,11 +52,7 @@ def _array(ds, name: str, default: str = "") -> np.ndarray:
 
 
 def counterfactual_groups(ds) -> dict[str, list[int]]:
-    """Return same-prefix group row indices from one Step2 shard.
-
-    The compiler preserves checkpoint groups within shards. Group identity includes
-    source kind, rainfall/event identity and checkpoint; outcome values are never used.
-    """
+    """Return same-prefix group row indices from one Step2 shard."""
 
     count = int(ds["initial_state"].shape[0])
     event = _array(ds, "event_id")
@@ -161,14 +160,7 @@ def _normalized_delta_loss(
     *,
     floor_scale: torch.Tensor,
 ) -> torch.Tensor:
-    """Response-weighted candidate-minus-reference loss.
-
-    Same-state action effects are sparse in space/time. A plain mean lets unaffected nodes
-    dominate. We therefore weight each target element by ``1 + |delta| / pair_scale`` and
-    renormalize the weights to mean one for every pair. This preserves overall loss scale
-    while concentrating gradient on actuator/node/time locations that SWMM shows are
-    actually responsive to the action.
-    """
+    """Response-weighted candidate-minus-reference loss."""
 
     pred_pair = _as_pairs(predicted)
     true_pair = _as_pairs(target)
@@ -211,10 +203,12 @@ def counterfactual_action_loss(
     use_authoritative_endpoint_truth: bool | None = None,
     use_exact_flood_loss: bool | None = None,
 ) -> PairMetrics:
-    """Action-sensitive loss for one or more vectorized same-prefix pairs.
+    """Action-sensitive loss for vectorized same-prefix reference/candidate pairs.
 
-    Consecutive rows are interpreted as ``[reference, candidate]``. This permits larger
-    CUDA batches without losing the counterfactual pairing contract.
+    Delta-TFV and ranking use a smooth positive flooding-volume proxy for *predicted*
+    flooding rates. The previous hard clamp created a zero-gradient dead zone whenever the
+    recurrent surrogate predicted both candidate and reference rates slightly below zero.
+    Authoritative/physical volume comparisons still use the hard non-negative operator.
     """
 
     _ = _as_pairs(initial_state)
@@ -267,7 +261,18 @@ def counterfactual_action_loss(
         floor_scale=(0.02 * state_std).reshape(-1),
     )
 
-    pred_node = trapezoid_node_flood_volume(
+    # The scale is derived only from the Train normalization already supplied to Step2.
+    # A small Softplus scale preserves useful gradient just below zero without changing
+    # authoritative SWMM truth or the hard physical endpoint loss.
+    flood_proxy_scale = (0.01 * state_std[2].detach()).clamp_min(1e-4)
+    pred_proxy_node = smooth_trapezoid_node_flood_volume(
+        initial_state,
+        rollout_states,
+        flood_rate_index=2,
+        dt_seconds=dt_seconds,
+        softplus_scale_m3s=flood_proxy_scale,
+    )
+    pred_physical_node = trapezoid_node_flood_volume(
         initial_state,
         rollout_states,
         flood_rate_index=2,
@@ -284,7 +289,7 @@ def counterfactual_action_loss(
         if endpoint_truth_enabled and exact_node_flood_volume_m3 is not None
         else true_traj_node.detach()
     )
-    pred_tfv_pair = _as_pairs(pred_node.sum(dim=-1))
+    pred_tfv_pair = _as_pairs(pred_proxy_node.sum(dim=-1))
     true_tfv_pair = _as_pairs(truth_node.sum(dim=-1))
     pred_delta_tfv = pred_tfv_pair[:, 1] - pred_tfv_pair[:, 0]
     true_delta_tfv = true_tfv_pair[:, 1] - true_tfv_pair[:, 0]
@@ -294,7 +299,9 @@ def counterfactual_action_loss(
         normalized_error, torch.zeros_like(normalized_error)
     )
 
-    meaningful = true_delta_tfv.detach().abs() > 1e-6
+    # The loss already uses a 1 m3 normalization floor. Do not report/optimize the sign of
+    # sub-1 m3 effects as if they were meaningful RTC decisions.
+    meaningful = true_delta_tfv.detach().abs() >= 1.0
     if bool(meaningful.any()):
         sign = true_delta_tfv.detach().sign()
         per_pair_ranking = F.softplus(-sign * pred_delta_tfv / delta_scale)
@@ -310,10 +317,10 @@ def counterfactual_action_loss(
     if exact_flood_enabled and exact_node_flood_volume_m3 is not None:
         exact = exact_node_flood_volume_m3.clamp_min(0.0)
         node_loss = torch.square(
-            torch.log1p(pred_node) - torch.log1p(exact)
+            torch.log1p(pred_physical_node) - torch.log1p(exact)
         ).mean()
         total_loss = torch.square(
-            torch.log1p(pred_node.sum(dim=-1))
+            torch.log1p(pred_physical_node.sum(dim=-1))
             - torch.log1p(exact.sum(dim=-1))
         ).mean()
         exact_flood = node_loss + total_loss

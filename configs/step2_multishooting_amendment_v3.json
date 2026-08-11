@@ -1,0 +1,49 @@
+{
+  "amendment": "PROJECT7_V069_STEP2_MULTISHOOTING_AMENDMENT_V3",
+  "status": "single_fixed_pre_formal_train_only_amendment",
+  "trigger": "STEP2_STABILITY_V2_RED_H60_ACTION_AMPLIFICATION",
+  "scientific_scope": "development_train_only",
+  "swmm_regeneration": false,
+  "validation_outcomes_access": false,
+  "final_access": false,
+  "training_contract": "STEP2_COUNTERFACTUAL_MULTISHOOTING_TRAINING_V4",
+  "bounded_dynamics_contract": "STEP2_BOUNDED_COUNTERFACTUAL_DYNAMICS_V2",
+  "counterfactual_loss_contract": "STEP2_COUNTERFACTUAL_ACTION_LOSS_V4_SMOOTH_TFV_PROXY",
+  "primary_fixes": [
+    "replace hard-clamped predicted flooding rate with a Softplus TFV proxy for delta-TFV/ranking gradients only",
+    "retain hard physical non-negative flooding volume for authoritative/reporting comparisons",
+    "replace H24-H72 full BPTT training with 12-step teacher-forced multiple-shooting windows",
+    "parallelize up to three independent 12-step windows in one CUDA forward",
+    "separate D2 and D3 sensitivity/sign diagnostics",
+    "reduce per-epoch pair duplication while rotating through all alternatives"
+  ],
+  "curriculum": [
+    {"epochs": "1-2", "stage": "flow_h1", "horizon_steps": 1, "d3": false},
+    {"epochs": "3-4", "stage": "joint_h1", "horizon_steps": 1, "d3": false},
+    {"epochs": "5-6", "stage": "h2", "horizon_steps": 2, "d3": false},
+    {"epochs": "7-8", "stage": "h6", "horizon_steps": 6, "d3": false},
+    {"epochs": "9-10", "stage": "h12", "horizon_steps": 12, "d3": false},
+    {"epochs": "11-16", "stage": "h72_multishooting", "horizon_steps": 72, "segment_steps": 12, "d3": true},
+    {"epochs": "17-18", "stage": "h72_multishooting_exact_diagnostic", "horizon_steps": 72, "segment_steps": 12, "d3": true, "authoritative_endpoint_role": "diagnostic_only"}
+  ],
+  "fixed_parameters": {
+    "epochs": 18,
+    "hidden_dim": 160,
+    "actuator_embedding_dim": 16,
+    "learning_rate": 0.001,
+    "gradient_clip": 1.0,
+    "branch_batch_size": 4,
+    "grad_accum": 2,
+    "d2_pairs_per_group": 4,
+    "d3_pairs_per_group": 2,
+    "seed": 42,
+    "precision": "auto",
+    "segment_steps": 12,
+    "max_parallel_segments": 3
+  },
+  "authoritative_endpoint_training": false,
+  "authoritative_endpoint_validation": true,
+  "formal_acceptance_thresholds_changed": false,
+  "d2_d3_data_contract_changed": false,
+  "new_swmm_required": false
+}
