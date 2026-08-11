@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import threading
 import time
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
@@ -24,6 +26,67 @@ from .step2_train_response_v4 import ResponseNormalizationV4, ResponsePairV4
 
 SCALE_CONTRACT_V41 = "STEP2_COUNTERFACTUAL_DELTA_SCALES_V41_TRAIN_ONLY"
 TRAINING_CONTRACT_V41 = "STEP2_RESPONSE_CALIBRATION_V41_TRAIN_ONLY_DIAGNOSTIC"
+
+
+class _GpuUtilizationSampler:
+    def __init__(self, enabled: bool) -> None:
+        self.enabled = enabled
+        self.utilization: list[float] = []
+        self.memory_mib: list[float] = []
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if not self.enabled:
+            return
+        self._thread = threading.Thread(target=self._sample, daemon=True)
+        self._thread.start()
+
+    def _sample(self) -> None:
+        command = [
+            "nvidia-smi",
+            "--query-gpu=utilization.gpu,memory.used",
+            "--format=csv,noheader,nounits",
+        ]
+        while not self._stop.is_set():
+            try:
+                completed = subprocess.run(
+                    command,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                first = completed.stdout.strip().splitlines()[0]
+                utilization, memory = (
+                    float(value.strip()) for value in first.split(",")[:2]
+                )
+                self.utilization.append(utilization)
+                self.memory_mib.append(memory)
+            except (FileNotFoundError, IndexError, subprocess.SubprocessError, ValueError):
+                self.enabled = False
+                return
+            self._stop.wait(0.25)
+
+    def stop(self) -> dict[str, Any]:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=3)
+        if not self.utilization:
+            return {"available": False, "samples": 0}
+        values = np.asarray(self.utilization, dtype=np.float64)
+        memory = np.asarray(self.memory_mib, dtype=np.float64)
+        return {
+            "available": True,
+            "samples": int(values.size),
+            "mean_percent": float(values.mean()),
+            "p50_percent": float(np.quantile(values, 0.5)),
+            "p90_percent": float(np.quantile(values, 0.9)),
+            "max_percent": float(values.max()),
+            "mean_memory_mib": float(memory.mean()),
+            "max_memory_mib": float(memory.max()),
+        }
 
 
 @dataclass(frozen=True)
@@ -508,7 +571,11 @@ def group_metrics_v41(
     true_gap = truth[left] - truth[right]
     pred_gap = predicted[left] - predicted[right]
     meaningful = np.abs(true_gap) > 1e-9
-    pairwise = float(np.mean(np.sign(true_gap[meaningful]) == np.sign(pred_gap[meaningful])))
+    pairwise = (
+        float(np.mean(np.sign(true_gap[meaningful]) == np.sign(pred_gap[meaningful])))
+        if meaningful.any()
+        else float("nan")
+    )
     meaningful_sign = np.abs(truth) >= 1.0
     sign = (
         float(np.mean(np.sign(predicted[meaningful_sign]) == np.sign(truth[meaningful_sign])))
@@ -762,6 +829,8 @@ def train_response_v41(
     started = time.perf_counter()
     best_state: dict[str, torch.Tensor] | None = None
     best_epoch = 0
+    gpu_sampler = _GpuUtilizationSampler(target_device.type == "cuda")
+    gpu_sampler.start()
     for epoch in range(1, int(epochs) + 1):
         order = sorted(grouped_pairs)
         np.random.default_rng(seed + epoch).shuffle(order)
@@ -861,6 +930,7 @@ def train_response_v41(
             stale += 1
         if stale >= int(early_stop_patience):
             break
+    gpu_utilization = gpu_sampler.stop()
 
     if best_state is not None:
         model.load_state_dict(best_state)
@@ -904,6 +974,7 @@ def train_response_v41(
             if target_device.type == "cuda"
             else 0
         ),
+        "gpu_utilization": gpu_utilization,
         "loss_weights": asdict(ResponseLossWeightsV41()),
     }
     out.with_suffix(out.suffix + ".history.json").write_text(

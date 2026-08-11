@@ -134,3 +134,14 @@ def test_group_metrics_report_rank_pairwise_top1_and_regret():
     assert rows["top1"] is True
     assert rows["regret_m3"] == pytest.approx(0.0)
     assert rows["spread_ratio"] == pytest.approx(3.0 / 4.0)
+
+
+def test_group_metrics_reports_nan_pairwise_when_all_true_effects_tie():
+    rows = group_metrics_v41(
+        predicted=np.asarray([1.0, 2.0, 3.0]),
+        truth=np.asarray([4.0, 4.0, 4.0]),
+        group="D2::ties",
+        source_kind="D2",
+    )
+    assert np.isnan(rows["rank"])
+    assert np.isnan(rows["pairwise"])

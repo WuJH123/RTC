@@ -25,6 +25,7 @@ from rtc.step2_train_response_v4 import (
 from rtc.step2_train_response_v41 import (
     CounterfactualDeltaScalesV41,
     evaluate_response_groups_v41,
+    group_metrics_v41,
     load_or_derive_train_only_scales_v41,
     prepare_graph_v41,
     stack_response_group_v41,
@@ -247,6 +248,179 @@ def _mechanism_gate(metric: dict[str, Any], gradient: dict[str, Any]) -> dict[st
     }
 
 
+def _effect_records_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
+    if not records:
+        return {"candidate_count": 0}
+    truth = np.asarray([record["truth"] for record in records], dtype=np.float64)
+    predicted = np.asarray([record["predicted"] for record in records], dtype=np.float64)
+    if len(records) >= 2:
+        metrics = group_metrics_v41(
+            predicted=predicted,
+            truth=truth,
+            group="diagnostic",
+            source_kind=str(records[0]["source_kind"]),
+        )
+        rank = metrics["rank"]
+        spread_ratio = metrics["spread_ratio"]
+    else:
+        rank = float("nan")
+        spread_ratio = float("nan")
+    meaningful = np.abs(truth) >= 1.0
+    return {
+        "candidate_count": len(records),
+        "spread_ratio": spread_ratio,
+        "rank": rank,
+        "sign": (
+            float(np.mean(np.sign(predicted[meaningful]) == np.sign(truth[meaningful])))
+            if meaningful.any()
+            else float("nan")
+        ),
+        "mean_abs_response_ratio": float(
+            np.mean(np.abs(predicted)) / max(np.mean(np.abs(truth)), 1e-12)
+        ),
+        "mae_m3": float(np.mean(np.abs(predicted - truth))),
+    }
+
+
+def _magnitude_strata(
+    contributions: list[dict[str, Any]], scales: CounterfactualDeltaScalesV41
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for source in ("D2", "D3"):
+        quantiles = scales.by_source[source].tfv_abs_quantiles_m3
+        q33, q67 = quantiles["q33"], quantiles["q67"]
+        records = []
+        for row in contributions:
+            if row["source_kind"] != source:
+                continue
+            magnitude = abs(float(row["true_delta_tfv_m3"]))
+            stratum = "small" if magnitude <= q33 else "medium" if magnitude <= q67 else "large"
+            records.append(
+                {
+                    "source_kind": source,
+                    "stratum": stratum,
+                    "truth": float(row["true_delta_tfv_m3"]),
+                    "predicted": float(row["predicted_final_delta_tfv_m3"]),
+                }
+            )
+        result[source] = {
+            "train_only_boundaries_m3": {"q33": q33, "q67": q67},
+            "strata": {
+                stratum: _effect_records_metrics(
+                    [record for record in records if record["stratum"] == stratum]
+                )
+                for stratum in ("small", "medium", "large")
+            },
+        }
+    return result
+
+
+def _actuator_type(graph: Any, actuator_index: int) -> str:
+    names = list(graph.actuator_physics_feature_names)
+    for feature, label in (
+        ("is_pump", "pump"),
+        ("is_orifice", "orifice"),
+        ("is_weir", "weir"),
+        ("is_outlet", "outlet"),
+    ):
+        if feature in names and graph.actuator_physics[actuator_index, names.index(feature)] > 0.5:
+            return label
+    return "unknown"
+
+
+def _d2_actuator_coverage(
+    grouped_pairs: dict[str, list[Any]],
+    contributions: list[dict[str, Any]],
+    graph: Any,
+) -> dict[str, Any]:
+    predicted = {
+        (row["group"], int(row["candidate_index"])): row
+        for row in contributions
+        if row["source_kind"] == "D2"
+    }
+    records: list[dict[str, Any]] = []
+    invalid_active_counts: list[dict[str, Any]] = []
+    for group, pairs in sorted(grouped_pairs.items()):
+        if not group.startswith("D2::"):
+            continue
+        for candidate_index, pair in enumerate(pairs):
+            delta = pair.candidate["settings"] - pair.reference["settings"]
+            active = np.flatnonzero(np.any(np.abs(delta) > 1e-8, axis=0))
+            if active.size != 1:
+                invalid_active_counts.append(
+                    {"group": group, "candidate_index": candidate_index, "active_count": int(active.size)}
+                )
+                continue
+            actuator_index = int(active[0])
+            values = predicted[(group, candidate_index)]
+            records.append(
+                {
+                    "source_kind": "D2",
+                    "group": group,
+                    "actuator_index": actuator_index,
+                    "actuator_id": str(graph.actuator_ids[actuator_index]),
+                    "actuator_type": _actuator_type(graph, actuator_index),
+                    "truth": float(values["true_delta_tfv_m3"]),
+                    "predicted": float(values["predicted_final_delta_tfv_m3"]),
+                }
+            )
+    return {
+        "invalid_single_actuator_candidates": invalid_active_counts,
+        "by_type": {
+            actuator_type: _effect_records_metrics(
+                [record for record in records if record["actuator_type"] == actuator_type]
+            )
+            for actuator_type in ("pump", "orifice", "weir", "outlet", "unknown")
+        },
+        "by_identity": {
+            actuator_id: _effect_records_metrics(
+                [record for record in records if record["actuator_id"] == actuator_id]
+            )
+            for actuator_id in sorted({record["actuator_id"] for record in records})
+        },
+        "covered_actuator_count": len({record["actuator_id"] for record in records}),
+        "candidate_count": len(records),
+    }
+
+
+def _simultaneous_action_diagnostic(
+    model: DifferentiableCounterfactualResponseModelV41,
+    pairs: list[Any],
+    prepared: Any,
+    device: torch.device,
+) -> dict[str, Any]:
+    batch = stack_response_group_v41(pairs, device)
+    results: dict[str, Any] = {}
+    for count in (1, 5, 10, 20):
+        candidate = batch.reference_settings[:, None].detach().clone()
+        selected = candidate[..., :count]
+        candidate[..., :count] = torch.where(selected <= 0.5, selected + 0.1, selected - 0.1)
+        candidate.requires_grad_(True)
+        output = model.forward_group(
+            batch.initial_state,
+            batch.rainfall,
+            batch.reference_settings,
+            candidate,
+            batch.previous_actuator_flow,
+            prepared,
+            batch.elapsed_seconds,
+            source_kind="D3",
+        )
+        objective = output.direct_delta_tfv_m3.sum() + output.trajectory_delta_tfv_m3.sum()
+        gradient = torch.autograd.grad(objective, candidate)[0].detach()
+        changed = gradient[..., :count]
+        results[str(count)] = {
+            "finite": bool(torch.isfinite(gradient).all().cpu()),
+            "all_changed_actuators_nonzero": bool(
+                changed.abs().sum(dim=(0, 1, 2)).gt(0.0).all().cpu()
+            ),
+            "gradient_l2_norm": float(torch.linalg.vector_norm(changed).cpu()),
+            "gradient_max_abs": float(changed.abs().max().cpu()),
+            "representation_test_only": True,
+        }
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True)
@@ -325,6 +499,17 @@ def main() -> int:
     model = _model(graph, normalization, scales, hidden_dim=args.hidden_dim)
     if parent is not None:
         _load_parent(model, parent)
+    target_device = torch.device(
+        args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"
+    )
+    model.to(target_device).float()
+    pretrain_prepared = prepare_graph_v41(model, graph, normalization, target_device)
+    pretrain_metrics, _ = evaluate_response_groups_v41(
+        model=model,
+        grouped_pairs=grouped_pairs,
+        prepared=pretrain_prepared,
+        device=target_device,
+    )
     stage_dir_name, checkpoint_name = STAGE_LAYOUT[args.stage]
     stage_dir = result_root / stage_dir_name
     checkpoint = stage_dir / checkpoint_name
@@ -339,9 +524,6 @@ def main() -> int:
         learning_rate=args.learning_rate,
         seed=20260811,
         device=args.device,
-    )
-    target_device = torch.device(
-        args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"
     )
     prepared = prepare_graph_v41(model, graph, normalization, target_device)
     metrics, contributions = evaluate_response_groups_v41(
@@ -370,6 +552,10 @@ def main() -> int:
             }
             for source in ("D2", "D3")
         }
+    simultaneous_group = next(
+        (group for group in sorted(grouped_pairs) if group.startswith("D2::")),
+        min(grouped_pairs),
+    )
     result = {
         "contract": "STEP2_RESPONSE_CALIBRATION_V41_STAGE_RESULT",
         "stage": args.stage,
@@ -389,12 +575,23 @@ def main() -> int:
         "scale_manifest_sha256": scales.source_manifest_sha256,
         "selected_groups": selected,
         "parent_checkpoint": str(parent) if parent else None,
+        "pretrain_group_metrics": pretrain_metrics,
         "training": training,
         "group_metrics": metrics,
         "candidate_contributions": contributions,
         "gradient_diagnostics": gradients,
         "trajectory_diagnostics": _trajectory_diagnostic(
             model, grouped_pairs, prepared, target_device
+        ),
+        "magnitude_strata": _magnitude_strata(contributions, scales),
+        "d2_actuator_coverage": _d2_actuator_coverage(
+            grouped_pairs, contributions, graph
+        ),
+        "simultaneous_action_diagnostics": _simultaneous_action_diagnostic(
+            model,
+            grouped_pairs[simultaneous_group],
+            prepared,
+            target_device,
         ),
         "mechanism_gates": gates,
     }
