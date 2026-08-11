@@ -164,9 +164,12 @@ class ActuatorFlowModel(nn.Module):
         *,
         actuator_count: int = 0,
         actuator_embedding_dim: int = 16,
+        bounded_flow_residual: bool = False,
+        delta_flow_scale: torch.Tensor | None = None,
     ):
         super().__init__()
         self.actuator_count = int(actuator_count)
+        self.bounded_flow_residual = bool(bounded_flow_residual)
         self.actuator_embedding_dim = int(
             actuator_embedding_dim if actuator_count > 0 else 0
         )
@@ -189,6 +192,17 @@ class ActuatorFlowModel(nn.Module):
         self.register_buffer("physics_mean", torch.zeros(physics_dim))
         self.register_buffer("physics_std", torch.ones(physics_dim))
         self.register_buffer("flow_std", torch.ones(1))
+        flow_scale = (
+            torch.ones(self.actuator_count, dtype=torch.float32)
+            if delta_flow_scale is None
+            else torch.as_tensor(delta_flow_scale, dtype=torch.float32).reshape(-1)
+        )
+        if flow_scale.numel() != self.actuator_count:
+            raise ValueError(
+                "delta_flow_scale must contain one value per actuator; "
+                f"got {flow_scale.numel()} for {self.actuator_count} actuators"
+            )
+        self.register_buffer("delta_flow_scale", _safe_std(flow_scale))
 
     @torch.no_grad()
     def set_normalization(
@@ -199,6 +213,11 @@ class ActuatorFlowModel(nn.Module):
         self.physics_mean.copy_(physics_mean.reshape_as(self.physics_mean))
         self.physics_std.copy_(_safe_std(physics_std.reshape_as(self.physics_std)))
         self.flow_std.copy_(_safe_std(flow_std.reshape_as(self.flow_std)))
+
+    @torch.no_grad()
+    def set_delta_flow_scale(self, delta_flow_scale: torch.Tensor) -> None:
+        scale = torch.as_tensor(delta_flow_scale, device=self.delta_flow_scale.device)
+        self.delta_flow_scale.copy_(_safe_std(scale.reshape_as(self.delta_flow_scale)))
 
     def prepare_static(
         self, physics: torch.Tensor, *, batch_size: int
@@ -238,7 +257,11 @@ class ActuatorFlowModel(nn.Module):
             parts.append(identity_embedding)
         z = self.encoder(torch.cat(parts, dim=-1))
         responsiveness = torch.sigmoid(self.response_logit(z)).squeeze(-1)
-        delta = self.flow_delta(z).squeeze(-1) * self.flow_std
+        raw_delta = self.flow_delta(z).squeeze(-1)
+        if self.bounded_flow_residual:
+            delta = torch.tanh(raw_delta) * self.delta_flow_scale.to(dtype=raw_delta.dtype)
+        else:
+            delta = raw_delta * self.flow_std
         return previous_flow + responsiveness * delta, responsiveness
 
     def forward(
@@ -266,9 +289,12 @@ class HydraulicTransition(nn.Module):
         hidden_dim=160,
         graph_layers=3,
         action_context_dim: int = 0,
+        bounded_state_residual: bool = False,
+        delta_state_scale: torch.Tensor | None = None,
     ):
         super().__init__()
         self.action_context_dim = int(action_context_dim)
+        self.bounded_state_residual = bool(bounded_state_residual)
         self.input = nn.Linear(
             state_dim + rainfall_dim + static_dim + 1 + self.action_context_dim,
             hidden_dim,
@@ -284,6 +310,17 @@ class HydraulicTransition(nn.Module):
         self.register_buffer("static_mean", torch.zeros(static_dim))
         self.register_buffer("static_std", torch.ones(static_dim))
         self.register_buffer("injection_std", torch.ones(1))
+        state_scale = (
+            torch.ones(state_dim, dtype=torch.float32)
+            if delta_state_scale is None
+            else torch.as_tensor(delta_state_scale, dtype=torch.float32).reshape(-1)
+        )
+        if state_scale.numel() != int(state_dim):
+            raise ValueError(
+                "delta_state_scale must contain one value per state channel; "
+                f"got {state_scale.numel()} for {state_dim} channels"
+            )
+        self.register_buffer("delta_state_scale", _safe_std(state_scale))
 
     @torch.no_grad()
     def set_normalization(
@@ -304,6 +341,11 @@ class HydraulicTransition(nn.Module):
         self.static_mean.copy_(static_mean.reshape_as(self.static_mean))
         self.static_std.copy_(_safe_std(static_std.reshape_as(self.static_std)))
         self.injection_std.copy_(_safe_std(injection_std.reshape_as(self.injection_std)))
+
+    @torch.no_grad()
+    def set_delta_state_scale(self, delta_state_scale: torch.Tensor) -> None:
+        scale = torch.as_tensor(delta_state_scale, device=self.delta_state_scale.device)
+        self.delta_state_scale.copy_(_safe_std(scale.reshape_as(self.delta_state_scale)))
 
     def prepare_static(
         self,
@@ -351,7 +393,12 @@ class HydraulicTransition(nn.Module):
         x = self.input(torch.cat(parts, dim=-1))
         for block in self.graph:
             x = block(x, edge_index, inverse_degree)
-        return state + self.residual(x) * self.state_std
+        raw_delta = self.residual(x)
+        if self.bounded_state_residual:
+            delta = torch.tanh(raw_delta) * self.delta_state_scale.to(dtype=raw_delta.dtype)
+        else:
+            delta = raw_delta * self.state_std
+        return state + delta
 
     def forward(
         self,
@@ -398,17 +445,25 @@ class DifferentiableHydraulicWorldModel(nn.Module):
         actuator_count=0,
         actuator_embedding_dim=16,
         direct_action_context: bool = False,
+        bounded_state_residual: bool = False,
+        bounded_flow_residual: bool = False,
+        delta_state_scale: torch.Tensor | None = None,
+        delta_flow_scale: torch.Tensor | None = None,
         **runtime_metadata,
     ):
         super().__init__()
         self.runtime_metadata = dict(runtime_metadata)
         self.direct_action_context = bool(direct_action_context)
+        self.bounded_state_residual = bool(bounded_state_residual)
+        self.bounded_flow_residual = bool(bounded_flow_residual)
         self.actuator = ActuatorFlowModel(
             state_dim,
             actuator_physics_dim,
             hidden_dim,
             actuator_count=actuator_count,
             actuator_embedding_dim=actuator_embedding_dim,
+            bounded_flow_residual=self.bounded_flow_residual,
+            delta_flow_scale=delta_flow_scale,
         )
         self.transition = HydraulicTransition(
             state_dim,
@@ -416,6 +471,8 @@ class DifferentiableHydraulicWorldModel(nn.Module):
             node_static_dim,
             hidden_dim=hidden_dim,
             action_context_dim=2 if self.direct_action_context else 0,
+            bounded_state_residual=self.bounded_state_residual,
+            delta_state_scale=delta_state_scale,
         )
 
     @torch.no_grad()

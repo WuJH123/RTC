@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -18,31 +19,58 @@ from .step2_counterfactual import (
     same_prefix_diagnostic,
 )
 from .step2_shards import load_shard_manifest, sha256_file
+from .step2_stability import (
+    CURRICULUM_CONTRACT_V2,
+    STABILITY_AMENDMENT,
+    STABILITY_MODEL_CONTRACT,
+    derive_train_only_delta_scales,
+)
+from .step2_training_cache import (
+    build_step2_training_cache,
+    load_step2_training_cache,
+    materialize_shard_arrays,
+)
 from .train_state import restore_training_state, save_training_state, training_contract_sha
 from .training import save_torch_checkpoint
 
+TRAINING_CONTRACT = "STEP2_COUNTERFACTUAL_STABILITY_TRAINING_V3_BOUNDED_V2"
+CURRICULUM_CONTRACT = CURRICULUM_CONTRACT_V2
 
-TRAINING_CONTRACT = "STEP2_COUNTERFACTUAL_ACTION_SENSITIVE_TRAINING_V2_VECTOR_BATCHED"
-CURRICULUM_CONTRACT = "FLOW_H1_TO_COUNTERFACTUAL_H360_V1"
 
+def _stage(
+    epoch: int,
+    total_epochs: int,
+    full_horizon: int,
+) -> tuple[str, int, bool, bool, bool]:
+    """Return the fixed V2 curriculum and explicit endpoint-loss switches."""
 
-def _stage(epoch: int, total_epochs: int, full_horizon: int) -> tuple[str, int, bool]:
-    if total_epochs <= 0:
-        raise ValueError("total_epochs must be positive")
-    p = float(epoch + 1) / float(total_epochs)
-    if p <= 0.10:
-        return "flow_h1", 1, True
-    if p <= 0.20:
-        return "joint_h1", 1, False
-    if p <= 0.30:
-        return "h2", min(2, full_horizon), False
-    if p <= 0.40:
-        return "h6", min(6, full_horizon), False
-    if p <= 0.50:
-        return "h12", min(12, full_horizon), False
-    if p <= 0.60:
-        return "h24", min(24, full_horizon), False
-    return "hfull", full_horizon, False
+    if total_epochs != 24:
+        raise ValueError(
+            "Step2 stability amendment V2 has one fixed 24-epoch curriculum; "
+            f"got {total_epochs}"
+        )
+    if full_horizon < 72:
+        raise ValueError(
+            "Step2 stability amendment V2 requires the frozen 72-step trajectory"
+        )
+    schedule = (
+        (2, "flow_h1", 1, True, False, False),
+        (4, "joint_h1", 1, False, False, False),
+        (6, "h2", 2, False, False, False),
+        (8, "h6", 6, False, False, False),
+        (10, "h12", 12, False, False, False),
+        (13, "h24", 24, False, False, False),
+        (15, "h36", 36, False, False, False),
+        (17, "h48", 48, False, False, False),
+        (20, "h60", 60, False, False, False),
+        (22, "h72_trajectory", 72, False, False, False),
+        (24, "h72_exact", 72, False, True, True),
+    )
+    completed = int(epoch) + 1
+    for end_epoch, name, horizon, flow_only, endpoint_truth, exact_flood in schedule:
+        if completed <= end_epoch:
+            return name, horizon, flow_only, endpoint_truth, exact_flood
+    raise AssertionError("curriculum schedule did not cover epoch")
 
 
 def _precision(device: torch.device, requested: str) -> tuple[bool, torch.dtype, bool, str]:
@@ -73,14 +101,34 @@ def _source_kind(group_key: str) -> str:
 def _source_group_counts(manifest: dict[str, object]) -> dict[str, int]:
     counts = {"D2": 0, "D3": 0}
     for item in manifest["shards"]:
-        with np.load(str(item["path"]), allow_pickle=False) as ds:
-            if "source_kind" not in ds.files:
+        if "arrays" in item:
+            ds = item["arrays"]
+            if "source_kind" not in ds:
                 raise ValueError(
                     "action-sensitive Step2 requires source_kind provenance in every shard"
                 )
             for key in counterfactual_groups(ds):
                 counts[_source_kind(key)] += 1
+        else:
+            with np.load(str(item["path"]), allow_pickle=False) as raw:
+                if "source_kind" not in raw.files:
+                    raise ValueError(
+                        "action-sensitive Step2 requires source_kind provenance in every shard"
+                    )
+                for key in counterfactual_groups(raw):
+                    counts[_source_kind(key)] += 1
     return counts
+
+
+@contextmanager
+def _open_training_shard(item):
+    """Yield a shard's decompressed arrays once, or its mmap arrays."""
+
+    if "arrays" in item:
+        yield item["arrays"]
+        return
+    with np.load(str(item["path"]), allow_pickle=False) as raw:
+        yield materialize_shard_arrays(raw)
 
 
 def _source_weight(source: str, counts: dict[str, int], *, enable_balance: bool) -> float:
@@ -102,20 +150,27 @@ def _pair_numpy(
         raise ValueError("cannot build an empty counterfactual pair batch")
     rows = np.asarray([idx for pair in pairs for idx in pair], dtype=int)
     payload = {
-        "initial_state": ds["initial_state"][rows].astype(np.float32),
-        "rainfall": ds["rainfall"][rows, :horizon].astype(np.float32),
-        "settings": ds["settings"][rows, :horizon].astype(np.float32),
-        "previous_actuator_flow": ds["previous_actuator_flow"][rows].astype(np.float32),
-        "target_states": ds["target_states"][rows, :horizon].astype(np.float32),
-        "target_actuator_flows": ds["target_actuator_flows"][rows, :horizon].astype(
-            np.float32
+        "initial_state": np.ascontiguousarray(ds["initial_state"][rows], dtype=np.float32),
+        "rainfall": np.ascontiguousarray(ds["rainfall"][rows, :horizon], dtype=np.float32),
+        "settings": np.ascontiguousarray(ds["settings"][rows, :horizon], dtype=np.float32),
+        "previous_actuator_flow": np.ascontiguousarray(
+            ds["previous_actuator_flow"][rows], dtype=np.float32
         ),
-        "elapsed_seconds": ds["elapsed_seconds"][rows, : horizon + 1].astype(np.float32),
+        "target_states": np.ascontiguousarray(
+            ds["target_states"][rows, :horizon], dtype=np.float32
+        ),
+        "target_actuator_flows": np.ascontiguousarray(
+            ds["target_actuator_flows"][rows, :horizon], dtype=np.float32
+        ),
+        "elapsed_seconds": np.ascontiguousarray(
+            ds["elapsed_seconds"][rows, : horizon + 1], dtype=np.float32
+        ),
     }
-    if "exact_node_flood_volume_m3" in ds.files:
-        payload["exact_node_flood_volume_m3"] = ds[
-            "exact_node_flood_volume_m3"
-        ][rows].astype(np.float32)
+    files = ds.files if hasattr(ds, "files") else ds.keys()
+    if "exact_node_flood_volume_m3" in files:
+        payload["exact_node_flood_volume_m3"] = np.ascontiguousarray(
+            ds["exact_node_flood_volume_m3"][rows], dtype=np.float32
+        )
     return payload
 
 
@@ -167,13 +222,13 @@ def train_step2_large_v3_main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Train action-sensitive Step2 from same-prefix D2/D3 pairs with a "
-            "one-step-to-H360 curriculum"
+            "bounded, explicit H1-to-H72 stability curriculum"
         )
     )
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--graph", required=True)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--epochs", type=int, default=24)
     parser.add_argument(
         "--batch-size",
         type=int,
@@ -198,7 +253,16 @@ def train_step2_large_v3_main() -> None:
     parser.add_argument("--d2-pairs-per-group", type=int, default=8)
     parser.add_argument("--d3-pairs-per-group", type=int, default=4)
     parser.add_argument("--gradient-clip", type=float, default=1.0)
+    parser.add_argument(
+        "--cache-dir",
+        help="optional STEP2_REBUILDABLE_TRAINING_CACHE_V1 directory",
+    )
     args = parser.parse_args()
+
+    if args.epochs != 24:
+        raise ValueError(
+            "PROJECT7_V069_STEP2_STABILITY_AMENDMENT_V2 requires exactly 24 epochs"
+        )
 
     if args.batch_size < 2 or args.batch_size % 2:
         raise ValueError("counterfactual Step2 --batch-size must be a positive even number")
@@ -235,6 +299,23 @@ def train_step2_large_v3_main() -> None:
         (static_mean, static_std),
         flow_std,
     ) = _step2_stats(manifest, graph)
+    delta_state_scale, delta_flow_scale, scale_details = derive_train_only_delta_scales(
+        args.manifest,
+        state_std=state_std,
+        flow_std=flow_std,
+    )
+    training_manifest = dict(manifest)
+    if args.cache_dir:
+        cache_manifest_path = build_step2_training_cache(args.manifest, args.cache_dir)
+        cached = load_step2_training_cache(cache_manifest_path)
+        if len(cached["shards"]) != len(manifest["shards"]):
+            raise ValueError("training cache shard count differs from V6 manifest")
+        training_manifest["shards"] = [
+            {**source_item, "arrays": cached_item["arrays"]}
+            for source_item, cached_item in zip(
+                manifest["shards"], cached["shards"], strict=True
+            )
+        ]
 
     with np.load(str(manifest["shards"][0]["path"]), allow_pickle=False) as first:
         core_config = {
@@ -246,6 +327,12 @@ def train_step2_large_v3_main() -> None:
             "actuator_count": len(graph.actuator_ids),
             "actuator_embedding_dim": args.actuator_embedding_dim,
             "direct_action_context": True,
+            "bounded_state_residual": True,
+            "bounded_flow_residual": True,
+            "delta_state_scale": delta_state_scale.tolist(),
+            "delta_flow_scale": delta_flow_scale.tolist(),
+            "stability_amendment": STABILITY_AMENDMENT,
+            "stability_model_contract": STABILITY_MODEL_CONTRACT,
         }
 
     model = DifferentiableHydraulicWorldModel(**core_config).to(device)
@@ -273,7 +360,7 @@ def train_step2_large_v3_main() -> None:
     scaler = torch.cuda.amp.GradScaler(enabled=use_scaler)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
     rng = np.random.default_rng(args.seed)
-    source_counts = _source_group_counts(manifest)
+    source_counts = _source_group_counts(training_manifest)
 
     weights = CounterfactualLossWeights(exact_flood=args.exact_flood_loss_weight)
     train_payload = {
@@ -296,9 +383,12 @@ def train_step2_large_v3_main() -> None:
         "d3_pairs_per_group": args.d3_pairs_per_group,
         "loss_weights": weights.__dict__,
         "seed": args.seed,
+        "stability_amendment": STABILITY_AMENDMENT,
+        "stability_model_contract": STABILITY_MODEL_CONTRACT,
+        "scale_derivation": scale_details,
     }
     contract_sha, code_sha = training_contract_sha(
-        "step2_counterfactual_v3", train_payload
+        "step2_counterfactual_stability_v2", train_payload
     )
     resume_path = Path(args.resume_state or (str(args.out) + ".trainstate.pt"))
     start_epoch = 0
@@ -320,14 +410,16 @@ def train_step2_large_v3_main() -> None:
         resume_path.unlink()
 
     for epoch in range(start_epoch, args.epochs):
-        stage, horizon, flow_only = _stage(epoch, args.epochs, full_horizon)
+        stage, horizon, flow_only, endpoint_truth, exact_flood = _stage(
+            epoch, args.epochs, full_horizon
+        )
         use_d3 = horizon >= min(24, full_horizon) and not flow_only
         source_balance = (
             use_d3 and source_counts["D2"] > 0 and source_counts["D3"] > 0
         )
         model.train()
         optimizer.zero_grad(set_to_none=True)
-        shard_order = list(manifest["shards"])
+        shard_order = list(training_manifest["shards"])
         rng.shuffle(shard_order)
 
         totals = {
@@ -347,15 +439,7 @@ def train_step2_large_v3_main() -> None:
         grad_norm_sum = grad_norm_max = 0.0
 
         for item in shard_order:
-            with np.load(str(item["path"]), allow_pickle=False) as ds:
-                if "source_kind" not in ds.files:
-                    raise ValueError(
-                        "action-sensitive Step2 requires source_kind provenance in every shard"
-                    )
-                if "exact_node_flood_volume_m3" not in ds.files:
-                    raise ValueError(
-                        "action-sensitive Formal Step2 requires exact cumulative flood truth"
-                    )
+            with _open_training_shard(item) as ds:
 
                 selected: dict[str, list[tuple[int, int]]] = {"D2": [], "D3": []}
                 groups = list(counterfactual_groups(ds).items())
@@ -439,6 +523,8 @@ def train_step2_large_v3_main() -> None:
                                 full_horizon=horizon == full_horizon,
                                 weights=weights,
                                 flow_only=flow_only,
+                                use_authoritative_endpoint_truth=endpoint_truth,
+                                use_exact_flood_loss=exact_flood,
                             )
                             full_loss = metrics.total * source_factor
                             loss = full_loss / args.grad_accum
@@ -560,6 +646,13 @@ def train_step2_large_v3_main() -> None:
         "training_contract_sha256": contract_sha,
         "step2_training_contract": TRAINING_CONTRACT,
         "curriculum_contract": CURRICULUM_CONTRACT,
+        "stability_amendment": STABILITY_AMENDMENT,
+        "stability_model_contract": STABILITY_MODEL_CONTRACT,
+        "scale_derivation": scale_details,
+        "bounded_state_residual": True,
+        "bounded_flow_residual": True,
+        "endpoint_truth_schedule": "h72_exact_only",
+        "exact_flood_schedule": "h72_exact_only",
     }
     meta = save_torch_checkpoint(
         model,

@@ -20,7 +20,7 @@ from .inp_runtime import sha256_file
 from .models import DifferentiableHydraulicWorldModel, SparseStateEstimator
 from .robust_tfv_mpc import ContinuousTFVFirstMPC
 from .runtime_controller_guard import ContinuityGuardController
-
+from .step2_stability import STABILITY_AMENDMENT, STABILITY_MODEL_CONTRACT
 
 FORMAL_POLICY_STRATEGIES = (
     "proposed",
@@ -116,6 +116,23 @@ def _load_step2(
     cfg = dict(raw_config)
     cfg.pop("state_weights", None)
     cfg.pop("flow_loss_weight", None)
+    stability_keys = {
+        "stability_amendment",
+        "stability_model_contract",
+        "bounded_state_residual",
+        "bounded_flow_residual",
+    }
+    if stability_keys.intersection(cfg):
+        if cfg.get("stability_amendment") != STABILITY_AMENDMENT or cfg.get(
+            "stability_model_contract"
+        ) != STABILITY_MODEL_CONTRACT:
+            raise ValueError(
+                "Step2 checkpoint has an incomplete or incompatible stability amendment"
+            )
+        if cfg.get("bounded_state_residual") is not True or cfg.get(
+            "bounded_flow_residual"
+        ) is not True:
+            raise ValueError("Step2 stability v2 checkpoint lacks bounded residual dynamics")
     runtime_metadata = {
         key: cfg.pop(key)
         for key in (
