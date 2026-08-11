@@ -146,6 +146,7 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         d2_tfv_scale: float,
         d3_tfv_scale: float,
         max_horizon_steps: int,
+        effect_rank: int = 12,
     ) -> None:
         super().__init__()
         if state_dim < 3:
@@ -159,10 +160,18 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         self.actuator_embedding_dim = int(actuator_embedding_dim)
         self.temporal_embedding_dim = int(temporal_embedding_dim)
         self.max_horizon_steps = int(max_horizon_steps)
+        self.effect_rank = int(effect_rank)
+        if self.effect_rank <= 0:
+            raise ValueError("effect_rank must be positive")
 
         self._register_vector("state_mean", state_mean, self.state_dim)
         self._register_vector("state_std", state_std, self.state_dim, positive=True)
-        self._register_vector("flow_std", flow_std, self.actuator_count, positive=True)
+        flow_std_tensor = torch.as_tensor(flow_std, dtype=torch.float32).reshape(-1)
+        if flow_std_tensor.numel() == 1:
+            flow_std_tensor = flow_std_tensor.expand(self.actuator_count).clone()
+        self._register_vector(
+            "flow_std", flow_std_tensor, self.actuator_count, positive=True
+        )
         self._register_vector("d2_state_scale", d2_state_scale, self.state_dim, positive=True)
         self._register_vector("d3_state_scale", d3_state_scale, self.state_dim, positive=True)
         self._register_vector("d2_flow_scale", d2_flow_scale, self.actuator_count, positive=True)
@@ -186,11 +195,17 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         self.single_effect_encoder = _mlp(token_dim, hidden_dim, hidden_dim)
         self.single_flow_head = nn.Linear(hidden_dim, 1)
         self.single_state_head = nn.Linear(hidden_dim, 2 * self.state_dim)
+        self.single_network_coefficient_head = nn.Linear(
+            hidden_dim, self.effect_rank * self.state_dim
+        )
+        self.single_node_basis_head = nn.Linear(hidden_dim, self.effect_rank)
         self.direct_single_tfv_head = _mlp(2 * hidden_dim, hidden_dim, 1)
 
-        self.interaction_encoder = _mlp(2 * hidden_dim + 3, hidden_dim, hidden_dim)
+        self.interaction_encoder = _mlp(4 * hidden_dim + 3, hidden_dim, hidden_dim)
         self.interaction_flow_head = nn.Linear(2 * hidden_dim, 1)
-        self.interaction_state_head = nn.Linear(hidden_dim, self.state_dim)
+        self.interaction_state_head = nn.Linear(
+            hidden_dim, self.effect_rank * self.state_dim
+        )
         self.direct_interaction_tfv_head = _mlp(2 * hidden_dim, hidden_dim, 1)
 
     def _register_vector(
@@ -331,14 +346,13 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
             invert_elevation_m=invert,
         )
 
-    def _source_scales(
-        self, source_kind: str
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, bool]:
+    @staticmethod
+    def _allows_interaction(source_kind: str) -> bool:
         source = source_kind.upper()
         if source == "D2":
-            return self.d2_state_scale, self.d2_flow_scale, self.d2_tfv_scale, False
+            return False
         if source == "D3":
-            return self.d3_state_scale, self.d3_flow_scale, self.d3_tfv_scale, True
+            return True
         raise ValueError("source_kind must be D2 or D3")
 
     def _candidate_tokens(
@@ -382,7 +396,7 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         reference = self.encode_reference(
             initial_state, rainfall, reference_settings, previous_actuator_flow, prepared
         )
-        state_scale, flow_scale, tfv_scale, allow_interaction = self._source_scales(source_kind)
+        allow_interaction = self._allows_interaction(source_kind)
         actual_hidden, zero_hidden, delta_u = self._candidate_tokens(
             reference_settings, candidate_settings, reference.actuator_static
         )
@@ -397,7 +411,9 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         single_flow_impulse = torch.where(
             actuator_action_mask, single_flow_impulse, torch.zeros_like(single_flow_impulse)
         )
-        single_flow = _causal_accumulate(single_flow_impulse).squeeze(-1) * flow_scale
+        single_flow = (
+            _causal_accumulate(single_flow_impulse).squeeze(-1) * self.d2_flow_scale
+        )
         single_flow = torch.where(
             causal_action_mask.unsqueeze(-1), single_flow, torch.zeros_like(single_flow)
         )
@@ -428,25 +444,68 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
             reference.actuator_downstream,
             initial_state.shape[1],
         )
-        single_state_raw = (outgoing + incoming) * state_scale
+        network_actual = self.single_network_coefficient_head(actual_hidden)
+        network_zero = self.single_network_coefficient_head(zero_hidden)
+        network_impulse = torch.where(
+            actuator_action_mask,
+            network_actual - network_zero,
+            torch.zeros_like(network_actual),
+        )
+        network_coefficients = _causal_accumulate(network_impulse).reshape(
+            batch,
+            candidates,
+            horizon,
+            actuators,
+            self.effect_rank,
+            self.state_dim,
+        )
+        network_coefficients = network_coefficients.sum(dim=3)
+        node_basis = torch.tanh(self.single_node_basis_head(reference.node_context))
+        network_state = torch.einsum(
+            "bchrs,bhnr->bchns", network_coefficients, node_basis
+        )
+        single_state_raw = (
+            outgoing + incoming + network_state
+        ) * self.d2_state_scale
         single_state_raw = torch.where(
             causal_action_mask[..., None, None], single_state_raw, torch.zeros_like(single_state_raw)
         )
 
+        active_now = delta_u.detach().ne(0.0).sum(dim=-1).clamp_min(1)
         active_so_far = delta_u.detach().abs().cumsum(dim=2).ne(0.0).sum(dim=-1)
-        interaction_time_gate = (active_so_far - 1).clamp_min(0).to(initial_state.dtype)
-        interaction_time_gate = interaction_time_gate / max(1, self.actuator_count - 1)
+        interaction_time_gate = active_so_far.ge(2).to(initial_state.dtype)
         if not allow_interaction:
             interaction_time_gate = torch.zeros_like(interaction_time_gate)
         interaction_gate = interaction_time_gate.amax(dim=2)
 
-        pooled_hidden = hidden_delta.mean(dim=3)
-        pooled_abs = delta_u.abs().mean(dim=3, keepdim=True)
-        pooled_signed = delta_u.mean(dim=3, keepdim=True)
-        pooled_square = delta_u.square().mean(dim=3, keepdim=True)
+        active_normalizer = active_now.to(initial_state.dtype).sqrt().unsqueeze(-1)
+        pooled_hidden = hidden_delta.sum(dim=3) / active_normalizer
+        pair_denominator = (
+            active_now.to(initial_state.dtype)
+            * (active_now.to(initial_state.dtype) - 1.0).clamp_min(1.0)
+        ).unsqueeze(-1)
+        hidden_sum = hidden_delta.sum(dim=3)
+        pair_moment = (
+            hidden_sum.square() - hidden_delta.square().sum(dim=3)
+        ) / pair_denominator
+        identity_moment = (
+            delta_u[..., None] * reference.actuator_static[None, None, None]
+        ).sum(dim=3) / active_normalizer
+        pooled_abs = delta_u.abs().sum(dim=3, keepdim=True) / active_normalizer
+        pooled_signed = delta_u.sum(dim=3, keepdim=True) / active_normalizer
+        pooled_square = delta_u.square().sum(dim=3, keepdim=True) / active_normalizer
         context = reference.global_context[:, None].expand(-1, candidates, -1, -1)
         interaction_input = torch.cat(
-            (pooled_hidden, context, pooled_abs, pooled_signed, pooled_square), dim=-1
+            (
+                pooled_hidden,
+                pair_moment,
+                identity_moment,
+                context,
+                pooled_abs,
+                pooled_signed,
+                pooled_square,
+            ),
+            dim=-1,
         )
         interaction_hidden = self.interaction_encoder(interaction_input)
         gate_h = interaction_time_gate[..., None]
@@ -455,12 +514,18 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         flow_context = interaction_hidden[:, :, :, None].expand(-1, -1, -1, actuators, -1)
         interaction_flow = self.interaction_flow_head(torch.cat((flow_context, hidden_delta), dim=-1)).squeeze(-1)
         interaction_flow = _causal_accumulate(interaction_flow.unsqueeze(-1)).squeeze(-1)
-        interaction_flow = interaction_flow * flow_scale * gate_h
+        interaction_flow = interaction_flow * self.d3_flow_scale * gate_h
 
         nodes = initial_state.shape[1]
-        interaction_node = self.interaction_state_head(interaction_hidden)
-        interaction_state_raw = interaction_node[:, :, :, None].expand(-1, -1, -1, nodes, -1)
-        interaction_state_raw = interaction_state_raw * state_scale * gate_h.unsqueeze(-1)
+        interaction_coefficients = self.interaction_state_head(interaction_hidden).reshape(
+            batch, candidates, horizon, self.effect_rank, self.state_dim
+        )
+        interaction_state_raw = torch.einsum(
+            "bchrs,bhnr->bchns", interaction_coefficients, node_basis
+        )
+        interaction_state_raw = (
+            interaction_state_raw * self.d3_state_scale * gate_h.unsqueeze(-1)
+        )
 
         ref_flood_latent = reference.reference_flood_latent[:, None].expand(-1, candidates, -1, -1)
         single_flood_latent = single_state_raw[..., 2]
@@ -541,7 +606,7 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
             torch.zeros_like(single_direct_actual),
         )
         direct_single = direct_single_effect.mean(dim=2).sum(dim=2).squeeze(-1)
-        direct_single = direct_single * tfv_scale
+        direct_single = direct_single * self.d2_tfv_scale
         direct_single = torch.where(
             candidate_action_mask, direct_single, torch.zeros_like(direct_single)
         )
@@ -551,7 +616,11 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         zero_interaction = self.direct_interaction_tfv_head(
             torch.cat((torch.zeros_like(global_context), global_context), dim=-1)
         ).squeeze(-1)
-        direct_interaction = (direct_interaction - zero_interaction) * tfv_scale * interaction_gate
+        direct_interaction = (
+            (direct_interaction - zero_interaction)
+            * self.d3_tfv_scale
+            * interaction_gate
+        )
         direct_tfv = direct_single + direct_interaction
 
         delta_flow = single_flow + interaction_flow

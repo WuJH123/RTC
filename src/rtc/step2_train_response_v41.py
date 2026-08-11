@@ -322,7 +322,8 @@ class ResponseGroupBatchV41:
 
 
 def _tensor(array: np.ndarray, device: torch.device) -> torch.Tensor:
-    return torch.from_numpy(np.ascontiguousarray(array, dtype=np.float32)).to(device)
+    writable = np.array(array, dtype=np.float32, order="C", copy=True)
+    return torch.from_numpy(writable).to(device)
 
 
 def stack_response_group_v41(
@@ -524,6 +525,10 @@ def group_metrics_v41(
         "predicted_delta_tfv_spread_m3": float(np.ptp(predicted)),
         "true_delta_tfv_spread_m3": true_spread,
         "spread_ratio": float(np.ptp(predicted) / max(true_spread, 1e-12)),
+        "mae_m3": float(np.mean(np.abs(predicted - truth))),
+        "normalized_mae": float(
+            np.mean(np.abs(predicted - truth)) / max(true_spread, 1e-12)
+        ),
         "rank": rank,
         "pairwise": pairwise,
         "sign": sign,
@@ -539,10 +544,10 @@ class ResponseLossWeightsV41:
     delta_state: float = 1.0
     delta_flow: float = 1.0
     direct_tfv: float = 2.0
-    centered_tfv: float = 2.0
+    centered_tfv: float = 5.0
     trajectory_tfv: float = 1.0
-    consistency: float = 0.5
-    ranking: float = 1.0
+    consistency: float = 1.0
+    ranking: float = 5.0
     interaction_energy: float = 0.01
 
 
@@ -661,12 +666,13 @@ def evaluate_response_groups_v41(
     grouped_pairs: dict[str, list[ResponsePairV4]],
     prepared: PreparedStaticV41,
     device: torch.device,
+    batches: dict[str, ResponseGroupBatchV41] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     model.eval()
     metrics: list[dict[str, Any]] = []
     contributions: list[dict[str, Any]] = []
     for group, pairs in sorted(grouped_pairs.items()):
-        batch = stack_response_group_v41(pairs, device)
+        batch = batches[group] if batches is not None else stack_response_group_v41(pairs, device)
         with torch.no_grad():
             output = model.forward_group(
                 batch.initial_state,
@@ -745,7 +751,17 @@ def train_response_v41(
         "backward_seconds": 0.0,
         "optimizer_seconds": 0.0,
     }
+    stamp = time.perf_counter()
+    batches = {
+        group: stack_response_group_v41(pairs, target_device)
+        for group, pairs in sorted(grouped_pairs.items())
+    }
+    profile_totals["data_load_seconds"] = time.perf_counter() - stamp
+    if target_device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(target_device)
     started = time.perf_counter()
+    best_state: dict[str, torch.Tensor] | None = None
+    best_epoch = 0
     for epoch in range(1, int(epochs) + 1):
         order = sorted(grouped_pairs)
         np.random.default_rng(seed + epoch).shuffle(order)
@@ -754,9 +770,7 @@ def train_response_v41(
         gradient_norms: list[float] = []
         component_sums: dict[str, float] = {}
         for group in order:
-            stamp = time.perf_counter()
-            batch = stack_response_group_v41(grouped_pairs[group], target_device)
-            profile_totals["data_load_seconds"] += time.perf_counter() - stamp
+            batch = batches[group]
             if target_device.type == "cuda":
                 torch.cuda.synchronize()
             stamp = time.perf_counter()
@@ -808,6 +822,7 @@ def train_response_v41(
             grouped_pairs=grouped_pairs,
             prepared=prepared,
             device=target_device,
+            batches=batches,
         )
         row: dict[str, Any] = {
             "epoch": epoch,
@@ -822,24 +837,39 @@ def train_response_v41(
         }
         row.update({name: value / len(order) for name, value in component_sums.items()})
         history.append(row)
-        calibration_score = (
-            abs(np.log10(max(row["spread_ratio"], 1e-8)))
-            + (1.0 - row["rank"])
-            + (1.0 - row["pairwise"])
+        calibration_score = float(
+            np.mean(
+                [
+                    abs(np.log10(max(item["spread_ratio"], 1e-8)))
+                    + (1.0 - item["rank"])
+                    + (1.0 - item["pairwise"])
+                    + (1.0 - item["sign"] if np.isfinite(item["sign"]) else 1.0)
+                    + (0.0 if item["top1"] else 1.0)
+                    + item["normalized_mae"]
+                    for item in group_rows
+                ]
+            )
         )
         if calibration_score + 1e-5 < best_score:
             best_score = calibration_score
             stale = 0
+            best_epoch = epoch
+            best_state = {
+                name: value.detach().cpu().clone() for name, value in model.state_dict().items()
+            }
         else:
             stale += 1
         if stale >= int(early_stop_patience):
             break
 
+    if best_state is not None:
+        model.load_state_dict(best_state)
     group_rows, contributions = evaluate_response_groups_v41(
         model=model,
         grouped_pairs=grouped_pairs,
         prepared=prepared,
         device=target_device,
+        batches=batches,
     )
     out = Path(out_path).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -860,6 +890,7 @@ def train_response_v41(
         "epochs_requested": int(epochs),
         "epochs_completed": len(history),
         "early_stopped": len(history) < int(epochs),
+        "best_epoch": best_epoch,
         "groups": sorted(grouped_pairs),
         "device": str(target_device),
         "precision": "fp32",
@@ -868,6 +899,11 @@ def train_response_v41(
         "group_metrics": group_rows,
         "candidate_contributions": contributions,
         "profile_seconds": {**profile_totals, "wall_time_seconds": total_seconds},
+        "gpu_peak_memory_bytes": (
+            int(torch.cuda.max_memory_allocated(target_device))
+            if target_device.type == "cuda"
+            else 0
+        ),
         "loss_weights": asdict(ResponseLossWeightsV41()),
     }
     out.with_suffix(out.suffix + ".history.json").write_text(

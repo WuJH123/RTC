@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
 import torch
 
 from rtc.step2_control_response_v41 import DifferentiableCounterfactualResponseModelV41
@@ -81,6 +82,31 @@ def test_group_forward_encodes_reference_once_and_zero_action_is_exact_zero():
     assert torch.equal(output.trajectory_delta_tfv_m3, torch.zeros_like(output.trajectory_delta_tfv_m3))
 
 
+def test_scalar_full_train_flow_std_expands_to_all_actuators():
+    model, _prepared, *_ = _fixture(actuators=5)
+    scalar_model = DifferentiableCounterfactualResponseModelV41(
+        state_dim=model.state_dim,
+        rainfall_dim=model.rainfall_dim,
+        node_static_dim=model.node_static_dim,
+        actuator_physics_dim=model.actuator_physics_dim,
+        hidden_dim=12,
+        actuator_count=5,
+        actuator_embedding_dim=4,
+        temporal_embedding_dim=3,
+        state_mean=torch.zeros(model.state_dim),
+        state_std=torch.ones(model.state_dim),
+        flow_std=torch.tensor([9.5]),
+        d2_state_scale=torch.ones(model.state_dim),
+        d3_state_scale=torch.ones(model.state_dim),
+        d2_flow_scale=torch.ones(5),
+        d3_flow_scale=torch.ones(5),
+        d2_tfv_scale=1.0,
+        d3_tfv_scale=1.0,
+        max_horizon_steps=8,
+    )
+    assert scalar_model.flow_std.tolist() == pytest.approx([9.5] * 5)
+
+
 def test_physical_flooding_is_nonnegative_and_head_depth_is_exact():
     model, prepared, initial, rainfall, reference, candidate, previous, elapsed = _fixture()
     candidate[:, 0, 2:, 0] = (candidate[:, 0, 2:, 0] + 0.2).clamp(0, 1)
@@ -110,6 +136,22 @@ def test_single_active_actuator_has_exact_zero_interaction_and_is_causal():
     assert torch.equal(output.delta_flows_physical[:, :, :3], torch.zeros_like(output.delta_flows_physical[:, :, :3]))
 
 
+def test_single_effect_keeps_d2_physical_calibration_inside_d3():
+    model, prepared, initial, rainfall, reference, candidate, previous, elapsed = _fixture(
+        candidates=1
+    )
+    candidate[:, 0, 2:, 2] = (candidate[:, 0, 2:, 2] + 0.2).clamp(0, 1)
+    d2 = model.forward_group(
+        initial, rainfall, reference, candidate, previous, prepared, elapsed, source_kind="D2"
+    )
+    d3 = model.forward_group(
+        initial, rainfall, reference, candidate, previous, prepared, elapsed, source_kind="D3"
+    )
+    assert torch.equal(d3.single_delta_states_physical, d2.single_delta_states_physical)
+    assert torch.equal(d3.single_delta_flows_physical, d2.single_delta_flows_physical)
+    assert torch.equal(d3.direct_single_delta_tfv_m3, d2.direct_single_delta_tfv_m3)
+
+
 def test_multi_actuator_interaction_is_available_without_canceling_single_branch():
     model, prepared, initial, rainfall, reference, candidate, previous, elapsed = _fixture(candidates=1)
     candidate[:, 0, :, :5] = (candidate[:, 0, :, :5] + 0.15).clamp(0, 1)
@@ -129,6 +171,24 @@ def test_actuator_identity_changes_response():
         initial, rainfall, reference, candidate, previous, prepared, elapsed, source_kind="D2"
     )
     assert not torch.equal(output.direct_delta_tfv_m3[:, 0], output.direct_delta_tfv_m3[:, 1])
+
+
+def test_single_actuator_effect_can_reach_nodes_beyond_its_endpoints():
+    model, prepared, initial, rainfall, reference, candidate, previous, elapsed = _fixture(
+        actuators=1, candidates=1
+    )
+    candidate[:, 0, 1:, 0] = (candidate[:, 0, 1:, 0] + 0.2).clamp(0, 1)
+    output = model.forward_group(
+        initial,
+        rainfall,
+        reference,
+        candidate,
+        previous,
+        prepared,
+        elapsed,
+        source_kind="D2",
+    )
+    assert output.single_delta_states_physical[..., 2:, :].abs().max() > 1e-5
 
 
 def test_one_five_ten_twenty_actuator_gradients_are_finite_and_nonzero():
