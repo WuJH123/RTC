@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
 import pytest
 import torch
@@ -203,8 +204,23 @@ def test_d2_snapshot_comparison_is_strict():
     assert not compare_d2_prediction_snapshots_v432(value, changed)["prediction_invariant"]
 
 
-def test_best_d2_checkpoint_resolver_reads_v42_artifact():
-    path = r"E:\RTC_sewer\Project7\study_v069\step2_d3_magnitude_calibration_v42\04_12_group_micro\stage_result.json"
+def test_best_d2_checkpoint_resolver_reads_stage_artifact(tmp_path):
+    checkpoint = tmp_path / "v42_12_group_micro.pt"
+    checkpoint.write_bytes(b"immutable checkpoint fixture")
+    path = tmp_path / "stage_result.json"
+    path.write_text(
+        json.dumps(
+            {
+                "training": {
+                    "checkpoint": str(checkpoint),
+                    "best_epoch": 22,
+                    "selection_policy": "d3_magnitude",
+                },
+                "group_metrics": [{"source_kind": "D2"}],
+            }
+        ),
+        encoding="utf-8",
+    )
     resolved = resolve_best_d2_checkpoint_v432(path)
     assert resolved["best_epoch"] == 22
     assert resolved["sha256"]
