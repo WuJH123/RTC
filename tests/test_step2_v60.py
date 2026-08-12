@@ -20,8 +20,11 @@ from rtc.step2_d3_lineage_v60 import stamp_d3_v60_lineage
 from rtc.step2_optimization_v60 import event_balance_summary_v60
 from rtc.step2_train_response_v60 import (
     TargetScalesV60,
+    event_balanced_mean_v60,
     hydraulic_critical_weights_v60,
     listwise_loss_v60,
+    magnitude_strata_partition_v60,
+    response_collapse_v60,
 )
 
 
@@ -246,6 +249,29 @@ def test_v60_event_balance_is_explicit_not_accidental_group_balance():
     assert summary["events"] == 2
     assert summary["groups_per_event"] == {"min": 1, "median": 1.5, "max": 2}
     assert summary["optimizer_step_unit"] == "event"
+
+
+def test_v60_event_balancing_is_not_group_weighted():
+    records = [
+        {"event_key": "e0", "rank": 0.0},
+        {"event_key": "e0", "rank": 0.0},
+        {"event_key": "e1", "rank": 1.0},
+    ]
+    assert event_balanced_mean_v60(records, "rank") == pytest.approx(0.5)
+
+
+def test_v60_magnitude_partition_is_exact_and_non_overlapping():
+    strata = {"q33_m3": 30.0, "q67_m3": 100.0}
+    masks = magnitude_strata_partition_v60(np.asarray([29.0, 30.0, 99.0, 100.0]), strata)
+    assert masks["small"].tolist() == [True, False, False, False]
+    assert masks["medium"].tolist() == [False, True, True, False]
+    assert masks["large"].tolist() == [False, False, False, True]
+    assert sum(int(mask.sum()) for mask in masks.values()) == 4
+
+
+def test_v60_response_collapse_gate_detects_near_zero_spread():
+    assert response_collapse_v60(1e-7, 1.0)
+    assert not response_collapse_v60(0.25, 1.0)
 
 
 def test_v60_mpc_value_is_differentiable_in_control_coefficients():

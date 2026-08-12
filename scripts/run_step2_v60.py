@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ from rtc.step2_train_response_v60 import (
     derive_input_normalization_v60,
     derive_target_scales_v60,
     deterministic_rainfall_split_v60,
+    derive_magnitude_strata_v60,
     evaluate_hydraulic_v60,
     evaluate_value_v60,
 )
@@ -60,6 +62,38 @@ def _sha256(path: str | Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _git_head() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "UNKNOWN"
+
+
+def _cache_lineage(cache_manifest: str | Path) -> dict[str, str]:
+    payload = json.loads(Path(cache_manifest).read_text(encoding="utf-8"))
+    source_path = Path(str(payload["source_manifest_path"]))
+    source = json.loads(source_path.read_text(encoding="utf-8"))
+    return {
+        "cache_manifest_sha256": _sha256(cache_manifest),
+        "graph_sha256": "",
+        "v60_control_basis_sha256": str(source.get("v60_control_basis_sha256", "")),
+        "v60_design_contract_sha256": str(source.get("v60_design_contract_sha256", "")),
+        "source_shard_manifest_sha256": _sha256(source_path),
+    }
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> str:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return _sha256(path)
 
 
 def _model_dimensions(cache: V60TrainCache, name: str) -> tuple[int, int]:
@@ -200,8 +234,75 @@ def main() -> None:
     if not all((fit_d2, fit_d3, holdout_d2, holdout_d3)):
         raise ValueError("V6 rainfall-group split must contain D2 and targeted D3 on both sides")
 
+    fit_rainfall = sorted({cache.entry(name).rainfall_group for name in fit})
+    holdout_rainfall = sorted({cache.entry(name).rainfall_group for name in holdout})
+    fit_events = sorted({cache.entry(name).event_id for name in fit})
+    holdout_events = sorted({cache.entry(name).event_id for name in holdout})
+    if set(fit_rainfall) & set(holdout_rainfall):
+        raise ValueError("V6 split has rainfall-group overlap")
+    if set(fit_events) & set(holdout_events):
+        raise ValueError("V6 split has event overlap")
+
     normalization = derive_input_normalization_v60(cache, fit)
     scales = derive_target_scales_v60(cache, fit)
+    magnitude_strata = derive_magnitude_strata_v60(cache, fit_d3)
+    out = Path(args.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    lineage = _cache_lineage(args.cache_manifest)
+    lineage["graph_sha256"] = _sha256(args.graph)
+    lineage["git_head"] = _git_head()
+    split_manifest = {
+        "contract": "PROJECT7_STEP2_V60_DETERMINISTIC_RAINFALL_GROUP_SPLIT_V1",
+        "all_rainfall_groups": sorted({cache.entry(name).rainfall_group for name in selected}),
+        "train_fit_rainfall_groups": fit_rainfall,
+        "train_internal_holdout_rainfall_groups": holdout_rainfall,
+        "fit_event_ids": fit_events,
+        "holdout_event_ids": holdout_events,
+        "fit_d2_group_names": sorted(fit_d2),
+        "fit_d3_group_names": sorted(fit_d3),
+        "holdout_d2_group_names": sorted(holdout_d2),
+        "holdout_d3_group_names": sorted(holdout_d3),
+        "split_algorithm": "sha256(rainfall_group)[:8] mod 10000 < round(holdout_fraction*10000)",
+        "holdout_fraction": float(args.holdout_fraction),
+        "seed": int(args.seed),
+        "rainfall_overlap_count": len(set(fit_rainfall) & set(holdout_rainfall)),
+        "event_overlap_count": len(set(fit_events) & set(holdout_events)),
+        **lineage,
+    }
+    split_manifest_sha = _write_json(out / "STEP2_V60_SPLIT_MANIFEST.json", split_manifest)
+    _write_json(
+        out / "STEP2_V60_INPUT_NORMALIZATION.json",
+        {
+            "contract": "PROJECT7_V60_INPUT_NORMALIZATION_TRAIN_FIT_ONLY_V1",
+            "state_mean": normalization.state_mean.tolist(),
+            "state_std": normalization.state_std.tolist(),
+            "rainfall_mean": normalization.rainfall_mean.tolist(),
+            "rainfall_std": normalization.rainfall_std.tolist(),
+            "flow_mean": normalization.flow_mean.tolist(),
+            "flow_std": normalization.flow_std.tolist(),
+            "source_groups": sorted(fit),
+            "source_rainfall_groups": fit_rainfall,
+            **lineage,
+        },
+    )
+    _write_json(
+        out / "STEP2_V60_TARGET_SCALES.json",
+        {
+            "contract": "PROJECT7_V60_TARGET_SCALES_TRAIN_FIT_ONLY_V1",
+            "state_scale": scales.state_scale.tolist(),
+            "flow_scale": scales.flow_scale.tolist(),
+            "d2_tfv_scale_m3": scales.d2_tfv_scale_m3,
+            "d3_tfv_scale_m3": scales.d3_tfv_scale_m3,
+            "tfv_rate_scale_m3s": scales.tfv_rate_scale_m3s,
+            "source_groups": sorted(fit),
+            "source_rainfall_groups": fit_rainfall,
+            **lineage,
+        },
+    )
+    magnitude_sha = _write_json(
+        out / "STEP2_V60_MAGNITUDE_STRATA.json",
+        {**magnitude_strata, **lineage},
+    )
     value, hydraulic = _build_models(graph, cache, fit, scales)
     value_history = train_value_event_balanced_v60(
         value,
@@ -230,12 +331,18 @@ def main() -> None:
     )
     prepared = prepare_static_v60(graph, target)
     value_metrics = {
-        "fit_d2": evaluate_value_v60(value, cache, fit_d2, normalization, prepared, device=target),
-        "fit_d3": evaluate_value_v60(value, cache, fit_d3, normalization, prepared, device=target),
-        "holdout_d2": evaluate_value_v60(value, cache, holdout_d2, normalization, prepared, device=target),
-        "holdout_d3": evaluate_value_v60(value, cache, holdout_d3, normalization, prepared, device=target),
+        "fit_d2": evaluate_value_v60(value, cache, fit_d2, normalization, prepared, device=target, magnitude_strata=magnitude_strata),
+        "fit_d3": evaluate_value_v60(value, cache, fit_d3, normalization, prepared, device=target, magnitude_strata=magnitude_strata),
+        "holdout_d2": evaluate_value_v60(value, cache, holdout_d2, normalization, prepared, device=target, magnitude_strata=magnitude_strata),
+        "holdout_d3": evaluate_value_v60(value, cache, holdout_d3, normalization, prepared, device=target, magnitude_strata=magnitude_strata),
     }
     hydraulic_metrics = {
+        "fit_d2": evaluate_hydraulic_v60(
+            hydraulic, cache, fit_d2, normalization, graph, device=target
+        ),
+        "fit_d3": evaluate_hydraulic_v60(
+            hydraulic, cache, fit_d3, normalization, graph, device=target
+        ),
         "holdout_d2": evaluate_hydraulic_v60(
             hydraulic, cache, holdout_d2, normalization, graph, device=target
         ),
@@ -264,6 +371,15 @@ def main() -> None:
             "model_state_dict": value.state_dict(),
             "basis_manifest": basis_manifest_v60(control_basis),
             "cache_manifest_sha256": _sha256(args.cache_manifest),
+            "graph_sha256": _sha256(args.graph),
+            "git_head": _git_head(),
+            "v60_control_basis_sha256": lineage["v60_control_basis_sha256"],
+            "v60_design_contract_sha256": lineage["v60_design_contract_sha256"],
+            "split_manifest_sha256": split_manifest_sha,
+            "magnitude_strata_sha256": magnitude_sha,
+            "seed": int(args.seed),
+            "precision": "FP32",
+            "epoch_contract": {"d2_pretrain": 4, "joint": 8},
             "production_compatible": False,
         },
         out / "step2_v60_control_value_development.pt",
@@ -274,7 +390,17 @@ def main() -> None:
             "scientific_split": "development",
             "training_fold": "TrainFit",
             "model_state_dict": hydraulic.state_dict(),
+            "basis_manifest": basis_manifest_v60(control_basis),
             "cache_manifest_sha256": _sha256(args.cache_manifest),
+            "graph_sha256": _sha256(args.graph),
+            "git_head": _git_head(),
+            "v60_control_basis_sha256": lineage["v60_control_basis_sha256"],
+            "v60_design_contract_sha256": lineage["v60_design_contract_sha256"],
+            "split_manifest_sha256": split_manifest_sha,
+            "magnitude_strata_sha256": magnitude_sha,
+            "seed": int(args.seed),
+            "precision": "FP32",
+            "epoch_contract": {"hydraulic": 8},
             "production_compatible": False,
         },
         out / "step2_v60_hydraulic_response_development.pt",
@@ -297,6 +423,12 @@ def main() -> None:
         "value_metrics": value_metrics,
         "hydraulic_metrics": hydraulic_metrics,
         "control_latent_gradient": coefficient_gradient,
+        "lineage": lineage,
+        "split_manifest_sha256": split_manifest_sha,
+        "input_normalization_artifact": str(out / "STEP2_V60_INPUT_NORMALIZATION.json"),
+        "target_scales_artifact": str(out / "STEP2_V60_TARGET_SCALES.json"),
+        "magnitude_strata_artifact": str(out / "STEP2_V60_MAGNITUDE_STRATA.json"),
+        "magnitude_strata": magnitude_strata,
         "value_history": value_history,
         "hydraulic_history": hydraulic_history,
         "boundaries": {

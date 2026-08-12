@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -43,6 +44,93 @@ class TargetScalesV60:
         if source == "D3":
             return float(self.d3_tfv_scale_m3)
         raise ValueError(f"unsupported V6 source kind: {source_kind}")
+
+
+def derive_magnitude_strata_v60(
+    cache: "V60TrainCache", fit_d3_names: Sequence[str]
+) -> dict[str, Any]:
+    """Freeze D3 magnitude thresholds from TrainFit only.
+
+    The thresholds are deliberately derived from authoritative candidate TFV values
+    in the targeted D3 TrainFit groups.  Holdout values never enter this helper.
+    """
+    if not fit_d3_names:
+        raise ValueError("magnitude strata require at least one TrainFit D3 group")
+    values: list[float] = []
+    for name in fit_d3_names:
+        entry = cache.entry(name)
+        arrays, ref = entry.arrays, entry.reference_index
+        candidates = [i for i in entry.indices if i != ref]
+        reference = float(
+            np.asarray(arrays["exact_node_flood_volume_m3"][ref], dtype=np.float64).sum()
+        )
+        candidate = np.asarray(
+            arrays["exact_node_flood_volume_m3"][candidates], dtype=np.float64
+        ).sum(axis=1)
+        values.extend(np.abs(candidate - reference).tolist())
+    absolute = np.asarray(values, dtype=np.float64)
+    if absolute.size == 0 or not np.isfinite(absolute).all():
+        raise ValueError("TrainFit D3 magnitude values are empty or non-finite")
+    q33, q67 = (float(np.quantile(absolute, q)) for q in (1.0 / 3.0, 2.0 / 3.0))
+    if q67 < q33:
+        raise ValueError("magnitude thresholds are not ordered")
+    return {
+        "contract": "PROJECT7_V60_D3_MAGNITUDE_STRATA_TRAIN_FIT_V1",
+        "q33_m3": q33,
+        "q67_m3": q67,
+        "source": "TrainFit targeted D3 authoritative exact delta TFV",
+        "source_group_count": int(len(fit_d3_names)),
+        "source_candidate_count": int(absolute.size),
+    }
+
+
+def magnitude_strata_partition_v60(
+    values_m3: np.ndarray | Sequence[float],
+    strata: dict[str, Any],
+) -> dict[str, np.ndarray]:
+    """Return the mutually-exclusive/exhaustive small/medium/large masks."""
+    values = np.asarray(values_m3, dtype=np.float64)
+    absolute = np.abs(values)
+    q33, q67 = float(strata["q33_m3"]), float(strata["q67_m3"])
+    masks = {
+        "small": absolute < q33,
+        "medium": (absolute >= q33) & (absolute < q67),
+        "large": absolute >= q67,
+    }
+    if not np.array_equal(
+        masks["small"] | masks["medium"] | masks["large"],
+        np.ones_like(absolute, dtype=bool),
+    ):
+        raise RuntimeError("V6 magnitude strata are not collectively exhaustive")
+    if np.any(masks["small"] & masks["medium"]) or np.any(
+        masks["medium"] & masks["large"]
+    ):
+        raise RuntimeError("V6 magnitude strata overlap")
+    return masks
+
+
+def event_balanced_mean_v60(
+    records: Sequence[dict[str, Any]], key: str
+) -> float:
+    """Mean a group metric within event, then mean equally across events."""
+    by_event: dict[str, list[float]] = defaultdict(list)
+    for record in records:
+        value = float(record.get(key, float("nan")))
+        if np.isfinite(value):
+            by_event[str(record["event_key"])].append(value)
+    event_means = [float(np.mean(values)) for values in by_event.values() if values]
+    return float(np.mean(event_means)) if event_means else float("nan")
+
+
+def response_collapse_v60(
+    predicted_spread_m3: float,
+    truth_spread_m3: float,
+    *,
+    threshold: float = 1e-3,
+) -> bool:
+    """Diagnostic gate for the historical near-zero response-spread failure."""
+    truth = max(abs(float(truth_spread_m3)), 1e-12)
+    return abs(float(predicted_spread_m3)) / truth < float(threshold)
 
 
 @dataclass(frozen=True)
@@ -317,28 +405,357 @@ def _pairwise_accuracy(predicted: np.ndarray, truth: np.ndarray) -> float:
     return float(correct/total) if total else float("nan")
 
 
-def evaluate_value_v60(model: ControlValueSurrogateV60, cache: V60TrainCache, names: Sequence[str], normalization: InputNormalizationV60, prepared: PreparedStaticV60, *, device: torch.device | str) -> dict[str, Any]:
-    model.eval(); ranks=[]; pairwise=[]; top1=0; regrets=[]; maes=[]
-    with torch.no_grad():
-        for name in names:
-            batch=cache.batch(name,normalization,device); output=model(batch.initial_state,batch.rainfall,batch.reference_settings,batch.candidate_settings,prepared,batch.elapsed_seconds)
-            pred=output.delta_tfv_m3[0].cpu().numpy(); truth=batch.true_delta_tfv_m3[0].cpu().numpy()
-            ranks.append(_spearman(pred,truth)); pairwise.append(_pairwise_accuracy(pred,truth)); bp=int(np.argmin(pred)); bt=int(np.argmin(truth)); top1 += int(bp==bt); regrets.append(float(truth[bp]-truth[bt])); maes.append(float(np.mean(np.abs(pred-truth))))
-    fr=[x for x in ranks if np.isfinite(x)]; fp=[x for x in pairwise if np.isfinite(x)]
-    return {"groups":len(names),"rank":float(np.mean(fr)) if fr else float("nan"),"pairwise":float(np.mean(fp)) if fp else float("nan"),"top1":int(top1),"top1_denominator":len(names),"mean_regret_m3":float(np.mean(regrets)) if regrets else float("nan"),"max_regret_m3":float(np.max(regrets)) if regrets else float("nan"),"tfv_mae_m3":float(np.mean(maes)) if maes else float("nan")}
+def _value_group_record(
+    predicted: np.ndarray,
+    truth: np.ndarray,
+    *,
+    event_key: str,
+    mask: np.ndarray | None = None,
+) -> dict[str, Any]:
+    selected = np.ones(truth.shape, dtype=bool) if mask is None else np.asarray(mask, dtype=bool)
+    pred, actual = np.asarray(predicted, dtype=np.float64)[selected], np.asarray(truth, dtype=np.float64)[selected]
+    if pred.size == 0:
+        return {"event_key": event_key, "count": 0}
+    orderable = pred.size >= 2
+    truth_spread = float(actual.max() - actual.min()) if orderable else 0.0
+    predicted_spread = float(pred.max() - pred.min()) if orderable else 0.0
+    nonzero = np.abs(actual) > 1e-9
+    sign = float(np.mean(np.sign(pred[nonzero]) == np.sign(actual[nonzero]))) if nonzero.any() else float("nan")
+    if orderable:
+        predicted_best, truth_best = int(np.argmin(pred)), int(np.argmin(actual))
+        regret = float(actual[predicted_best] - actual[truth_best])
+        top1 = float(predicted_best == truth_best)
+    else:
+        regret, top1 = float("nan"), float("nan")
+    return {
+        "event_key": event_key,
+        "count": int(pred.size),
+        "rank": _spearman(pred, actual) if orderable else float("nan"),
+        "pairwise": _pairwise_accuracy(pred, actual) if orderable else float("nan"),
+        "sign_accuracy": sign,
+        "top1_rate": top1,
+        "mean_regret_m3": regret,
+        "tfv_mae_m3": float(np.mean(np.abs(pred - actual))),
+        "tfv_bias_m3": float(np.mean(pred - actual)),
+        "truth_spread_m3": truth_spread,
+        "predicted_spread_m3": predicted_spread,
+        "mean_abs_truth_m3": float(np.mean(np.abs(actual))),
+        "mean_abs_prediction_m3": float(np.mean(np.abs(pred))),
+    }
 
 
-def evaluate_hydraulic_v60(model: HydraulicResponseSurrogateV60, cache: V60TrainCache, names: Sequence[str], normalization: InputNormalizationV60, graph: Any, *, device: torch.device | str) -> dict[str, Any]:
-    target=torch.device(device); model.to(target).eval(); prepared=prepare_static_v60(graph,target); d=[]; f=[]; s=[]; q=[]; ba=[]; storage_mask=prepared.storage_mask.detach().cpu().numpy().astype(bool)
+_VALUE_METRIC_KEYS = (
+    "rank", "pairwise", "sign_accuracy", "top1_rate", "mean_regret_m3",
+    "tfv_mae_m3", "tfv_bias_m3", "truth_spread_m3", "predicted_spread_m3",
+    "mean_abs_truth_m3", "mean_abs_prediction_m3",
+)
+
+
+def _aggregate_value_records(records: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    def mean(key: str, subset: Sequence[dict[str, Any]]) -> float:
+        values = [float(r[key]) for r in subset if key in r and np.isfinite(float(r[key]))]
+        return float(np.mean(values)) if values else float("nan")
+
+    group_balanced = {key: mean(key, records) for key in _VALUE_METRIC_KEYS}
+    event_keys = sorted({str(r["event_key"]) for r in records})
+    event_balanced = {
+        key: event_balanced_mean_v60(records, key) for key in _VALUE_METRIC_KEYS
+    }
+    for target in (group_balanced, event_balanced):
+        target["response_ratio"] = target["mean_abs_prediction_m3"] / max(
+            target["mean_abs_truth_m3"], 1e-6
+        )
+        target["spread_ratio"] = target["predicted_spread_m3"] / max(
+            target["truth_spread_m3"], 1e-6
+        )
+    max_regret = max(
+        (float(r["mean_regret_m3"]) for r in records if np.isfinite(float(r.get("mean_regret_m3", np.nan)))),
+        default=float("nan"),
+    )
+    event_balanced["max_regret_m3"] = max_regret
+    group_balanced["max_regret_m3"] = max_regret
+    top1_count = sum(
+        int(float(r.get("top1_rate", float("nan"))) == 1.0) for r in records
+    )
+    result = {
+        "groups": int(len(records)),
+        "events": int(len(event_keys)),
+        "group_balanced": group_balanced,
+        "event_balanced": event_balanced,
+        "scientific_primary": "event_balanced",
+        # Backward-compatible aliases now point to the scientific primary.
+        "rank": event_balanced["rank"],
+        "pairwise": event_balanced["pairwise"],
+        "sign_accuracy": event_balanced["sign_accuracy"],
+        "top1": event_balanced["top1_rate"],
+        "top1_count": int(top1_count),
+        "top1_denominator": int(len(records)),
+        "mean_regret_m3": event_balanced["mean_regret_m3"],
+        "max_regret_m3": max_regret,
+        "tfv_mae_m3": event_balanced["tfv_mae_m3"],
+        "truth_spread_m3": event_balanced["truth_spread_m3"],
+        "predicted_spread_m3": event_balanced["predicted_spread_m3"],
+        "spread_ratio": event_balanced["spread_ratio"],
+        "response_ratio": event_balanced["response_ratio"],
+        "mean_abs_truth_m3": event_balanced["mean_abs_truth_m3"],
+        "mean_abs_prediction_m3": event_balanced["mean_abs_prediction_m3"],
+        "response_collapse": response_collapse_v60(
+            event_balanced["predicted_spread_m3"], event_balanced["truth_spread_m3"]
+        ),
+        "response_collapse_threshold": 1e-3,
+    }
+    return result
+
+
+def evaluate_value_v60(
+    model: ControlValueSurrogateV60,
+    cache: V60TrainCache,
+    names: Sequence[str],
+    normalization: InputNormalizationV60,
+    prepared: PreparedStaticV60,
+    *,
+    device: torch.device | str,
+    magnitude_strata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    model.eval()
+    records: list[dict[str, Any]] = []
     with torch.no_grad():
         for name in names:
-            batch=cache.batch(name,normalization,target); out=model(batch.initial_state,batch.rainfall,batch.reference_settings,batch.candidate_settings,prepared); idx=out.horizon_indices
-            truth=batch.true_candidate_states.index_select(2,idx); flow=batch.true_candidate_flows.index_select(2,idx)
-            d.append(float(torch.sqrt(torch.mean((out.candidate_states_physical[...,0]-truth[...,0])**2)))); f.append(float(torch.sqrt(torch.mean((out.candidate_states_physical[...,2]-truth[...,2])**2)))); q.append(float(torch.sqrt(torch.mean((out.candidate_flows_physical-flow)**2))))
+            batch = cache.batch(name, normalization, device)
+            output = model(
+                batch.initial_state,
+                batch.rainfall,
+                batch.reference_settings,
+                batch.candidate_settings,
+                prepared,
+                batch.elapsed_seconds,
+            )
+            pred = output.delta_tfv_m3[0].detach().cpu().numpy()
+            truth = batch.true_delta_tfv_m3[0].detach().cpu().numpy()
+            entry = cache.entry(name)
+            records.append(
+                _value_group_record(
+                    pred,
+                    truth,
+                    event_key=f"{entry.rainfall_group}::{entry.event_id}",
+                )
+            )
+    result = _aggregate_value_records(records)
+    if magnitude_strata is not None:
+        strata_metrics: dict[str, Any] = {}
+        for stratum, masks in (
+            ("small", []),
+            ("medium", []),
+            ("large", []),
+        ):
+            del masks
+            strata_records: list[dict[str, Any]] = []
+            with torch.no_grad():
+                for name in names:
+                    batch = cache.batch(name, normalization, device)
+                    output = model(
+                        batch.initial_state,
+                        batch.rainfall,
+                        batch.reference_settings,
+                        batch.candidate_settings,
+                        prepared,
+                        batch.elapsed_seconds,
+                    )
+                    pred = output.delta_tfv_m3[0].detach().cpu().numpy()
+                    truth = batch.true_delta_tfv_m3[0].detach().cpu().numpy()
+                    mask = magnitude_strata_partition_v60(truth, magnitude_strata)[stratum]
+                    entry = cache.entry(name)
+                    strata_records.append(
+                        _value_group_record(
+                            pred,
+                            truth,
+                            event_key=f"{entry.rainfall_group}::{entry.event_id}",
+                            mask=mask,
+                        )
+                    )
+            strata_result = _aggregate_value_records(
+                [record for record in strata_records if record.get("count", 0) > 0]
+            )
+            strata_result["count"] = int(sum(record.get("count", 0) for record in strata_records))
+            strata_metrics[stratum] = strata_result
+        result["magnitude_strata"] = {
+            "thresholds": dict(magnitude_strata),
+            "small": strata_metrics["small"],
+            "medium": strata_metrics["medium"],
+            "large": strata_metrics["large"],
+            "large_effect_response_ratio": strata_metrics["large"].get("response_ratio"),
+        }
+    return result
+
+
+def _hydraulic_scalar_summary(
+    records: Sequence[dict[str, Any]],
+    keys: Sequence[str],
+) -> dict[str, Any]:
+    group_balanced = {
+        key: float(np.mean([r[key] for r in records if np.isfinite(r.get(key, np.nan))]))
+        if any(np.isfinite(r.get(key, np.nan)) for r in records) else float("nan")
+        for key in keys
+    }
+    event_balanced = {key: event_balanced_mean_v60(records, key) for key in keys}
+    return {
+        "group_balanced": group_balanced,
+        "event_balanced": event_balanced,
+        "scientific_primary": "event_balanced",
+        **event_balanced,
+    }
+
+
+def _hydraulic_region_metrics(
+    predicted: np.ndarray,
+    truth: np.ndarray,
+    logits: np.ndarray,
+    mask: np.ndarray,
+    *,
+    onset_epsilon: float,
+) -> dict[str, Any]:
+    selected = np.asarray(mask, dtype=bool)
+    count = int(selected.sum())
+    result: dict[str, Any] = {"sample_count": count}
+    if count == 0:
+        return result
+    p, t = predicted[selected], truth[selected]
+    result["depth_rmse_m"] = float(np.sqrt(np.mean(np.square(p[..., 0] - t[..., 0]))))
+    result["flooding_rmse_m3s"] = float(np.sqrt(np.mean(np.square(p[..., 2] - t[..., 2]))))
+    result["storage_volume_rmse_m3"] = float(np.sqrt(np.mean(np.square(p[..., 3] - t[..., 3]))))
+    y = t[..., 2] > onset_epsilon
+    pred_onset = logits[selected] > 0.0
+    tp, fn = np.sum(pred_onset & y), np.sum((~pred_onset) & y)
+    fp, tn = np.sum(pred_onset & (~y)), np.sum((~pred_onset) & (~y))
+    result["onset_recall"] = float(tp / max(tp + fn, 1))
+    result["onset_precision"] = float(tp / max(tp + fp, 1))
+    result["onset_balanced_accuracy"] = float(
+        0.5 * (tp / max(tp + fn, 1) + tn / max(tn + fp, 1))
+    )
+    return result
+
+
+def evaluate_hydraulic_v60(
+    model: HydraulicResponseSurrogateV60,
+    cache: V60TrainCache,
+    names: Sequence[str],
+    normalization: InputNormalizationV60,
+    graph: Any,
+    *,
+    device: torch.device | str,
+) -> dict[str, Any]:
+    target = torch.device(device)
+    model.to(target).eval()
+    prepared = prepare_static_v60(graph, target)
+    storage_mask = prepared.storage_mask.detach().cpu().numpy().astype(bool)
+    max_depth = prepared.max_depth_m.detach().cpu().numpy()
+    surcharge = (prepared.max_depth_m + prepared.surcharge_depth_m).detach().cpu().numpy()
+    capacity = prepared.storage_capacity_m3.detach().cpu().numpy()
+    onset_epsilon = HydraulicLossContractV60().onset_epsilon_m3s
+    records: list[dict[str, Any]] = []
+    region_records: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    with torch.no_grad():
+        for name in names:
+            batch = cache.batch(name, normalization, target)
+            out = model(
+                batch.initial_state,
+                batch.rainfall,
+                batch.reference_settings,
+                batch.candidate_settings,
+                prepared,
+            )
+            idx = out.horizon_indices
+            predicted = out.candidate_states_physical.detach().cpu().numpy()
+            truth = batch.true_candidate_states.index_select(2, idx).detach().cpu().numpy()
+            flow_pred = out.candidate_flows_physical.detach().cpu().numpy()
+            flow_truth = batch.true_candidate_flows.index_select(2, idx).detach().cpu().numpy()
+            logits = out.candidate_flood_onset_logits.detach().cpu().numpy()
+            depth_error = predicted[..., 0] - truth[..., 0]
+            flood_error = predicted[..., 2] - truth[..., 2]
+            storage_error = predicted[..., 3] - truth[..., 3]
+            flow_error = flow_pred - flow_truth
+            depth_rmse = float(np.sqrt(np.mean(np.square(depth_error))))
+            flood_rmse = float(np.sqrt(np.mean(np.square(flood_error))))
+            flow_rmse = float(np.sqrt(np.mean(np.square(flow_error))))
             if storage_mask.any():
-                mask=torch.as_tensor(storage_mask,device=target); s.append(float(torch.sqrt(torch.mean((out.candidate_states_physical[...,3][...,mask]-truth[...,3][...,mask])**2))))
-            y=truth[...,2] > HydraulicLossContractV60().onset_epsilon_m3s; p=out.candidate_flood_onset_logits>0; tpr=(p&y).sum().float()/y.sum().clamp_min(1); tnr=((~p)&(~y)).sum().float()/(~y).sum().clamp_min(1); ba.append(float(0.5*(tpr+tnr)))
-    return {"groups":len(names),"depth_rmse_m":float(np.mean(d)),"flooding_rmse_m3s":float(np.mean(f)),"storage_volume_rmse_m3":float(np.mean(s)) if s else float("nan"),"managed_flow_rmse_m3s":float(np.mean(q)),"flooding_onset_balanced_accuracy":float(np.mean(ba)),"event_group_balanced":True,"multi_resolution_points":len(model.horizon_contract.indices())}
+                storage_diff = storage_error[..., storage_mask]
+                storage_rmse = float(np.sqrt(np.mean(np.square(storage_diff))))
+            else:
+                storage_rmse = float("nan")
+            baseline = truth[..., 0] - np.mean(truth[..., 0])
+            depth_nse = float(1.0 - np.sum(np.square(depth_error)) / max(np.sum(np.square(baseline)), 1e-12))
+            y = truth[..., 2] > onset_epsilon
+            p = logits > 0.0
+            tp, fn = np.sum(p & y), np.sum((~p) & y)
+            fp, tn = np.sum(p & (~y)), np.sum((~p) & (~y))
+            record = {
+                "event_key": f"{cache.entry(name).rainfall_group}::{cache.entry(name).event_id}",
+                "depth_rmse_m": depth_rmse,
+                "depth_nse": depth_nse,
+                "flooding_rmse_m3s": flood_rmse,
+                "storage_volume_rmse_m3": storage_rmse,
+                "managed_flow_rmse_m3s": flow_rmse,
+                "flooding_onset_balanced_accuracy": float(
+                    0.5 * (tp / max(tp + fn, 1) + tn / max(tn + fp, 1))
+                ),
+            }
+            records.append(record)
+            ratios = truth[..., 0] / np.maximum(max_depth[None, None, None, :], 1e-6)
+            surcharge_ratios = truth[..., 0] / np.maximum(surcharge[None, None, None, :], 1e-6)
+            storage_ratios = truth[..., 3] / np.maximum(capacity[None, None, None, :], 1e-6)
+            masks = {
+                "wet": ratios >= 0.5,
+                "near_surcharge": surcharge_ratios >= 0.8,
+                "storage_near_capacity": storage_ratios >= 0.8,
+                "flooding_onset": truth[..., 2] > onset_epsilon,
+            }
+            for key, mask in masks.items():
+                # Storage proximity is defined only on storage nodes.
+                if key == "storage_near_capacity":
+                    mask = mask & storage_mask[None, None, None, :]
+                region = _hydraulic_region_metrics(
+                    predicted,
+                    truth,
+                    logits,
+                    mask,
+                    onset_epsilon=onset_epsilon,
+                )
+                region["event_key"] = record["event_key"]
+                region_records[key].append(region)
+    keys = (
+        "depth_rmse_m", "depth_nse", "flooding_rmse_m3s", "storage_volume_rmse_m3",
+        "managed_flow_rmse_m3s", "flooding_onset_balanced_accuracy",
+    )
+    summary = _hydraulic_scalar_summary(records, keys)
+    summary.update(
+        {
+            "groups": int(len(names)),
+            "events": int(len({r["event_key"] for r in records})),
+            "multi_resolution_points": len(model.horizon_contract.indices()),
+            "critical_strata": {},
+        }
+    )
+    region_keys = (
+        "depth_rmse_m", "flooding_rmse_m3s", "storage_volume_rmse_m3",
+        "onset_recall", "onset_precision", "onset_balanced_accuracy",
+    )
+    for name, region in region_records.items():
+        valid = [r for r in region if int(r.get("sample_count", 0)) > 0]
+        summary["critical_strata"][name] = {
+            "sample_count": int(sum(int(r.get("sample_count", 0)) for r in region)),
+            "group_balanced": {
+                key: float(np.mean([r[key] for r in valid if key in r and np.isfinite(r[key])]))
+                if any(key in r and np.isfinite(r[key]) for r in valid) else float("nan")
+                for key in region_keys
+            },
+            "event_balanced": {
+                key: event_balanced_mean_v60(valid, key)
+                for key in region_keys
+            },
+        }
+        summary["critical_strata"][name]["scientific_primary"] = "event_balanced"
+        summary["critical_strata"][name].update(summary["critical_strata"][name]["event_balanced"])
+    return summary
 
 
 def train_value_v60(model: ControlValueSurrogateV60, cache: V60TrainCache, *, fit_d2_names: Sequence[str], fit_d3_names: Sequence[str], normalization: InputNormalizationV60, scales: TargetScalesV60, graph: Any, device: str="cuda", d2_pretrain_epochs: int=4, joint_epochs: int=8, learning_rate: float=1e-3, seed: int=42) -> list[dict[str, float | int | str]]:
@@ -373,4 +790,12 @@ def train_hydraulic_v60(model: HydraulicResponseSurrogateV60, cache: V60TrainCac
     return history
 
 
-__all__ = ["InputNormalizationV60","TargetScalesV60","V60GroupBatch","V60TrainCache","derive_input_normalization_v60","derive_target_scales_v60","deterministic_rainfall_split_v60","evaluate_hydraulic_v60","evaluate_value_v60","hydraulic_critical_weights_v60","hydraulic_loss_v60","listwise_loss_v60","train_hydraulic_v60","train_value_v60","value_loss_v60"]
+__all__ = [
+    "InputNormalizationV60", "TargetScalesV60", "V60GroupBatch", "V60TrainCache",
+    "derive_input_normalization_v60", "derive_target_scales_v60",
+    "derive_magnitude_strata_v60", "magnitude_strata_partition_v60",
+    "event_balanced_mean_v60", "response_collapse_v60",
+    "deterministic_rainfall_split_v60", "evaluate_hydraulic_v60", "evaluate_value_v60",
+    "hydraulic_critical_weights_v60", "hydraulic_loss_v60", "listwise_loss_v60",
+    "train_hydraulic_v60", "train_value_v60", "value_loss_v60",
+]
