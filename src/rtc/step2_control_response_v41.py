@@ -59,6 +59,7 @@ class CounterfactualGroupResponseV41:
     delta_flows_physical: torch.Tensor
     direct_single_delta_tfv_m3: torch.Tensor
     direct_interaction_delta_tfv_m3: torch.Tensor
+    nodewise_local_residual_delta_tfv_m3: torch.Tensor
     direct_delta_tfv_m3: torch.Tensor
     trajectory_delta_tfv_m3: torch.Tensor
 
@@ -616,6 +617,7 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
                 magnitude_hidden
             )
         nodewise_tfv_enabled = bool(getattr(self, "nodewise_tfv_enabled", False))
+        nodewise_residual_enabled = bool(getattr(self, "nodewise_residual_enabled", False))
         topology_kwargs = dict(
             hidden_delta=hidden_delta,
             delta_u=delta_u,
@@ -624,7 +626,7 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
             prepared=prepared,
             interaction_time_gate=interaction_time_gate,
         )
-        if nodewise_tfv_enabled:
+        if nodewise_tfv_enabled or nodewise_residual_enabled:
             topology_output = self._topology_interaction(
                 **topology_kwargs, return_node_latent=True
             )
@@ -723,6 +725,25 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
             torch.zeros_like(delta_state),
         )
 
+        nodewise_local_residual = interaction_gate.new_zeros(batch, candidates)
+        if nodewise_residual_enabled:
+            if topology_node_latent is None:
+                raise RuntimeError("nodewise residual requires topology node latent")
+            residual_method = getattr(self, "_nodewise_local_residual_delta_tfv", None)
+            if residual_method is None:
+                raise RuntimeError("nodewise residual implementation is not initialized")
+            nodewise_local_residual = residual_method(
+                topology_node_latent,
+                interaction_flood,
+                reference,
+                elapsed_seconds,
+                interaction_gate,
+            )
+            if nodewise_local_residual.shape != (batch, candidates):
+                raise RuntimeError("nodewise residual must return [batch, candidate] TFV")
+            if not torch.isfinite(nodewise_local_residual).all():
+                raise FloatingPointError("nodewise residual is non-finite")
+
         global_context = context.mean(dim=2)
         single_direct_actual = self.direct_single_tfv_head(
             torch.cat((actual_hidden, context[:, :, :, None].expand(-1, -1, -1, actuators, -1)), dim=-1)
@@ -765,6 +786,7 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
                 * self.d3_tfv_scale
                 * interaction_gate
             )
+        direct_interaction = direct_interaction + nodewise_local_residual
         direct_tfv = direct_single + direct_interaction
 
         delta_flow = single_flow + interaction_flow
@@ -786,6 +808,7 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
             delta_flows_physical=delta_flow,
             direct_single_delta_tfv_m3=direct_single,
             direct_interaction_delta_tfv_m3=direct_interaction,
+            nodewise_local_residual_delta_tfv_m3=nodewise_local_residual,
             direct_delta_tfv_m3=direct_tfv,
             trajectory_delta_tfv_m3=trajectory_tfv,
         )
