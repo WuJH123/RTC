@@ -28,6 +28,7 @@ from rtc.step2_optimization_v70 import (
     train_hydraulic_event_balanced_v70,
     train_value_event_balanced_v70,
 )
+from rtc.step2_shards_v60 import validate_v60_cache_lineage
 from rtc.step2_train_response_v60 import (
     V60TrainCache,
     derive_input_normalization_v60,
@@ -223,6 +224,19 @@ def _checkpoint_payload(model, *, kind, lineage, basis_manifest, scales, split_s
     }
 
 
+def _cache_lineage_hashes(cache_manifest: str | Path) -> dict[str, str]:
+    """Read basis/design identity from the validated source shard manifest."""
+    lineage = validate_v60_cache_lineage(cache_manifest)
+    return {
+        "basis_sha256_from_cache_lineage": str(
+            lineage["v60_control_basis_sha256"]
+        ),
+        "design_sha256_from_cache_lineage": str(
+            lineage["v60_design_contract_sha256"]
+        ),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Project7 Step2 V7 canonical Train-only development")
     parser.add_argument("--graph", required=True)
@@ -280,8 +294,7 @@ def main() -> None:
         "git_head": git_head,
         "graph_sha256": _sha256(args.graph),
         "cache_manifest_sha256": _sha256(args.cache_manifest),
-        "basis_sha256_from_cache_lineage": json.loads(Path(args.cache_manifest).read_text()).get("v60_control_basis_sha256", ""),
-        "design_sha256_from_cache_lineage": json.loads(Path(args.cache_manifest).read_text()).get("v60_design_contract_sha256", ""),
+        **_cache_lineage_hashes(args.cache_manifest),
     }
     split_payload = {
         "contract": "PROJECT7_STEP2_V70_SAME_V60_RAINFALL_HOLDOUT_V1",

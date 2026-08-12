@@ -11,6 +11,23 @@ from rtc.step2_hydraulic_effect_v70 import retained_onset_targets_v70
 from rtc.step2_train_response_v70 import value_loss_v70
 
 
+def test_v70_report_lineage_reads_source_manifest(monkeypatch):
+    import scripts.run_step2_v70 as runner
+
+    monkeypatch.setattr(
+        runner,
+        "validate_v60_cache_lineage",
+        lambda _path: {
+            "v60_control_basis_sha256": "basis-sha",
+            "v60_design_contract_sha256": "design-sha",
+        },
+    )
+    assert runner._cache_lineage_hashes("cache.json") == {
+        "basis_sha256_from_cache_lineage": "basis-sha",
+        "design_sha256_from_cache_lineage": "design-sha",
+    }
+
+
 def _graph():
     n, a = 14, 109
     edges = np.asarray([(i, i + 1) for i in range(n - 1)] + [(i + 1, i) for i in range(n - 1)], dtype=np.int64).T
