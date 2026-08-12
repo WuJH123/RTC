@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import json
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 
 from rtc.step2_v60_contract import MultiResolutionHorizonV60
@@ -151,6 +152,36 @@ def test_v60_targeted_d3_is_sparse_group_structured_unique_and_lineage_bound():
     assert frame.v60_control_basis_sha256.nunique() == 1
     assert frame.v60_design_contract_sha256.nunique() == 1
     assert lineage["v60_control_basis_sha256"] == frame.v60_control_basis_sha256.iloc[0]
+
+
+def test_v60_targeted_d3_accepts_aligned_checkpoint_elapsed_seconds():
+    graph = _graph()
+    basis = build_control_basis_v60(graph)
+    row = {
+        "checkpoint_id": "aligned", "event_id": "e0", "rainfall_group": "r0",
+        "scientific_split": "development", "development_fold": "train",
+        "checkpoint_elapsed_seconds": 3600, "checkpoint_minutes": 60,
+        "inp_path": "x", "trajectory_metadata_path": "y",
+    }
+    for actuator_id in graph.actuator_ids:
+        row[f"setting:{actuator_id}"] = 0.5
+    frame = design_targeted_d3_v60(pd.DataFrame([row]), graph, basis)
+    assert len(frame) == 25
+
+
+def test_v60_targeted_d3_rejects_unaligned_checkpoint_elapsed_seconds():
+    graph = _graph()
+    basis = build_control_basis_v60(graph)
+    row = {
+        "checkpoint_id": "unaligned", "event_id": "e0", "rainfall_group": "r0",
+        "scientific_split": "development", "development_fold": "train",
+        "checkpoint_elapsed_seconds": 3960, "checkpoint_minutes": 66,
+        "inp_path": "x", "trajectory_metadata_path": "y",
+    }
+    for actuator_id in graph.actuator_ids:
+        row[f"setting:{actuator_id}"] = 0.5
+    with pytest.raises(ValueError, match="align with model_step_seconds"):
+        design_targeted_d3_v60(pd.DataFrame([row]), graph, basis)
 
 
 def test_v60_state_conditioning_exact_zero_causality_and_disjoint_surrogates():

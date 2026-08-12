@@ -104,6 +104,24 @@ def design_targeted_d3_v60(checkpoints: pd.DataFrame, graph: Any, basis: Control
     contract.validate(); basis.validate(); ids=tuple(str(v) for v in graph.actuator_ids); setting_cols=[f"setting:{aid}" for aid in ids]; missing=[x for x in ("checkpoint_id",*setting_cols) if x not in checkpoints.columns]
     if missing: raise ValueError(f"V6 D3 checkpoints missing: {missing[:10]}")
     if control_update_seconds%model_step_seconds or basis.horizon.control_block_steps != control_update_seconds//model_step_seconds: raise ValueError("V6 D3 cadence differs from control basis")
+    # The SWMM sequence runner starts intervention on the frozen model stride.
+    # Reject a checkpoint table that would only fail after worker launch.
+    if "checkpoint_elapsed_seconds" in checkpoints.columns:
+        raw_elapsed = pd.to_numeric(checkpoints["checkpoint_elapsed_seconds"], errors="raise").to_numpy(dtype=np.float64)
+    elif "checkpoint_minutes" in checkpoints.columns:
+        minutes = pd.to_numeric(checkpoints["checkpoint_minutes"], errors="raise").to_numpy(dtype=np.float64)
+        raw_elapsed = minutes * 60.0
+    else:
+        raise ValueError("V6 D3 checkpoints require checkpoint_elapsed_seconds or checkpoint_minutes")
+    if np.any(~np.isfinite(raw_elapsed)) or np.any(raw_elapsed != np.trunc(raw_elapsed)):
+        raise ValueError("V6 D3 checkpoint elapsed seconds must be finite integer seconds")
+    elapsed = raw_elapsed.astype(np.int64)
+    if np.any(elapsed < 0) or np.any(elapsed % int(model_step_seconds) != 0):
+        bad = elapsed[(elapsed < 0) | (elapsed % int(model_step_seconds) != 0)]
+        raise ValueError(
+            "V6 D3 checkpoints must align with model_step_seconds; "
+            f"bad elapsed seconds: {bad[:10].tolist()}"
+        )
     metadata=[c for c in checkpoints.columns if c not in setting_cols]; records=[]
     members={group:np.flatnonzero(basis.grouping.group_id_by_actuator==group) for group in range(basis.group_count)}
     for row_number,(_,row) in enumerate(checkpoints.iterrows()):
