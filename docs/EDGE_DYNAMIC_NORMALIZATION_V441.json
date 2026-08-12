@@ -1,0 +1,11 @@
+{
+  "contract": "EDGE_DYNAMIC_NORMALIZATION_V441",
+  "source": "full Train18 stamped normalization plus frozen conduit geometry median; no Validation/Final",
+  "source_manifest_sha256": "7c69211823f5419a7fabcae03c68f6578b364d1f948f0dbfd76534c0cc48f20d",
+  "head_scale_train_m": 5.145068645477295,
+  "gradient_scale_train_dimensionless": 0.03356537590421303,
+  "conduit_length_median": 153.285,
+  "transform": "delta_head/head_scale; signed_log1p(abs(delta_head/length)/gradient_scale)",
+  "finite": true,
+  "sha256": "eb9817ba95e630568e882b364fdf05fc35261591f39706094edca2ad110a8718"
+}
