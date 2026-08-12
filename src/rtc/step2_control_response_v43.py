@@ -21,6 +21,7 @@ from .step2_control_response_v41 import (
     ReferenceEncodingV41,
     _directed_scatter,
     _mlp,
+    _trapezoid_delta_tfv,
 )
 
 
@@ -29,7 +30,13 @@ class DifferentiableCounterfactualResponseModelV43(
 ):
     """V4.2.1 response model with a small state-conditioned graph residual."""
 
-    def __init__(self, *args, topology_blocks: int = 3, **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        topology_blocks: int = 3,
+        nodewise_tfv_enabled: bool = False,
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         if topology_blocks < 1:
             raise ValueError("topology_blocks must be positive")
@@ -50,6 +57,11 @@ class DifferentiableCounterfactualResponseModelV43(
         )
         self.topology_state_head = nn.Linear(rank, self.state_dim)
         self.topology_hidden_head = nn.Linear(rank, hidden)
+        # This head is intentionally disabled for the historical V4.3 path.
+        # V4.3.2 enables it to replace the lossy node-mean scalar TFV summary
+        # with a sum of causal per-node contributions.
+        self.topology_nodewise_tfv_head = _mlp(rank, hidden, 1)
+        self.nodewise_tfv_enabled = bool(nodewise_tfv_enabled)
         self._topology_graph_enabled = True
         self._topology_endpoint_state_enabled = True
         self._topology_message_state_enabled = True
@@ -97,7 +109,10 @@ class DifferentiableCounterfactualResponseModelV43(
         reference: ReferenceEncodingV41,
         prepared: PreparedStaticV41,
         interaction_time_gate: torch.Tensor,
-    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        return_node_latent: bool = False,
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None] | tuple[
+        torch.Tensor | None, torch.Tensor | None, torch.Tensor | None
+    ]:
         del interaction_hidden
         batch, candidates, horizon, actuators, _ = hidden_delta.shape
         nodes = reference.node_context.shape[2]
@@ -106,6 +121,10 @@ class DifferentiableCounterfactualResponseModelV43(
         if not self._topology_graph_enabled:
             zero_state = hidden_delta.new_zeros(batch, candidates, horizon, nodes, self.state_dim)
             zero_hidden = hidden_delta.new_zeros(batch, candidates, horizon, self.hidden_dim)
+            if return_node_latent:
+                return zero_state, zero_hidden, hidden_delta.new_zeros(
+                    batch, candidates, horizon, nodes, self.effect_rank
+                )
             return zero_state, zero_hidden
 
         upstream = reference.actuator_upstream.to(device=device)
@@ -183,6 +202,8 @@ class DifferentiableCounterfactualResponseModelV43(
         topology_hidden = self.topology_hidden_head(node_latent.mean(dim=3))
         topology_state = topology_state * time_gate
         topology_hidden = topology_hidden * time_gate.squeeze(-1)
+        if return_node_latent:
+            return topology_state, topology_hidden, node_latent
         return topology_state, topology_hidden
 
 

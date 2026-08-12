@@ -615,7 +615,8 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
             interaction_hidden = interaction_hidden + self.interaction_magnitude_residual(
                 magnitude_hidden
             )
-        topology_state_raw, topology_hidden = self._topology_interaction(
+        nodewise_tfv_enabled = bool(getattr(self, "nodewise_tfv_enabled", False))
+        topology_kwargs = dict(
             hidden_delta=hidden_delta,
             delta_u=delta_u,
             interaction_hidden=interaction_hidden,
@@ -623,6 +624,16 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
             prepared=prepared,
             interaction_time_gate=interaction_time_gate,
         )
+        if nodewise_tfv_enabled:
+            topology_output = self._topology_interaction(
+                **topology_kwargs, return_node_latent=True
+            )
+            topology_state_raw, topology_hidden, topology_node_latent = topology_output
+        else:
+            topology_state_raw, topology_hidden = self._topology_interaction(
+                **topology_kwargs
+            )
+            topology_node_latent = None
         if topology_hidden is not None:
             interaction_hidden = interaction_hidden + topology_hidden
         gate_h = interaction_time_gate[..., None]
@@ -729,17 +740,31 @@ class DifferentiableCounterfactualResponseModelV41(nn.Module):
         direct_single = torch.where(
             candidate_action_mask, direct_single, torch.zeros_like(direct_single)
         )
-        direct_interaction = self.direct_interaction_tfv_head(
-            torch.cat((interaction_hidden.mean(dim=2), global_context), dim=-1)
-        ).squeeze(-1)
-        zero_interaction = self.direct_interaction_tfv_head(
-            torch.cat((torch.zeros_like(global_context), global_context), dim=-1)
-        ).squeeze(-1)
-        direct_interaction = (
-            (direct_interaction - zero_interaction)
-            * self.d3_tfv_scale
-            * interaction_gate
-        )
+        if nodewise_tfv_enabled:
+            if topology_node_latent is None:
+                raise RuntimeError("nodewise TFV requires topology node latent")
+            nodewise_head = getattr(self, "topology_nodewise_tfv_head", None)
+            if nodewise_head is None:
+                raise RuntimeError("nodewise TFV head is not initialized")
+            # TFV is a cumulative system quantity.  Predict a signed causal
+            # contribution per node and integrate/sum it, rather than taking
+            # a mean over nodes before the scalar head.
+            nodewise_contributions = nodewise_head(topology_node_latent).squeeze(-1)
+            direct_interaction = _trapezoid_delta_tfv(
+                nodewise_contributions, elapsed_seconds
+            ) * self.d3_tfv_scale * interaction_gate
+        else:
+            direct_interaction = self.direct_interaction_tfv_head(
+                torch.cat((interaction_hidden.mean(dim=2), global_context), dim=-1)
+            ).squeeze(-1)
+            zero_interaction = self.direct_interaction_tfv_head(
+                torch.cat((torch.zeros_like(global_context), global_context), dim=-1)
+            ).squeeze(-1)
+            direct_interaction = (
+                (direct_interaction - zero_interaction)
+                * self.d3_tfv_scale
+                * interaction_gate
+            )
         direct_tfv = direct_single + direct_interaction
 
         delta_flow = single_flow + interaction_flow
