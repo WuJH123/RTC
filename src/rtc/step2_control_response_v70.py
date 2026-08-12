@@ -49,6 +49,7 @@ class DirectValueOutputV70:
 
 class TemporalActionProjectorV70(nn.Module):
     """Compress H72 actions to the frozen six temporal control coordinates per actuator."""
+
     def __init__(self, temporal_basis: np.ndarray, *, control_block_steps: int = 2) -> None:
         super().__init__()
         basis = torch.as_tensor(np.asarray(temporal_basis), dtype=torch.float32)
@@ -232,6 +233,21 @@ class ControlValueSurrogateV70(nn.Module):
         limit = float(self.contract.transformed_limit)
         normalized = limit * torch.tanh(normalized / limit)
         delta_tfv = self.tfv_scale_m3.to(normalized) * torch.sinh(normalized)
+
+        # Fail closed on the exact counterfactual identity. This is a structural
+        # contract, not a learned shortcut; all non-identical candidate gradients
+        # remain unchanged.
+        same_action = torch.all(
+            candidate_settings == reference_expanded, dim=(2, 3)
+        )
+        normalized = torch.where(same_action, torch.zeros_like(normalized), normalized)
+        delta_tfv = torch.where(same_action, torch.zeros_like(delta_tfv), delta_tfv)
+        effect = torch.where(
+            same_action[..., None, None], torch.zeros_like(effect), effect
+        )
+        pooled = torch.where(
+            same_action[..., None], torch.zeros_like(pooled), pooled
+        )
         return DirectValueOutputV70(
             delta_tfv_m3=delta_tfv,
             normalized_delta_tfv=normalized,
