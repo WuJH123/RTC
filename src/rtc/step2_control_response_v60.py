@@ -323,6 +323,26 @@ class HydraulicResponseSurrogateV60(_BaseSurrogateV60):
         cand_flow_raw = self.effect_flow_latent(torch.cat((cand_joint, cand_z_act), dim=-1)).squeeze(-1)
         flow_scale = self.flow_scale.to(ref_flow_raw).reshape(1, 1, 1, -1)
         reference_flows, candidate_flows = F.softplus(ref_flow_raw) * flow_scale, F.softplus(cand_flow_raw) * flow_scale
+        # Preserve the V6 structural candidate/reference contract on CUDA as well
+        # as CPU.  Identical action tensors can otherwise take separately laid-out
+        # GEMM paths and differ by a few ulps before the physical transform.  The
+        # equality branch is not a learned shortcut: it only applies to an exact
+        # candidate==reference action sequence and keeps all non-zero counterfactual
+        # gradients untouched.
+        same_action = torch.all(
+            candidate_settings == reference_settings[:, None], dim=(2, 3)
+        )
+        state_mask = same_action[..., None, None, None]
+        flow_mask = same_action[..., None, None]
+        reference_states_expanded = reference_states.expand_as(candidate_states)
+        reference_flows_expanded = reference_flows.expand_as(candidate_flows)
+        candidate_states = torch.where(state_mask, reference_states_expanded, candidate_states)
+        candidate_flows = torch.where(flow_mask, reference_flows_expanded, candidate_flows)
+        reference_logits = self.flood_onset_head(ref_input).squeeze(-1)
+        candidate_logits = self.flood_onset_head(cand_input).squeeze(-1)
+        candidate_logits = torch.where(
+            same_action[..., None, None], reference_logits, candidate_logits
+        )
         return HydraulicOutputV60(
             horizon_indices=indices,
             reference_states_physical=reference_states,
@@ -331,8 +351,8 @@ class HydraulicResponseSurrogateV60(_BaseSurrogateV60):
             reference_flows_physical=reference_flows,
             candidate_flows_physical=candidate_flows,
             delta_flows_physical=candidate_flows - reference_flows,
-            reference_flood_onset_logits=self.flood_onset_head(ref_input).squeeze(-1),
-            candidate_flood_onset_logits=self.flood_onset_head(cand_input).squeeze(-1),
+            reference_flood_onset_logits=reference_logits,
+            candidate_flood_onset_logits=candidate_logits,
             joint_context_before_scatter=candidate_joint,
         )
 
