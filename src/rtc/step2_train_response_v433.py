@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import subprocess
 from typing import Any
 
 import numpy as np
@@ -22,6 +23,28 @@ from .step2_train_response_v41 import (
 
 
 TRAINING_CONTRACT_V433 = "PROJECT7_STEP2_NODEWISE_TFV_CORRECTNESS_V433"
+
+
+def _sample_gpu_telemetry() -> tuple[float, float] | None:
+    """Best-effort utilization and used-memory sample for the active GPU."""
+
+    try:
+        raw = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu,memory.used",
+                "--format=csv,noheader,nounits",
+                "-i",
+                "0",
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+        ).strip()
+        utilization, memory_used = (float(value.strip()) for value in raw.split(",", 1))
+        return utilization, memory_used
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
 
 
 def train_nodewise_residual_v433(
@@ -57,6 +80,9 @@ def train_nodewise_residual_v433(
     weights = ResponseLossWeightsV41()
     history: list[dict[str, Any]] = []
     profile = {"forward_seconds": 0.0, "backward_seconds": 0.0, "optimizer_seconds": 0.0}
+    gpu_samples: list[tuple[float, float]] = []
+    if target.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(target)
     started = time.perf_counter()
     for epoch in range(1, int(epochs) + 1):
         order = sorted(batches)
@@ -120,7 +146,39 @@ def train_nodewise_residual_v433(
                 "d3_max_regret_m3": float(max(row["regret_m3"] for row in d3)),
             }
         )
+        sample = _sample_gpu_telemetry() if target.type == "cuda" else None
+        if sample is not None:
+            gpu_samples.append(sample)
+    if target.type == "cuda":
+        torch.cuda.synchronize(target)
+        sample = _sample_gpu_telemetry()
+        if sample is not None:
+            gpu_samples.append(sample)
     profile["wall_time_seconds"] = time.perf_counter() - started
+    if target.type == "cuda":
+        profile.update(
+            {
+                "gpu_name": torch.cuda.get_device_name(target),
+                "gpu_peak_memory_allocated_bytes": int(torch.cuda.max_memory_allocated(target)),
+                "gpu_peak_memory_reserved_bytes": int(torch.cuda.max_memory_reserved(target)),
+            }
+        )
+        if gpu_samples:
+            utilization = np.asarray([sample[0] for sample in gpu_samples], dtype=np.float64)
+            memory_used = np.asarray([sample[1] for sample in gpu_samples], dtype=np.float64)
+            profile.update(
+                {
+                    "gpu_utilization_mean_percent": float(utilization.mean()),
+                    "gpu_utilization_p90_percent": float(np.percentile(utilization, 90)),
+                    "gpu_utilization_max_percent": float(utilization.max()),
+                    "gpu_memory_used_mean_mib": float(memory_used.mean()),
+                    "gpu_memory_used_p90_mib": float(np.percentile(memory_used, 90)),
+                    "gpu_memory_used_max_mib": float(memory_used.max()),
+                    "gpu_telemetry_samples": len(gpu_samples),
+                }
+            )
+        else:
+            profile["gpu_telemetry_samples"] = 0
     model.eval()
     metrics, contributions = evaluate_response_groups_v41(
         model=model,

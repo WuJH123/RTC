@@ -202,10 +202,10 @@
           "candidate_index": 7,
           "true_delta_tfv_m3": -26624.5,
           "predicted_additive_single_delta_tfv_m3": -82073.421875,
-          "predicted_old_global_interaction_delta_tfv_m3": -27948.427734375,
+          "predicted_old_global_interaction_delta_tfv_m3": -27948.419921875,
           "predicted_nodewise_local_residual_delta_tfv_m3": 0.0,
-          "predicted_interaction_delta_tfv_m3": -27948.427734375,
-          "predicted_final_delta_tfv_m3": -110021.8515625,
+          "predicted_interaction_delta_tfv_m3": -27948.419921875,
+          "predicted_final_delta_tfv_m3": -110021.84375,
           "predicted_trajectory_delta_tfv_m3": -100326.828125
         }
       ],
@@ -223,7 +223,7 @@
       },
       "d3": {
         "groups": 6,
-        "spread_ratio": 0.6827296822968577,
+        "spread_ratio": 0.6827296942627757,
         "rank": 0.2658730158730159,
         "pairwise": 0.6130952380952381,
         "sign": 0.7291666666666666,
@@ -234,18 +234,18 @@
       "d3_magnitude_strata": {
         "small": {
           "count": 15,
-          "mae_m3": 66076.93330078125,
-          "bias_m3": -56335.02783203125,
-          "response_ratio": 3.108472519575162,
+          "mae_m3": 66076.93382161458,
+          "bias_m3": -56335.02835286458,
+          "response_ratio": 3.1084725397761503,
           "rank": 0.625,
           "pairwise": 0.7583333333333333,
           "sign": 0.7333333333333333
         },
         "medium": {
           "count": 12,
-          "mae_m3": 57059.34716796875,
-          "bias_m3": 16131.223470052084,
-          "response_ratio": 0.7194012603248028,
+          "mae_m3": 57059.347493489586,
+          "bias_m3": 16131.223795572916,
+          "response_ratio": 0.7194012647910114,
           "rank": -0.13333333333333333,
           "pairwise": 0.4444444444444445,
           "sign": 0.75
@@ -269,8 +269,8 @@
           },
           "predicted_old_interaction": {
             "count": 15,
-            "mean_signed_m3": 45182.857482910156,
-            "mean_abs_m3": 65771.32982177734
+            "mean_signed_m3": 45182.856962076825,
+            "mean_abs_m3": 65771.33034261067
           },
           "predicted_local_residual": {
             "count": 15,
@@ -279,8 +279,8 @@
           },
           "final_interaction": {
             "count": 15,
-            "mean_signed_m3": 45182.857482910156,
-            "mean_abs_m3": 65771.32982177734
+            "mean_signed_m3": 45182.856962076825,
+            "mean_abs_m3": 65771.33034261067
           }
         },
         "medium": {
@@ -291,8 +291,8 @@
           },
           "predicted_old_interaction": {
             "count": 12,
-            "mean_signed_m3": 23027.007446289062,
-            "mean_abs_m3": 49175.2607828776
+            "mean_signed_m3": 23027.007771809895,
+            "mean_abs_m3": 49175.26110839844
           },
           "predicted_local_residual": {
             "count": 12,
@@ -301,8 +301,8 @@
           },
           "final_interaction": {
             "count": 12,
-            "mean_signed_m3": 23027.007446289062,
-            "mean_abs_m3": 49175.2607828776
+            "mean_signed_m3": 23027.007771809895,
+            "mean_abs_m3": 49175.26110839844
           }
         },
         "large": {
@@ -363,7 +363,7 @@
           "predicted_nodewise_local_residual_delta_tfv_m3": 0.0,
           "predicted_interaction_delta_tfv_m3": 203286.03125,
           "predicted_final_delta_tfv_m3": -173770.625,
-          "predicted_trajectory_delta_tfv_m3": -224305.875
+          "predicted_trajectory_delta_tfv_m3": -224305.890625
         },
         {
           "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t12300",
@@ -419,10 +419,10 @@
           "candidate_index": 7,
           "true_delta_tfv_m3": -26624.5,
           "predicted_additive_single_delta_tfv_m3": -82073.421875,
-          "predicted_old_global_interaction_delta_tfv_m3": -27948.419921875,
+          "predicted_old_global_interaction_delta_tfv_m3": -27948.427734375,
           "predicted_nodewise_local_residual_delta_tfv_m3": 0.0,
-          "predicted_interaction_delta_tfv_m3": -27948.419921875,
-          "predicted_final_delta_tfv_m3": -110021.84375,
+          "predicted_interaction_delta_tfv_m3": -27948.427734375,
+          "predicted_final_delta_tfv_m3": -110021.8515625,
           "predicted_trajectory_delta_tfv_m3": -100326.828125
         },
         {
@@ -495,7 +495,7 @@
           "predicted_nodewise_local_residual_delta_tfv_m3": 0.0,
           "predicted_interaction_delta_tfv_m3": 126114.109375,
           "predicted_final_delta_tfv_m3": -39918.125,
-          "predicted_trajectory_delta_tfv_m3": -96400.5
+          "predicted_trajectory_delta_tfv_m3": -96400.4921875
         },
         {
           "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6000",
@@ -635,10 +635,10 @@
           "candidate_index": 1,
           "true_delta_tfv_m3": -54091.5,
           "predicted_additive_single_delta_tfv_m3": -170833.390625,
-          "predicted_old_global_interaction_delta_tfv_m3": 69691.3046875,
+          "predicted_old_global_interaction_delta_tfv_m3": 69691.296875,
           "predicted_nodewise_local_residual_delta_tfv_m3": 0.0,
-          "predicted_interaction_delta_tfv_m3": 69691.3046875,
-          "predicted_final_delta_tfv_m3": -101142.0859375,
+          "predicted_interaction_delta_tfv_m3": 69691.296875,
+          "predicted_final_delta_tfv_m3": -101142.09375,
           "predicted_trajectory_delta_tfv_m3": -120052.6484375
         },
         {
@@ -735,7 +735,7 @@
           "predicted_nodewise_local_residual_delta_tfv_m3": 0.0,
           "predicted_interaction_delta_tfv_m3": -20826.958984375,
           "predicted_final_delta_tfv_m3": 4466.146484375,
-          "predicted_trajectory_delta_tfv_m3": -58353.51171875
+          "predicted_trajectory_delta_tfv_m3": -58353.5078125
         },
         {
           "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4500",
@@ -791,10 +791,10 @@
           "candidate_index": 6,
           "true_delta_tfv_m3": -66564.75,
           "predicted_additive_single_delta_tfv_m3": -35931.96484375,
-          "predicted_old_global_interaction_delta_tfv_m3": 57343.95703125,
+          "predicted_old_global_interaction_delta_tfv_m3": 57343.9609375,
           "predicted_nodewise_local_residual_delta_tfv_m3": 0.0,
-          "predicted_interaction_delta_tfv_m3": 57343.95703125,
-          "predicted_final_delta_tfv_m3": 21411.9921875,
+          "predicted_interaction_delta_tfv_m3": 57343.9609375,
+          "predicted_final_delta_tfv_m3": 21411.99609375,
           "predicted_trajectory_delta_tfv_m3": -68185.9375
         },
         {
@@ -807,7 +807,7 @@
           "predicted_nodewise_local_residual_delta_tfv_m3": 0.0,
           "predicted_interaction_delta_tfv_m3": -16605.314453125,
           "predicted_final_delta_tfv_m3": -5340.7578125,
-          "predicted_trajectory_delta_tfv_m3": -36614.31640625
+          "predicted_trajectory_delta_tfv_m3": -36614.3125
         },
         {
           "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7200",
@@ -851,10 +851,10 @@
           "candidate_index": 3,
           "true_delta_tfv_m3": -18681.75,
           "predicted_additive_single_delta_tfv_m3": -135146.53125,
-          "predicted_old_global_interaction_delta_tfv_m3": 82017.1640625,
+          "predicted_old_global_interaction_delta_tfv_m3": 82017.171875,
           "predicted_nodewise_local_residual_delta_tfv_m3": 0.0,
-          "predicted_interaction_delta_tfv_m3": 82017.1640625,
-          "predicted_final_delta_tfv_m3": -53129.3671875,
+          "predicted_interaction_delta_tfv_m3": 82017.171875,
+          "predicted_final_delta_tfv_m3": -53129.359375,
           "predicted_trajectory_delta_tfv_m3": -88759.2578125
         },
         {
@@ -1052,7 +1052,7 @@
       "tiny": {
         "metrics": {
           "groups": 1,
-          "spread_ratio": 1.9142236177530236,
+          "spread_ratio": 1.914223510037375,
           "rank": 0.4523809523809524,
           "pairwise": 0.6785714285714286,
           "sign": 1.0,
@@ -1134,7 +1134,7 @@
           {
             "epoch": 8,
             "loss": 4.11492395401001,
-            "gradient_norm": 0.25778910517692566,
+            "gradient_norm": 0.2577889859676361,
             "d3_rank": 0.4523809523809524,
             "d3_pairwise": 0.6785714285714286,
             "d3_sign": 1.0,
@@ -1144,7 +1144,7 @@
           {
             "epoch": 9,
             "loss": 4.107091903686523,
-            "gradient_norm": 0.27409350872039795,
+            "gradient_norm": 0.27409353852272034,
             "d3_rank": 0.4523809523809524,
             "d3_pairwise": 0.6785714285714286,
             "d3_sign": 1.0,
@@ -1154,7 +1154,7 @@
           {
             "epoch": 10,
             "loss": 4.097610950469971,
-            "gradient_norm": 0.29670852422714233,
+            "gradient_norm": 0.29670843482017517,
             "d3_rank": 0.4523809523809524,
             "d3_pairwise": 0.6785714285714286,
             "d3_sign": 1.0,
@@ -1174,7 +1174,7 @@
           {
             "epoch": 12,
             "loss": 4.073046684265137,
-            "gradient_norm": 0.3536618947982788,
+            "gradient_norm": 0.3536618649959564,
             "d3_rank": 0.4523809523809524,
             "d3_pairwise": 0.6785714285714286,
             "d3_sign": 1.0,
@@ -1194,7 +1194,7 @@
           {
             "epoch": 14,
             "loss": 4.040750980377197,
-            "gradient_norm": 0.4049759805202484,
+            "gradient_norm": 0.40497586131095886,
             "d3_rank": 0.4523809523809524,
             "d3_pairwise": 0.6785714285714286,
             "d3_sign": 1.0,
@@ -1204,7 +1204,7 @@
           {
             "epoch": 15,
             "loss": 4.0222249031066895,
-            "gradient_norm": 0.41745927929878235,
+            "gradient_norm": 0.41745924949645996,
             "d3_rank": 0.4523809523809524,
             "d3_pairwise": 0.6785714285714286,
             "d3_sign": 1.0,
@@ -1213,10 +1213,20 @@
           }
         ],
         "profile": {
-          "forward_seconds": 1.2335544000379741,
-          "backward_seconds": 0.3274626001366414,
-          "optimizer_seconds": 0.13550919998669997,
-          "wall_time_seconds": 2.758054300036747
+          "forward_seconds": 1.2832603001152165,
+          "backward_seconds": 0.3112009999458678,
+          "optimizer_seconds": 0.06499009998515248,
+          "wall_time_seconds": 4.133327499963343,
+          "gpu_name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+          "gpu_peak_memory_allocated_bytes": 1473105408,
+          "gpu_peak_memory_reserved_bytes": 5041553408,
+          "gpu_utilization_mean_percent": 57.9375,
+          "gpu_utilization_p90_percent": 73.0,
+          "gpu_utilization_max_percent": 89.0,
+          "gpu_memory_used_mean_mib": 4967.0,
+          "gpu_memory_used_p90_mib": 4967.0,
+          "gpu_memory_used_max_mib": 4967.0,
+          "gpu_telemetry_samples": 16
         },
         "contributions": [
           {
@@ -1226,7 +1236,7 @@
             "true_delta_tfv_m3": -50199.0,
             "predicted_additive_single_delta_tfv_m3": -260313.5625,
             "predicted_old_global_interaction_delta_tfv_m3": 113823.109375,
-            "predicted_nodewise_local_residual_delta_tfv_m3": 8223.6650390625,
+            "predicted_nodewise_local_residual_delta_tfv_m3": 8223.6669921875,
             "predicted_interaction_delta_tfv_m3": 122046.7734375,
             "predicted_final_delta_tfv_m3": -138266.78125,
             "predicted_trajectory_delta_tfv_m3": -207978.8125
@@ -1237,8 +1247,8 @@
             "candidate_index": 1,
             "true_delta_tfv_m3": -82962.5,
             "predicted_additive_single_delta_tfv_m3": -140406.578125,
-            "predicted_old_global_interaction_delta_tfv_m3": -4923.2568359375,
-            "predicted_nodewise_local_residual_delta_tfv_m3": -7862.5263671875,
+            "predicted_old_global_interaction_delta_tfv_m3": -4923.2578125,
+            "predicted_nodewise_local_residual_delta_tfv_m3": -7862.525390625,
             "predicted_interaction_delta_tfv_m3": -12785.783203125,
             "predicted_final_delta_tfv_m3": -153192.359375,
             "predicted_trajectory_delta_tfv_m3": -143232.375
@@ -1262,7 +1272,7 @@
             "true_delta_tfv_m3": -39841.5,
             "predicted_additive_single_delta_tfv_m3": -157511.09375,
             "predicted_old_global_interaction_delta_tfv_m3": 48107.88671875,
-            "predicted_nodewise_local_residual_delta_tfv_m3": -1442.8724365234375,
+            "predicted_nodewise_local_residual_delta_tfv_m3": -1442.8714599609375,
             "predicted_interaction_delta_tfv_m3": 46665.015625,
             "predicted_final_delta_tfv_m3": -110846.078125,
             "predicted_trajectory_delta_tfv_m3": -125471.015625
@@ -1274,7 +1284,7 @@
             "true_delta_tfv_m3": -120244.0,
             "predicted_additive_single_delta_tfv_m3": -131144.171875,
             "predicted_old_global_interaction_delta_tfv_m3": -102930.625,
-            "predicted_nodewise_local_residual_delta_tfv_m3": -2927.6513671875,
+            "predicted_nodewise_local_residual_delta_tfv_m3": -2927.647705078125,
             "predicted_interaction_delta_tfv_m3": -105858.2734375,
             "predicted_final_delta_tfv_m3": -237002.4375,
             "predicted_trajectory_delta_tfv_m3": -179969.71875
@@ -1286,9 +1296,9 @@
             "true_delta_tfv_m3": -2384.5,
             "predicted_additive_single_delta_tfv_m3": -12975.697265625,
             "predicted_old_global_interaction_delta_tfv_m3": 5586.56689453125,
-            "predicted_nodewise_local_residual_delta_tfv_m3": -4003.883056640625,
-            "predicted_interaction_delta_tfv_m3": 1582.683837890625,
-            "predicted_final_delta_tfv_m3": -11393.013671875,
+            "predicted_nodewise_local_residual_delta_tfv_m3": -4003.8818359375,
+            "predicted_interaction_delta_tfv_m3": 1582.68505859375,
+            "predicted_final_delta_tfv_m3": -11393.01171875,
             "predicted_trajectory_delta_tfv_m3": -81123.203125
           },
           {
@@ -1298,9 +1308,9 @@
             "true_delta_tfv_m3": -111839.5,
             "predicted_additive_single_delta_tfv_m3": -17884.82421875,
             "predicted_old_global_interaction_delta_tfv_m3": -81507.0546875,
-            "predicted_nodewise_local_residual_delta_tfv_m3": -10098.1943359375,
-            "predicted_interaction_delta_tfv_m3": -91605.25,
-            "predicted_final_delta_tfv_m3": -109490.078125,
+            "predicted_nodewise_local_residual_delta_tfv_m3": -10098.1904296875,
+            "predicted_interaction_delta_tfv_m3": -91605.2421875,
+            "predicted_final_delta_tfv_m3": -109490.0625,
             "predicted_trajectory_delta_tfv_m3": -112905.3515625
           },
           {
@@ -1309,9 +1319,9 @@
             "candidate_index": 7,
             "true_delta_tfv_m3": -26624.5,
             "predicted_additive_single_delta_tfv_m3": -82073.421875,
-            "predicted_old_global_interaction_delta_tfv_m3": -27948.419921875,
-            "predicted_nodewise_local_residual_delta_tfv_m3": -9492.216796875,
-            "predicted_interaction_delta_tfv_m3": -37440.63671875,
+            "predicted_old_global_interaction_delta_tfv_m3": -27948.42578125,
+            "predicted_nodewise_local_residual_delta_tfv_m3": -9492.21484375,
+            "predicted_interaction_delta_tfv_m3": -37440.640625,
             "predicted_final_delta_tfv_m3": -119514.0625,
             "predicted_trajectory_delta_tfv_m3": -100326.828125
           }
@@ -1320,7 +1330,7 @@
       "tiny_pass": true,
       "d3": {
         "groups": 6,
-        "spread_ratio": 0.7173724756594394,
+        "spread_ratio": 0.7173724655298397,
         "rank": 0.36507936507936517,
         "pairwise": 0.6369047619047619,
         "sign": 0.7916666666666666,
@@ -1331,27 +1341,27 @@
       "d3_magnitude_strata": {
         "small": {
           "count": 15,
-          "mae_m3": 78527.79410807292,
-          "bias_m3": -72024.15738932292,
-          "response_ratio": 3.5913903364187787,
+          "mae_m3": 78527.79462890625,
+          "bias_m3": -72024.15791015625,
+          "response_ratio": 3.591390356619767,
           "rank": 0.6749999999999999,
           "pairwise": 0.7833333333333333,
           "sign": 0.7333333333333333
         },
         "medium": {
           "count": 12,
-          "mae_m3": 48327.344889322914,
-          "bias_m3": -35.63818359375,
-          "response_ratio": 0.8364486173939751,
+          "mae_m3": 48327.344563802086,
+          "bias_m3": -35.638509114583336,
+          "response_ratio": 0.8364486218601839,
           "rank": 0.0666666666666667,
           "pairwise": 0.5,
           "sign": 0.9166666666666666
         },
         "large": {
           "count": 21,
-          "mae_m3": 160848.67764136905,
-          "bias_m3": -52039.85546875,
-          "response_ratio": 0.42130151415546263,
+          "mae_m3": 160848.67726934524,
+          "bias_m3": -52039.85435267857,
+          "response_ratio": 0.4213015086578711,
           "rank": 0.25999999999999995,
           "pairwise": 0.6,
           "sign": 0.7619047619047619
@@ -1371,13 +1381,13 @@
           },
           "predicted_local_residual": {
             "count": 15,
-            "mean_signed_m3": -15689.130338541667,
-            "mean_abs_m3": 16343.222916666668
+            "mean_signed_m3": -15689.130251057943,
+            "mean_abs_m3": 16343.223069254558
           },
           "final_interaction": {
             "count": 15,
-            "mean_signed_m3": 29493.726725260418,
-            "mean_abs_m3": 54454.70224609375
+            "mean_signed_m3": 29493.72685546875,
+            "mean_abs_m3": 54454.70185546875
           }
         },
         "medium": {
@@ -1388,18 +1398,18 @@
           },
           "predicted_old_interaction": {
             "count": 12,
-            "mean_signed_m3": 23027.007446289062,
-            "mean_abs_m3": 49175.2607828776
+            "mean_signed_m3": 23027.007283528645,
+            "mean_abs_m3": 49175.26094563802
           },
           "predicted_local_residual": {
             "count": 12,
-            "mean_signed_m3": -16166.861602783203,
-            "mean_abs_m3": 17447.29350789388
+            "mean_signed_m3": -16166.861521402994,
+            "mean_abs_m3": 17447.293752034504
           },
           "final_interaction": {
             "count": 12,
-            "mean_signed_m3": 6860.1462809244795,
-            "mean_abs_m3": 45926.94063313802
+            "mean_signed_m3": 6860.146057128906,
+            "mean_abs_m3": 45926.940856933594
           }
         },
         "large": {
@@ -1415,13 +1425,13 @@
           },
           "predicted_local_residual": {
             "count": 21,
-            "mean_signed_m3": -19159.59156436012,
-            "mean_abs_m3": 20443.117234002977
+            "mean_signed_m3": -19159.591372535342,
+            "mean_abs_m3": 20443.117518833704
           },
           "final_interaction": {
             "count": 21,
-            "mean_signed_m3": 30589.69503348214,
-            "mean_abs_m3": 75300.19745163691
+            "mean_signed_m3": 30589.695963541668,
+            "mean_abs_m3": 75300.19670758929
           }
         }
       },
@@ -1433,7 +1443,7 @@
           "true_delta_tfv_m3": -50199.0,
           "predicted_additive_single_delta_tfv_m3": -260313.5625,
           "predicted_old_global_interaction_delta_tfv_m3": 113823.109375,
-          "predicted_nodewise_local_residual_delta_tfv_m3": -6664.05419921875,
+          "predicted_nodewise_local_residual_delta_tfv_m3": -6664.052734375,
           "predicted_interaction_delta_tfv_m3": 107159.0546875,
           "predicted_final_delta_tfv_m3": -153154.5,
           "predicted_trajectory_delta_tfv_m3": -207978.8125
@@ -1445,8 +1455,8 @@
           "true_delta_tfv_m3": -82962.5,
           "predicted_additive_single_delta_tfv_m3": -140406.578125,
           "predicted_old_global_interaction_delta_tfv_m3": -4923.25732421875,
-          "predicted_nodewise_local_residual_delta_tfv_m3": 983.2523193359375,
-          "predicted_interaction_delta_tfv_m3": -3940.0048828125,
+          "predicted_nodewise_local_residual_delta_tfv_m3": 983.2530517578125,
+          "predicted_interaction_delta_tfv_m3": -3940.00439453125,
           "predicted_final_delta_tfv_m3": -144346.578125,
           "predicted_trajectory_delta_tfv_m3": -143232.375
         },
@@ -1481,9 +1491,9 @@
           "true_delta_tfv_m3": -120244.0,
           "predicted_additive_single_delta_tfv_m3": -131144.171875,
           "predicted_old_global_interaction_delta_tfv_m3": -102930.625,
-          "predicted_nodewise_local_residual_delta_tfv_m3": -6614.41162109375,
-          "predicted_interaction_delta_tfv_m3": -109545.0390625,
-          "predicted_final_delta_tfv_m3": -240689.21875,
+          "predicted_nodewise_local_residual_delta_tfv_m3": -6614.41015625,
+          "predicted_interaction_delta_tfv_m3": -109545.03125,
+          "predicted_final_delta_tfv_m3": -240689.203125,
           "predicted_trajectory_delta_tfv_m3": -179969.71875
         },
         {
@@ -1493,7 +1503,7 @@
           "true_delta_tfv_m3": -2384.5,
           "predicted_additive_single_delta_tfv_m3": -12975.697265625,
           "predicted_old_global_interaction_delta_tfv_m3": 5586.56689453125,
-          "predicted_nodewise_local_residual_delta_tfv_m3": 123.880859375,
+          "predicted_nodewise_local_residual_delta_tfv_m3": 123.88095092773438,
           "predicted_interaction_delta_tfv_m3": 5710.44775390625,
           "predicted_final_delta_tfv_m3": -7265.24951171875,
           "predicted_trajectory_delta_tfv_m3": -81123.203125
@@ -1505,7 +1515,7 @@
           "true_delta_tfv_m3": -111839.5,
           "predicted_additive_single_delta_tfv_m3": -17884.82421875,
           "predicted_old_global_interaction_delta_tfv_m3": -81507.0546875,
-          "predicted_nodewise_local_residual_delta_tfv_m3": 1214.008544921875,
+          "predicted_nodewise_local_residual_delta_tfv_m3": 1214.0093994140625,
           "predicted_interaction_delta_tfv_m3": -80293.046875,
           "predicted_final_delta_tfv_m3": -98177.875,
           "predicted_trajectory_delta_tfv_m3": -112905.3515625
@@ -1517,7 +1527,7 @@
           "true_delta_tfv_m3": -26624.5,
           "predicted_additive_single_delta_tfv_m3": -82073.421875,
           "predicted_old_global_interaction_delta_tfv_m3": -27948.427734375,
-          "predicted_nodewise_local_residual_delta_tfv_m3": 1130.605712890625,
+          "predicted_nodewise_local_residual_delta_tfv_m3": 1130.60595703125,
           "predicted_interaction_delta_tfv_m3": -26817.822265625,
           "predicted_final_delta_tfv_m3": -108891.2421875,
           "predicted_trajectory_delta_tfv_m3": -100326.828125
@@ -1592,7 +1602,7 @@
           "predicted_nodewise_local_residual_delta_tfv_m3": -22013.765625,
           "predicted_interaction_delta_tfv_m3": 104100.34375,
           "predicted_final_delta_tfv_m3": -61931.890625,
-          "predicted_trajectory_delta_tfv_m3": -96400.5
+          "predicted_trajectory_delta_tfv_m3": -96400.4921875
         },
         {
           "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6000",
@@ -1625,8 +1635,8 @@
           "true_delta_tfv_m3": -180903.5,
           "predicted_additive_single_delta_tfv_m3": -44583.421875,
           "predicted_old_global_interaction_delta_tfv_m3": -30120.15625,
-          "predicted_nodewise_local_residual_delta_tfv_m3": 2187.595947265625,
-          "predicted_interaction_delta_tfv_m3": -27932.560546875,
+          "predicted_nodewise_local_residual_delta_tfv_m3": 2187.59716796875,
+          "predicted_interaction_delta_tfv_m3": -27932.55859375,
           "predicted_final_delta_tfv_m3": -72515.984375,
           "predicted_trajectory_delta_tfv_m3": -118173.015625
         },
@@ -1649,8 +1659,8 @@
           "true_delta_tfv_m3": -72143.0,
           "predicted_additive_single_delta_tfv_m3": -122682.25,
           "predicted_old_global_interaction_delta_tfv_m3": -4956.5166015625,
-          "predicted_nodewise_local_residual_delta_tfv_m3": 3490.72998046875,
-          "predicted_interaction_delta_tfv_m3": -1465.78662109375,
+          "predicted_nodewise_local_residual_delta_tfv_m3": 3490.730712890625,
+          "predicted_interaction_delta_tfv_m3": -1465.785888671875,
           "predicted_final_delta_tfv_m3": -124148.0390625,
           "predicted_trajectory_delta_tfv_m3": -197362.78125
         },
@@ -1673,8 +1683,8 @@
           "true_delta_tfv_m3": -11749.0,
           "predicted_additive_single_delta_tfv_m3": -73070.8984375,
           "predicted_old_global_interaction_delta_tfv_m3": -42253.23046875,
-          "predicted_nodewise_local_residual_delta_tfv_m3": 3651.207763671875,
-          "predicted_interaction_delta_tfv_m3": -38602.0234375,
+          "predicted_nodewise_local_residual_delta_tfv_m3": 3651.209228515625,
+          "predicted_interaction_delta_tfv_m3": -38602.01953125,
           "predicted_final_delta_tfv_m3": -111672.921875,
           "predicted_trajectory_delta_tfv_m3": -155175.40625
         },
@@ -1685,7 +1695,7 @@
           "true_delta_tfv_m3": -89015.0,
           "predicted_additive_single_delta_tfv_m3": -97193.875,
           "predicted_old_global_interaction_delta_tfv_m3": -12628.4921875,
-          "predicted_nodewise_local_residual_delta_tfv_m3": 3208.609130859375,
+          "predicted_nodewise_local_residual_delta_tfv_m3": 3208.609619140625,
           "predicted_interaction_delta_tfv_m3": -9419.8828125,
           "predicted_final_delta_tfv_m3": -106613.7578125,
           "predicted_trajectory_delta_tfv_m3": -197152.5
@@ -1697,7 +1707,7 @@
           "true_delta_tfv_m3": -229381.0,
           "predicted_additive_single_delta_tfv_m3": -164077.453125,
           "predicted_old_global_interaction_delta_tfv_m3": 74137.34375,
-          "predicted_nodewise_local_residual_delta_tfv_m3": -5547.54931640625,
+          "predicted_nodewise_local_residual_delta_tfv_m3": -5547.5498046875,
           "predicted_interaction_delta_tfv_m3": 68589.796875,
           "predicted_final_delta_tfv_m3": -95487.65625,
           "predicted_trajectory_delta_tfv_m3": -179691.90625
@@ -1709,10 +1719,10 @@
           "true_delta_tfv_m3": -153885.5,
           "predicted_additive_single_delta_tfv_m3": 10980.8037109375,
           "predicted_old_global_interaction_delta_tfv_m3": -83906.3125,
-          "predicted_nodewise_local_residual_delta_tfv_m3": 10075.4150390625,
-          "predicted_interaction_delta_tfv_m3": -73830.8984375,
-          "predicted_final_delta_tfv_m3": -62850.09375,
-          "predicted_trajectory_delta_tfv_m3": -82460.921875
+          "predicted_nodewise_local_residual_delta_tfv_m3": 10075.41796875,
+          "predicted_interaction_delta_tfv_m3": -73830.890625,
+          "predicted_final_delta_tfv_m3": -62850.0859375,
+          "predicted_trajectory_delta_tfv_m3": -82460.9296875
         },
         {
           "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t8700",
@@ -1757,8 +1767,8 @@
           "true_delta_tfv_m3": 371178.0,
           "predicted_additive_single_delta_tfv_m3": -59865.13671875,
           "predicted_old_global_interaction_delta_tfv_m3": 30048.166015625,
-          "predicted_nodewise_local_residual_delta_tfv_m3": -20128.537109375,
-          "predicted_interaction_delta_tfv_m3": 9919.62890625,
+          "predicted_nodewise_local_residual_delta_tfv_m3": -20128.53515625,
+          "predicted_interaction_delta_tfv_m3": 9919.630859375,
           "predicted_final_delta_tfv_m3": -49945.5078125,
           "predicted_trajectory_delta_tfv_m3": -61848.0546875
         },
@@ -1828,10 +1838,10 @@
           "candidate_index": 1,
           "true_delta_tfv_m3": -67508.25,
           "predicted_additive_single_delta_tfv_m3": 25293.10546875,
-          "predicted_old_global_interaction_delta_tfv_m3": -20826.958984375,
-          "predicted_nodewise_local_residual_delta_tfv_m3": -14442.623046875,
-          "predicted_interaction_delta_tfv_m3": -35269.58203125,
-          "predicted_final_delta_tfv_m3": -9976.4765625,
+          "predicted_old_global_interaction_delta_tfv_m3": -20826.9609375,
+          "predicted_nodewise_local_residual_delta_tfv_m3": -14442.625,
+          "predicted_interaction_delta_tfv_m3": -35269.5859375,
+          "predicted_final_delta_tfv_m3": -9976.48046875,
           "predicted_trajectory_delta_tfv_m3": -58353.5078125
         },
         {
@@ -1865,7 +1875,7 @@
           "true_delta_tfv_m3": -125242.75,
           "predicted_additive_single_delta_tfv_m3": -256236.921875,
           "predicted_old_global_interaction_delta_tfv_m3": 193286.9375,
-          "predicted_nodewise_local_residual_delta_tfv_m3": -33675.2109375,
+          "predicted_nodewise_local_residual_delta_tfv_m3": -33675.21484375,
           "predicted_interaction_delta_tfv_m3": 159611.71875,
           "predicted_final_delta_tfv_m3": -96625.203125,
           "predicted_trajectory_delta_tfv_m3": -160778.390625
@@ -1913,9 +1923,9 @@
           "true_delta_tfv_m3": -6005.0,
           "predicted_additive_single_delta_tfv_m3": -124322.2265625,
           "predicted_old_global_interaction_delta_tfv_m3": 33959.60546875,
-          "predicted_nodewise_local_residual_delta_tfv_m3": -21553.404296875,
-          "predicted_interaction_delta_tfv_m3": 12406.201171875,
-          "predicted_final_delta_tfv_m3": -111916.0234375,
+          "predicted_nodewise_local_residual_delta_tfv_m3": -21553.40625,
+          "predicted_interaction_delta_tfv_m3": 12406.19921875,
+          "predicted_final_delta_tfv_m3": -111916.03125,
           "predicted_trajectory_delta_tfv_m3": -81563.7109375
         },
         {
@@ -1925,7 +1935,7 @@
           "true_delta_tfv_m3": -63585.75,
           "predicted_additive_single_delta_tfv_m3": 30372.310546875,
           "predicted_old_global_interaction_delta_tfv_m3": -20392.16796875,
-          "predicted_nodewise_local_residual_delta_tfv_m3": -14176.7548828125,
+          "predicted_nodewise_local_residual_delta_tfv_m3": -14176.75390625,
           "predicted_interaction_delta_tfv_m3": -34568.921875,
           "predicted_final_delta_tfv_m3": -4196.611328125,
           "predicted_trajectory_delta_tfv_m3": -27877.5859375
@@ -2008,8 +2018,8 @@
         "history": [
           {
             "epoch": 1,
-            "loss": 5.5685990651448565,
-            "gradient_norm": 0.32813734871645767,
+            "loss": 5.568598985671997,
+            "gradient_norm": 0.3281373530626297,
             "d3_rank": 0.2817460317460318,
             "d3_pairwise": 0.6190476190476191,
             "d3_sign": 0.7291666666666666,
@@ -2019,7 +2029,7 @@
           {
             "epoch": 2,
             "loss": 5.562181830406189,
-            "gradient_norm": 0.3474699438860019,
+            "gradient_norm": 0.3474699736883243,
             "d3_rank": 0.2936507936507937,
             "d3_pairwise": 0.625,
             "d3_sign": 0.7291666666666666,
@@ -2029,7 +2039,7 @@
           {
             "epoch": 3,
             "loss": 5.551694830258687,
-            "gradient_norm": 0.40777446205417317,
+            "gradient_norm": 0.4077744508783023,
             "d3_rank": 0.28571428571428575,
             "d3_pairwise": 0.6190476190476191,
             "d3_sign": 0.75,
@@ -2039,7 +2049,7 @@
           {
             "epoch": 4,
             "loss": 5.545103152592977,
-            "gradient_norm": 0.4885798891385396,
+            "gradient_norm": 0.4885799214243889,
             "d3_rank": 0.27777777777777785,
             "d3_pairwise": 0.6130952380952381,
             "d3_sign": 0.75,
@@ -2049,7 +2059,7 @@
           {
             "epoch": 5,
             "loss": 5.52263085047404,
-            "gradient_norm": 0.6306846588850021,
+            "gradient_norm": 0.6306846489508947,
             "d3_rank": 0.29761904761904767,
             "d3_pairwise": 0.613095238095238,
             "d3_sign": 0.7708333333333334,
@@ -2059,7 +2069,7 @@
           {
             "epoch": 6,
             "loss": 5.509798566500346,
-            "gradient_norm": 0.6080164661010107,
+            "gradient_norm": 0.6080164511998495,
             "d3_rank": 0.29761904761904767,
             "d3_pairwise": 0.613095238095238,
             "d3_sign": 0.7708333333333334,
@@ -2069,7 +2079,7 @@
           {
             "epoch": 7,
             "loss": 5.511858264605205,
-            "gradient_norm": 0.5733539660771688,
+            "gradient_norm": 0.5733539561430613,
             "d3_rank": 0.36111111111111116,
             "d3_pairwise": 0.6309523809523809,
             "d3_sign": 0.7916666666666666,
@@ -2078,8 +2088,8 @@
           },
           {
             "epoch": 8,
-            "loss": 5.502387960751851,
-            "gradient_norm": 0.5305483539899191,
+            "loss": 5.502388040224711,
+            "gradient_norm": 0.5305483639240265,
             "d3_rank": 0.3373015873015874,
             "d3_pairwise": 0.625,
             "d3_sign": 0.7916666666666666,
@@ -2089,7 +2099,7 @@
           {
             "epoch": 9,
             "loss": 5.493231892585754,
-            "gradient_norm": 0.5084889630476633,
+            "gradient_norm": 0.5084889481465021,
             "d3_rank": 0.3373015873015874,
             "d3_pairwise": 0.625,
             "d3_sign": 0.7916666666666666,
@@ -2098,8 +2108,8 @@
           },
           {
             "epoch": 10,
-            "loss": 5.492872953414917,
-            "gradient_norm": 0.4885678291320801,
+            "loss": 5.492872913678487,
+            "gradient_norm": 0.4885678191979726,
             "d3_rank": 0.3373015873015874,
             "d3_pairwise": 0.625,
             "d3_sign": 0.7916666666666666,
@@ -2109,7 +2119,7 @@
           {
             "epoch": 11,
             "loss": 5.48512065410614,
-            "gradient_norm": 0.44083184003829956,
+            "gradient_norm": 0.440831795334816,
             "d3_rank": 0.3373015873015874,
             "d3_pairwise": 0.625,
             "d3_sign": 0.7916666666666666,
@@ -2119,7 +2129,7 @@
           {
             "epoch": 12,
             "loss": 5.482326825459798,
-            "gradient_norm": 0.41167787959178287,
+            "gradient_norm": 0.41167785227298737,
             "d3_rank": 0.36507936507936517,
             "d3_pairwise": 0.6369047619047619,
             "d3_sign": 0.7916666666666666,
@@ -2128,10 +2138,20 @@
           }
         ],
         "profile": {
-          "forward_seconds": 5.2640086996834725,
-          "backward_seconds": 0.9550629000295885,
-          "optimizer_seconds": 0.06610140018165112,
-          "wall_time_seconds": 10.864205199992284
+          "forward_seconds": 5.377538000291679,
+          "backward_seconds": 0.9506423001294024,
+          "optimizer_seconds": 0.06208230019547045,
+          "wall_time_seconds": 12.468367699999362,
+          "gpu_name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+          "gpu_peak_memory_allocated_bytes": 1616181760,
+          "gpu_peak_memory_reserved_bytes": 5041553408,
+          "gpu_utilization_mean_percent": 56.53846153846154,
+          "gpu_utilization_p90_percent": 64.0,
+          "gpu_utilization_max_percent": 66.0,
+          "gpu_memory_used_mean_mib": 4967.0,
+          "gpu_memory_used_p90_mib": 4967.0,
+          "gpu_memory_used_max_mib": 4967.0,
+          "gpu_telemetry_samples": 13
         }
       },
       "d2_after_d3": {
