@@ -1,0 +1,8238 @@
+# STEP2 ADDITIVE SUPERPOSITION AUDIT V4.5
+
+```json
+{
+  "contract": "STEP2_ADDITIVE_SUPERPOSITION_AUDIT_V45",
+  "boundary": {
+    "swmm_launched": false,
+    "d2_regenerated": false,
+    "d3_regenerated": false,
+    "validation_outcomes_accessed": false,
+    "final_accessed": false,
+    "formal_run": false,
+    "full_train_smoke_run": false,
+    "production_wiring_modified": false
+  },
+  "data": {
+    "cache": "E:\\RTC_sewer\\Project7\\study_v069\\step2_counterfactual_stability_v2\\step2_training_cache_v1",
+    "micro_cache": "E:\\RTC_sewer\\Project7\\study_v069\\step2_counterfactual_stability_v2\\02_micro_smoke\\cache",
+    "source_manifest_sha256": "7c69211823f5419a7fabcae03c68f6578b364d1f948f0dbfd76534c0cc48f20d",
+    "d3_group_count": 144,
+    "d3_candidate_count": 1152,
+    "d3_group_name_sha256": "757d4a94c865c754a2bc0aaccab3ee46c5e1461bd4110a9d53b2211976613b10",
+    "expected_micro_cohort_sha256": "6d4e916f08c78e0dc62af4787ea042667551be484da2f16fc669eb1a710529e3",
+    "meaningful_scale_m3": 117846.578125,
+    "q33_m3": 58782.83333333333,
+    "q67_m3": 111775.91666666666,
+    "best_d2_checkpoint": "E:\\RTC_sewer\\Project7\\study_v069\\step2_d3_magnitude_calibration_v42\\04_12_group_micro\\v42_12_group_micro.pt",
+    "best_d2_sha256": "b2d5a0c006e21afd5e178118409d41472a9f16f5ed266cd0e5d7af0995e156fe"
+  },
+  "definition": {
+    "true_total": "authoritative SWMM delta TFV",
+    "d2_additive": "frozen D2 sum-of-single predicted delta TFV",
+    "required_interaction": "true_total - d2_additive",
+    "R_true": "abs(required_interaction)/max(abs(true_total), meaningful_scale)",
+    "R_additive": "abs(required_interaction)/max(abs(d2_additive), meaningful_scale)",
+    "R_joint": "abs(required_interaction)/max(abs(true_total)+abs(d2_additive), meaningful_scale)"
+  },
+  "overall_additive_candidate_metrics": {
+    "groups": 144,
+    "rank": -0.009093915343915338,
+    "pairwise": 0.49875992063492064,
+    "top1": 16,
+    "mean_regret_m3": 102586.98611111111,
+    "max_regret_m3": 604633.0
+  },
+  "medium_large_burden": {
+    "count": 768,
+    "meaningful_scale_m3": 117846.578125,
+    "R_true": {
+      "median": 0.5792474351914917,
+      "p75": 0.9962829546272614,
+      "p90": 1.392415579561744,
+      "p95": 1.8284856689553661,
+      "max": 3.8897493974223107
+    },
+    "R_additive": {
+      "median": 0.5161669547912735,
+      "p75": 0.9089487344575793,
+      "p90": 1.5966423107586523,
+      "p95": 1.9143165020834156,
+      "max": 7.026477354494674
+    },
+    "R_joint": {
+      "median": 0.3367109601562087,
+      "p75": 0.6839556422737667,
+      "p90": 1.0,
+      "p95": 1.0000000172274204,
+      "max": 1.0000000552360488
+    },
+    "fraction_required_gt_true": 0.3203125,
+    "fraction_required_gt_additive": 0.3958333333333333,
+    "fraction_required_gt_half_true": 0.6197916666666666,
+    "sign_reversal_fraction": 0.20833333333333334,
+    "severe_cancellation_fraction": 0.045572916666666664
+  },
+  "strata": {
+    "small": {
+      "count": 384,
+      "meaningful_scale_m3": 117846.578125,
+      "R_true": {
+        "median": 0.7891597271399347,
+        "p75": 1.255213677582121,
+        "p90": 1.7624239195532432,
+        "p95": 2.0942622697599007,
+        "max": 3.9005205523442092
+      },
+      "R_additive": {
+        "median": 0.7271054064390251,
+        "p75": 0.8934106419052974,
+        "p90": 1.068094786556947,
+        "p95": 1.1411609082432064,
+        "max": 1.3867084335419688
+      },
+      "R_joint": {
+        "median": 0.6187372016389956,
+        "p75": 0.8371413694711467,
+        "p90": 1.0,
+        "p95": 1.0,
+        "max": 1.0000000587461952
+      },
+      "fraction_required_gt_true": 0.7994791666666666,
+      "fraction_required_gt_additive": 0.3645833333333333,
+      "fraction_required_gt_half_true": 0.9244791666666666,
+      "sign_reversal_fraction": 0.3020833333333333,
+      "severe_cancellation_fraction": 0.2421875
+    },
+    "medium": {
+      "count": 384,
+      "meaningful_scale_m3": 117846.578125,
+      "R_true": {
+        "median": 0.5595286031984648,
+        "p75": 0.964967361562922,
+        "p90": 1.534242933178082,
+        "p95": 1.9268418909596572,
+        "max": 3.8897493974223107
+      },
+      "R_additive": {
+        "median": 0.46600572178508914,
+        "p75": 0.6902438719708928,
+        "p90": 1.1261364849239233,
+        "p95": 1.376105810772772,
+        "max": 1.901893087384831
+      },
+      "R_joint": {
+        "median": 0.3252757964690338,
+        "p75": 0.5818537026725347,
+        "p90": 0.9999999633459381,
+        "p95": 1.0,
+        "max": 1.0000000533025657
+      },
+      "fraction_required_gt_true": 0.3854166666666667,
+      "fraction_required_gt_additive": 0.2994791666666667,
+      "fraction_required_gt_half_true": 0.6484375,
+      "sign_reversal_fraction": 0.19010416666666666,
+      "severe_cancellation_fraction": 0.07291666666666667
+    },
+    "large": {
+      "count": 384,
+      "meaningful_scale_m3": 117846.578125,
+      "R_true": {
+        "median": 0.6081064864982765,
+        "p75": 1.0065581506049173,
+        "p90": 1.2890536618147952,
+        "p95": 1.6350235724596092,
+        "max": 2.3863557302584555
+      },
+      "R_additive": {
+        "median": 0.6104614832234867,
+        "p75": 1.3130552356142076,
+        "p90": 1.9149313573885325,
+        "p95": 2.158235243890327,
+        "max": 7.026477354494674
+      },
+      "R_joint": {
+        "median": 0.34889313393080157,
+        "p75": 0.9225097337357926,
+        "p90": 1.0000000043392179,
+        "p95": 1.0000000279547827,
+        "max": 1.0000000552360488
+      },
+      "fraction_required_gt_true": 0.2552083333333333,
+      "fraction_required_gt_additive": 0.4921875,
+      "fraction_required_gt_half_true": 0.5911458333333334,
+      "sign_reversal_fraction": 0.2265625,
+      "severe_cancellation_fraction": 0.018229166666666668
+    }
+  },
+  "candidate_rows": [
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t12300",
+      "candidate_index": 0,
+      "true_total_m3": -50199.0,
+      "d2_additive_m3": -260313.5625,
+      "required_interaction_m3": 210114.5625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t12300",
+      "candidate_index": 1,
+      "true_total_m3": -82962.5,
+      "d2_additive_m3": -140406.578125,
+      "required_interaction_m3": 57444.078125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t12300",
+      "candidate_index": 2,
+      "true_total_m3": -35282.0,
+      "d2_additive_m3": -377056.65625,
+      "required_interaction_m3": 341774.65625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t12300",
+      "candidate_index": 3,
+      "true_total_m3": -39841.5,
+      "d2_additive_m3": -157511.09375,
+      "required_interaction_m3": 117669.59375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t12300",
+      "candidate_index": 4,
+      "true_total_m3": -120244.0,
+      "d2_additive_m3": -131144.171875,
+      "required_interaction_m3": 10900.171875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t12300",
+      "candidate_index": 5,
+      "true_total_m3": -2384.5,
+      "d2_additive_m3": -12975.697265625,
+      "required_interaction_m3": 10591.197265625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t12300",
+      "candidate_index": 6,
+      "true_total_m3": -111839.5,
+      "d2_additive_m3": -17884.82421875,
+      "required_interaction_m3": -93954.671875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t12300",
+      "candidate_index": 7,
+      "true_total_m3": -26624.5,
+      "d2_additive_m3": -82073.421875,
+      "required_interaction_m3": 55448.921875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13200",
+      "candidate_index": 0,
+      "true_total_m3": -162046.0,
+      "d2_additive_m3": 17102.798828125,
+      "required_interaction_m3": -179148.796875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13200",
+      "candidate_index": 1,
+      "true_total_m3": -102941.0,
+      "d2_additive_m3": 136333.78125,
+      "required_interaction_m3": -239274.78125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13200",
+      "candidate_index": 2,
+      "true_total_m3": -106073.0,
+      "d2_additive_m3": 36417.734375,
+      "required_interaction_m3": -142490.734375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13200",
+      "candidate_index": 3,
+      "true_total_m3": -238730.0,
+      "d2_additive_m3": -160051.453125,
+      "required_interaction_m3": -78678.546875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13200",
+      "candidate_index": 4,
+      "true_total_m3": -157284.0,
+      "d2_additive_m3": -158265.46875,
+      "required_interaction_m3": 981.46875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13200",
+      "candidate_index": 5,
+      "true_total_m3": -139474.0,
+      "d2_additive_m3": -255272.640625,
+      "required_interaction_m3": 115798.640625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13200",
+      "candidate_index": 6,
+      "true_total_m3": -87757.5,
+      "d2_additive_m3": -123978.3984375,
+      "required_interaction_m3": 36220.8984375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13200",
+      "candidate_index": 7,
+      "true_total_m3": -109316.0,
+      "d2_additive_m3": -279043.875,
+      "required_interaction_m3": 169727.875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13800",
+      "candidate_index": 0,
+      "true_total_m3": -74786.0,
+      "d2_additive_m3": -8432.26953125,
+      "required_interaction_m3": -66353.734375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13800",
+      "candidate_index": 1,
+      "true_total_m3": 35626.75,
+      "d2_additive_m3": -38673.45703125,
+      "required_interaction_m3": 74300.203125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13800",
+      "candidate_index": 2,
+      "true_total_m3": -67561.5,
+      "d2_additive_m3": -16211.427734375,
+      "required_interaction_m3": -51350.0703125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13800",
+      "candidate_index": 3,
+      "true_total_m3": -113083.0,
+      "d2_additive_m3": 38414.33984375,
+      "required_interaction_m3": -151497.34375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13800",
+      "candidate_index": 4,
+      "true_total_m3": -80106.0,
+      "d2_additive_m3": -52098.61328125,
+      "required_interaction_m3": -28007.38671875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13800",
+      "candidate_index": 5,
+      "true_total_m3": -69357.25,
+      "d2_additive_m3": -87431.9921875,
+      "required_interaction_m3": 18074.7421875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13800",
+      "candidate_index": 6,
+      "true_total_m3": 68695.5,
+      "d2_additive_m3": -230000.484375,
+      "required_interaction_m3": 298696.0
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t13800",
+      "candidate_index": 7,
+      "true_total_m3": 91824.0,
+      "d2_additive_m3": -130795.953125,
+      "required_interaction_m3": 222619.953125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t17100",
+      "candidate_index": 0,
+      "true_total_m3": -88772.125,
+      "d2_additive_m3": -89773.6328125,
+      "required_interaction_m3": 1001.5078125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t17100",
+      "candidate_index": 1,
+      "true_total_m3": -132585.375,
+      "d2_additive_m3": -63435.30078125,
+      "required_interaction_m3": -69150.078125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t17100",
+      "candidate_index": 2,
+      "true_total_m3": -118726.375,
+      "d2_additive_m3": 22712.0546875,
+      "required_interaction_m3": -141438.4375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t17100",
+      "candidate_index": 3,
+      "true_total_m3": -50051.875,
+      "d2_additive_m3": -95557.421875,
+      "required_interaction_m3": 45505.546875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t17100",
+      "candidate_index": 4,
+      "true_total_m3": -61316.375,
+      "d2_additive_m3": -104680.140625,
+      "required_interaction_m3": 43363.765625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t17100",
+      "candidate_index": 5,
+      "true_total_m3": 98678.875,
+      "d2_additive_m3": -320224.96875,
+      "required_interaction_m3": 418903.84375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t17100",
+      "candidate_index": 6,
+      "true_total_m3": -149462.875,
+      "d2_additive_m3": -14421.3564453125,
+      "required_interaction_m3": -135041.515625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t17100",
+      "candidate_index": 7,
+      "true_total_m3": -54815.625,
+      "d2_additive_m3": -94180.65625,
+      "required_interaction_m3": 39365.03125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6000",
+      "candidate_index": 0,
+      "true_total_m3": -131664.5,
+      "d2_additive_m3": -186125.765625,
+      "required_interaction_m3": 54461.265625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6000",
+      "candidate_index": 1,
+      "true_total_m3": 935.5,
+      "d2_additive_m3": -123041.0859375,
+      "required_interaction_m3": 123976.5859375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6000",
+      "candidate_index": 2,
+      "true_total_m3": 841121.0,
+      "d2_additive_m3": 13074.66015625,
+      "required_interaction_m3": 828046.3125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6000",
+      "candidate_index": 3,
+      "true_total_m3": 165412.0,
+      "d2_additive_m3": -116529.15625,
+      "required_interaction_m3": 281941.15625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6000",
+      "candidate_index": 4,
+      "true_total_m3": -31895.0,
+      "d2_additive_m3": 29416.943359375,
+      "required_interaction_m3": -61311.9453125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6000",
+      "candidate_index": 5,
+      "true_total_m3": -146864.5,
+      "d2_additive_m3": -166032.234375,
+      "required_interaction_m3": 19167.734375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6000",
+      "candidate_index": 6,
+      "true_total_m3": -115287.0,
+      "d2_additive_m3": 46841.2890625,
+      "required_interaction_m3": -162128.28125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6000",
+      "candidate_index": 7,
+      "true_total_m3": -22121.5,
+      "d2_additive_m3": -167372.96875,
+      "required_interaction_m3": 145251.46875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6300",
+      "candidate_index": 0,
+      "true_total_m3": 10492.0,
+      "d2_additive_m3": -108292.1640625,
+      "required_interaction_m3": 118784.1640625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6300",
+      "candidate_index": 1,
+      "true_total_m3": -42938.0,
+      "d2_additive_m3": -153452.859375,
+      "required_interaction_m3": 110514.859375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6300",
+      "candidate_index": 2,
+      "true_total_m3": 35237.0,
+      "d2_additive_m3": -57636.80859375,
+      "required_interaction_m3": 92873.8125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6300",
+      "candidate_index": 3,
+      "true_total_m3": 21032.5,
+      "d2_additive_m3": 10747.359375,
+      "required_interaction_m3": 10285.140625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6300",
+      "candidate_index": 4,
+      "true_total_m3": 147355.0,
+      "d2_additive_m3": -141789.546875,
+      "required_interaction_m3": 289144.5625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6300",
+      "candidate_index": 5,
+      "true_total_m3": -774.5,
+      "d2_additive_m3": -69119.609375,
+      "required_interaction_m3": 68345.109375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6300",
+      "candidate_index": 6,
+      "true_total_m3": -87265.5,
+      "d2_additive_m3": -168806.671875,
+      "required_interaction_m3": 81541.171875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t6300",
+      "candidate_index": 7,
+      "true_total_m3": -19911.0,
+      "d2_additive_m3": -158862.15625,
+      "required_interaction_m3": 138951.15625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9000",
+      "candidate_index": 0,
+      "true_total_m3": -21317.5,
+      "d2_additive_m3": 63196.640625,
+      "required_interaction_m3": -84514.140625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9000",
+      "candidate_index": 1,
+      "true_total_m3": -51379.5,
+      "d2_additive_m3": -196727.21875,
+      "required_interaction_m3": 145347.71875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9000",
+      "candidate_index": 2,
+      "true_total_m3": 60167.0,
+      "d2_additive_m3": -25221.396484375,
+      "required_interaction_m3": 85388.3984375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9000",
+      "candidate_index": 3,
+      "true_total_m3": -132607.5,
+      "d2_additive_m3": -186434.703125,
+      "required_interaction_m3": 53827.203125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9000",
+      "candidate_index": 4,
+      "true_total_m3": -45446.5,
+      "d2_additive_m3": -286676.21875,
+      "required_interaction_m3": 241229.71875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9000",
+      "candidate_index": 5,
+      "true_total_m3": -52843.0,
+      "d2_additive_m3": 28724.08984375,
+      "required_interaction_m3": -81567.09375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9000",
+      "candidate_index": 6,
+      "true_total_m3": -96625.5,
+      "d2_additive_m3": -51233.25390625,
+      "required_interaction_m3": -45392.24609375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9000",
+      "candidate_index": 7,
+      "true_total_m3": -69403.0,
+      "d2_additive_m3": -36390.26171875,
+      "required_interaction_m3": -33012.73828125
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9600",
+      "candidate_index": 0,
+      "true_total_m3": -47277.0,
+      "d2_additive_m3": -162994.015625,
+      "required_interaction_m3": 115717.015625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9600",
+      "candidate_index": 1,
+      "true_total_m3": -87595.0,
+      "d2_additive_m3": -61269.41015625,
+      "required_interaction_m3": -26325.58984375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9600",
+      "candidate_index": 2,
+      "true_total_m3": -126828.5,
+      "d2_additive_m3": -82747.6953125,
+      "required_interaction_m3": -44080.8046875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9600",
+      "candidate_index": 3,
+      "true_total_m3": 3032.0,
+      "d2_additive_m3": 46261.00390625,
+      "required_interaction_m3": -43229.00390625
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9600",
+      "candidate_index": 4,
+      "true_total_m3": -156292.0,
+      "d2_additive_m3": 80495.2421875,
+      "required_interaction_m3": -236787.25
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9600",
+      "candidate_index": 5,
+      "true_total_m3": -23235.0,
+      "d2_additive_m3": -116827.21875,
+      "required_interaction_m3": 93592.21875
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9600",
+      "candidate_index": 6,
+      "true_total_m3": -176058.0,
+      "d2_additive_m3": -96603.390625,
+      "required_interaction_m3": -79454.609375
+    },
+    {
+      "group": "D3::T100_D180_chicago::T100_D180_chicago::T100_D180_chicago:t9600",
+      "candidate_index": 7,
+      "true_total_m3": -85605.5,
+      "d2_additive_m3": 5471.92822265625,
+      "required_interaction_m3": -91077.4296875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t10500",
+      "candidate_index": 0,
+      "true_total_m3": -137700.5,
+      "d2_additive_m3": -24323.064453125,
+      "required_interaction_m3": -113377.4375
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t10500",
+      "candidate_index": 1,
+      "true_total_m3": 83951.5,
+      "d2_additive_m3": 49577.01953125,
+      "required_interaction_m3": 34374.48046875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t10500",
+      "candidate_index": 2,
+      "true_total_m3": -38511.5,
+      "d2_additive_m3": -205614.671875,
+      "required_interaction_m3": 167103.171875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t10500",
+      "candidate_index": 3,
+      "true_total_m3": -2885.5,
+      "d2_additive_m3": -92744.046875,
+      "required_interaction_m3": 89858.546875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t10500",
+      "candidate_index": 4,
+      "true_total_m3": -44881.5,
+      "d2_additive_m3": -123114.25,
+      "required_interaction_m3": 78232.75
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t10500",
+      "candidate_index": 5,
+      "true_total_m3": 463443.5,
+      "d2_additive_m3": -52709.7109375,
+      "required_interaction_m3": 516153.21875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t10500",
+      "candidate_index": 6,
+      "true_total_m3": -70690.0,
+      "d2_additive_m3": -106037.71875,
+      "required_interaction_m3": 35347.71875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t10500",
+      "candidate_index": 7,
+      "true_total_m3": 77504.0,
+      "d2_additive_m3": -66431.6875,
+      "required_interaction_m3": 143935.6875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t11400",
+      "candidate_index": 0,
+      "true_total_m3": -226357.0,
+      "d2_additive_m3": 14753.7939453125,
+      "required_interaction_m3": -241110.796875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t11400",
+      "candidate_index": 1,
+      "true_total_m3": -131396.0,
+      "d2_additive_m3": 59637.0078125,
+      "required_interaction_m3": -191033.0
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t11400",
+      "candidate_index": 2,
+      "true_total_m3": -141131.0,
+      "d2_additive_m3": -64440.2734375,
+      "required_interaction_m3": -76690.7265625
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t11400",
+      "candidate_index": 3,
+      "true_total_m3": -133958.5,
+      "d2_additive_m3": -183250.8125,
+      "required_interaction_m3": 49292.3125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t11400",
+      "candidate_index": 4,
+      "true_total_m3": -68558.0,
+      "d2_additive_m3": -51934.296875,
+      "required_interaction_m3": -16623.703125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t11400",
+      "candidate_index": 5,
+      "true_total_m3": -32216.5,
+      "d2_additive_m3": -150124.390625,
+      "required_interaction_m3": 117907.890625
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t11400",
+      "candidate_index": 6,
+      "true_total_m3": -148507.0,
+      "d2_additive_m3": 39982.484375,
+      "required_interaction_m3": -188489.484375
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t11400",
+      "candidate_index": 7,
+      "true_total_m3": 52720.0,
+      "d2_additive_m3": -81025.96875,
+      "required_interaction_m3": 133745.96875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t15600",
+      "candidate_index": 0,
+      "true_total_m3": -132645.5,
+      "d2_additive_m3": -28211.177734375,
+      "required_interaction_m3": -104434.3203125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t15600",
+      "candidate_index": 1,
+      "true_total_m3": -29497.0,
+      "d2_additive_m3": -236592.140625,
+      "required_interaction_m3": 207095.140625
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t15600",
+      "candidate_index": 2,
+      "true_total_m3": -86363.0,
+      "d2_additive_m3": -273540.875,
+      "required_interaction_m3": 187177.875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t15600",
+      "candidate_index": 3,
+      "true_total_m3": -11590.0,
+      "d2_additive_m3": -205904.953125,
+      "required_interaction_m3": 194314.953125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t15600",
+      "candidate_index": 4,
+      "true_total_m3": -67010.5,
+      "d2_additive_m3": -110420.703125,
+      "required_interaction_m3": 43410.203125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t15600",
+      "candidate_index": 5,
+      "true_total_m3": -32694.0,
+      "d2_additive_m3": -328588.59375,
+      "required_interaction_m3": 295894.59375
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t15600",
+      "candidate_index": 6,
+      "true_total_m3": -190130.5,
+      "d2_additive_m3": -125646.4453125,
+      "required_interaction_m3": -64484.0546875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t15600",
+      "candidate_index": 7,
+      "true_total_m3": -44025.0,
+      "d2_additive_m3": -48070.28515625,
+      "required_interaction_m3": 4045.28515625
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t17400",
+      "candidate_index": 0,
+      "true_total_m3": 12714.5,
+      "d2_additive_m3": -86110.234375,
+      "required_interaction_m3": 98824.734375
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t17400",
+      "candidate_index": 1,
+      "true_total_m3": -36066.5,
+      "d2_additive_m3": 15074.9091796875,
+      "required_interaction_m3": -51141.41015625
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t17400",
+      "candidate_index": 2,
+      "true_total_m3": 10635.25,
+      "d2_additive_m3": 32020.140625,
+      "required_interaction_m3": -21384.890625
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t17400",
+      "candidate_index": 3,
+      "true_total_m3": 19140.5,
+      "d2_additive_m3": -138612.40625,
+      "required_interaction_m3": 157752.90625
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t17400",
+      "candidate_index": 4,
+      "true_total_m3": -24874.5,
+      "d2_additive_m3": -127206.0078125,
+      "required_interaction_m3": 102331.5078125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t17400",
+      "candidate_index": 5,
+      "true_total_m3": 19817.5,
+      "d2_additive_m3": 19905.29296875,
+      "required_interaction_m3": -87.79296875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t17400",
+      "candidate_index": 6,
+      "true_total_m3": -98513.25,
+      "d2_additive_m3": -150217.90625,
+      "required_interaction_m3": 51704.65625
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t17400",
+      "candidate_index": 7,
+      "true_total_m3": 15105.5,
+      "d2_additive_m3": 115990.03125,
+      "required_interaction_m3": -100884.53125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18000",
+      "candidate_index": 0,
+      "true_total_m3": -119138.25,
+      "d2_additive_m3": -90807.6796875,
+      "required_interaction_m3": -28330.5703125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18000",
+      "candidate_index": 1,
+      "true_total_m3": -127311.0,
+      "d2_additive_m3": -68517.3828125,
+      "required_interaction_m3": -58793.6171875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18000",
+      "candidate_index": 2,
+      "true_total_m3": -151347.5,
+      "d2_additive_m3": -114204.5390625,
+      "required_interaction_m3": -37142.9609375
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18000",
+      "candidate_index": 3,
+      "true_total_m3": -93072.5,
+      "d2_additive_m3": -32046.421875,
+      "required_interaction_m3": -61026.078125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18000",
+      "candidate_index": 4,
+      "true_total_m3": -168408.0,
+      "d2_additive_m3": -64839.2109375,
+      "required_interaction_m3": -103568.7890625
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18000",
+      "candidate_index": 5,
+      "true_total_m3": -187246.5,
+      "d2_additive_m3": -70658.7421875,
+      "required_interaction_m3": -116587.7578125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18000",
+      "candidate_index": 6,
+      "true_total_m3": -92866.0,
+      "d2_additive_m3": -132443.578125,
+      "required_interaction_m3": 39577.578125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18000",
+      "candidate_index": 7,
+      "true_total_m3": -98404.0,
+      "d2_additive_m3": -147959.515625,
+      "required_interaction_m3": 49555.515625
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18900",
+      "candidate_index": 0,
+      "true_total_m3": -54221.5,
+      "d2_additive_m3": -136609.46875,
+      "required_interaction_m3": 82387.96875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18900",
+      "candidate_index": 1,
+      "true_total_m3": -78856.875,
+      "d2_additive_m3": -163104.65625,
+      "required_interaction_m3": 84247.78125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18900",
+      "candidate_index": 2,
+      "true_total_m3": -114371.0,
+      "d2_additive_m3": -73812.0546875,
+      "required_interaction_m3": -40558.9453125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18900",
+      "candidate_index": 3,
+      "true_total_m3": -68517.375,
+      "d2_additive_m3": 97429.796875,
+      "required_interaction_m3": -165947.171875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18900",
+      "candidate_index": 4,
+      "true_total_m3": -54222.25,
+      "d2_additive_m3": -114680.6640625,
+      "required_interaction_m3": 60458.4140625
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18900",
+      "candidate_index": 5,
+      "true_total_m3": -62669.375,
+      "d2_additive_m3": 32408.626953125,
+      "required_interaction_m3": -95078.0
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18900",
+      "candidate_index": 6,
+      "true_total_m3": 14663.75,
+      "d2_additive_m3": -210590.84375,
+      "required_interaction_m3": 225254.59375
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t18900",
+      "candidate_index": 7,
+      "true_total_m3": -111438.5,
+      "d2_additive_m3": -153377.984375,
+      "required_interaction_m3": 41939.484375
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6300",
+      "candidate_index": 0,
+      "true_total_m3": -6439.0,
+      "d2_additive_m3": -206306.28125,
+      "required_interaction_m3": 199867.28125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6300",
+      "candidate_index": 1,
+      "true_total_m3": -18157.0,
+      "d2_additive_m3": -204651.8125,
+      "required_interaction_m3": 186494.8125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6300",
+      "candidate_index": 2,
+      "true_total_m3": 63305.0,
+      "d2_additive_m3": -85982.1015625,
+      "required_interaction_m3": 149287.09375
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6300",
+      "candidate_index": 3,
+      "true_total_m3": -91184.0,
+      "d2_additive_m3": -155548.328125,
+      "required_interaction_m3": 64364.328125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6300",
+      "candidate_index": 4,
+      "true_total_m3": -23227.0,
+      "d2_additive_m3": 164437.1875,
+      "required_interaction_m3": -187664.1875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6300",
+      "candidate_index": 5,
+      "true_total_m3": -23182.0,
+      "d2_additive_m3": -12632.2255859375,
+      "required_interaction_m3": -10549.7744140625
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6300",
+      "candidate_index": 6,
+      "true_total_m3": 154280.0,
+      "d2_additive_m3": -22114.64453125,
+      "required_interaction_m3": 176394.640625
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6300",
+      "candidate_index": 7,
+      "true_total_m3": -36011.0,
+      "d2_additive_m3": -139008.578125,
+      "required_interaction_m3": 102997.578125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6600",
+      "candidate_index": 0,
+      "true_total_m3": -52374.0,
+      "d2_additive_m3": -55568.1484375,
+      "required_interaction_m3": 3194.1484375
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6600",
+      "candidate_index": 1,
+      "true_total_m3": 224805.0,
+      "d2_additive_m3": -24430.603515625,
+      "required_interaction_m3": 249235.609375
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6600",
+      "candidate_index": 2,
+      "true_total_m3": -118531.0,
+      "d2_additive_m3": -171953.578125,
+      "required_interaction_m3": 53422.578125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6600",
+      "candidate_index": 3,
+      "true_total_m3": -115661.5,
+      "d2_additive_m3": 21669.44921875,
+      "required_interaction_m3": -137330.953125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6600",
+      "candidate_index": 4,
+      "true_total_m3": -201680.0,
+      "d2_additive_m3": -56052.5703125,
+      "required_interaction_m3": -145627.4375
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6600",
+      "candidate_index": 5,
+      "true_total_m3": -51397.5,
+      "d2_additive_m3": -132401.578125,
+      "required_interaction_m3": 81004.078125
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6600",
+      "candidate_index": 6,
+      "true_total_m3": 402953.0,
+      "d2_additive_m3": -197704.703125,
+      "required_interaction_m3": 600657.6875
+    },
+    {
+      "group": "D3::T100_D240_chicago::T100_D240_chicago::T100_D240_chicago:t6600",
+      "candidate_index": 7,
+      "true_total_m3": 63083.0,
+      "d2_additive_m3": -123217.3828125,
+      "required_interaction_m3": 186300.375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t10800",
+      "candidate_index": 0,
+      "true_total_m3": -13550.5,
+      "d2_additive_m3": 67212.171875,
+      "required_interaction_m3": -80762.671875
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t10800",
+      "candidate_index": 1,
+      "true_total_m3": -47790.0,
+      "d2_additive_m3": -22371.134765625,
+      "required_interaction_m3": -25418.865234375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t10800",
+      "candidate_index": 2,
+      "true_total_m3": -187817.0,
+      "d2_additive_m3": -77781.6796875,
+      "required_interaction_m3": -110035.3203125
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t10800",
+      "candidate_index": 3,
+      "true_total_m3": -93753.0,
+      "d2_additive_m3": -102270.1875,
+      "required_interaction_m3": 8517.1875
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t10800",
+      "candidate_index": 4,
+      "true_total_m3": -15825.5,
+      "d2_additive_m3": 40877.23828125,
+      "required_interaction_m3": -56702.73828125
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t10800",
+      "candidate_index": 5,
+      "true_total_m3": -121109.5,
+      "d2_additive_m3": -227629.515625,
+      "required_interaction_m3": 106520.015625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t10800",
+      "candidate_index": 6,
+      "true_total_m3": 5214.0,
+      "d2_additive_m3": -113809.890625,
+      "required_interaction_m3": 119023.890625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t10800",
+      "candidate_index": 7,
+      "true_total_m3": -50096.5,
+      "d2_additive_m3": -225430.078125,
+      "required_interaction_m3": 175333.578125
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t13500",
+      "candidate_index": 0,
+      "true_total_m3": -196879.0,
+      "d2_additive_m3": -756.8834838867188,
+      "required_interaction_m3": -196122.109375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t13500",
+      "candidate_index": 1,
+      "true_total_m3": -133160.0,
+      "d2_additive_m3": 22390.943359375,
+      "required_interaction_m3": -155550.9375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t13500",
+      "candidate_index": 2,
+      "true_total_m3": -10377.5,
+      "d2_additive_m3": -90300.1875,
+      "required_interaction_m3": 79922.6875
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t13500",
+      "candidate_index": 3,
+      "true_total_m3": -60571.0,
+      "d2_additive_m3": 5395.515625,
+      "required_interaction_m3": -65966.515625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t13500",
+      "candidate_index": 4,
+      "true_total_m3": -73030.0,
+      "d2_additive_m3": -16045.03515625,
+      "required_interaction_m3": -56984.96484375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t13500",
+      "candidate_index": 5,
+      "true_total_m3": 41281.0,
+      "d2_additive_m3": -97890.0859375,
+      "required_interaction_m3": 139171.09375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t13500",
+      "candidate_index": 6,
+      "true_total_m3": -94693.0,
+      "d2_additive_m3": -88855.6015625,
+      "required_interaction_m3": -5837.3984375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t13500",
+      "candidate_index": 7,
+      "true_total_m3": -294946.0,
+      "d2_additive_m3": -209233.0625,
+      "required_interaction_m3": -85712.9375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t18600",
+      "candidate_index": 0,
+      "true_total_m3": -180903.5,
+      "d2_additive_m3": -44583.421875,
+      "required_interaction_m3": -136320.078125
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t18600",
+      "candidate_index": 1,
+      "true_total_m3": -227755.0,
+      "d2_additive_m3": -308489.5,
+      "required_interaction_m3": 80734.5
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t18600",
+      "candidate_index": 2,
+      "true_total_m3": -72143.0,
+      "d2_additive_m3": -122682.25,
+      "required_interaction_m3": 50539.25
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t18600",
+      "candidate_index": 3,
+      "true_total_m3": -164889.0,
+      "d2_additive_m3": -281344.1875,
+      "required_interaction_m3": 116455.1875
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t18600",
+      "candidate_index": 4,
+      "true_total_m3": -11749.0,
+      "d2_additive_m3": -73070.8984375,
+      "required_interaction_m3": 61321.8984375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t18600",
+      "candidate_index": 5,
+      "true_total_m3": -89015.0,
+      "d2_additive_m3": -97193.875,
+      "required_interaction_m3": 8178.875
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t18600",
+      "candidate_index": 6,
+      "true_total_m3": -229381.0,
+      "d2_additive_m3": -164077.453125,
+      "required_interaction_m3": -65303.546875
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t18600",
+      "candidate_index": 7,
+      "true_total_m3": -153885.5,
+      "d2_additive_m3": 10980.8037109375,
+      "required_interaction_m3": -164866.296875
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t21600",
+      "candidate_index": 0,
+      "true_total_m3": -154190.75,
+      "d2_additive_m3": -192399.546875,
+      "required_interaction_m3": 38208.796875
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t21600",
+      "candidate_index": 1,
+      "true_total_m3": -86283.25,
+      "d2_additive_m3": -111007.5703125,
+      "required_interaction_m3": 24724.3203125
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t21600",
+      "candidate_index": 2,
+      "true_total_m3": -154700.75,
+      "d2_additive_m3": -318.49688720703125,
+      "required_interaction_m3": -154382.25
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t21600",
+      "candidate_index": 3,
+      "true_total_m3": -114919.0,
+      "d2_additive_m3": -59118.515625,
+      "required_interaction_m3": -55800.484375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t21600",
+      "candidate_index": 4,
+      "true_total_m3": -83465.25,
+      "d2_additive_m3": -84175.8984375,
+      "required_interaction_m3": 710.6484375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t21600",
+      "candidate_index": 5,
+      "true_total_m3": -39917.0,
+      "d2_additive_m3": -168790.65625,
+      "required_interaction_m3": 128873.65625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t21600",
+      "candidate_index": 6,
+      "true_total_m3": -68967.75,
+      "d2_additive_m3": -54053.12890625,
+      "required_interaction_m3": -14914.62109375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t21600",
+      "candidate_index": 7,
+      "true_total_m3": -124735.25,
+      "d2_additive_m3": -39975.75,
+      "required_interaction_m3": -84759.5
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t24300",
+      "candidate_index": 0,
+      "true_total_m3": -76566.625,
+      "d2_additive_m3": -188302.515625,
+      "required_interaction_m3": 111735.890625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t24300",
+      "candidate_index": 1,
+      "true_total_m3": -152851.375,
+      "d2_additive_m3": -220481.578125,
+      "required_interaction_m3": 67630.203125
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t24300",
+      "candidate_index": 2,
+      "true_total_m3": -124117.0,
+      "d2_additive_m3": -229327.265625,
+      "required_interaction_m3": 105210.265625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t24300",
+      "candidate_index": 3,
+      "true_total_m3": -62922.125,
+      "d2_additive_m3": -299052.4375,
+      "required_interaction_m3": 236130.3125
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t24300",
+      "candidate_index": 4,
+      "true_total_m3": -88336.75,
+      "d2_additive_m3": -163413.140625,
+      "required_interaction_m3": 75076.390625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t24300",
+      "candidate_index": 5,
+      "true_total_m3": 64614.875,
+      "d2_additive_m3": -297328.3125,
+      "required_interaction_m3": 361943.1875
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t24300",
+      "candidate_index": 6,
+      "true_total_m3": -60515.375,
+      "d2_additive_m3": -84726.2265625,
+      "required_interaction_m3": 24210.8515625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t24300",
+      "candidate_index": 7,
+      "true_total_m3": 10481.125,
+      "d2_additive_m3": -220470.25,
+      "required_interaction_m3": 230951.375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t26400",
+      "candidate_index": 0,
+      "true_total_m3": -127272.875,
+      "d2_additive_m3": -88099.859375,
+      "required_interaction_m3": -39173.015625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t26400",
+      "candidate_index": 1,
+      "true_total_m3": -59957.375,
+      "d2_additive_m3": -43802.72265625,
+      "required_interaction_m3": -16154.65234375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t26400",
+      "candidate_index": 2,
+      "true_total_m3": -59062.875,
+      "d2_additive_m3": -203995.703125,
+      "required_interaction_m3": 144932.828125
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t26400",
+      "candidate_index": 3,
+      "true_total_m3": -1045.875,
+      "d2_additive_m3": 12306.677734375,
+      "required_interaction_m3": -13352.552734375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t26400",
+      "candidate_index": 4,
+      "true_total_m3": -29756.0,
+      "d2_additive_m3": -76034.9921875,
+      "required_interaction_m3": 46278.9921875
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t26400",
+      "candidate_index": 5,
+      "true_total_m3": 6559.125,
+      "d2_additive_m3": -195503.15625,
+      "required_interaction_m3": 202062.28125
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t26400",
+      "candidate_index": 6,
+      "true_total_m3": -83986.25,
+      "d2_additive_m3": -80292.9296875,
+      "required_interaction_m3": -3693.3203125
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t26400",
+      "candidate_index": 7,
+      "true_total_m3": -59935.375,
+      "d2_additive_m3": -195963.0625,
+      "required_interaction_m3": 136027.6875
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t8700",
+      "candidate_index": 0,
+      "true_total_m3": 176845.0,
+      "d2_additive_m3": -141245.90625,
+      "required_interaction_m3": 318090.90625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t8700",
+      "candidate_index": 1,
+      "true_total_m3": -54091.5,
+      "d2_additive_m3": -170833.390625,
+      "required_interaction_m3": 116741.890625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t8700",
+      "candidate_index": 2,
+      "true_total_m3": -61415.0,
+      "d2_additive_m3": -145095.609375,
+      "required_interaction_m3": 83680.609375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t8700",
+      "candidate_index": 3,
+      "true_total_m3": 371178.0,
+      "d2_additive_m3": -59865.13671875,
+      "required_interaction_m3": 431043.125
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t8700",
+      "candidate_index": 4,
+      "true_total_m3": 225425.0,
+      "d2_additive_m3": -227655.109375,
+      "required_interaction_m3": 453080.125
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t8700",
+      "candidate_index": 5,
+      "true_total_m3": 1672.0,
+      "d2_additive_m3": -68950.46875,
+      "required_interaction_m3": 70622.46875
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t8700",
+      "candidate_index": 6,
+      "true_total_m3": -114162.5,
+      "d2_additive_m3": -42069.38671875,
+      "required_interaction_m3": -72093.109375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t8700",
+      "candidate_index": 7,
+      "true_total_m3": -146690.0,
+      "d2_additive_m3": -70600.7109375,
+      "required_interaction_m3": -76089.2890625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t9600",
+      "candidate_index": 0,
+      "true_total_m3": -1575.5,
+      "d2_additive_m3": -128757.3359375,
+      "required_interaction_m3": 127181.8359375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t9600",
+      "candidate_index": 1,
+      "true_total_m3": -16271.0,
+      "d2_additive_m3": -128907.109375,
+      "required_interaction_m3": 112636.109375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t9600",
+      "candidate_index": 2,
+      "true_total_m3": -28275.5,
+      "d2_additive_m3": -169841.609375,
+      "required_interaction_m3": 141566.109375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t9600",
+      "candidate_index": 3,
+      "true_total_m3": -108312.0,
+      "d2_additive_m3": -129033.890625,
+      "required_interaction_m3": 20721.890625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t9600",
+      "candidate_index": 4,
+      "true_total_m3": -101346.5,
+      "d2_additive_m3": -146283.390625,
+      "required_interaction_m3": 44936.890625
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t9600",
+      "candidate_index": 5,
+      "true_total_m3": -92616.0,
+      "d2_additive_m3": -146467.109375,
+      "required_interaction_m3": 53851.109375
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t9600",
+      "candidate_index": 6,
+      "true_total_m3": -141795.0,
+      "d2_additive_m3": -58557.50390625,
+      "required_interaction_m3": -83237.5
+    },
+    {
+      "group": "D3::T100_D360_chicago::T100_D360_chicago::T100_D360_chicago:t9600",
+      "candidate_index": 7,
+      "true_total_m3": 143467.5,
+      "d2_additive_m3": -180656.03125,
+      "required_interaction_m3": 324123.53125
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t10200",
+      "candidate_index": 0,
+      "true_total_m3": -43703.75,
+      "d2_additive_m3": -80145.890625,
+      "required_interaction_m3": 36442.140625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t10200",
+      "candidate_index": 1,
+      "true_total_m3": 18971.5,
+      "d2_additive_m3": 54656.7578125,
+      "required_interaction_m3": -35685.2578125
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t10200",
+      "candidate_index": 2,
+      "true_total_m3": -47555.5,
+      "d2_additive_m3": -140681.234375,
+      "required_interaction_m3": 93125.734375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t10200",
+      "candidate_index": 3,
+      "true_total_m3": -69894.75,
+      "d2_additive_m3": -183045.078125,
+      "required_interaction_m3": 113150.328125
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t10200",
+      "candidate_index": 4,
+      "true_total_m3": -62485.25,
+      "d2_additive_m3": -103533.59375,
+      "required_interaction_m3": 41048.34375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t10200",
+      "candidate_index": 5,
+      "true_total_m3": 34276.5,
+      "d2_additive_m3": -96653.9765625,
+      "required_interaction_m3": 130930.4765625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t10200",
+      "candidate_index": 6,
+      "true_total_m3": -75262.5,
+      "d2_additive_m3": -226106.015625,
+      "required_interaction_m3": 150843.515625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t10200",
+      "candidate_index": 7,
+      "true_total_m3": -34966.0,
+      "d2_additive_m3": -15243.421875,
+      "required_interaction_m3": -19722.578125
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4500",
+      "candidate_index": 0,
+      "true_total_m3": -133446.25,
+      "d2_additive_m3": -166211.75,
+      "required_interaction_m3": 32765.5
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4500",
+      "candidate_index": 1,
+      "true_total_m3": -67508.25,
+      "d2_additive_m3": 25293.10546875,
+      "required_interaction_m3": -92801.359375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4500",
+      "candidate_index": 2,
+      "true_total_m3": -79917.25,
+      "d2_additive_m3": -25492.005859375,
+      "required_interaction_m3": -54425.2421875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4500",
+      "candidate_index": 3,
+      "true_total_m3": -40815.25,
+      "d2_additive_m3": 32949.97265625,
+      "required_interaction_m3": -73765.21875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4500",
+      "candidate_index": 4,
+      "true_total_m3": -125242.75,
+      "d2_additive_m3": -256236.921875,
+      "required_interaction_m3": 130994.171875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4500",
+      "candidate_index": 5,
+      "true_total_m3": -146357.25,
+      "d2_additive_m3": -131232.890625,
+      "required_interaction_m3": -15124.359375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4500",
+      "candidate_index": 6,
+      "true_total_m3": -66564.75,
+      "d2_additive_m3": -35931.96484375,
+      "required_interaction_m3": -30632.78515625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4500",
+      "candidate_index": 7,
+      "true_total_m3": -62088.5,
+      "d2_additive_m3": 11264.556640625,
+      "required_interaction_m3": -73353.0546875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4800",
+      "candidate_index": 0,
+      "true_total_m3": -46284.5,
+      "d2_additive_m3": -5226.0556640625,
+      "required_interaction_m3": -41058.4453125
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4800",
+      "candidate_index": 1,
+      "true_total_m3": -48950.0,
+      "d2_additive_m3": -63222.87890625,
+      "required_interaction_m3": 14272.87890625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4800",
+      "candidate_index": 2,
+      "true_total_m3": -82859.5,
+      "d2_additive_m3": 116456.828125,
+      "required_interaction_m3": -199316.328125
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4800",
+      "candidate_index": 3,
+      "true_total_m3": -30562.25,
+      "d2_additive_m3": -1148.220947265625,
+      "required_interaction_m3": -29414.029296875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4800",
+      "candidate_index": 4,
+      "true_total_m3": -13976.0,
+      "d2_additive_m3": -195315.40625,
+      "required_interaction_m3": 181339.40625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4800",
+      "candidate_index": 5,
+      "true_total_m3": -64555.5,
+      "d2_additive_m3": -128334.265625,
+      "required_interaction_m3": 63778.765625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4800",
+      "candidate_index": 6,
+      "true_total_m3": -11832.5,
+      "d2_additive_m3": -38147.5625,
+      "required_interaction_m3": 26315.0625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t4800",
+      "candidate_index": 7,
+      "true_total_m3": -153527.75,
+      "d2_additive_m3": -95545.59375,
+      "required_interaction_m3": -57982.15625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t5100",
+      "candidate_index": 0,
+      "true_total_m3": -59354.25,
+      "d2_additive_m3": -133645.03125,
+      "required_interaction_m3": 74290.78125
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t5100",
+      "candidate_index": 1,
+      "true_total_m3": -49188.25,
+      "d2_additive_m3": 86870.4453125,
+      "required_interaction_m3": -136058.6875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t5100",
+      "candidate_index": 2,
+      "true_total_m3": -58641.5,
+      "d2_additive_m3": -122572.3984375,
+      "required_interaction_m3": 63930.8984375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t5100",
+      "candidate_index": 3,
+      "true_total_m3": -110902.25,
+      "d2_additive_m3": -87760.1015625,
+      "required_interaction_m3": -23142.1484375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t5100",
+      "candidate_index": 4,
+      "true_total_m3": 107754.75,
+      "d2_additive_m3": -202443.453125,
+      "required_interaction_m3": 310198.1875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t5100",
+      "candidate_index": 5,
+      "true_total_m3": -86316.25,
+      "d2_additive_m3": -30700.783203125,
+      "required_interaction_m3": -55615.46875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t5100",
+      "candidate_index": 6,
+      "true_total_m3": -47076.5,
+      "d2_additive_m3": -31777.87890625,
+      "required_interaction_m3": -15298.62109375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t5100",
+      "candidate_index": 7,
+      "true_total_m3": 30222.0,
+      "d2_additive_m3": -31689.66015625,
+      "required_interaction_m3": 61911.66015625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t6000",
+      "candidate_index": 0,
+      "true_total_m3": -68574.25,
+      "d2_additive_m3": -337042.125,
+      "required_interaction_m3": 268467.875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t6000",
+      "candidate_index": 1,
+      "true_total_m3": -45250.0,
+      "d2_additive_m3": -44376.828125,
+      "required_interaction_m3": -873.171875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t6000",
+      "candidate_index": 2,
+      "true_total_m3": -208999.5,
+      "d2_additive_m3": -116942.8984375,
+      "required_interaction_m3": -92056.6015625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t6000",
+      "candidate_index": 3,
+      "true_total_m3": 37215.0,
+      "d2_additive_m3": -132162.1875,
+      "required_interaction_m3": 169377.1875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t6000",
+      "candidate_index": 4,
+      "true_total_m3": -119800.75,
+      "d2_additive_m3": 56635.3125,
+      "required_interaction_m3": -176436.0625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t6000",
+      "candidate_index": 5,
+      "true_total_m3": -80095.75,
+      "d2_additive_m3": -68641.5,
+      "required_interaction_m3": -11454.25
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t6000",
+      "candidate_index": 6,
+      "true_total_m3": -112618.75,
+      "d2_additive_m3": 87732.1796875,
+      "required_interaction_m3": -200350.9375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t6000",
+      "candidate_index": 7,
+      "true_total_m3": -50233.5,
+      "d2_additive_m3": 31836.9140625,
+      "required_interaction_m3": -82070.4140625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7200",
+      "candidate_index": 0,
+      "true_total_m3": -6005.0,
+      "d2_additive_m3": -124322.2265625,
+      "required_interaction_m3": 118317.2265625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7200",
+      "candidate_index": 1,
+      "true_total_m3": -63585.75,
+      "d2_additive_m3": 30372.310546875,
+      "required_interaction_m3": -93958.0625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7200",
+      "candidate_index": 2,
+      "true_total_m3": -85455.0,
+      "d2_additive_m3": -235868.96875,
+      "required_interaction_m3": 150413.96875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7200",
+      "candidate_index": 3,
+      "true_total_m3": -18681.75,
+      "d2_additive_m3": -135146.53125,
+      "required_interaction_m3": 116464.78125
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7200",
+      "candidate_index": 4,
+      "true_total_m3": -72231.5,
+      "d2_additive_m3": 58447.453125,
+      "required_interaction_m3": -130678.953125
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7200",
+      "candidate_index": 5,
+      "true_total_m3": 71736.75,
+      "d2_additive_m3": -136605.34375,
+      "required_interaction_m3": 208342.09375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7200",
+      "candidate_index": 6,
+      "true_total_m3": 44440.5,
+      "d2_additive_m3": -125109.6953125,
+      "required_interaction_m3": 169550.1875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7200",
+      "candidate_index": 7,
+      "true_total_m3": -234637.25,
+      "d2_additive_m3": 1942.7216796875,
+      "required_interaction_m3": -236579.96875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7800",
+      "candidate_index": 0,
+      "true_total_m3": -30404.0,
+      "d2_additive_m3": -192168.46875,
+      "required_interaction_m3": 161764.46875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7800",
+      "candidate_index": 1,
+      "true_total_m3": -24696.0,
+      "d2_additive_m3": -225227.984375,
+      "required_interaction_m3": 200531.984375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7800",
+      "candidate_index": 2,
+      "true_total_m3": 55684.25,
+      "d2_additive_m3": -86101.078125,
+      "required_interaction_m3": 141785.328125
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7800",
+      "candidate_index": 3,
+      "true_total_m3": -51953.75,
+      "d2_additive_m3": 4486.478515625,
+      "required_interaction_m3": -56440.2265625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7800",
+      "candidate_index": 4,
+      "true_total_m3": -118628.75,
+      "d2_additive_m3": -107970.4765625,
+      "required_interaction_m3": -10658.2734375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7800",
+      "candidate_index": 5,
+      "true_total_m3": -1474.5,
+      "d2_additive_m3": -88890.375,
+      "required_interaction_m3": 87415.875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7800",
+      "candidate_index": 6,
+      "true_total_m3": 80300.0,
+      "d2_additive_m3": -132133.703125,
+      "required_interaction_m3": 212433.703125
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t7800",
+      "candidate_index": 7,
+      "true_total_m3": 8765.0,
+      "d2_additive_m3": -135872.109375,
+      "required_interaction_m3": 144637.109375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t9000",
+      "candidate_index": 0,
+      "true_total_m3": -113298.5,
+      "d2_additive_m3": -19468.78125,
+      "required_interaction_m3": -93829.71875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t9000",
+      "candidate_index": 1,
+      "true_total_m3": -78717.5,
+      "d2_additive_m3": -85676.34375,
+      "required_interaction_m3": 6958.84375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t9000",
+      "candidate_index": 2,
+      "true_total_m3": -42171.75,
+      "d2_additive_m3": -166495.390625,
+      "required_interaction_m3": 124323.640625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t9000",
+      "candidate_index": 3,
+      "true_total_m3": 22850.5,
+      "d2_additive_m3": -203502.5625,
+      "required_interaction_m3": 226353.0625
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t9000",
+      "candidate_index": 4,
+      "true_total_m3": -102142.25,
+      "d2_additive_m3": -114182.78125,
+      "required_interaction_m3": 12040.53125
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t9000",
+      "candidate_index": 5,
+      "true_total_m3": -174954.25,
+      "d2_additive_m3": -60929.87109375,
+      "required_interaction_m3": -114024.375
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t9000",
+      "candidate_index": 6,
+      "true_total_m3": -131374.75,
+      "d2_additive_m3": -5383.55859375,
+      "required_interaction_m3": -125991.1875
+    },
+    {
+      "group": "D3::T100_D60_chicago::T100_D60_chicago::T100_D60_chicago:t9000",
+      "candidate_index": 7,
+      "true_total_m3": 29731.0,
+      "d2_additive_m3": -204307.015625,
+      "required_interaction_m3": 234038.015625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t11100",
+      "candidate_index": 0,
+      "true_total_m3": -59803.0,
+      "d2_additive_m3": -154581.265625,
+      "required_interaction_m3": 94778.265625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t11100",
+      "candidate_index": 1,
+      "true_total_m3": -55762.0,
+      "d2_additive_m3": -126348.453125,
+      "required_interaction_m3": 70586.453125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t11100",
+      "candidate_index": 2,
+      "true_total_m3": -128385.75,
+      "d2_additive_m3": -389163.4375,
+      "required_interaction_m3": 260777.6875
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t11100",
+      "candidate_index": 3,
+      "true_total_m3": -79681.5,
+      "d2_additive_m3": -209732.546875,
+      "required_interaction_m3": 130051.046875
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t11100",
+      "candidate_index": 4,
+      "true_total_m3": -139019.5,
+      "d2_additive_m3": 42933.70703125,
+      "required_interaction_m3": -181953.203125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t11100",
+      "candidate_index": 5,
+      "true_total_m3": -154143.875,
+      "d2_additive_m3": 22439.68359375,
+      "required_interaction_m3": -176583.5625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t11100",
+      "candidate_index": 6,
+      "true_total_m3": -112403.75,
+      "d2_additive_m3": -50517.5859375,
+      "required_interaction_m3": -61886.1640625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t11100",
+      "candidate_index": 7,
+      "true_total_m3": -93301.25,
+      "d2_additive_m3": -254743.578125,
+      "required_interaction_m3": 161442.328125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t12600",
+      "candidate_index": 0,
+      "true_total_m3": -135029.375,
+      "d2_additive_m3": -183374.140625,
+      "required_interaction_m3": 48344.765625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t12600",
+      "candidate_index": 1,
+      "true_total_m3": -91401.375,
+      "d2_additive_m3": -79148.1171875,
+      "required_interaction_m3": -12253.2578125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t12600",
+      "candidate_index": 2,
+      "true_total_m3": 6936.875,
+      "d2_additive_m3": -147344.71875,
+      "required_interaction_m3": 154281.59375
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t12600",
+      "candidate_index": 3,
+      "true_total_m3": -71883.875,
+      "d2_additive_m3": -3692.026611328125,
+      "required_interaction_m3": -68191.8515625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t12600",
+      "candidate_index": 4,
+      "true_total_m3": -55289.875,
+      "d2_additive_m3": -135310.96875,
+      "required_interaction_m3": 80021.09375
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t12600",
+      "candidate_index": 5,
+      "true_total_m3": -98200.625,
+      "d2_additive_m3": 40826.40625,
+      "required_interaction_m3": -139027.03125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t12600",
+      "candidate_index": 6,
+      "true_total_m3": -34873.125,
+      "d2_additive_m3": -165943.6875,
+      "required_interaction_m3": 131070.5625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t12600",
+      "candidate_index": 7,
+      "true_total_m3": -114212.375,
+      "d2_additive_m3": -225415.75,
+      "required_interaction_m3": 111203.375
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t13800",
+      "candidate_index": 0,
+      "true_total_m3": -75415.0,
+      "d2_additive_m3": -106731.6015625,
+      "required_interaction_m3": 31316.6015625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t13800",
+      "candidate_index": 1,
+      "true_total_m3": -61720.875,
+      "d2_additive_m3": -117909.984375,
+      "required_interaction_m3": 56189.109375
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t13800",
+      "candidate_index": 2,
+      "true_total_m3": -25854.5,
+      "d2_additive_m3": -242359.765625,
+      "required_interaction_m3": 216505.265625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t13800",
+      "candidate_index": 3,
+      "true_total_m3": -78091.25,
+      "d2_additive_m3": -67526.0,
+      "required_interaction_m3": -10565.25
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t13800",
+      "candidate_index": 4,
+      "true_total_m3": -3463.625,
+      "d2_additive_m3": -149448.953125,
+      "required_interaction_m3": 145985.328125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t13800",
+      "candidate_index": 5,
+      "true_total_m3": -81170.125,
+      "d2_additive_m3": -61879.02734375,
+      "required_interaction_m3": -19291.09765625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t13800",
+      "candidate_index": 6,
+      "true_total_m3": -3394.125,
+      "d2_additive_m3": -148985.671875,
+      "required_interaction_m3": 145591.546875
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t13800",
+      "candidate_index": 7,
+      "true_total_m3": -113905.75,
+      "d2_additive_m3": -185168.71875,
+      "required_interaction_m3": 71262.96875
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t5700",
+      "candidate_index": 0,
+      "true_total_m3": -242656.5,
+      "d2_additive_m3": -56229.9453125,
+      "required_interaction_m3": -186426.5625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t5700",
+      "candidate_index": 1,
+      "true_total_m3": -25368.25,
+      "d2_additive_m3": -171032.015625,
+      "required_interaction_m3": 145663.765625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t5700",
+      "candidate_index": 2,
+      "true_total_m3": -83927.5,
+      "d2_additive_m3": -189667.5,
+      "required_interaction_m3": 105740.0
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t5700",
+      "candidate_index": 3,
+      "true_total_m3": -119865.875,
+      "d2_additive_m3": -55812.76171875,
+      "required_interaction_m3": -64053.11328125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t5700",
+      "candidate_index": 4,
+      "true_total_m3": -132125.75,
+      "d2_additive_m3": -12866.6845703125,
+      "required_interaction_m3": -119259.0625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t5700",
+      "candidate_index": 5,
+      "true_total_m3": -122449.25,
+      "d2_additive_m3": -100243.78125,
+      "required_interaction_m3": -22205.46875
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t5700",
+      "candidate_index": 6,
+      "true_total_m3": -35797.5,
+      "d2_additive_m3": -122987.046875,
+      "required_interaction_m3": 87189.546875
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t5700",
+      "candidate_index": 7,
+      "true_total_m3": -205676.875,
+      "d2_additive_m3": -36439.51171875,
+      "required_interaction_m3": -169237.359375
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t6000",
+      "candidate_index": 0,
+      "true_total_m3": -87704.125,
+      "d2_additive_m3": -377506.5,
+      "required_interaction_m3": 289802.375
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t6000",
+      "candidate_index": 1,
+      "true_total_m3": -198347.5,
+      "d2_additive_m3": -155149.15625,
+      "required_interaction_m3": -43198.34375
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t6000",
+      "candidate_index": 2,
+      "true_total_m3": -90650.375,
+      "d2_additive_m3": -95880.2578125,
+      "required_interaction_m3": 5229.8828125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t6000",
+      "candidate_index": 3,
+      "true_total_m3": -191304.0,
+      "d2_additive_m3": -253884.328125,
+      "required_interaction_m3": 62580.328125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t6000",
+      "candidate_index": 4,
+      "true_total_m3": -170035.625,
+      "d2_additive_m3": -82613.671875,
+      "required_interaction_m3": -87421.953125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t6000",
+      "candidate_index": 5,
+      "true_total_m3": -157981.0,
+      "d2_additive_m3": -92830.453125,
+      "required_interaction_m3": -65150.546875
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t6000",
+      "candidate_index": 6,
+      "true_total_m3": -12593.5,
+      "d2_additive_m3": -72810.9765625,
+      "required_interaction_m3": 60217.4765625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t6000",
+      "candidate_index": 7,
+      "true_total_m3": -100318.375,
+      "d2_additive_m3": -7623.72705078125,
+      "required_interaction_m3": -92694.6484375
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t7200",
+      "candidate_index": 0,
+      "true_total_m3": -86353.75,
+      "d2_additive_m3": -84984.3515625,
+      "required_interaction_m3": -1369.3984375
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t7200",
+      "candidate_index": 1,
+      "true_total_m3": -24306.5,
+      "d2_additive_m3": -154741.140625,
+      "required_interaction_m3": 130434.640625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t7200",
+      "candidate_index": 2,
+      "true_total_m3": -34455.75,
+      "d2_additive_m3": 26404.78515625,
+      "required_interaction_m3": -60860.53515625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t7200",
+      "candidate_index": 3,
+      "true_total_m3": -70357.5,
+      "d2_additive_m3": -186226.046875,
+      "required_interaction_m3": 115868.546875
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t7200",
+      "candidate_index": 4,
+      "true_total_m3": 15923.0,
+      "d2_additive_m3": -89667.828125,
+      "required_interaction_m3": 105590.828125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t7200",
+      "candidate_index": 5,
+      "true_total_m3": -65262.875,
+      "d2_additive_m3": 19193.62109375,
+      "required_interaction_m3": -84456.5
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t7200",
+      "candidate_index": 6,
+      "true_total_m3": -3251.25,
+      "d2_additive_m3": -148596.90625,
+      "required_interaction_m3": 145345.65625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t7200",
+      "candidate_index": 7,
+      "true_total_m3": -57257.75,
+      "d2_additive_m3": -3588.32275390625,
+      "required_interaction_m3": -53669.42578125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t8400",
+      "candidate_index": 0,
+      "true_total_m3": -100497.625,
+      "d2_additive_m3": -26285.27734375,
+      "required_interaction_m3": -74212.34375
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t8400",
+      "candidate_index": 1,
+      "true_total_m3": -132339.125,
+      "d2_additive_m3": -165768.078125,
+      "required_interaction_m3": 33428.953125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t8400",
+      "candidate_index": 2,
+      "true_total_m3": -171682.625,
+      "d2_additive_m3": -64990.84375,
+      "required_interaction_m3": -106691.78125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t8400",
+      "candidate_index": 3,
+      "true_total_m3": -51204.875,
+      "d2_additive_m3": -130280.125,
+      "required_interaction_m3": 79075.25
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t8400",
+      "candidate_index": 4,
+      "true_total_m3": -102445.0,
+      "d2_additive_m3": -183235.265625,
+      "required_interaction_m3": 80790.265625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t8400",
+      "candidate_index": 5,
+      "true_total_m3": -173420.875,
+      "d2_additive_m3": 55464.4609375,
+      "required_interaction_m3": -228885.34375
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t8400",
+      "candidate_index": 6,
+      "true_total_m3": -175925.875,
+      "d2_additive_m3": -69932.609375,
+      "required_interaction_m3": -105993.265625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t8400",
+      "candidate_index": 7,
+      "true_total_m3": -67627.375,
+      "d2_additive_m3": -126696.5859375,
+      "required_interaction_m3": 59069.2109375
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t9900",
+      "candidate_index": 0,
+      "true_total_m3": -194113.0,
+      "d2_additive_m3": -47640.51171875,
+      "required_interaction_m3": -146472.484375
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t9900",
+      "candidate_index": 1,
+      "true_total_m3": -85336.875,
+      "d2_additive_m3": -73658.3359375,
+      "required_interaction_m3": -11678.5390625
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t9900",
+      "candidate_index": 2,
+      "true_total_m3": -78545.0,
+      "d2_additive_m3": 14584.7978515625,
+      "required_interaction_m3": -93129.796875
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t9900",
+      "candidate_index": 3,
+      "true_total_m3": -54668.0,
+      "d2_additive_m3": -26231.873046875,
+      "required_interaction_m3": -28436.126953125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t9900",
+      "candidate_index": 4,
+      "true_total_m3": -132769.5,
+      "d2_additive_m3": -81332.921875,
+      "required_interaction_m3": -51436.578125
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t9900",
+      "candidate_index": 5,
+      "true_total_m3": -162475.5,
+      "d2_additive_m3": -2840.45166015625,
+      "required_interaction_m3": -159635.046875
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t9900",
+      "candidate_index": 6,
+      "true_total_m3": -19813.25,
+      "d2_additive_m3": 21889.365234375,
+      "required_interaction_m3": -41702.6171875
+    },
+    {
+      "group": "D3::T10_D120_chicago::T10_D120_chicago::T10_D120_chicago:t9900",
+      "candidate_index": 7,
+      "true_total_m3": -58853.5,
+      "d2_additive_m3": -89979.3203125,
+      "required_interaction_m3": 31125.8203125
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t12600",
+      "candidate_index": 0,
+      "true_total_m3": -51649.75,
+      "d2_additive_m3": -187797.890625,
+      "required_interaction_m3": 136148.140625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t12600",
+      "candidate_index": 1,
+      "true_total_m3": -43482.5,
+      "d2_additive_m3": -67874.5625,
+      "required_interaction_m3": 24392.0625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t12600",
+      "candidate_index": 2,
+      "true_total_m3": -3345.75,
+      "d2_additive_m3": -299753.78125,
+      "required_interaction_m3": 296408.03125
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t12600",
+      "candidate_index": 3,
+      "true_total_m3": -79055.5,
+      "d2_additive_m3": -339078.1875,
+      "required_interaction_m3": 260022.6875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t12600",
+      "candidate_index": 4,
+      "true_total_m3": 32197.75,
+      "d2_additive_m3": -189601.0,
+      "required_interaction_m3": 221798.75
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t12600",
+      "candidate_index": 5,
+      "true_total_m3": -62631.5,
+      "d2_additive_m3": 36472.671875,
+      "required_interaction_m3": -99104.171875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t12600",
+      "candidate_index": 6,
+      "true_total_m3": -30863.0,
+      "d2_additive_m3": -13326.1044921875,
+      "required_interaction_m3": -17536.89453125
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t12600",
+      "candidate_index": 7,
+      "true_total_m3": 83792.5,
+      "d2_additive_m3": -139555.9375,
+      "required_interaction_m3": 223348.4375
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t13200",
+      "candidate_index": 0,
+      "true_total_m3": -58574.75,
+      "d2_additive_m3": 99582.4453125,
+      "required_interaction_m3": -158157.1875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t13200",
+      "candidate_index": 1,
+      "true_total_m3": -110790.0,
+      "d2_additive_m3": -220306.53125,
+      "required_interaction_m3": 109516.53125
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t13200",
+      "candidate_index": 2,
+      "true_total_m3": -196571.5,
+      "d2_additive_m3": -4697.041015625,
+      "required_interaction_m3": -191874.453125
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t13200",
+      "candidate_index": 3,
+      "true_total_m3": -63072.0,
+      "d2_additive_m3": 14630.8876953125,
+      "required_interaction_m3": -77702.890625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t13200",
+      "candidate_index": 4,
+      "true_total_m3": -48606.0,
+      "d2_additive_m3": -214891.59375,
+      "required_interaction_m3": 166285.59375
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t13200",
+      "candidate_index": 5,
+      "true_total_m3": -135104.75,
+      "d2_additive_m3": -181245.75,
+      "required_interaction_m3": 46141.0
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t13200",
+      "candidate_index": 6,
+      "true_total_m3": -112946.0,
+      "d2_additive_m3": -252554.28125,
+      "required_interaction_m3": 139608.28125
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t13200",
+      "candidate_index": 7,
+      "true_total_m3": -64525.75,
+      "d2_additive_m3": -66330.9921875,
+      "required_interaction_m3": 1805.2421875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t14100",
+      "candidate_index": 0,
+      "true_total_m3": -72769.375,
+      "d2_additive_m3": -114960.3515625,
+      "required_interaction_m3": 42190.9765625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t14100",
+      "candidate_index": 1,
+      "true_total_m3": -50823.375,
+      "d2_additive_m3": -3781.2099609375,
+      "required_interaction_m3": -47042.1640625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t14100",
+      "candidate_index": 2,
+      "true_total_m3": -73685.0,
+      "d2_additive_m3": -132908.0,
+      "required_interaction_m3": 59223.0
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t14100",
+      "candidate_index": 3,
+      "true_total_m3": -88139.0,
+      "d2_additive_m3": -216712.734375,
+      "required_interaction_m3": 128573.734375
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t14100",
+      "candidate_index": 4,
+      "true_total_m3": -52597.375,
+      "d2_additive_m3": -95471.5390625,
+      "required_interaction_m3": 42874.1640625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t14100",
+      "candidate_index": 5,
+      "true_total_m3": 30518.0,
+      "d2_additive_m3": -83217.9296875,
+      "required_interaction_m3": 113735.9296875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t14100",
+      "candidate_index": 6,
+      "true_total_m3": 23772.75,
+      "d2_additive_m3": -228378.84375,
+      "required_interaction_m3": 252151.59375
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t14100",
+      "candidate_index": 7,
+      "true_total_m3": 102238.5,
+      "d2_additive_m3": -351710.40625,
+      "required_interaction_m3": 453948.90625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t15000",
+      "candidate_index": 0,
+      "true_total_m3": -12331.25,
+      "d2_additive_m3": -186802.890625,
+      "required_interaction_m3": 174471.640625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t15000",
+      "candidate_index": 1,
+      "true_total_m3": -88888.25,
+      "d2_additive_m3": -52551.42578125,
+      "required_interaction_m3": -36336.82421875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t15000",
+      "candidate_index": 2,
+      "true_total_m3": -112064.75,
+      "d2_additive_m3": -191199.3125,
+      "required_interaction_m3": 79134.5625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t15000",
+      "candidate_index": 3,
+      "true_total_m3": -95055.5,
+      "d2_additive_m3": -198585.296875,
+      "required_interaction_m3": 103529.796875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t15000",
+      "candidate_index": 4,
+      "true_total_m3": -39181.25,
+      "d2_additive_m3": 68737.1875,
+      "required_interaction_m3": -107918.4375
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t15000",
+      "candidate_index": 5,
+      "true_total_m3": -20267.0,
+      "d2_additive_m3": -76696.8046875,
+      "required_interaction_m3": 56429.8046875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t15000",
+      "candidate_index": 6,
+      "true_total_m3": -87376.125,
+      "d2_additive_m3": -17852.298828125,
+      "required_interaction_m3": -69523.828125
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t15000",
+      "candidate_index": 7,
+      "true_total_m3": -32448.875,
+      "d2_additive_m3": -204953.4375,
+      "required_interaction_m3": 172504.5625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t3900",
+      "candidate_index": 0,
+      "true_total_m3": -70397.0,
+      "d2_additive_m3": -66759.828125,
+      "required_interaction_m3": -3637.171875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t3900",
+      "candidate_index": 1,
+      "true_total_m3": -109752.5,
+      "d2_additive_m3": -157107.5625,
+      "required_interaction_m3": 47355.0625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t3900",
+      "candidate_index": 2,
+      "true_total_m3": -15068.5,
+      "d2_additive_m3": -141723.96875,
+      "required_interaction_m3": 126655.46875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t3900",
+      "candidate_index": 3,
+      "true_total_m3": -257872.25,
+      "d2_additive_m3": 13570.927734375,
+      "required_interaction_m3": -271443.1875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t3900",
+      "candidate_index": 4,
+      "true_total_m3": -156667.0,
+      "d2_additive_m3": 31350.126953125,
+      "required_interaction_m3": -188017.125
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t3900",
+      "candidate_index": 5,
+      "true_total_m3": -12332.25,
+      "d2_additive_m3": -215513.1875,
+      "required_interaction_m3": 203180.9375
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t3900",
+      "candidate_index": 6,
+      "true_total_m3": -218386.5,
+      "d2_additive_m3": -37692.48828125,
+      "required_interaction_m3": -180694.015625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t3900",
+      "candidate_index": 7,
+      "true_total_m3": -101487.75,
+      "d2_additive_m3": -65385.89453125,
+      "required_interaction_m3": -36101.85546875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t5100",
+      "candidate_index": 0,
+      "true_total_m3": -74380.0,
+      "d2_additive_m3": -27737.927734375,
+      "required_interaction_m3": -46642.0703125
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t5100",
+      "candidate_index": 1,
+      "true_total_m3": -86394.0,
+      "d2_additive_m3": 62765.53125,
+      "required_interaction_m3": -149159.53125
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t5100",
+      "candidate_index": 2,
+      "true_total_m3": -21467.5,
+      "d2_additive_m3": 164037.890625,
+      "required_interaction_m3": -185505.390625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t5100",
+      "candidate_index": 3,
+      "true_total_m3": -137878.0,
+      "d2_additive_m3": 59522.1796875,
+      "required_interaction_m3": -197400.1875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t5100",
+      "candidate_index": 4,
+      "true_total_m3": -104809.25,
+      "d2_additive_m3": 50096.35546875,
+      "required_interaction_m3": -154905.609375
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t5100",
+      "candidate_index": 5,
+      "true_total_m3": -84859.75,
+      "d2_additive_m3": -175677.125,
+      "required_interaction_m3": 90817.375
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t5100",
+      "candidate_index": 6,
+      "true_total_m3": -53846.5,
+      "d2_additive_m3": -8546.06640625,
+      "required_interaction_m3": -45300.43359375
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t5100",
+      "candidate_index": 7,
+      "true_total_m3": -30864.75,
+      "d2_additive_m3": -59785.66796875,
+      "required_interaction_m3": 28920.91796875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8100",
+      "candidate_index": 0,
+      "true_total_m3": -132499.0,
+      "d2_additive_m3": -140690.203125,
+      "required_interaction_m3": 8191.203125
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8100",
+      "candidate_index": 1,
+      "true_total_m3": -19431.5,
+      "d2_additive_m3": -37609.140625,
+      "required_interaction_m3": 18177.640625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8100",
+      "candidate_index": 2,
+      "true_total_m3": -117485.0,
+      "d2_additive_m3": -236272.625,
+      "required_interaction_m3": 118787.625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8100",
+      "candidate_index": 3,
+      "true_total_m3": -123707.0,
+      "d2_additive_m3": -66975.8671875,
+      "required_interaction_m3": -56731.1328125
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8100",
+      "candidate_index": 4,
+      "true_total_m3": 26009.5,
+      "d2_additive_m3": 36730.13671875,
+      "required_interaction_m3": -10720.63671875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8100",
+      "candidate_index": 5,
+      "true_total_m3": -122510.0,
+      "d2_additive_m3": -188367.6875,
+      "required_interaction_m3": 65857.6875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8100",
+      "candidate_index": 6,
+      "true_total_m3": -253264.5,
+      "d2_additive_m3": -227186.71875,
+      "required_interaction_m3": -26077.78125
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8100",
+      "candidate_index": 7,
+      "true_total_m3": -80091.25,
+      "d2_additive_m3": -44276.65234375,
+      "required_interaction_m3": -35814.59765625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8700",
+      "candidate_index": 0,
+      "true_total_m3": -214745.5,
+      "d2_additive_m3": -158350.484375,
+      "required_interaction_m3": -56395.015625
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8700",
+      "candidate_index": 1,
+      "true_total_m3": -147208.0,
+      "d2_additive_m3": -177378.21875,
+      "required_interaction_m3": 30170.21875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8700",
+      "candidate_index": 2,
+      "true_total_m3": -101773.0,
+      "d2_additive_m3": -167924.234375,
+      "required_interaction_m3": 66151.234375
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8700",
+      "candidate_index": 3,
+      "true_total_m3": -132746.0,
+      "d2_additive_m3": -100274.9765625,
+      "required_interaction_m3": -32471.0234375
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8700",
+      "candidate_index": 4,
+      "true_total_m3": -168283.0,
+      "d2_additive_m3": -100929.578125,
+      "required_interaction_m3": -67353.421875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8700",
+      "candidate_index": 5,
+      "true_total_m3": -120279.5,
+      "d2_additive_m3": -51651.6328125,
+      "required_interaction_m3": -68627.8671875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8700",
+      "candidate_index": 6,
+      "true_total_m3": 47730.75,
+      "d2_additive_m3": -19705.673828125,
+      "required_interaction_m3": 67436.421875
+    },
+    {
+      "group": "D3::T10_D180_chicago::T10_D180_chicago::T10_D180_chicago:t8700",
+      "candidate_index": 7,
+      "true_total_m3": -136415.5,
+      "d2_additive_m3": -287061.09375,
+      "required_interaction_m3": 150645.59375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t11400",
+      "candidate_index": 0,
+      "true_total_m3": 60519.5,
+      "d2_additive_m3": -14031.8056640625,
+      "required_interaction_m3": 74551.3046875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t11400",
+      "candidate_index": 1,
+      "true_total_m3": -176627.5,
+      "d2_additive_m3": -112417.75,
+      "required_interaction_m3": -64209.75
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t11400",
+      "candidate_index": 2,
+      "true_total_m3": -51025.0,
+      "d2_additive_m3": -39309.60546875,
+      "required_interaction_m3": -11715.39453125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t11400",
+      "candidate_index": 3,
+      "true_total_m3": -119806.75,
+      "d2_additive_m3": -183112.125,
+      "required_interaction_m3": 63305.375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t11400",
+      "candidate_index": 4,
+      "true_total_m3": -35010.5,
+      "d2_additive_m3": -15078.1298828125,
+      "required_interaction_m3": -19932.37109375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t11400",
+      "candidate_index": 5,
+      "true_total_m3": -13634.75,
+      "d2_additive_m3": -85702.3046875,
+      "required_interaction_m3": 72067.5546875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t11400",
+      "candidate_index": 6,
+      "true_total_m3": -106372.75,
+      "d2_additive_m3": -134637.234375,
+      "required_interaction_m3": 28264.484375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t11400",
+      "candidate_index": 7,
+      "true_total_m3": -120562.5,
+      "d2_additive_m3": -65262.56640625,
+      "required_interaction_m3": -55299.93359375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t15900",
+      "candidate_index": 0,
+      "true_total_m3": -90864.5,
+      "d2_additive_m3": -187662.125,
+      "required_interaction_m3": 96797.625
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t15900",
+      "candidate_index": 1,
+      "true_total_m3": -123355.0,
+      "d2_additive_m3": -191856.28125,
+      "required_interaction_m3": 68501.28125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t15900",
+      "candidate_index": 2,
+      "true_total_m3": -61521.25,
+      "d2_additive_m3": -75404.2265625,
+      "required_interaction_m3": 13882.9765625
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t15900",
+      "candidate_index": 3,
+      "true_total_m3": -66042.5,
+      "d2_additive_m3": -205814.75,
+      "required_interaction_m3": 139772.25
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t15900",
+      "candidate_index": 4,
+      "true_total_m3": -19787.0,
+      "d2_additive_m3": -249038.859375,
+      "required_interaction_m3": 229251.859375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t15900",
+      "candidate_index": 5,
+      "true_total_m3": -35334.0,
+      "d2_additive_m3": -299881.9375,
+      "required_interaction_m3": 264547.9375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t15900",
+      "candidate_index": 6,
+      "true_total_m3": -57228.5,
+      "d2_additive_m3": -102982.375,
+      "required_interaction_m3": 45753.875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t15900",
+      "candidate_index": 7,
+      "true_total_m3": 9653.75,
+      "d2_additive_m3": -131645.28125,
+      "required_interaction_m3": 141299.03125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18300",
+      "candidate_index": 0,
+      "true_total_m3": -86139.5,
+      "d2_additive_m3": 18010.140625,
+      "required_interaction_m3": -104149.640625
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18300",
+      "candidate_index": 1,
+      "true_total_m3": -6664.0,
+      "d2_additive_m3": 29189.67578125,
+      "required_interaction_m3": -35853.67578125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18300",
+      "candidate_index": 2,
+      "true_total_m3": 8221.125,
+      "d2_additive_m3": -67728.4921875,
+      "required_interaction_m3": 75949.6171875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18300",
+      "candidate_index": 3,
+      "true_total_m3": -116083.0,
+      "d2_additive_m3": -12042.4521484375,
+      "required_interaction_m3": -104040.546875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18300",
+      "candidate_index": 4,
+      "true_total_m3": -13579.25,
+      "d2_additive_m3": -108424.171875,
+      "required_interaction_m3": 94844.921875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18300",
+      "candidate_index": 5,
+      "true_total_m3": -39261.125,
+      "d2_additive_m3": -154592.296875,
+      "required_interaction_m3": 115331.171875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18300",
+      "candidate_index": 6,
+      "true_total_m3": -8736.75,
+      "d2_additive_m3": 52948.9375,
+      "required_interaction_m3": -61685.6875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18300",
+      "candidate_index": 7,
+      "true_total_m3": -28348.5,
+      "d2_additive_m3": 60935.34765625,
+      "required_interaction_m3": -89283.84375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18900",
+      "candidate_index": 0,
+      "true_total_m3": -124687.875,
+      "d2_additive_m3": 172861.75,
+      "required_interaction_m3": -297549.625
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18900",
+      "candidate_index": 1,
+      "true_total_m3": -166497.5,
+      "d2_additive_m3": -123060.2265625,
+      "required_interaction_m3": -43437.2734375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18900",
+      "candidate_index": 2,
+      "true_total_m3": -74206.25,
+      "d2_additive_m3": -206638.421875,
+      "required_interaction_m3": 132432.171875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18900",
+      "candidate_index": 3,
+      "true_total_m3": -244925.5,
+      "d2_additive_m3": -77306.796875,
+      "required_interaction_m3": -167618.703125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18900",
+      "candidate_index": 4,
+      "true_total_m3": -73585.75,
+      "d2_additive_m3": -60777.13671875,
+      "required_interaction_m3": -12808.61328125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18900",
+      "candidate_index": 5,
+      "true_total_m3": -112198.25,
+      "d2_additive_m3": -59120.41796875,
+      "required_interaction_m3": -53077.83203125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18900",
+      "candidate_index": 6,
+      "true_total_m3": -49627.25,
+      "d2_additive_m3": -90818.375,
+      "required_interaction_m3": 41191.125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t18900",
+      "candidate_index": 7,
+      "true_total_m3": -171913.375,
+      "d2_additive_m3": -100124.890625,
+      "required_interaction_m3": -71788.484375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t20700",
+      "candidate_index": 0,
+      "true_total_m3": -114421.25,
+      "d2_additive_m3": -76402.7265625,
+      "required_interaction_m3": -38018.5234375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t20700",
+      "candidate_index": 1,
+      "true_total_m3": -146631.0625,
+      "d2_additive_m3": -56263.35546875,
+      "required_interaction_m3": -90367.703125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t20700",
+      "candidate_index": 2,
+      "true_total_m3": -115428.0,
+      "d2_additive_m3": -137864.75,
+      "required_interaction_m3": 22436.75
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t20700",
+      "candidate_index": 3,
+      "true_total_m3": -82611.125,
+      "d2_additive_m3": -152282.28125,
+      "required_interaction_m3": 69671.15625
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t20700",
+      "candidate_index": 4,
+      "true_total_m3": -98661.5,
+      "d2_additive_m3": -173386.140625,
+      "required_interaction_m3": 74724.640625
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t20700",
+      "candidate_index": 5,
+      "true_total_m3": -97293.75,
+      "d2_additive_m3": -38842.10546875,
+      "required_interaction_m3": -58451.64453125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t20700",
+      "candidate_index": 6,
+      "true_total_m3": -46175.625,
+      "d2_additive_m3": -181506.296875,
+      "required_interaction_m3": 135330.671875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t20700",
+      "candidate_index": 7,
+      "true_total_m3": -111627.25,
+      "d2_additive_m3": 20997.712890625,
+      "required_interaction_m3": -132624.96875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6000",
+      "candidate_index": 0,
+      "true_total_m3": -102914.5,
+      "d2_additive_m3": -110382.3984375,
+      "required_interaction_m3": 7467.8984375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6000",
+      "candidate_index": 1,
+      "true_total_m3": -16075.5,
+      "d2_additive_m3": -103595.0078125,
+      "required_interaction_m3": 87519.5078125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6000",
+      "candidate_index": 2,
+      "true_total_m3": -48046.0,
+      "d2_additive_m3": -92153.59375,
+      "required_interaction_m3": 44107.59375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6000",
+      "candidate_index": 3,
+      "true_total_m3": -160540.0,
+      "d2_additive_m3": -174222.15625,
+      "required_interaction_m3": 13682.15625
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6000",
+      "candidate_index": 4,
+      "true_total_m3": -38185.75,
+      "d2_additive_m3": -113268.703125,
+      "required_interaction_m3": 75082.953125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6000",
+      "candidate_index": 5,
+      "true_total_m3": -109486.5,
+      "d2_additive_m3": -124981.875,
+      "required_interaction_m3": 15495.375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6000",
+      "candidate_index": 6,
+      "true_total_m3": -105301.75,
+      "d2_additive_m3": -96756.2265625,
+      "required_interaction_m3": -8545.5234375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6000",
+      "candidate_index": 7,
+      "true_total_m3": -118050.25,
+      "d2_additive_m3": 43738.11328125,
+      "required_interaction_m3": -161788.359375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6600",
+      "candidate_index": 0,
+      "true_total_m3": -130406.5,
+      "d2_additive_m3": -142197.515625,
+      "required_interaction_m3": 11791.015625
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6600",
+      "candidate_index": 1,
+      "true_total_m3": 37602.75,
+      "d2_additive_m3": -302164.21875,
+      "required_interaction_m3": 339766.96875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6600",
+      "candidate_index": 2,
+      "true_total_m3": -119816.75,
+      "d2_additive_m3": -37265.23046875,
+      "required_interaction_m3": -82551.515625
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6600",
+      "candidate_index": 3,
+      "true_total_m3": -44172.75,
+      "d2_additive_m3": -188309.484375,
+      "required_interaction_m3": 144136.734375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6600",
+      "candidate_index": 4,
+      "true_total_m3": -93209.25,
+      "d2_additive_m3": -62362.31640625,
+      "required_interaction_m3": -30846.93359375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6600",
+      "candidate_index": 5,
+      "true_total_m3": -18001.0,
+      "d2_additive_m3": -39024.12109375,
+      "required_interaction_m3": 21023.12109375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6600",
+      "candidate_index": 6,
+      "true_total_m3": 215050.25,
+      "d2_additive_m3": -78209.0390625,
+      "required_interaction_m3": 293259.28125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t6600",
+      "candidate_index": 7,
+      "true_total_m3": -144161.0,
+      "d2_additive_m3": -183247.09375,
+      "required_interaction_m3": 39086.09375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t9300",
+      "candidate_index": 0,
+      "true_total_m3": -124782.75,
+      "d2_additive_m3": -105481.1484375,
+      "required_interaction_m3": -19301.6015625
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t9300",
+      "candidate_index": 1,
+      "true_total_m3": 51351.75,
+      "d2_additive_m3": 23857.234375,
+      "required_interaction_m3": 27494.515625
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t9300",
+      "candidate_index": 2,
+      "true_total_m3": -151875.75,
+      "d2_additive_m3": 8713.5263671875,
+      "required_interaction_m3": -160589.28125
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t9300",
+      "candidate_index": 3,
+      "true_total_m3": 67552.75,
+      "d2_additive_m3": -33494.48828125,
+      "required_interaction_m3": 101047.234375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t9300",
+      "candidate_index": 4,
+      "true_total_m3": 21622.25,
+      "d2_additive_m3": 55758.57421875,
+      "required_interaction_m3": -34136.32421875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t9300",
+      "candidate_index": 5,
+      "true_total_m3": -222775.25,
+      "d2_additive_m3": 3327.6162109375,
+      "required_interaction_m3": -226102.859375
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t9300",
+      "candidate_index": 6,
+      "true_total_m3": -125628.25,
+      "d2_additive_m3": -111823.5078125,
+      "required_interaction_m3": -13804.7421875
+    },
+    {
+      "group": "D3::T10_D240_chicago::T10_D240_chicago::T10_D240_chicago:t9300",
+      "candidate_index": 7,
+      "true_total_m3": -62053.0,
+      "d2_additive_m3": -99065.9609375,
+      "required_interaction_m3": 37012.9609375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t13200",
+      "candidate_index": 0,
+      "true_total_m3": -49908.25,
+      "d2_additive_m3": -5066.36865234375,
+      "required_interaction_m3": -44841.8828125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t13200",
+      "candidate_index": 1,
+      "true_total_m3": -154016.25,
+      "d2_additive_m3": -124979.1796875,
+      "required_interaction_m3": -29037.0703125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t13200",
+      "candidate_index": 2,
+      "true_total_m3": -120410.25,
+      "d2_additive_m3": 7609.83349609375,
+      "required_interaction_m3": -128020.0859375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t13200",
+      "candidate_index": 3,
+      "true_total_m3": -137933.0,
+      "d2_additive_m3": -143805.171875,
+      "required_interaction_m3": 5872.171875
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t13200",
+      "candidate_index": 4,
+      "true_total_m3": -145116.25,
+      "d2_additive_m3": 8461.15234375,
+      "required_interaction_m3": -153577.40625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t13200",
+      "candidate_index": 5,
+      "true_total_m3": -77246.75,
+      "d2_additive_m3": -145599.515625,
+      "required_interaction_m3": 68352.765625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t13200",
+      "candidate_index": 6,
+      "true_total_m3": -205744.5,
+      "d2_additive_m3": -92496.1796875,
+      "required_interaction_m3": -113248.3203125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t13200",
+      "candidate_index": 7,
+      "true_total_m3": -37659.0,
+      "d2_additive_m3": -39282.078125,
+      "required_interaction_m3": 1623.078125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t14400",
+      "candidate_index": 0,
+      "true_total_m3": -126758.5,
+      "d2_additive_m3": -111975.359375,
+      "required_interaction_m3": -14783.140625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t14400",
+      "candidate_index": 1,
+      "true_total_m3": -25197.0,
+      "d2_additive_m3": -77582.8046875,
+      "required_interaction_m3": 52385.8046875
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t14400",
+      "candidate_index": 2,
+      "true_total_m3": -151508.0,
+      "d2_additive_m3": -229673.609375,
+      "required_interaction_m3": 78165.609375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t14400",
+      "candidate_index": 3,
+      "true_total_m3": -146669.5,
+      "d2_additive_m3": -264716.3125,
+      "required_interaction_m3": 118046.8125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t14400",
+      "candidate_index": 4,
+      "true_total_m3": -48062.75,
+      "d2_additive_m3": 52157.62109375,
+      "required_interaction_m3": -100220.375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t14400",
+      "candidate_index": 5,
+      "true_total_m3": -123186.5,
+      "d2_additive_m3": -47853.109375,
+      "required_interaction_m3": -75333.390625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t14400",
+      "candidate_index": 6,
+      "true_total_m3": -102569.5,
+      "d2_additive_m3": -168480.046875,
+      "required_interaction_m3": 65910.546875
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t14400",
+      "candidate_index": 7,
+      "true_total_m3": -150143.0,
+      "d2_additive_m3": -71551.671875,
+      "required_interaction_m3": -78591.328125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t17400",
+      "candidate_index": 0,
+      "true_total_m3": -89371.5,
+      "d2_additive_m3": -202581.640625,
+      "required_interaction_m3": 113210.140625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t17400",
+      "candidate_index": 1,
+      "true_total_m3": 175783.5,
+      "d2_additive_m3": -168937.9375,
+      "required_interaction_m3": 344721.4375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t17400",
+      "candidate_index": 2,
+      "true_total_m3": 100910.25,
+      "d2_additive_m3": -357483.40625,
+      "required_interaction_m3": 458393.65625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t17400",
+      "candidate_index": 3,
+      "true_total_m3": -58943.75,
+      "d2_additive_m3": -29121.685546875,
+      "required_interaction_m3": -29822.064453125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t17400",
+      "candidate_index": 4,
+      "true_total_m3": -275053.0,
+      "d2_additive_m3": -54165.4921875,
+      "required_interaction_m3": -220887.5
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t17400",
+      "candidate_index": 5,
+      "true_total_m3": -6860.0,
+      "d2_additive_m3": -275537.59375,
+      "required_interaction_m3": 268677.59375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t17400",
+      "candidate_index": 6,
+      "true_total_m3": -37693.5,
+      "d2_additive_m3": 2945.99462890625,
+      "required_interaction_m3": -40639.49609375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t17400",
+      "candidate_index": 7,
+      "true_total_m3": -165427.75,
+      "d2_additive_m3": -195856.296875,
+      "required_interaction_m3": 30428.546875
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t18300",
+      "candidate_index": 0,
+      "true_total_m3": -182855.5,
+      "d2_additive_m3": 1112.19677734375,
+      "required_interaction_m3": -183967.703125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t18300",
+      "candidate_index": 1,
+      "true_total_m3": -129389.5,
+      "d2_additive_m3": 22803.623046875,
+      "required_interaction_m3": -152193.125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t18300",
+      "candidate_index": 2,
+      "true_total_m3": -33575.5,
+      "d2_additive_m3": -201632.015625,
+      "required_interaction_m3": 168056.515625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t18300",
+      "candidate_index": 3,
+      "true_total_m3": -221585.5,
+      "d2_additive_m3": -169432.671875,
+      "required_interaction_m3": -52152.828125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t18300",
+      "candidate_index": 4,
+      "true_total_m3": -106127.75,
+      "d2_additive_m3": -106906.7578125,
+      "required_interaction_m3": 779.0078125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t18300",
+      "candidate_index": 5,
+      "true_total_m3": -90819.5,
+      "d2_additive_m3": -83025.21875,
+      "required_interaction_m3": -7794.28125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t18300",
+      "candidate_index": 6,
+      "true_total_m3": -109778.0,
+      "d2_additive_m3": -326362.53125,
+      "required_interaction_m3": 216584.53125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t18300",
+      "candidate_index": 7,
+      "true_total_m3": -206956.5,
+      "d2_additive_m3": -228226.421875,
+      "required_interaction_m3": 21269.921875
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t24900",
+      "candidate_index": 0,
+      "true_total_m3": -60883.125,
+      "d2_additive_m3": -208275.140625,
+      "required_interaction_m3": 147392.015625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t24900",
+      "candidate_index": 1,
+      "true_total_m3": -138906.0,
+      "d2_additive_m3": 7786.5556640625,
+      "required_interaction_m3": -146692.5625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t24900",
+      "candidate_index": 2,
+      "true_total_m3": -122822.75,
+      "d2_additive_m3": 25725.064453125,
+      "required_interaction_m3": -148547.8125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t24900",
+      "candidate_index": 3,
+      "true_total_m3": -103537.125,
+      "d2_additive_m3": -170749.421875,
+      "required_interaction_m3": 67212.296875
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t24900",
+      "candidate_index": 4,
+      "true_total_m3": -96200.875,
+      "d2_additive_m3": 36547.4765625,
+      "required_interaction_m3": -132748.34375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t24900",
+      "candidate_index": 5,
+      "true_total_m3": -58396.125,
+      "d2_additive_m3": -100369.296875,
+      "required_interaction_m3": 41973.171875
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t24900",
+      "candidate_index": 6,
+      "true_total_m3": -103129.625,
+      "d2_additive_m3": -35648.30859375,
+      "required_interaction_m3": -67481.3125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t24900",
+      "candidate_index": 7,
+      "true_total_m3": -86892.125,
+      "d2_additive_m3": -15603.2880859375,
+      "required_interaction_m3": -71288.8359375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t25200",
+      "candidate_index": 0,
+      "true_total_m3": -159791.375,
+      "d2_additive_m3": 22813.05078125,
+      "required_interaction_m3": -182604.421875
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t25200",
+      "candidate_index": 1,
+      "true_total_m3": -104079.75,
+      "d2_additive_m3": 2954.96875,
+      "required_interaction_m3": -107034.71875
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t25200",
+      "candidate_index": 2,
+      "true_total_m3": -39834.125,
+      "d2_additive_m3": -89686.328125,
+      "required_interaction_m3": 49852.203125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t25200",
+      "candidate_index": 3,
+      "true_total_m3": -101839.375,
+      "d2_additive_m3": -54331.2265625,
+      "required_interaction_m3": -47508.1484375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t25200",
+      "candidate_index": 4,
+      "true_total_m3": -8338.5,
+      "d2_additive_m3": -114657.59375,
+      "required_interaction_m3": 106319.09375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t25200",
+      "candidate_index": 5,
+      "true_total_m3": -126817.375,
+      "d2_additive_m3": -288062.71875,
+      "required_interaction_m3": 161245.34375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t25200",
+      "candidate_index": 6,
+      "true_total_m3": -57517.5,
+      "d2_additive_m3": -135944.9375,
+      "required_interaction_m3": 78427.4375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t25200",
+      "candidate_index": 7,
+      "true_total_m3": -70803.5,
+      "d2_additive_m3": -128289.5390625,
+      "required_interaction_m3": 57486.0390625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t6300",
+      "candidate_index": 0,
+      "true_total_m3": 191064.0,
+      "d2_additive_m3": -99486.9921875,
+      "required_interaction_m3": 290551.0
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t6300",
+      "candidate_index": 1,
+      "true_total_m3": 190410.0,
+      "d2_additive_m3": -170168.28125,
+      "required_interaction_m3": 360578.28125
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t6300",
+      "candidate_index": 2,
+      "true_total_m3": -67395.25,
+      "d2_additive_m3": -286603.3125,
+      "required_interaction_m3": 219208.0625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t6300",
+      "candidate_index": 3,
+      "true_total_m3": -73632.75,
+      "d2_additive_m3": -118351.7109375,
+      "required_interaction_m3": 44718.9609375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t6300",
+      "candidate_index": 4,
+      "true_total_m3": -91572.0,
+      "d2_additive_m3": -174260.140625,
+      "required_interaction_m3": 82688.140625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t6300",
+      "candidate_index": 5,
+      "true_total_m3": 487516.75,
+      "d2_additive_m3": -5259.494140625,
+      "required_interaction_m3": 492776.25
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t6300",
+      "candidate_index": 6,
+      "true_total_m3": -15897.0,
+      "d2_additive_m3": -82346.75,
+      "required_interaction_m3": 66449.75
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t6300",
+      "candidate_index": 7,
+      "true_total_m3": -41537.5,
+      "d2_additive_m3": 7934.12646484375,
+      "required_interaction_m3": -49471.625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t7800",
+      "candidate_index": 0,
+      "true_total_m3": 104916.25,
+      "d2_additive_m3": -122549.9921875,
+      "required_interaction_m3": 227466.25
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t7800",
+      "candidate_index": 1,
+      "true_total_m3": -38000.75,
+      "d2_additive_m3": -159004.515625,
+      "required_interaction_m3": 121003.765625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t7800",
+      "candidate_index": 2,
+      "true_total_m3": -70583.25,
+      "d2_additive_m3": 10982.3876953125,
+      "required_interaction_m3": -81565.640625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t7800",
+      "candidate_index": 3,
+      "true_total_m3": -45453.75,
+      "d2_additive_m3": 100215.1484375,
+      "required_interaction_m3": -145668.90625
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t7800",
+      "candidate_index": 4,
+      "true_total_m3": -11591.75,
+      "d2_additive_m3": -78893.1875,
+      "required_interaction_m3": 67301.4375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t7800",
+      "candidate_index": 5,
+      "true_total_m3": -124433.75,
+      "d2_additive_m3": -49533.265625,
+      "required_interaction_m3": -74900.484375
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t7800",
+      "candidate_index": 6,
+      "true_total_m3": -15641.0,
+      "d2_additive_m3": -72456.96875,
+      "required_interaction_m3": 56815.96875
+    },
+    {
+      "group": "D3::T10_D360_chicago::T10_D360_chicago::T10_D360_chicago:t7800",
+      "candidate_index": 7,
+      "true_total_m3": 288089.0,
+      "d2_additive_m3": -156817.296875,
+      "required_interaction_m3": 444906.3125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t10800",
+      "candidate_index": 0,
+      "true_total_m3": -79761.0,
+      "d2_additive_m3": -84714.2578125,
+      "required_interaction_m3": 4953.2578125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t10800",
+      "candidate_index": 1,
+      "true_total_m3": 6400.5,
+      "d2_additive_m3": -40542.8984375,
+      "required_interaction_m3": 46943.3984375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t10800",
+      "candidate_index": 2,
+      "true_total_m3": -93111.75,
+      "d2_additive_m3": -131664.984375,
+      "required_interaction_m3": 38553.234375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t10800",
+      "candidate_index": 3,
+      "true_total_m3": -150236.25,
+      "d2_additive_m3": -221466.40625,
+      "required_interaction_m3": 71230.15625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t10800",
+      "candidate_index": 4,
+      "true_total_m3": -154363.25,
+      "d2_additive_m3": -51347.42578125,
+      "required_interaction_m3": -103015.828125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t10800",
+      "candidate_index": 5,
+      "true_total_m3": -126770.0,
+      "d2_additive_m3": -164172.1875,
+      "required_interaction_m3": 37402.1875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t10800",
+      "candidate_index": 6,
+      "true_total_m3": -111492.5,
+      "d2_additive_m3": -158517.953125,
+      "required_interaction_m3": 47025.453125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t10800",
+      "candidate_index": 7,
+      "true_total_m3": -106943.25,
+      "d2_additive_m3": 5877.5576171875,
+      "required_interaction_m3": -112820.8046875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t13200",
+      "candidate_index": 0,
+      "true_total_m3": -35385.25,
+      "d2_additive_m3": -207113.875,
+      "required_interaction_m3": 171728.625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t13200",
+      "candidate_index": 1,
+      "true_total_m3": -52826.625,
+      "d2_additive_m3": -48063.7109375,
+      "required_interaction_m3": -4762.9140625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t13200",
+      "candidate_index": 2,
+      "true_total_m3": -82958.0,
+      "d2_additive_m3": -227748.46875,
+      "required_interaction_m3": 144790.46875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t13200",
+      "candidate_index": 3,
+      "true_total_m3": -48251.0,
+      "d2_additive_m3": -152213.71875,
+      "required_interaction_m3": 103962.71875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t13200",
+      "candidate_index": 4,
+      "true_total_m3": -26089.375,
+      "d2_additive_m3": -89891.34375,
+      "required_interaction_m3": 63801.96875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t13200",
+      "candidate_index": 5,
+      "true_total_m3": -144817.0,
+      "d2_additive_m3": -41675.1171875,
+      "required_interaction_m3": -103141.8828125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t13200",
+      "candidate_index": 6,
+      "true_total_m3": 1633.5,
+      "d2_additive_m3": 22880.421875,
+      "required_interaction_m3": -21246.921875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t13200",
+      "candidate_index": 7,
+      "true_total_m3": -97129.875,
+      "d2_additive_m3": -167069.71875,
+      "required_interaction_m3": 69939.84375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t14100",
+      "candidate_index": 0,
+      "true_total_m3": -20037.5,
+      "d2_additive_m3": 88341.4140625,
+      "required_interaction_m3": -108378.9140625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t14100",
+      "candidate_index": 1,
+      "true_total_m3": 30793.0,
+      "d2_additive_m3": -135451.171875,
+      "required_interaction_m3": 166244.171875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t14100",
+      "candidate_index": 2,
+      "true_total_m3": -39216.5,
+      "d2_additive_m3": -51091.34375,
+      "required_interaction_m3": 11874.84375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t14100",
+      "candidate_index": 3,
+      "true_total_m3": -41202.75,
+      "d2_additive_m3": -156460.765625,
+      "required_interaction_m3": 115258.015625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t14100",
+      "candidate_index": 4,
+      "true_total_m3": -42496.75,
+      "d2_additive_m3": -32738.30859375,
+      "required_interaction_m3": -9758.44140625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t14100",
+      "candidate_index": 5,
+      "true_total_m3": -98677.25,
+      "d2_additive_m3": -162311.5,
+      "required_interaction_m3": 63634.25
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t14100",
+      "candidate_index": 6,
+      "true_total_m3": -53607.0,
+      "d2_additive_m3": -143502.03125,
+      "required_interaction_m3": 89895.03125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t14100",
+      "candidate_index": 7,
+      "true_total_m3": -101522.625,
+      "d2_additive_m3": -53603.75390625,
+      "required_interaction_m3": -47918.87109375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t4500",
+      "candidate_index": 0,
+      "true_total_m3": -18619.0,
+      "d2_additive_m3": -83695.78125,
+      "required_interaction_m3": 65076.78125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t4500",
+      "candidate_index": 1,
+      "true_total_m3": -142621.75,
+      "d2_additive_m3": -126120.3984375,
+      "required_interaction_m3": -16501.3515625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t4500",
+      "candidate_index": 2,
+      "true_total_m3": -112380.5,
+      "d2_additive_m3": -146711.0,
+      "required_interaction_m3": 34330.5
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t4500",
+      "candidate_index": 3,
+      "true_total_m3": -240334.0,
+      "d2_additive_m3": -207404.765625,
+      "required_interaction_m3": -32929.234375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t4500",
+      "candidate_index": 4,
+      "true_total_m3": -44276.5,
+      "d2_additive_m3": -259757.3125,
+      "required_interaction_m3": 215480.8125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t4500",
+      "candidate_index": 5,
+      "true_total_m3": -91312.0,
+      "d2_additive_m3": -93581.3359375,
+      "required_interaction_m3": 2269.3359375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t4500",
+      "candidate_index": 6,
+      "true_total_m3": -101474.0,
+      "d2_additive_m3": 59072.578125,
+      "required_interaction_m3": -160546.578125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t4500",
+      "candidate_index": 7,
+      "true_total_m3": -90515.75,
+      "d2_additive_m3": -49489.94921875,
+      "required_interaction_m3": -41025.80078125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t5700",
+      "candidate_index": 0,
+      "true_total_m3": -142148.0,
+      "d2_additive_m3": 34666.7890625,
+      "required_interaction_m3": -176814.78125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t5700",
+      "candidate_index": 1,
+      "true_total_m3": -154439.5,
+      "d2_additive_m3": 51685.7734375,
+      "required_interaction_m3": -206125.28125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t5700",
+      "candidate_index": 2,
+      "true_total_m3": 101.0,
+      "d2_additive_m3": -152054.515625,
+      "required_interaction_m3": 152155.515625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t5700",
+      "candidate_index": 3,
+      "true_total_m3": -152258.25,
+      "d2_additive_m3": -141380.640625,
+      "required_interaction_m3": -10877.609375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t5700",
+      "candidate_index": 4,
+      "true_total_m3": 12308.5,
+      "d2_additive_m3": -38241.9140625,
+      "required_interaction_m3": 50550.4140625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t5700",
+      "candidate_index": 5,
+      "true_total_m3": -14479.5,
+      "d2_additive_m3": -163744.890625,
+      "required_interaction_m3": 149265.390625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t5700",
+      "candidate_index": 6,
+      "true_total_m3": 19320.5,
+      "d2_additive_m3": -192194.78125,
+      "required_interaction_m3": 211515.28125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t5700",
+      "candidate_index": 7,
+      "true_total_m3": -46170.5,
+      "d2_additive_m3": 11873.8056640625,
+      "required_interaction_m3": -58044.3046875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t7200",
+      "candidate_index": 0,
+      "true_total_m3": -83263.0,
+      "d2_additive_m3": 56.7945442199707,
+      "required_interaction_m3": -83319.796875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t7200",
+      "candidate_index": 1,
+      "true_total_m3": -186445.75,
+      "d2_additive_m3": -111885.9921875,
+      "required_interaction_m3": -74559.7578125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t7200",
+      "candidate_index": 2,
+      "true_total_m3": 17679.75,
+      "d2_additive_m3": -62626.5234375,
+      "required_interaction_m3": 80306.2734375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t7200",
+      "candidate_index": 3,
+      "true_total_m3": -132148.5,
+      "d2_additive_m3": 170949.4375,
+      "required_interaction_m3": -303097.9375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t7200",
+      "candidate_index": 4,
+      "true_total_m3": -57782.25,
+      "d2_additive_m3": -33639.81640625,
+      "required_interaction_m3": -24142.43359375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t7200",
+      "candidate_index": 5,
+      "true_total_m3": -201640.75,
+      "d2_additive_m3": -98708.3515625,
+      "required_interaction_m3": -102932.3984375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t7200",
+      "candidate_index": 6,
+      "true_total_m3": -79927.75,
+      "d2_additive_m3": -18772.876953125,
+      "required_interaction_m3": -61154.875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t7200",
+      "candidate_index": 7,
+      "true_total_m3": -84586.75,
+      "d2_additive_m3": -5233.94580078125,
+      "required_interaction_m3": -79352.8046875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t8400",
+      "candidate_index": 0,
+      "true_total_m3": -178253.5,
+      "d2_additive_m3": -186501.921875,
+      "required_interaction_m3": 8248.421875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t8400",
+      "candidate_index": 1,
+      "true_total_m3": -90070.0,
+      "d2_additive_m3": -114849.671875,
+      "required_interaction_m3": 24779.671875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t8400",
+      "candidate_index": 2,
+      "true_total_m3": -70695.0,
+      "d2_additive_m3": -98201.15625,
+      "required_interaction_m3": 27506.15625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t8400",
+      "candidate_index": 3,
+      "true_total_m3": -102774.0,
+      "d2_additive_m3": -66152.78125,
+      "required_interaction_m3": -36621.21875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t8400",
+      "candidate_index": 4,
+      "true_total_m3": 1078.25,
+      "d2_additive_m3": -191639.984375,
+      "required_interaction_m3": 192718.234375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t8400",
+      "candidate_index": 5,
+      "true_total_m3": -57797.0,
+      "d2_additive_m3": -154717.828125,
+      "required_interaction_m3": 96920.828125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t8400",
+      "candidate_index": 6,
+      "true_total_m3": -166856.0,
+      "d2_additive_m3": -108703.1640625,
+      "required_interaction_m3": -58152.8359375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t8400",
+      "candidate_index": 7,
+      "true_total_m3": 154395.25,
+      "d2_additive_m3": -31297.369140625,
+      "required_interaction_m3": 185692.625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t9000",
+      "candidate_index": 0,
+      "true_total_m3": -6900.25,
+      "d2_additive_m3": -157921.765625,
+      "required_interaction_m3": 151021.515625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t9000",
+      "candidate_index": 1,
+      "true_total_m3": -43525.75,
+      "d2_additive_m3": -67092.0078125,
+      "required_interaction_m3": 23566.2578125
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t9000",
+      "candidate_index": 2,
+      "true_total_m3": -116247.5,
+      "d2_additive_m3": -152597.421875,
+      "required_interaction_m3": 36349.921875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t9000",
+      "candidate_index": 3,
+      "true_total_m3": -99710.75,
+      "d2_additive_m3": -241857.6875,
+      "required_interaction_m3": 142146.9375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t9000",
+      "candidate_index": 4,
+      "true_total_m3": -125685.5,
+      "d2_additive_m3": -248763.546875,
+      "required_interaction_m3": 123078.046875
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t9000",
+      "candidate_index": 5,
+      "true_total_m3": -45236.5,
+      "d2_additive_m3": -124740.4375,
+      "required_interaction_m3": 79503.9375
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t9000",
+      "candidate_index": 6,
+      "true_total_m3": -190657.5,
+      "d2_additive_m3": -158231.4375,
+      "required_interaction_m3": -32426.0625
+    },
+    {
+      "group": "D3::T20_D120_chicago::T20_D120_chicago::T20_D120_chicago:t9000",
+      "candidate_index": 7,
+      "true_total_m3": -37917.75,
+      "d2_additive_m3": -57394.9140625,
+      "required_interaction_m3": 19477.1640625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t10500",
+      "candidate_index": 0,
+      "true_total_m3": 256618.5,
+      "d2_additive_m3": -65044.1328125,
+      "required_interaction_m3": 321662.625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t10500",
+      "candidate_index": 1,
+      "true_total_m3": -51168.0,
+      "d2_additive_m3": -259164.265625,
+      "required_interaction_m3": 207996.265625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t10500",
+      "candidate_index": 2,
+      "true_total_m3": 365692.0,
+      "d2_additive_m3": 43787.40625,
+      "required_interaction_m3": 321904.59375
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t10500",
+      "candidate_index": 3,
+      "true_total_m3": 14354.5,
+      "d2_additive_m3": -104823.828125,
+      "required_interaction_m3": 119178.328125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t10500",
+      "candidate_index": 4,
+      "true_total_m3": -131474.0,
+      "d2_additive_m3": -75646.859375,
+      "required_interaction_m3": -55827.140625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t10500",
+      "candidate_index": 5,
+      "true_total_m3": 6804.0,
+      "d2_additive_m3": 117890.0390625,
+      "required_interaction_m3": -111086.0390625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t10500",
+      "candidate_index": 6,
+      "true_total_m3": -14610.0,
+      "d2_additive_m3": 16514.404296875,
+      "required_interaction_m3": -31124.404296875
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t10500",
+      "candidate_index": 7,
+      "true_total_m3": -24241.0,
+      "d2_additive_m3": -89805.40625,
+      "required_interaction_m3": 65564.40625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t12000",
+      "candidate_index": 0,
+      "true_total_m3": 172168.0,
+      "d2_additive_m3": -128180.8984375,
+      "required_interaction_m3": 300348.90625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t12000",
+      "candidate_index": 1,
+      "true_total_m3": -48012.0,
+      "d2_additive_m3": -123302.703125,
+      "required_interaction_m3": 75290.703125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t12000",
+      "candidate_index": 2,
+      "true_total_m3": -160750.0,
+      "d2_additive_m3": 30967.1875,
+      "required_interaction_m3": -191717.1875
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t12000",
+      "candidate_index": 3,
+      "true_total_m3": 16518.0,
+      "d2_additive_m3": -178264.09375,
+      "required_interaction_m3": 194782.09375
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t12000",
+      "candidate_index": 4,
+      "true_total_m3": -54008.0,
+      "d2_additive_m3": -97359.921875,
+      "required_interaction_m3": 43351.921875
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t12000",
+      "candidate_index": 5,
+      "true_total_m3": 20151.5,
+      "d2_additive_m3": -82690.8671875,
+      "required_interaction_m3": 102842.3671875
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t12000",
+      "candidate_index": 6,
+      "true_total_m3": -51366.5,
+      "d2_additive_m3": -235989.25,
+      "required_interaction_m3": 184622.75
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t12000",
+      "candidate_index": 7,
+      "true_total_m3": 46088.5,
+      "d2_additive_m3": 20203.96875,
+      "required_interaction_m3": 25884.53125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16200",
+      "candidate_index": 0,
+      "true_total_m3": 97241.5,
+      "d2_additive_m3": -198897.609375,
+      "required_interaction_m3": 296139.125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16200",
+      "candidate_index": 1,
+      "true_total_m3": -117187.0,
+      "d2_additive_m3": -40634.67578125,
+      "required_interaction_m3": -76552.328125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16200",
+      "candidate_index": 2,
+      "true_total_m3": -73413.5,
+      "d2_additive_m3": -22532.42578125,
+      "required_interaction_m3": -50881.07421875
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16200",
+      "candidate_index": 3,
+      "true_total_m3": -242032.0,
+      "d2_additive_m3": -172011.34375,
+      "required_interaction_m3": -70020.65625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16200",
+      "candidate_index": 4,
+      "true_total_m3": -83740.5,
+      "d2_additive_m3": -4439.7451171875,
+      "required_interaction_m3": -79300.7578125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16200",
+      "candidate_index": 5,
+      "true_total_m3": -128571.75,
+      "d2_additive_m3": -260717.96875,
+      "required_interaction_m3": 132146.21875
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16200",
+      "candidate_index": 6,
+      "true_total_m3": -117134.0,
+      "d2_additive_m3": -253245.515625,
+      "required_interaction_m3": 136111.515625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16200",
+      "candidate_index": 7,
+      "true_total_m3": 13176.75,
+      "d2_additive_m3": -88055.3125,
+      "required_interaction_m3": 101232.0625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16500",
+      "candidate_index": 0,
+      "true_total_m3": -15591.25,
+      "d2_additive_m3": -281131.375,
+      "required_interaction_m3": 265540.125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16500",
+      "candidate_index": 1,
+      "true_total_m3": -35981.0,
+      "d2_additive_m3": 64614.78515625,
+      "required_interaction_m3": -100595.78125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16500",
+      "candidate_index": 2,
+      "true_total_m3": 41488.25,
+      "d2_additive_m3": -418174.75,
+      "required_interaction_m3": 459663.0
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16500",
+      "candidate_index": 3,
+      "true_total_m3": -148269.5,
+      "d2_additive_m3": -201944.671875,
+      "required_interaction_m3": 53675.171875
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16500",
+      "candidate_index": 4,
+      "true_total_m3": -103078.75,
+      "d2_additive_m3": -103325.28125,
+      "required_interaction_m3": 246.53125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16500",
+      "candidate_index": 5,
+      "true_total_m3": -49815.5,
+      "d2_additive_m3": -199051.578125,
+      "required_interaction_m3": 149236.078125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16500",
+      "candidate_index": 6,
+      "true_total_m3": -191375.75,
+      "d2_additive_m3": -86657.9765625,
+      "required_interaction_m3": -104717.7734375
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t16500",
+      "candidate_index": 7,
+      "true_total_m3": -89313.0,
+      "d2_additive_m3": -290612.90625,
+      "required_interaction_m3": 201299.90625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21000",
+      "candidate_index": 0,
+      "true_total_m3": -75155.625,
+      "d2_additive_m3": -84531.7109375,
+      "required_interaction_m3": 9376.0859375
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21000",
+      "candidate_index": 1,
+      "true_total_m3": -68625.625,
+      "d2_additive_m3": -181458.09375,
+      "required_interaction_m3": 112832.46875
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21000",
+      "candidate_index": 2,
+      "true_total_m3": -127666.25,
+      "d2_additive_m3": -66768.640625,
+      "required_interaction_m3": -60897.609375
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21000",
+      "candidate_index": 3,
+      "true_total_m3": -117220.875,
+      "d2_additive_m3": -171948.078125,
+      "required_interaction_m3": 54727.203125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21000",
+      "candidate_index": 4,
+      "true_total_m3": -39379.25,
+      "d2_additive_m3": 38448.55078125,
+      "required_interaction_m3": -77827.796875
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21000",
+      "candidate_index": 5,
+      "true_total_m3": -127041.75,
+      "d2_additive_m3": -4425.46630859375,
+      "required_interaction_m3": -122616.28125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21000",
+      "candidate_index": 6,
+      "true_total_m3": -2642.625,
+      "d2_additive_m3": 103994.828125,
+      "required_interaction_m3": -106637.453125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21000",
+      "candidate_index": 7,
+      "true_total_m3": -85486.375,
+      "d2_additive_m3": -44232.4921875,
+      "required_interaction_m3": -41253.8828125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21600",
+      "candidate_index": 0,
+      "true_total_m3": -109172.875,
+      "d2_additive_m3": -138981.03125,
+      "required_interaction_m3": 29808.15625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21600",
+      "candidate_index": 1,
+      "true_total_m3": -125400.0,
+      "d2_additive_m3": -46483.33984375,
+      "required_interaction_m3": -78916.65625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21600",
+      "candidate_index": 2,
+      "true_total_m3": -48007.0,
+      "d2_additive_m3": -195816.1875,
+      "required_interaction_m3": 147809.1875
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21600",
+      "candidate_index": 3,
+      "true_total_m3": -11149.25,
+      "d2_additive_m3": -22789.099609375,
+      "required_interaction_m3": 11639.849609375
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21600",
+      "candidate_index": 4,
+      "true_total_m3": -69575.25,
+      "d2_additive_m3": -164823.15625,
+      "required_interaction_m3": 95247.90625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21600",
+      "candidate_index": 5,
+      "true_total_m3": -209064.125,
+      "d2_additive_m3": -120472.875,
+      "required_interaction_m3": -88591.25
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21600",
+      "candidate_index": 6,
+      "true_total_m3": -18811.375,
+      "d2_additive_m3": -139190.15625,
+      "required_interaction_m3": 120378.78125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t21600",
+      "candidate_index": 7,
+      "true_total_m3": -88567.875,
+      "d2_additive_m3": -71336.78125,
+      "required_interaction_m3": -17231.09375
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t3900",
+      "candidate_index": 0,
+      "true_total_m3": -119878.25,
+      "d2_additive_m3": -64732.5390625,
+      "required_interaction_m3": -55145.7109375
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t3900",
+      "candidate_index": 1,
+      "true_total_m3": -86856.75,
+      "d2_additive_m3": -54475.578125,
+      "required_interaction_m3": -32381.171875
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t3900",
+      "candidate_index": 2,
+      "true_total_m3": 190454.25,
+      "d2_additive_m3": -28706.048828125,
+      "required_interaction_m3": 219160.296875
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t3900",
+      "candidate_index": 3,
+      "true_total_m3": 171028.75,
+      "d2_additive_m3": 66444.109375,
+      "required_interaction_m3": 104584.640625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t3900",
+      "candidate_index": 4,
+      "true_total_m3": 92361.75,
+      "d2_additive_m3": -86434.65625,
+      "required_interaction_m3": 178796.40625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t3900",
+      "candidate_index": 5,
+      "true_total_m3": -22722.75,
+      "d2_additive_m3": -145644.671875,
+      "required_interaction_m3": 122921.921875
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t3900",
+      "candidate_index": 6,
+      "true_total_m3": -33118.0,
+      "d2_additive_m3": -111877.3203125,
+      "required_interaction_m3": 78759.3203125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t3900",
+      "candidate_index": 7,
+      "true_total_m3": -168465.5,
+      "d2_additive_m3": -203465.390625,
+      "required_interaction_m3": 34999.890625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t6600",
+      "candidate_index": 0,
+      "true_total_m3": 41884.5,
+      "d2_additive_m3": -121881.0546875,
+      "required_interaction_m3": 163765.5625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t6600",
+      "candidate_index": 1,
+      "true_total_m3": -215749.0,
+      "d2_additive_m3": 29961.2578125,
+      "required_interaction_m3": -245710.25
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t6600",
+      "candidate_index": 2,
+      "true_total_m3": -182888.5,
+      "d2_additive_m3": 37820.27734375,
+      "required_interaction_m3": -220708.78125
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t6600",
+      "candidate_index": 3,
+      "true_total_m3": -147461.0,
+      "d2_additive_m3": -154498.0625,
+      "required_interaction_m3": 7037.0625
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t6600",
+      "candidate_index": 4,
+      "true_total_m3": -98258.0,
+      "d2_additive_m3": -75570.1640625,
+      "required_interaction_m3": -22687.8359375
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t6600",
+      "candidate_index": 5,
+      "true_total_m3": -14567.0,
+      "d2_additive_m3": 60119.10546875,
+      "required_interaction_m3": -74686.109375
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t6600",
+      "candidate_index": 6,
+      "true_total_m3": -80057.0,
+      "d2_additive_m3": -107323.4375,
+      "required_interaction_m3": 27266.4375
+    },
+    {
+      "group": "D3::T20_D300_chicago::T20_D300_chicago::T20_D300_chicago:t6600",
+      "candidate_index": 7,
+      "true_total_m3": 134172.5,
+      "d2_additive_m3": -92810.4375,
+      "required_interaction_m3": 226982.9375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t11100",
+      "candidate_index": 0,
+      "true_total_m3": 140117.0,
+      "d2_additive_m3": -83866.6796875,
+      "required_interaction_m3": 223983.6875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t11100",
+      "candidate_index": 1,
+      "true_total_m3": -122899.5,
+      "d2_additive_m3": -198953.75,
+      "required_interaction_m3": 76054.25
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t11100",
+      "candidate_index": 2,
+      "true_total_m3": -92434.0,
+      "d2_additive_m3": -29320.111328125,
+      "required_interaction_m3": -63113.890625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t11100",
+      "candidate_index": 3,
+      "true_total_m3": -65313.0,
+      "d2_additive_m3": -154802.125,
+      "required_interaction_m3": 89489.125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t11100",
+      "candidate_index": 4,
+      "true_total_m3": -169041.5,
+      "d2_additive_m3": -93008.8515625,
+      "required_interaction_m3": -76032.6484375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t11100",
+      "candidate_index": 5,
+      "true_total_m3": -102339.0,
+      "d2_additive_m3": 3532.7275390625,
+      "required_interaction_m3": -105871.7265625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t11100",
+      "candidate_index": 6,
+      "true_total_m3": 42062.0,
+      "d2_additive_m3": -41771.8203125,
+      "required_interaction_m3": 83833.8203125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t11100",
+      "candidate_index": 7,
+      "true_total_m3": 2455.5,
+      "d2_additive_m3": -108126.984375,
+      "required_interaction_m3": 110582.484375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t15000",
+      "candidate_index": 0,
+      "true_total_m3": 26112.0,
+      "d2_additive_m3": -150968.625,
+      "required_interaction_m3": 177080.625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t15000",
+      "candidate_index": 1,
+      "true_total_m3": -115674.5,
+      "d2_additive_m3": -188203.96875,
+      "required_interaction_m3": 72529.46875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t15000",
+      "candidate_index": 2,
+      "true_total_m3": -114711.5,
+      "d2_additive_m3": -37361.109375,
+      "required_interaction_m3": -77350.390625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t15000",
+      "candidate_index": 3,
+      "true_total_m3": 166559.0,
+      "d2_additive_m3": -64993.28515625,
+      "required_interaction_m3": 231552.28125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t15000",
+      "candidate_index": 4,
+      "true_total_m3": -162013.5,
+      "d2_additive_m3": -206219.515625,
+      "required_interaction_m3": 44206.015625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t15000",
+      "candidate_index": 5,
+      "true_total_m3": -203217.5,
+      "d2_additive_m3": 18199.927734375,
+      "required_interaction_m3": -221417.421875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t15000",
+      "candidate_index": 6,
+      "true_total_m3": 119298.5,
+      "d2_additive_m3": -142738.984375,
+      "required_interaction_m3": 262037.484375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t15000",
+      "candidate_index": 7,
+      "true_total_m3": -42323.5,
+      "d2_additive_m3": -66548.53125,
+      "required_interaction_m3": 24225.03125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t18000",
+      "candidate_index": 0,
+      "true_total_m3": -167672.25,
+      "d2_additive_m3": -135712.578125,
+      "required_interaction_m3": -31959.671875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t18000",
+      "candidate_index": 1,
+      "true_total_m3": -31744.75,
+      "d2_additive_m3": -89278.5546875,
+      "required_interaction_m3": 57533.8046875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t18000",
+      "candidate_index": 2,
+      "true_total_m3": -213885.75,
+      "d2_additive_m3": -100901.0078125,
+      "required_interaction_m3": -112984.7421875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t18000",
+      "candidate_index": 3,
+      "true_total_m3": 32959.0,
+      "d2_additive_m3": -24986.62109375,
+      "required_interaction_m3": 57945.62109375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t18000",
+      "candidate_index": 4,
+      "true_total_m3": -79509.25,
+      "d2_additive_m3": -106984.9921875,
+      "required_interaction_m3": 27475.7421875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t18000",
+      "candidate_index": 5,
+      "true_total_m3": -94533.5,
+      "d2_additive_m3": -77075.328125,
+      "required_interaction_m3": -17458.171875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t18000",
+      "candidate_index": 6,
+      "true_total_m3": -160726.5,
+      "d2_additive_m3": -58092.27734375,
+      "required_interaction_m3": -102634.21875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t18000",
+      "candidate_index": 7,
+      "true_total_m3": -44397.0,
+      "d2_additive_m3": -291001.46875,
+      "required_interaction_m3": 246604.46875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t19200",
+      "candidate_index": 0,
+      "true_total_m3": -129233.25,
+      "d2_additive_m3": -227323.84375,
+      "required_interaction_m3": 98090.59375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t19200",
+      "candidate_index": 1,
+      "true_total_m3": -22196.5,
+      "d2_additive_m3": -211668.921875,
+      "required_interaction_m3": 189472.421875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t19200",
+      "candidate_index": 2,
+      "true_total_m3": -5573.5,
+      "d2_additive_m3": 147132.640625,
+      "required_interaction_m3": -152706.140625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t19200",
+      "candidate_index": 3,
+      "true_total_m3": 6351.5,
+      "d2_additive_m3": -206687.5,
+      "required_interaction_m3": 213039.0
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t19200",
+      "candidate_index": 4,
+      "true_total_m3": -34436.5,
+      "d2_additive_m3": -28328.71484375,
+      "required_interaction_m3": -6107.78515625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t19200",
+      "candidate_index": 5,
+      "true_total_m3": -61567.75,
+      "d2_additive_m3": 174541.296875,
+      "required_interaction_m3": -236109.046875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t19200",
+      "candidate_index": 6,
+      "true_total_m3": -233532.5,
+      "d2_additive_m3": -114271.9296875,
+      "required_interaction_m3": -119260.5703125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t19200",
+      "candidate_index": 7,
+      "true_total_m3": -78099.5,
+      "d2_additive_m3": -112571.28125,
+      "required_interaction_m3": 34471.78125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t24000",
+      "candidate_index": 0,
+      "true_total_m3": -11101.875,
+      "d2_additive_m3": -262974.25,
+      "required_interaction_m3": 251872.375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t24000",
+      "candidate_index": 1,
+      "true_total_m3": -148967.625,
+      "d2_additive_m3": -125168.1796875,
+      "required_interaction_m3": -23799.4453125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t24000",
+      "candidate_index": 2,
+      "true_total_m3": -56848.875,
+      "d2_additive_m3": -80943.625,
+      "required_interaction_m3": 24094.75
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t24000",
+      "candidate_index": 3,
+      "true_total_m3": -55460.625,
+      "d2_additive_m3": 77526.7109375,
+      "required_interaction_m3": -132987.34375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t24000",
+      "candidate_index": 4,
+      "true_total_m3": -137386.625,
+      "d2_additive_m3": -86729.0859375,
+      "required_interaction_m3": -50657.5390625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t24000",
+      "candidate_index": 5,
+      "true_total_m3": -181025.625,
+      "d2_additive_m3": -55168.19921875,
+      "required_interaction_m3": -125857.421875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t24000",
+      "candidate_index": 6,
+      "true_total_m3": -84638.125,
+      "d2_additive_m3": -124107.890625,
+      "required_interaction_m3": 39469.765625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t24000",
+      "candidate_index": 7,
+      "true_total_m3": -143693.625,
+      "d2_additive_m3": -77864.046875,
+      "required_interaction_m3": -65829.578125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t27600",
+      "candidate_index": 0,
+      "true_total_m3": -99557.5625,
+      "d2_additive_m3": -101014.8359375,
+      "required_interaction_m3": 1457.2734375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t27600",
+      "candidate_index": 1,
+      "true_total_m3": -67712.6875,
+      "d2_additive_m3": 37460.765625,
+      "required_interaction_m3": -105173.453125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t27600",
+      "candidate_index": 2,
+      "true_total_m3": -176577.4375,
+      "d2_additive_m3": 3299.9150390625,
+      "required_interaction_m3": -179877.359375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t27600",
+      "candidate_index": 3,
+      "true_total_m3": -90847.8125,
+      "d2_additive_m3": -58828.453125,
+      "required_interaction_m3": -32019.359375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t27600",
+      "candidate_index": 4,
+      "true_total_m3": -45272.1875,
+      "d2_additive_m3": -294152.09375,
+      "required_interaction_m3": 248879.90625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t27600",
+      "candidate_index": 5,
+      "true_total_m3": -107978.6875,
+      "d2_additive_m3": -125992.9609375,
+      "required_interaction_m3": 18014.2734375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t27600",
+      "candidate_index": 6,
+      "true_total_m3": -64330.6875,
+      "d2_additive_m3": -181784.265625,
+      "required_interaction_m3": 117453.578125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t27600",
+      "candidate_index": 7,
+      "true_total_m3": -11302.1875,
+      "d2_additive_m3": -50830.77734375,
+      "required_interaction_m3": 39528.58984375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t8700",
+      "candidate_index": 0,
+      "true_total_m3": -47923.5,
+      "d2_additive_m3": -167696.953125,
+      "required_interaction_m3": 119773.453125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t8700",
+      "candidate_index": 1,
+      "true_total_m3": -157909.0,
+      "d2_additive_m3": -78923.859375,
+      "required_interaction_m3": -78985.140625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t8700",
+      "candidate_index": 2,
+      "true_total_m3": -12746.5,
+      "d2_additive_m3": -93850.0078125,
+      "required_interaction_m3": 81103.5078125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t8700",
+      "candidate_index": 3,
+      "true_total_m3": -152355.5,
+      "d2_additive_m3": -123228.03125,
+      "required_interaction_m3": -29127.46875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t8700",
+      "candidate_index": 4,
+      "true_total_m3": -191611.5,
+      "d2_additive_m3": -199897.515625,
+      "required_interaction_m3": 8286.015625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t8700",
+      "candidate_index": 5,
+      "true_total_m3": -41023.0,
+      "d2_additive_m3": -778.2428588867188,
+      "required_interaction_m3": -40244.7578125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t8700",
+      "candidate_index": 6,
+      "true_total_m3": 162330.5,
+      "d2_additive_m3": -186300.8125,
+      "required_interaction_m3": 348631.3125
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t8700",
+      "candidate_index": 7,
+      "true_total_m3": -115942.5,
+      "d2_additive_m3": -94302.1484375,
+      "required_interaction_m3": -21640.3515625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t9300",
+      "candidate_index": 0,
+      "true_total_m3": 184894.0,
+      "d2_additive_m3": -110989.96875,
+      "required_interaction_m3": 295883.96875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t9300",
+      "candidate_index": 1,
+      "true_total_m3": -219088.5,
+      "d2_additive_m3": -27761.599609375,
+      "required_interaction_m3": -191326.90625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t9300",
+      "candidate_index": 2,
+      "true_total_m3": -96823.0,
+      "d2_additive_m3": -11032.1259765625,
+      "required_interaction_m3": -85790.875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t9300",
+      "candidate_index": 3,
+      "true_total_m3": 344378.0,
+      "d2_additive_m3": 46555.546875,
+      "required_interaction_m3": 297822.4375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t9300",
+      "candidate_index": 4,
+      "true_total_m3": -220215.0,
+      "d2_additive_m3": 4438.6943359375,
+      "required_interaction_m3": -224653.6875
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t9300",
+      "candidate_index": 5,
+      "true_total_m3": -28732.5,
+      "d2_additive_m3": -42034.9609375,
+      "required_interaction_m3": 13302.4609375
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t9300",
+      "candidate_index": 6,
+      "true_total_m3": -246951.0,
+      "d2_additive_m3": -91592.8515625,
+      "required_interaction_m3": -155358.15625
+    },
+    {
+      "group": "D3::T20_D360_chicago::T20_D360_chicago::T20_D360_chicago:t9300",
+      "candidate_index": 7,
+      "true_total_m3": -291785.5,
+      "d2_additive_m3": -67940.671875,
+      "required_interaction_m3": -223844.828125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12300",
+      "candidate_index": 0,
+      "true_total_m3": -158019.5,
+      "d2_additive_m3": 33550.51953125,
+      "required_interaction_m3": -191570.015625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12300",
+      "candidate_index": 1,
+      "true_total_m3": -129729.0,
+      "d2_additive_m3": -127940.84375,
+      "required_interaction_m3": -1788.15625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12300",
+      "candidate_index": 2,
+      "true_total_m3": -154206.5,
+      "d2_additive_m3": 326.2084655761719,
+      "required_interaction_m3": -154532.703125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12300",
+      "candidate_index": 3,
+      "true_total_m3": -181020.0,
+      "d2_additive_m3": -46241.78515625,
+      "required_interaction_m3": -134778.21875
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12300",
+      "candidate_index": 4,
+      "true_total_m3": -27174.0,
+      "d2_additive_m3": -7830.44384765625,
+      "required_interaction_m3": -19343.556640625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12300",
+      "candidate_index": 5,
+      "true_total_m3": -29939.5,
+      "d2_additive_m3": -188009.34375,
+      "required_interaction_m3": 158069.84375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12300",
+      "candidate_index": 6,
+      "true_total_m3": -51594.0,
+      "d2_additive_m3": -125548.96875,
+      "required_interaction_m3": 73954.96875
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12300",
+      "candidate_index": 7,
+      "true_total_m3": -113723.0,
+      "d2_additive_m3": -51010.03515625,
+      "required_interaction_m3": -62712.96484375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12900",
+      "candidate_index": 0,
+      "true_total_m3": -6911.5,
+      "d2_additive_m3": -111513.640625,
+      "required_interaction_m3": 104602.140625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12900",
+      "candidate_index": 1,
+      "true_total_m3": -68503.0,
+      "d2_additive_m3": -631.061767578125,
+      "required_interaction_m3": -67871.9375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12900",
+      "candidate_index": 2,
+      "true_total_m3": -11951.5,
+      "d2_additive_m3": 54957.62890625,
+      "required_interaction_m3": -66909.125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12900",
+      "candidate_index": 3,
+      "true_total_m3": -34159.0,
+      "d2_additive_m3": 97947.5,
+      "required_interaction_m3": -132106.5
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12900",
+      "candidate_index": 4,
+      "true_total_m3": -172309.0,
+      "d2_additive_m3": -145902.140625,
+      "required_interaction_m3": -26406.859375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12900",
+      "candidate_index": 5,
+      "true_total_m3": -104238.25,
+      "d2_additive_m3": -74246.671875,
+      "required_interaction_m3": -29991.578125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12900",
+      "candidate_index": 6,
+      "true_total_m3": -45766.0,
+      "d2_additive_m3": -1298.45703125,
+      "required_interaction_m3": -44467.54296875
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t12900",
+      "candidate_index": 7,
+      "true_total_m3": -45124.0,
+      "d2_additive_m3": 9307.64453125,
+      "required_interaction_m3": -54431.64453125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t15600",
+      "candidate_index": 0,
+      "true_total_m3": -145958.25,
+      "d2_additive_m3": 104911.1875,
+      "required_interaction_m3": -250869.4375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t15600",
+      "candidate_index": 1,
+      "true_total_m3": -79609.75,
+      "d2_additive_m3": -100247.1875,
+      "required_interaction_m3": 20637.4375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t15600",
+      "candidate_index": 2,
+      "true_total_m3": -85514.0,
+      "d2_additive_m3": -245220.0625,
+      "required_interaction_m3": 159706.0625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t15600",
+      "candidate_index": 3,
+      "true_total_m3": -100525.5,
+      "d2_additive_m3": 177043.4375,
+      "required_interaction_m3": -277568.9375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t15600",
+      "candidate_index": 4,
+      "true_total_m3": -63571.5,
+      "d2_additive_m3": -92387.4375,
+      "required_interaction_m3": 28815.9375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t15600",
+      "candidate_index": 5,
+      "true_total_m3": -195519.5,
+      "d2_additive_m3": -47558.87109375,
+      "required_interaction_m3": -147960.625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t15600",
+      "candidate_index": 6,
+      "true_total_m3": -134899.5,
+      "d2_additive_m3": -164677.828125,
+      "required_interaction_m3": 29778.328125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t15600",
+      "candidate_index": 7,
+      "true_total_m3": -7257.25,
+      "d2_additive_m3": -55923.15234375,
+      "required_interaction_m3": 48665.90234375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t16500",
+      "candidate_index": 0,
+      "true_total_m3": -50608.75,
+      "d2_additive_m3": -2083.271728515625,
+      "required_interaction_m3": -48525.4765625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t16500",
+      "candidate_index": 1,
+      "true_total_m3": -115167.75,
+      "d2_additive_m3": -213385.171875,
+      "required_interaction_m3": 98217.421875
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t16500",
+      "candidate_index": 2,
+      "true_total_m3": 108581.75,
+      "d2_additive_m3": -222718.78125,
+      "required_interaction_m3": 331300.53125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t16500",
+      "candidate_index": 3,
+      "true_total_m3": -62201.75,
+      "d2_additive_m3": -116481.140625,
+      "required_interaction_m3": 54279.390625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t16500",
+      "candidate_index": 4,
+      "true_total_m3": -119662.25,
+      "d2_additive_m3": -174882.234375,
+      "required_interaction_m3": 55219.984375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t16500",
+      "candidate_index": 5,
+      "true_total_m3": -26112.0,
+      "d2_additive_m3": -124073.4609375,
+      "required_interaction_m3": 97961.4609375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t16500",
+      "candidate_index": 6,
+      "true_total_m3": -167188.625,
+      "d2_additive_m3": -55019.87109375,
+      "required_interaction_m3": -112168.75
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t16500",
+      "candidate_index": 7,
+      "true_total_m3": -45998.875,
+      "d2_additive_m3": -336885.25,
+      "required_interaction_m3": 290886.375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t3600",
+      "candidate_index": 0,
+      "true_total_m3": -48352.5,
+      "d2_additive_m3": -196615.484375,
+      "required_interaction_m3": 148262.984375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t3600",
+      "candidate_index": 1,
+      "true_total_m3": 261567.5,
+      "d2_additive_m3": 6614.2900390625,
+      "required_interaction_m3": 254953.203125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t3600",
+      "candidate_index": 2,
+      "true_total_m3": -9785.5,
+      "d2_additive_m3": -109584.421875,
+      "required_interaction_m3": 99798.921875
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t3600",
+      "candidate_index": 3,
+      "true_total_m3": 73925.5,
+      "d2_additive_m3": 55457.39453125,
+      "required_interaction_m3": 18468.10546875
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t3600",
+      "candidate_index": 4,
+      "true_total_m3": -36843.5,
+      "d2_additive_m3": -97171.34375,
+      "required_interaction_m3": 60327.84375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t3600",
+      "candidate_index": 5,
+      "true_total_m3": -36049.5,
+      "d2_additive_m3": -249610.203125,
+      "required_interaction_m3": 213560.703125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t3600",
+      "candidate_index": 6,
+      "true_total_m3": 614546.0,
+      "d2_additive_m3": -68392.8515625,
+      "required_interaction_m3": 682938.875
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t3600",
+      "candidate_index": 7,
+      "true_total_m3": 37006.0,
+      "d2_additive_m3": -58207.73046875,
+      "required_interaction_m3": 95213.734375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t4500",
+      "candidate_index": 0,
+      "true_total_m3": 95562.5,
+      "d2_additive_m3": -22622.603515625,
+      "required_interaction_m3": 118185.1015625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t4500",
+      "candidate_index": 1,
+      "true_total_m3": 6785.0,
+      "d2_additive_m3": -79272.453125,
+      "required_interaction_m3": 86057.453125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t4500",
+      "candidate_index": 2,
+      "true_total_m3": -83090.0,
+      "d2_additive_m3": -87397.0390625,
+      "required_interaction_m3": 4307.0390625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t4500",
+      "candidate_index": 3,
+      "true_total_m3": 43470.0,
+      "d2_additive_m3": -77200.9296875,
+      "required_interaction_m3": 120670.9296875
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t4500",
+      "candidate_index": 4,
+      "true_total_m3": -12959.5,
+      "d2_additive_m3": -110677.515625,
+      "required_interaction_m3": 97718.015625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t4500",
+      "candidate_index": 5,
+      "true_total_m3": -61681.0,
+      "d2_additive_m3": -75988.9453125,
+      "required_interaction_m3": 14307.9453125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t4500",
+      "candidate_index": 6,
+      "true_total_m3": -45897.0,
+      "d2_additive_m3": -128144.625,
+      "required_interaction_m3": 82247.625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t4500",
+      "candidate_index": 7,
+      "true_total_m3": -98147.5,
+      "d2_additive_m3": -83644.9296875,
+      "required_interaction_m3": -14502.5703125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t7200",
+      "candidate_index": 0,
+      "true_total_m3": 4644.0,
+      "d2_additive_m3": -47147.48828125,
+      "required_interaction_m3": 51791.48828125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t7200",
+      "candidate_index": 1,
+      "true_total_m3": -87461.5,
+      "d2_additive_m3": -119297.84375,
+      "required_interaction_m3": 31836.34375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t7200",
+      "candidate_index": 2,
+      "true_total_m3": -122856.0,
+      "d2_additive_m3": -95317.3125,
+      "required_interaction_m3": -27538.6875
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t7200",
+      "candidate_index": 3,
+      "true_total_m3": 34538.5,
+      "d2_additive_m3": -203007.3125,
+      "required_interaction_m3": 237545.8125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t7200",
+      "candidate_index": 4,
+      "true_total_m3": -28497.5,
+      "d2_additive_m3": -67917.46875,
+      "required_interaction_m3": 39419.96875
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t7200",
+      "candidate_index": 5,
+      "true_total_m3": 765941.5,
+      "d2_additive_m3": -184216.453125,
+      "required_interaction_m3": 950157.9375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t7200",
+      "candidate_index": 6,
+      "true_total_m3": 21188.5,
+      "d2_additive_m3": -3916.16259765625,
+      "required_interaction_m3": 25104.662109375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t7200",
+      "candidate_index": 7,
+      "true_total_m3": 81649.5,
+      "d2_additive_m3": -77741.09375,
+      "required_interaction_m3": 159390.59375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t9900",
+      "candidate_index": 0,
+      "true_total_m3": -77142.0,
+      "d2_additive_m3": -28217.16796875,
+      "required_interaction_m3": -48924.83203125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t9900",
+      "candidate_index": 1,
+      "true_total_m3": -28541.0,
+      "d2_additive_m3": -194401.4375,
+      "required_interaction_m3": 165860.4375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t9900",
+      "candidate_index": 2,
+      "true_total_m3": -166535.5,
+      "d2_additive_m3": -78096.5546875,
+      "required_interaction_m3": -88438.9453125
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t9900",
+      "candidate_index": 3,
+      "true_total_m3": -184057.5,
+      "d2_additive_m3": -191432.140625,
+      "required_interaction_m3": 7374.640625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t9900",
+      "candidate_index": 4,
+      "true_total_m3": -34243.0,
+      "d2_additive_m3": -14454.05078125,
+      "required_interaction_m3": -19788.94921875
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t9900",
+      "candidate_index": 5,
+      "true_total_m3": 33067.0,
+      "d2_additive_m3": -235105.4375,
+      "required_interaction_m3": 268172.4375
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t9900",
+      "candidate_index": 6,
+      "true_total_m3": -13531.5,
+      "d2_additive_m3": -126697.7265625,
+      "required_interaction_m3": 113166.2265625
+    },
+    {
+      "group": "D3::T50_D180_chicago::T50_D180_chicago::T50_D180_chicago:t9900",
+      "candidate_index": 7,
+      "true_total_m3": -91652.5,
+      "d2_additive_m3": -1545.265869140625,
+      "required_interaction_m3": -90107.234375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t10800",
+      "candidate_index": 0,
+      "true_total_m3": -184881.0,
+      "d2_additive_m3": -122699.609375,
+      "required_interaction_m3": -62181.390625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t10800",
+      "candidate_index": 1,
+      "true_total_m3": -245551.0,
+      "d2_additive_m3": -13626.99609375,
+      "required_interaction_m3": -231924.0
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t10800",
+      "candidate_index": 2,
+      "true_total_m3": 178843.0,
+      "d2_additive_m3": 25674.447265625,
+      "required_interaction_m3": 153168.546875
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t10800",
+      "candidate_index": 3,
+      "true_total_m3": 157572.0,
+      "d2_additive_m3": 23036.111328125,
+      "required_interaction_m3": 134535.890625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t10800",
+      "candidate_index": 4,
+      "true_total_m3": -47673.0,
+      "d2_additive_m3": -70287.109375,
+      "required_interaction_m3": 22614.109375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t10800",
+      "candidate_index": 5,
+      "true_total_m3": 725.0,
+      "d2_additive_m3": -94698.0234375,
+      "required_interaction_m3": 95423.0234375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t10800",
+      "candidate_index": 6,
+      "true_total_m3": 349204.0,
+      "d2_additive_m3": -86231.8671875,
+      "required_interaction_m3": 435435.875
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t10800",
+      "candidate_index": 7,
+      "true_total_m3": -102017.0,
+      "d2_additive_m3": -59788.65625,
+      "required_interaction_m3": -42228.34375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t17400",
+      "candidate_index": 0,
+      "true_total_m3": 39702.75,
+      "d2_additive_m3": -168186.921875,
+      "required_interaction_m3": 207889.671875
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t17400",
+      "candidate_index": 1,
+      "true_total_m3": -95926.5,
+      "d2_additive_m3": -309520.6875,
+      "required_interaction_m3": 213594.1875
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t17400",
+      "candidate_index": 2,
+      "true_total_m3": 107725.0,
+      "d2_additive_m3": -119443.1953125,
+      "required_interaction_m3": 227168.1875
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t17400",
+      "candidate_index": 3,
+      "true_total_m3": -166853.0,
+      "d2_additive_m3": -56017.58984375,
+      "required_interaction_m3": -110835.40625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t17400",
+      "candidate_index": 4,
+      "true_total_m3": -159824.75,
+      "d2_additive_m3": 37970.78515625,
+      "required_interaction_m3": -197795.53125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t17400",
+      "candidate_index": 5,
+      "true_total_m3": -164408.25,
+      "d2_additive_m3": -58795.25,
+      "required_interaction_m3": -105613.0
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t17400",
+      "candidate_index": 6,
+      "true_total_m3": -84428.0,
+      "d2_additive_m3": -183417.109375,
+      "required_interaction_m3": 98989.109375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t17400",
+      "candidate_index": 7,
+      "true_total_m3": -143014.75,
+      "d2_additive_m3": -233054.578125,
+      "required_interaction_m3": 90039.828125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t19500",
+      "candidate_index": 0,
+      "true_total_m3": -104692.5,
+      "d2_additive_m3": -422697.5625,
+      "required_interaction_m3": 318005.0625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t19500",
+      "candidate_index": 1,
+      "true_total_m3": -39896.25,
+      "d2_additive_m3": 52584.32421875,
+      "required_interaction_m3": -92480.578125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t19500",
+      "candidate_index": 2,
+      "true_total_m3": -129685.75,
+      "d2_additive_m3": -217220.890625,
+      "required_interaction_m3": 87535.140625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t19500",
+      "candidate_index": 3,
+      "true_total_m3": -85929.25,
+      "d2_additive_m3": -219687.734375,
+      "required_interaction_m3": 133758.484375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t19500",
+      "candidate_index": 4,
+      "true_total_m3": -73212.5,
+      "d2_additive_m3": -237909.90625,
+      "required_interaction_m3": 164697.40625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t19500",
+      "candidate_index": 5,
+      "true_total_m3": -53119.25,
+      "d2_additive_m3": -138545.25,
+      "required_interaction_m3": 85426.0
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t19500",
+      "candidate_index": 6,
+      "true_total_m3": -106831.5,
+      "d2_additive_m3": -14384.96875,
+      "required_interaction_m3": -92446.53125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t19500",
+      "candidate_index": 7,
+      "true_total_m3": -25658.75,
+      "d2_additive_m3": -122292.8203125,
+      "required_interaction_m3": 96634.0703125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t21300",
+      "candidate_index": 0,
+      "true_total_m3": -41816.25,
+      "d2_additive_m3": -178562.515625,
+      "required_interaction_m3": 136746.265625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t21300",
+      "candidate_index": 1,
+      "true_total_m3": -164123.875,
+      "d2_additive_m3": -103956.796875,
+      "required_interaction_m3": -60167.078125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t21300",
+      "candidate_index": 2,
+      "true_total_m3": -87788.75,
+      "d2_additive_m3": -273732.59375,
+      "required_interaction_m3": 185943.84375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t21300",
+      "candidate_index": 3,
+      "true_total_m3": -147814.625,
+      "d2_additive_m3": -85331.9375,
+      "required_interaction_m3": -62482.6875
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t21300",
+      "candidate_index": 4,
+      "true_total_m3": -91288.125,
+      "d2_additive_m3": -9887.48828125,
+      "required_interaction_m3": -81400.640625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t21300",
+      "candidate_index": 5,
+      "true_total_m3": -138434.125,
+      "d2_additive_m3": -377407.03125,
+      "required_interaction_m3": 238972.90625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t21300",
+      "candidate_index": 6,
+      "true_total_m3": -23962.625,
+      "d2_additive_m3": -153190.734375,
+      "required_interaction_m3": 129228.109375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t21300",
+      "candidate_index": 7,
+      "true_total_m3": -28363.875,
+      "d2_additive_m3": -152077.078125,
+      "required_interaction_m3": 123713.203125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t24900",
+      "candidate_index": 0,
+      "true_total_m3": -97802.625,
+      "d2_additive_m3": -219867.96875,
+      "required_interaction_m3": 122065.34375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t24900",
+      "candidate_index": 1,
+      "true_total_m3": -113398.3125,
+      "d2_additive_m3": -72281.9453125,
+      "required_interaction_m3": -41116.3671875
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t24900",
+      "candidate_index": 2,
+      "true_total_m3": -72427.0,
+      "d2_additive_m3": -45658.75390625,
+      "required_interaction_m3": -26768.24609375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t24900",
+      "candidate_index": 3,
+      "true_total_m3": -30815.875,
+      "d2_additive_m3": -135681.90625,
+      "required_interaction_m3": 104866.03125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t24900",
+      "candidate_index": 4,
+      "true_total_m3": -51606.3125,
+      "d2_additive_m3": -20962.7890625,
+      "required_interaction_m3": -30643.5234375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t24900",
+      "candidate_index": 5,
+      "true_total_m3": -167658.9375,
+      "d2_additive_m3": -126372.5625,
+      "required_interaction_m3": -41286.375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t24900",
+      "candidate_index": 6,
+      "true_total_m3": -108153.0,
+      "d2_additive_m3": -65618.8984375,
+      "required_interaction_m3": -42534.1015625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t24900",
+      "candidate_index": 7,
+      "true_total_m3": -93878.5625,
+      "d2_additive_m3": -25838.806640625,
+      "required_interaction_m3": -68039.7578125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t5400",
+      "candidate_index": 0,
+      "true_total_m3": 83661.0,
+      "d2_additive_m3": -183911.03125,
+      "required_interaction_m3": 267572.03125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t5400",
+      "candidate_index": 1,
+      "true_total_m3": 60597.0,
+      "d2_additive_m3": -34541.25390625,
+      "required_interaction_m3": 95138.25
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t5400",
+      "candidate_index": 2,
+      "true_total_m3": 90870.5,
+      "d2_additive_m3": -206747.078125,
+      "required_interaction_m3": 297617.5625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t5400",
+      "candidate_index": 3,
+      "true_total_m3": -55597.5,
+      "d2_additive_m3": -110663.5859375,
+      "required_interaction_m3": 55066.0859375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t5400",
+      "candidate_index": 4,
+      "true_total_m3": -64696.5,
+      "d2_additive_m3": -118489.9296875,
+      "required_interaction_m3": 53793.4296875
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t5400",
+      "candidate_index": 5,
+      "true_total_m3": -181752.5,
+      "d2_additive_m3": 36658.36328125,
+      "required_interaction_m3": -218410.859375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t5400",
+      "candidate_index": 6,
+      "true_total_m3": 48751.5,
+      "d2_additive_m3": -69657.6796875,
+      "required_interaction_m3": 118409.1796875
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t5400",
+      "candidate_index": 7,
+      "true_total_m3": 28811.5,
+      "d2_additive_m3": -130096.421875,
+      "required_interaction_m3": 158907.921875
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t6600",
+      "candidate_index": 0,
+      "true_total_m3": -99039.0,
+      "d2_additive_m3": -117515.5390625,
+      "required_interaction_m3": 18476.5390625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t6600",
+      "candidate_index": 1,
+      "true_total_m3": -5659.0,
+      "d2_additive_m3": -31913.482421875,
+      "required_interaction_m3": 26254.482421875
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t6600",
+      "candidate_index": 2,
+      "true_total_m3": -69826.5,
+      "d2_additive_m3": -117773.5234375,
+      "required_interaction_m3": 47947.0234375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t6600",
+      "candidate_index": 3,
+      "true_total_m3": 46068.0,
+      "d2_additive_m3": -30005.78125,
+      "required_interaction_m3": 76073.78125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t6600",
+      "candidate_index": 4,
+      "true_total_m3": 455.0,
+      "d2_additive_m3": -278798.15625,
+      "required_interaction_m3": 279253.15625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t6600",
+      "candidate_index": 5,
+      "true_total_m3": -6749.5,
+      "d2_additive_m3": -201268.78125,
+      "required_interaction_m3": 194519.28125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t6600",
+      "candidate_index": 6,
+      "true_total_m3": -2147.0,
+      "d2_additive_m3": -150958.0625,
+      "required_interaction_m3": 148811.0625
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t6600",
+      "candidate_index": 7,
+      "true_total_m3": -14129.0,
+      "d2_additive_m3": -131288.578125,
+      "required_interaction_m3": 117159.578125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t9300",
+      "candidate_index": 0,
+      "true_total_m3": -67454.0,
+      "d2_additive_m3": -95945.96875,
+      "required_interaction_m3": 28491.96875
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t9300",
+      "candidate_index": 1,
+      "true_total_m3": -235232.5,
+      "d2_additive_m3": -66740.6484375,
+      "required_interaction_m3": -168491.84375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t9300",
+      "candidate_index": 2,
+      "true_total_m3": 27604.5,
+      "d2_additive_m3": -122240.625,
+      "required_interaction_m3": 149845.125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t9300",
+      "candidate_index": 3,
+      "true_total_m3": 126462.0,
+      "d2_additive_m3": -105862.078125,
+      "required_interaction_m3": 232324.078125
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t9300",
+      "candidate_index": 4,
+      "true_total_m3": -171547.0,
+      "d2_additive_m3": -104523.75,
+      "required_interaction_m3": -67023.25
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t9300",
+      "candidate_index": 5,
+      "true_total_m3": -101704.5,
+      "d2_additive_m3": -128406.359375,
+      "required_interaction_m3": 26701.859375
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t9300",
+      "candidate_index": 6,
+      "true_total_m3": -100119.0,
+      "d2_additive_m3": -175947.546875,
+      "required_interaction_m3": 75828.546875
+    },
+    {
+      "group": "D3::T50_D300_chicago::T50_D300_chicago::T50_D300_chicago:t9300",
+      "candidate_index": 7,
+      "true_total_m3": -23272.0,
+      "d2_additive_m3": -91672.625,
+      "required_interaction_m3": 68400.625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t10200",
+      "candidate_index": 0,
+      "true_total_m3": -76670.25,
+      "d2_additive_m3": -270611.03125,
+      "required_interaction_m3": 193940.78125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t10200",
+      "candidate_index": 1,
+      "true_total_m3": -116175.625,
+      "d2_additive_m3": -93631.15625,
+      "required_interaction_m3": -22544.46875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t10200",
+      "candidate_index": 2,
+      "true_total_m3": -114219.0,
+      "d2_additive_m3": 34810.5625,
+      "required_interaction_m3": -149029.5625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t10200",
+      "candidate_index": 3,
+      "true_total_m3": -127601.5,
+      "d2_additive_m3": -204707.125,
+      "required_interaction_m3": 77105.625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t10200",
+      "candidate_index": 4,
+      "true_total_m3": -153853.375,
+      "d2_additive_m3": -201025.09375,
+      "required_interaction_m3": 47171.71875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t10200",
+      "candidate_index": 5,
+      "true_total_m3": -73677.875,
+      "d2_additive_m3": -100526.703125,
+      "required_interaction_m3": 26848.828125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t10200",
+      "candidate_index": 6,
+      "true_total_m3": -164411.875,
+      "d2_additive_m3": -204578.875,
+      "required_interaction_m3": 40167.0
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t10200",
+      "candidate_index": 7,
+      "true_total_m3": -134062.875,
+      "d2_additive_m3": -74952.34375,
+      "required_interaction_m3": -59110.53125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t3600",
+      "candidate_index": 0,
+      "true_total_m3": -43944.375,
+      "d2_additive_m3": -141456.03125,
+      "required_interaction_m3": 97511.65625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t3600",
+      "candidate_index": 1,
+      "true_total_m3": -72205.125,
+      "d2_additive_m3": -56622.67578125,
+      "required_interaction_m3": -15582.44921875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t3600",
+      "candidate_index": 2,
+      "true_total_m3": -38161.125,
+      "d2_additive_m3": -80452.0234375,
+      "required_interaction_m3": 42290.8984375
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t3600",
+      "candidate_index": 3,
+      "true_total_m3": 20076.375,
+      "d2_additive_m3": -285179.28125,
+      "required_interaction_m3": 305255.65625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t3600",
+      "candidate_index": 4,
+      "true_total_m3": -279403.25,
+      "d2_additive_m3": -269795.0625,
+      "required_interaction_m3": -9608.1875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t3600",
+      "candidate_index": 5,
+      "true_total_m3": -162018.375,
+      "d2_additive_m3": 17931.40234375,
+      "required_interaction_m3": -179949.78125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t3600",
+      "candidate_index": 6,
+      "true_total_m3": -120555.625,
+      "d2_additive_m3": -54820.94140625,
+      "required_interaction_m3": -65734.6875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t3600",
+      "candidate_index": 7,
+      "true_total_m3": -125969.375,
+      "d2_additive_m3": 46410.33984375,
+      "required_interaction_m3": -172379.71875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5100",
+      "candidate_index": 0,
+      "true_total_m3": -122383.625,
+      "d2_additive_m3": -65055.73828125,
+      "required_interaction_m3": -57327.88671875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5100",
+      "candidate_index": 1,
+      "true_total_m3": -168401.75,
+      "d2_additive_m3": -118155.953125,
+      "required_interaction_m3": -50245.796875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5100",
+      "candidate_index": 2,
+      "true_total_m3": -98534.75,
+      "d2_additive_m3": 126898.3359375,
+      "required_interaction_m3": -225433.09375
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5100",
+      "candidate_index": 3,
+      "true_total_m3": -131961.875,
+      "d2_additive_m3": -134530.25,
+      "required_interaction_m3": 2568.375
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5100",
+      "candidate_index": 4,
+      "true_total_m3": -147555.375,
+      "d2_additive_m3": -116218.6015625,
+      "required_interaction_m3": -31336.7734375
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5100",
+      "candidate_index": 5,
+      "true_total_m3": -181276.625,
+      "d2_additive_m3": -107373.921875,
+      "required_interaction_m3": -73902.703125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5100",
+      "candidate_index": 6,
+      "true_total_m3": -194231.0,
+      "d2_additive_m3": 56435.05859375,
+      "required_interaction_m3": -250666.0625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5100",
+      "candidate_index": 7,
+      "true_total_m3": -126197.625,
+      "d2_additive_m3": -151919.1875,
+      "required_interaction_m3": 25721.5625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5400",
+      "candidate_index": 0,
+      "true_total_m3": -77575.375,
+      "d2_additive_m3": -35500.20703125,
+      "required_interaction_m3": -42075.16796875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5400",
+      "candidate_index": 1,
+      "true_total_m3": -206324.875,
+      "d2_additive_m3": -4613.857421875,
+      "required_interaction_m3": -201711.015625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5400",
+      "candidate_index": 2,
+      "true_total_m3": -25499.625,
+      "d2_additive_m3": -196882.9375,
+      "required_interaction_m3": 171383.3125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5400",
+      "candidate_index": 3,
+      "true_total_m3": 2205.375,
+      "d2_additive_m3": -105295.3359375,
+      "required_interaction_m3": 107500.7109375
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5400",
+      "candidate_index": 4,
+      "true_total_m3": -19889.75,
+      "d2_additive_m3": -105828.09375,
+      "required_interaction_m3": 85938.34375
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5400",
+      "candidate_index": 5,
+      "true_total_m3": -133519.5,
+      "d2_additive_m3": -168458.4375,
+      "required_interaction_m3": 34938.9375
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5400",
+      "candidate_index": 6,
+      "true_total_m3": -45787.875,
+      "d2_additive_m3": -26278.7265625,
+      "required_interaction_m3": -19509.1484375
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t5400",
+      "candidate_index": 7,
+      "true_total_m3": -121049.0,
+      "d2_additive_m3": -122074.0703125,
+      "required_interaction_m3": 1025.0703125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t6600",
+      "candidate_index": 0,
+      "true_total_m3": -71303.5,
+      "d2_additive_m3": -108320.96875,
+      "required_interaction_m3": 37017.46875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t6600",
+      "candidate_index": 1,
+      "true_total_m3": -47864.5,
+      "d2_additive_m3": -10296.1513671875,
+      "required_interaction_m3": -37568.34765625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t6600",
+      "candidate_index": 2,
+      "true_total_m3": -128728.625,
+      "d2_additive_m3": -160177.75,
+      "required_interaction_m3": 31449.125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t6600",
+      "candidate_index": 3,
+      "true_total_m3": -192004.5,
+      "d2_additive_m3": -98547.96875,
+      "required_interaction_m3": -93456.53125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t6600",
+      "candidate_index": 4,
+      "true_total_m3": -145514.375,
+      "d2_additive_m3": -187943.15625,
+      "required_interaction_m3": 42428.78125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t6600",
+      "candidate_index": 5,
+      "true_total_m3": -234684.5,
+      "d2_additive_m3": -241171.390625,
+      "required_interaction_m3": 6486.890625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t6600",
+      "candidate_index": 6,
+      "true_total_m3": -176452.875,
+      "d2_additive_m3": -38184.8046875,
+      "required_interaction_m3": -138268.0625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t6600",
+      "candidate_index": 7,
+      "true_total_m3": -157953.25,
+      "d2_additive_m3": -30716.94140625,
+      "required_interaction_m3": -127236.3125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t7500",
+      "candidate_index": 0,
+      "true_total_m3": -168448.25,
+      "d2_additive_m3": -167615.671875,
+      "required_interaction_m3": -832.578125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t7500",
+      "candidate_index": 1,
+      "true_total_m3": -128505.25,
+      "d2_additive_m3": -170522.140625,
+      "required_interaction_m3": 42016.890625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t7500",
+      "candidate_index": 2,
+      "true_total_m3": 10403.25,
+      "d2_additive_m3": -40850.14453125,
+      "required_interaction_m3": 51253.39453125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t7500",
+      "candidate_index": 3,
+      "true_total_m3": -84343.75,
+      "d2_additive_m3": -11702.77734375,
+      "required_interaction_m3": -72640.96875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t7500",
+      "candidate_index": 4,
+      "true_total_m3": -57327.5,
+      "d2_additive_m3": -4068.8095703125,
+      "required_interaction_m3": -53258.69140625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t7500",
+      "candidate_index": 5,
+      "true_total_m3": -11713.75,
+      "d2_additive_m3": -182648.1875,
+      "required_interaction_m3": 170934.4375
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t7500",
+      "candidate_index": 6,
+      "true_total_m3": -23002.0,
+      "d2_additive_m3": -82624.421875,
+      "required_interaction_m3": 59622.421875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t7500",
+      "candidate_index": 7,
+      "true_total_m3": -47271.625,
+      "d2_additive_m3": -159908.375,
+      "required_interaction_m3": 112636.75
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t8100",
+      "candidate_index": 0,
+      "true_total_m3": -116823.375,
+      "d2_additive_m3": -4473.9306640625,
+      "required_interaction_m3": -112349.4453125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t8100",
+      "candidate_index": 1,
+      "true_total_m3": -131417.5,
+      "d2_additive_m3": -151343.84375,
+      "required_interaction_m3": 19926.34375
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t8100",
+      "candidate_index": 2,
+      "true_total_m3": -135020.25,
+      "d2_additive_m3": -65363.984375,
+      "required_interaction_m3": -69656.265625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t8100",
+      "candidate_index": 3,
+      "true_total_m3": -163320.625,
+      "d2_additive_m3": -161091.5625,
+      "required_interaction_m3": -2229.0625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t8100",
+      "candidate_index": 4,
+      "true_total_m3": -100094.75,
+      "d2_additive_m3": -158530.421875,
+      "required_interaction_m3": 58435.671875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t8100",
+      "candidate_index": 5,
+      "true_total_m3": -108632.0,
+      "d2_additive_m3": -199953.78125,
+      "required_interaction_m3": 91321.78125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t8100",
+      "candidate_index": 6,
+      "true_total_m3": -120984.125,
+      "d2_additive_m3": -157540.828125,
+      "required_interaction_m3": 36556.703125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t8100",
+      "candidate_index": 7,
+      "true_total_m3": -28796.0,
+      "d2_additive_m3": -20028.873046875,
+      "required_interaction_m3": -8767.126953125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t9300",
+      "candidate_index": 0,
+      "true_total_m3": -6478.875,
+      "d2_additive_m3": -185304.59375,
+      "required_interaction_m3": 178825.71875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t9300",
+      "candidate_index": 1,
+      "true_total_m3": -72498.0,
+      "d2_additive_m3": -156698.25,
+      "required_interaction_m3": 84200.25
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t9300",
+      "candidate_index": 2,
+      "true_total_m3": -95385.0,
+      "d2_additive_m3": -66593.328125,
+      "required_interaction_m3": -28791.671875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t9300",
+      "candidate_index": 3,
+      "true_total_m3": -233867.0,
+      "d2_additive_m3": -24778.77734375,
+      "required_interaction_m3": -209088.21875
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t9300",
+      "candidate_index": 4,
+      "true_total_m3": -100472.125,
+      "d2_additive_m3": -65357.34375,
+      "required_interaction_m3": -35114.78125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t9300",
+      "candidate_index": 5,
+      "true_total_m3": -106210.75,
+      "d2_additive_m3": -24374.294921875,
+      "required_interaction_m3": -81836.453125
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t9300",
+      "candidate_index": 6,
+      "true_total_m3": -60858.625,
+      "d2_additive_m3": 67401.8515625,
+      "required_interaction_m3": -128260.4765625
+    },
+    {
+      "group": "D3::T50_D60_chicago::T50_D60_chicago::T50_D60_chicago:t9300",
+      "candidate_index": 7,
+      "true_total_m3": -98031.75,
+      "d2_additive_m3": -233079.84375,
+      "required_interaction_m3": 135048.09375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t10800",
+      "candidate_index": 0,
+      "true_total_m3": -72124.625,
+      "d2_additive_m3": -121729.7578125,
+      "required_interaction_m3": 49605.1328125
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t10800",
+      "candidate_index": 1,
+      "true_total_m3": -67874.75,
+      "d2_additive_m3": -63177.86328125,
+      "required_interaction_m3": -4696.88671875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t10800",
+      "candidate_index": 2,
+      "true_total_m3": -99894.25,
+      "d2_additive_m3": -136609.828125,
+      "required_interaction_m3": 36715.578125
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t10800",
+      "candidate_index": 3,
+      "true_total_m3": -43900.0,
+      "d2_additive_m3": -221141.609375,
+      "required_interaction_m3": 177241.609375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t10800",
+      "candidate_index": 4,
+      "true_total_m3": -111836.0,
+      "d2_additive_m3": -98686.5546875,
+      "required_interaction_m3": -13149.4453125
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t10800",
+      "candidate_index": 5,
+      "true_total_m3": -92538.875,
+      "d2_additive_m3": -99728.2734375,
+      "required_interaction_m3": 7189.3984375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t10800",
+      "candidate_index": 6,
+      "true_total_m3": -135118.25,
+      "d2_additive_m3": -189652.640625,
+      "required_interaction_m3": 54534.390625
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t10800",
+      "candidate_index": 7,
+      "true_total_m3": -138321.875,
+      "d2_additive_m3": -240094.765625,
+      "required_interaction_m3": 101772.890625
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12300",
+      "candidate_index": 0,
+      "true_total_m3": -52025.0,
+      "d2_additive_m3": -87445.4609375,
+      "required_interaction_m3": 35420.4609375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12300",
+      "candidate_index": 1,
+      "true_total_m3": -198593.625,
+      "d2_additive_m3": -318557.0625,
+      "required_interaction_m3": 119963.4375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12300",
+      "candidate_index": 2,
+      "true_total_m3": -49138.25,
+      "d2_additive_m3": -70207.21875,
+      "required_interaction_m3": 21068.96875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12300",
+      "candidate_index": 3,
+      "true_total_m3": -130653.375,
+      "d2_additive_m3": -220359.796875,
+      "required_interaction_m3": 89706.421875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12300",
+      "candidate_index": 4,
+      "true_total_m3": -70769.25,
+      "d2_additive_m3": -141808.53125,
+      "required_interaction_m3": 71039.28125
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12300",
+      "candidate_index": 5,
+      "true_total_m3": -84203.5,
+      "d2_additive_m3": -199445.484375,
+      "required_interaction_m3": 115241.984375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12300",
+      "candidate_index": 6,
+      "true_total_m3": -91716.125,
+      "d2_additive_m3": -131057.484375,
+      "required_interaction_m3": 39341.359375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12300",
+      "candidate_index": 7,
+      "true_total_m3": -54314.5,
+      "d2_additive_m3": -90544.3203125,
+      "required_interaction_m3": 36229.8203125
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12600",
+      "candidate_index": 0,
+      "true_total_m3": -89736.125,
+      "d2_additive_m3": -61344.16796875,
+      "required_interaction_m3": -28391.95703125
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12600",
+      "candidate_index": 1,
+      "true_total_m3": -45281.375,
+      "d2_additive_m3": -179362.625,
+      "required_interaction_m3": 134081.25
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12600",
+      "candidate_index": 2,
+      "true_total_m3": -102399.0625,
+      "d2_additive_m3": -153900.578125,
+      "required_interaction_m3": 51501.515625
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12600",
+      "candidate_index": 3,
+      "true_total_m3": -23063.875,
+      "d2_additive_m3": -269900.3125,
+      "required_interaction_m3": 246836.4375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12600",
+      "candidate_index": 4,
+      "true_total_m3": -75104.375,
+      "d2_additive_m3": -143512.4375,
+      "required_interaction_m3": 68408.0625
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12600",
+      "candidate_index": 5,
+      "true_total_m3": -47646.375,
+      "d2_additive_m3": -77457.0625,
+      "required_interaction_m3": 29810.6875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12600",
+      "candidate_index": 6,
+      "true_total_m3": -169761.8125,
+      "d2_additive_m3": -267259.09375,
+      "required_interaction_m3": 97497.28125
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t12600",
+      "candidate_index": 7,
+      "true_total_m3": -125176.3125,
+      "d2_additive_m3": -162018.578125,
+      "required_interaction_m3": 36842.265625
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t3900",
+      "candidate_index": 0,
+      "true_total_m3": -124340.75,
+      "d2_additive_m3": -127481.8828125,
+      "required_interaction_m3": 3141.1328125
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t3900",
+      "candidate_index": 1,
+      "true_total_m3": -194546.375,
+      "d2_additive_m3": -61025.76171875,
+      "required_interaction_m3": -133520.609375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t3900",
+      "candidate_index": 2,
+      "true_total_m3": -88629.375,
+      "d2_additive_m3": -162022.578125,
+      "required_interaction_m3": 73393.203125
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t3900",
+      "candidate_index": 3,
+      "true_total_m3": -95236.875,
+      "d2_additive_m3": -60727.96875,
+      "required_interaction_m3": -34508.90625
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t3900",
+      "candidate_index": 4,
+      "true_total_m3": -87130.375,
+      "d2_additive_m3": -185080.25,
+      "required_interaction_m3": 97949.875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t3900",
+      "candidate_index": 5,
+      "true_total_m3": -90140.375,
+      "d2_additive_m3": -38982.86328125,
+      "required_interaction_m3": -51157.51171875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t3900",
+      "candidate_index": 6,
+      "true_total_m3": -71212.25,
+      "d2_additive_m3": -209315.390625,
+      "required_interaction_m3": 138103.140625
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t3900",
+      "candidate_index": 7,
+      "true_total_m3": -111515.0,
+      "d2_additive_m3": -29734.080078125,
+      "required_interaction_m3": -81780.921875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t4800",
+      "candidate_index": 0,
+      "true_total_m3": 4048.625,
+      "d2_additive_m3": -203194.234375,
+      "required_interaction_m3": 207242.859375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t4800",
+      "candidate_index": 1,
+      "true_total_m3": -23491.625,
+      "d2_additive_m3": -131399.875,
+      "required_interaction_m3": 107908.25
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t4800",
+      "candidate_index": 2,
+      "true_total_m3": -126159.375,
+      "d2_additive_m3": -5642.22705078125,
+      "required_interaction_m3": -120517.1484375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t4800",
+      "candidate_index": 3,
+      "true_total_m3": -104062.375,
+      "d2_additive_m3": -117315.4296875,
+      "required_interaction_m3": 13253.0546875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t4800",
+      "candidate_index": 4,
+      "true_total_m3": -225196.125,
+      "d2_additive_m3": -86905.703125,
+      "required_interaction_m3": -138290.421875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t4800",
+      "candidate_index": 5,
+      "true_total_m3": -98389.375,
+      "d2_additive_m3": -136308.765625,
+      "required_interaction_m3": 37919.390625
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t4800",
+      "candidate_index": 6,
+      "true_total_m3": -72746.75,
+      "d2_additive_m3": 38402.296875,
+      "required_interaction_m3": -111149.046875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t4800",
+      "candidate_index": 7,
+      "true_total_m3": -90976.0,
+      "d2_additive_m3": -122841.671875,
+      "required_interaction_m3": 31865.671875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t5100",
+      "candidate_index": 0,
+      "true_total_m3": -81305.375,
+      "d2_additive_m3": -203826.3125,
+      "required_interaction_m3": 122520.9375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t5100",
+      "candidate_index": 1,
+      "true_total_m3": -192270.5625,
+      "d2_additive_m3": -26266.31640625,
+      "required_interaction_m3": -166004.25
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t5100",
+      "candidate_index": 2,
+      "true_total_m3": -134954.875,
+      "d2_additive_m3": -71042.2890625,
+      "required_interaction_m3": -63912.5859375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t5100",
+      "candidate_index": 3,
+      "true_total_m3": -89253.625,
+      "d2_additive_m3": -152512.453125,
+      "required_interaction_m3": 63258.828125
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t5100",
+      "candidate_index": 4,
+      "true_total_m3": -73750.625,
+      "d2_additive_m3": -134990.875,
+      "required_interaction_m3": 61240.25
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t5100",
+      "candidate_index": 5,
+      "true_total_m3": -102788.625,
+      "d2_additive_m3": -128238.234375,
+      "required_interaction_m3": 25449.609375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t5100",
+      "candidate_index": 6,
+      "true_total_m3": -149877.375,
+      "d2_additive_m3": -45462.57421875,
+      "required_interaction_m3": -104414.796875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t5100",
+      "candidate_index": 7,
+      "true_total_m3": -159594.125,
+      "d2_additive_m3": -71431.7734375,
+      "required_interaction_m3": -88162.3515625
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t8100",
+      "candidate_index": 0,
+      "true_total_m3": -60351.5,
+      "d2_additive_m3": -240865.328125,
+      "required_interaction_m3": 180513.828125
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t8100",
+      "candidate_index": 1,
+      "true_total_m3": -43990.25,
+      "d2_additive_m3": -19689.4453125,
+      "required_interaction_m3": -24300.8046875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t8100",
+      "candidate_index": 2,
+      "true_total_m3": -61795.375,
+      "d2_additive_m3": -45369.1875,
+      "required_interaction_m3": -16426.1875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t8100",
+      "candidate_index": 3,
+      "true_total_m3": -74189.25,
+      "d2_additive_m3": -5856.44775390625,
+      "required_interaction_m3": -68332.8046875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t8100",
+      "candidate_index": 4,
+      "true_total_m3": -119375.875,
+      "d2_additive_m3": -67543.6171875,
+      "required_interaction_m3": -51832.2578125
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t8100",
+      "candidate_index": 5,
+      "true_total_m3": 34111.5,
+      "d2_additive_m3": -36445.69140625,
+      "required_interaction_m3": 70557.1875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t8100",
+      "candidate_index": 6,
+      "true_total_m3": -41464.375,
+      "d2_additive_m3": -2566.072021484375,
+      "required_interaction_m3": -38898.3046875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t8100",
+      "candidate_index": 7,
+      "true_total_m3": -147382.875,
+      "d2_additive_m3": -220723.21875,
+      "required_interaction_m3": 73340.34375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t9900",
+      "candidate_index": 0,
+      "true_total_m3": -16997.875,
+      "d2_additive_m3": -50493.125,
+      "required_interaction_m3": 33495.25
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t9900",
+      "candidate_index": 1,
+      "true_total_m3": -157719.125,
+      "d2_additive_m3": -202131.640625,
+      "required_interaction_m3": 44412.515625
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t9900",
+      "candidate_index": 2,
+      "true_total_m3": -67976.625,
+      "d2_additive_m3": -82982.6171875,
+      "required_interaction_m3": 15005.9921875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t9900",
+      "candidate_index": 3,
+      "true_total_m3": -35815.125,
+      "d2_additive_m3": -37039.453125,
+      "required_interaction_m3": 1224.328125
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t9900",
+      "candidate_index": 4,
+      "true_total_m3": -69958.5,
+      "d2_additive_m3": -10847.9140625,
+      "required_interaction_m3": -59110.5859375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t9900",
+      "candidate_index": 5,
+      "true_total_m3": -67300.5,
+      "d2_additive_m3": -21069.568359375,
+      "required_interaction_m3": -46230.9296875
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t9900",
+      "candidate_index": 6,
+      "true_total_m3": -61711.0,
+      "d2_additive_m3": -150598.484375,
+      "required_interaction_m3": 88887.484375
+    },
+    {
+      "group": "D3::T5_D120_chicago::T5_D120_chicago::T5_D120_chicago:t9900",
+      "candidate_index": 7,
+      "true_total_m3": -132253.25,
+      "d2_additive_m3": -80306.796875,
+      "required_interaction_m3": -51946.453125
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t11100",
+      "candidate_index": 0,
+      "true_total_m3": -93099.75,
+      "d2_additive_m3": -199447.1875,
+      "required_interaction_m3": 106347.4375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t11100",
+      "candidate_index": 1,
+      "true_total_m3": 38046.0,
+      "d2_additive_m3": -212325.703125,
+      "required_interaction_m3": 250371.703125
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t11100",
+      "candidate_index": 2,
+      "true_total_m3": -110742.5,
+      "d2_additive_m3": -234213.078125,
+      "required_interaction_m3": 123470.578125
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t11100",
+      "candidate_index": 3,
+      "true_total_m3": -57133.0,
+      "d2_additive_m3": -59797.49609375,
+      "required_interaction_m3": 2664.49609375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t11100",
+      "candidate_index": 4,
+      "true_total_m3": -111745.875,
+      "d2_additive_m3": -219251.84375,
+      "required_interaction_m3": 107505.96875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t11100",
+      "candidate_index": 5,
+      "true_total_m3": -76856.125,
+      "d2_additive_m3": -132916.0,
+      "required_interaction_m3": 56059.875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t11100",
+      "candidate_index": 6,
+      "true_total_m3": -88996.5,
+      "d2_additive_m3": -202048.9375,
+      "required_interaction_m3": 113052.4375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t11100",
+      "candidate_index": 7,
+      "true_total_m3": -106275.0,
+      "d2_additive_m3": 201.32318115234375,
+      "required_interaction_m3": -106476.3203125
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t13200",
+      "candidate_index": 0,
+      "true_total_m3": -135471.5,
+      "d2_additive_m3": 86857.9765625,
+      "required_interaction_m3": -222329.46875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t13200",
+      "candidate_index": 1,
+      "true_total_m3": -114399.125,
+      "d2_additive_m3": -162145.5625,
+      "required_interaction_m3": 47746.4375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t13200",
+      "candidate_index": 2,
+      "true_total_m3": -58211.5,
+      "d2_additive_m3": -495.52435302734375,
+      "required_interaction_m3": -57715.9765625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t13200",
+      "candidate_index": 3,
+      "true_total_m3": -77096.0,
+      "d2_additive_m3": -85488.5546875,
+      "required_interaction_m3": 8392.5546875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t13200",
+      "candidate_index": 4,
+      "true_total_m3": -111080.25,
+      "d2_additive_m3": -6153.4541015625,
+      "required_interaction_m3": -104926.796875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t13200",
+      "candidate_index": 5,
+      "true_total_m3": -117764.75,
+      "d2_additive_m3": -102576.5703125,
+      "required_interaction_m3": -15188.1796875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t13200",
+      "candidate_index": 6,
+      "true_total_m3": -102708.25,
+      "d2_additive_m3": 2374.108642578125,
+      "required_interaction_m3": -105082.359375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t13200",
+      "candidate_index": 7,
+      "true_total_m3": -30483.5,
+      "d2_additive_m3": 27598.95703125,
+      "required_interaction_m3": -58082.45703125
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15300",
+      "candidate_index": 0,
+      "true_total_m3": -43527.125,
+      "d2_additive_m3": -170209.515625,
+      "required_interaction_m3": 126682.390625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15300",
+      "candidate_index": 1,
+      "true_total_m3": -228383.5,
+      "d2_additive_m3": -181291.546875,
+      "required_interaction_m3": -47091.953125
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15300",
+      "candidate_index": 2,
+      "true_total_m3": -113872.875,
+      "d2_additive_m3": -12353.0849609375,
+      "required_interaction_m3": -101519.7890625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15300",
+      "candidate_index": 3,
+      "true_total_m3": -52577.875,
+      "d2_additive_m3": -238637.765625,
+      "required_interaction_m3": 186059.890625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15300",
+      "candidate_index": 4,
+      "true_total_m3": -61411.375,
+      "d2_additive_m3": -137317.796875,
+      "required_interaction_m3": 75906.421875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15300",
+      "candidate_index": 5,
+      "true_total_m3": -34843.0,
+      "d2_additive_m3": -230214.5,
+      "required_interaction_m3": 195371.5
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15300",
+      "candidate_index": 6,
+      "true_total_m3": -55684.75,
+      "d2_additive_m3": -113297.1015625,
+      "required_interaction_m3": 57612.3515625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15300",
+      "candidate_index": 7,
+      "true_total_m3": -37182.75,
+      "d2_additive_m3": -219917.28125,
+      "required_interaction_m3": 182734.53125
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15900",
+      "candidate_index": 0,
+      "true_total_m3": -63931.625,
+      "d2_additive_m3": -116356.46875,
+      "required_interaction_m3": 52424.84375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15900",
+      "candidate_index": 1,
+      "true_total_m3": -43834.25,
+      "d2_additive_m3": -105116.109375,
+      "required_interaction_m3": 61281.859375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15900",
+      "candidate_index": 2,
+      "true_total_m3": -128252.5,
+      "d2_additive_m3": -145362.328125,
+      "required_interaction_m3": 17109.828125
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15900",
+      "candidate_index": 3,
+      "true_total_m3": -105999.375,
+      "d2_additive_m3": -117279.1171875,
+      "required_interaction_m3": 11279.7421875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15900",
+      "candidate_index": 4,
+      "true_total_m3": -47041.375,
+      "d2_additive_m3": -41021.203125,
+      "required_interaction_m3": -6020.171875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15900",
+      "candidate_index": 5,
+      "true_total_m3": -25162.25,
+      "d2_additive_m3": -318290.9375,
+      "required_interaction_m3": 293128.6875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15900",
+      "candidate_index": 6,
+      "true_total_m3": -46082.0,
+      "d2_additive_m3": -312421.21875,
+      "required_interaction_m3": 266339.21875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t15900",
+      "candidate_index": 7,
+      "true_total_m3": -73059.75,
+      "d2_additive_m3": -94841.875,
+      "required_interaction_m3": 21782.125
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t19500",
+      "candidate_index": 0,
+      "true_total_m3": -33884.625,
+      "d2_additive_m3": -193261.609375,
+      "required_interaction_m3": 159376.984375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t19500",
+      "candidate_index": 1,
+      "true_total_m3": -139539.9375,
+      "d2_additive_m3": -46793.1484375,
+      "required_interaction_m3": -92746.7890625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t19500",
+      "candidate_index": 2,
+      "true_total_m3": -75508.8125,
+      "d2_additive_m3": -302033.90625,
+      "required_interaction_m3": 226525.09375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t19500",
+      "candidate_index": 3,
+      "true_total_m3": -91951.375,
+      "d2_additive_m3": -232345.734375,
+      "required_interaction_m3": 140394.359375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t19500",
+      "candidate_index": 4,
+      "true_total_m3": -106763.5625,
+      "d2_additive_m3": -180552.5,
+      "required_interaction_m3": 73788.9375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t19500",
+      "candidate_index": 5,
+      "true_total_m3": -97103.625,
+      "d2_additive_m3": 33047.95703125,
+      "required_interaction_m3": -130151.578125
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t19500",
+      "candidate_index": 6,
+      "true_total_m3": -85144.0625,
+      "d2_additive_m3": -145376.8125,
+      "required_interaction_m3": 60232.75
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t19500",
+      "candidate_index": 7,
+      "true_total_m3": -179237.375,
+      "d2_additive_m3": -188989.796875,
+      "required_interaction_m3": 9752.421875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4200",
+      "candidate_index": 0,
+      "true_total_m3": -121546.0,
+      "d2_additive_m3": -253074.734375,
+      "required_interaction_m3": 131528.734375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4200",
+      "candidate_index": 1,
+      "true_total_m3": -193342.25,
+      "d2_additive_m3": -184382.03125,
+      "required_interaction_m3": -8960.21875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4200",
+      "candidate_index": 2,
+      "true_total_m3": -152456.5,
+      "d2_additive_m3": 5081.9677734375,
+      "required_interaction_m3": -157538.46875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4200",
+      "candidate_index": 3,
+      "true_total_m3": 13771.375,
+      "d2_additive_m3": -191070.265625,
+      "required_interaction_m3": 204841.640625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4200",
+      "candidate_index": 4,
+      "true_total_m3": -50556.125,
+      "d2_additive_m3": 2625.20947265625,
+      "required_interaction_m3": -53181.3359375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4200",
+      "candidate_index": 5,
+      "true_total_m3": 54396.625,
+      "d2_additive_m3": -109022.21875,
+      "required_interaction_m3": 163418.84375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4200",
+      "candidate_index": 6,
+      "true_total_m3": -129500.875,
+      "d2_additive_m3": -25662.150390625,
+      "required_interaction_m3": -103838.7265625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4200",
+      "candidate_index": 7,
+      "true_total_m3": -165424.375,
+      "d2_additive_m3": -40349.8984375,
+      "required_interaction_m3": -125074.4765625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4800",
+      "candidate_index": 0,
+      "true_total_m3": -142950.0,
+      "d2_additive_m3": -120074.375,
+      "required_interaction_m3": -22875.625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4800",
+      "candidate_index": 1,
+      "true_total_m3": -12379.5,
+      "d2_additive_m3": -43718.8515625,
+      "required_interaction_m3": 31339.3515625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4800",
+      "candidate_index": 2,
+      "true_total_m3": -180083.25,
+      "d2_additive_m3": -142996.09375,
+      "required_interaction_m3": -37087.15625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4800",
+      "candidate_index": 3,
+      "true_total_m3": -79481.75,
+      "d2_additive_m3": -159950.796875,
+      "required_interaction_m3": 80469.046875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4800",
+      "candidate_index": 4,
+      "true_total_m3": -94571.375,
+      "d2_additive_m3": -123303.921875,
+      "required_interaction_m3": 28732.546875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4800",
+      "candidate_index": 5,
+      "true_total_m3": -110318.5,
+      "d2_additive_m3": -66526.3359375,
+      "required_interaction_m3": -43792.1640625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4800",
+      "candidate_index": 6,
+      "true_total_m3": -27022.75,
+      "d2_additive_m3": -108203.546875,
+      "required_interaction_m3": 81180.796875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t4800",
+      "candidate_index": 7,
+      "true_total_m3": 25819.125,
+      "d2_additive_m3": -108406.8203125,
+      "required_interaction_m3": 134225.9375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t8700",
+      "candidate_index": 0,
+      "true_total_m3": -84604.375,
+      "d2_additive_m3": -87719.3828125,
+      "required_interaction_m3": 3115.0078125
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t8700",
+      "candidate_index": 1,
+      "true_total_m3": -188960.0,
+      "d2_additive_m3": -152945.5625,
+      "required_interaction_m3": -36014.4375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t8700",
+      "candidate_index": 2,
+      "true_total_m3": -69740.375,
+      "d2_additive_m3": 104832.0546875,
+      "required_interaction_m3": -174572.4375
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t8700",
+      "candidate_index": 3,
+      "true_total_m3": -25311.5,
+      "d2_additive_m3": -55088.41796875,
+      "required_interaction_m3": 29776.91796875
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t8700",
+      "candidate_index": 4,
+      "true_total_m3": -67841.25,
+      "d2_additive_m3": -244425.0,
+      "required_interaction_m3": 176583.75
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t8700",
+      "candidate_index": 5,
+      "true_total_m3": -26329.75,
+      "d2_additive_m3": -109532.4140625,
+      "required_interaction_m3": 83202.6640625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t8700",
+      "candidate_index": 6,
+      "true_total_m3": -187279.875,
+      "d2_additive_m3": 51601.51171875,
+      "required_interaction_m3": -238881.390625
+    },
+    {
+      "group": "D3::T5_D240_chicago::T5_D240_chicago::T5_D240_chicago:t8700",
+      "candidate_index": 7,
+      "true_total_m3": -59765.375,
+      "d2_additive_m3": -124860.828125,
+      "required_interaction_m3": 65095.453125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t10500",
+      "candidate_index": 0,
+      "true_total_m3": -215032.25,
+      "d2_additive_m3": -134437.5625,
+      "required_interaction_m3": -80594.6875
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t10500",
+      "candidate_index": 1,
+      "true_total_m3": -137153.5,
+      "d2_additive_m3": -142610.328125,
+      "required_interaction_m3": 5456.828125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t10500",
+      "candidate_index": 2,
+      "true_total_m3": -144080.75,
+      "d2_additive_m3": -35957.65625,
+      "required_interaction_m3": -108123.09375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t10500",
+      "candidate_index": 3,
+      "true_total_m3": -198600.5,
+      "d2_additive_m3": -105747.6953125,
+      "required_interaction_m3": -92852.8046875
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t10500",
+      "candidate_index": 4,
+      "true_total_m3": -163582.25,
+      "d2_additive_m3": -153728.546875,
+      "required_interaction_m3": -9853.703125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t10500",
+      "candidate_index": 5,
+      "true_total_m3": -226474.0,
+      "d2_additive_m3": -107110.7734375,
+      "required_interaction_m3": -119363.2265625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t10500",
+      "candidate_index": 6,
+      "true_total_m3": -162652.5,
+      "d2_additive_m3": -187869.265625,
+      "required_interaction_m3": 25216.765625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t10500",
+      "candidate_index": 7,
+      "true_total_m3": -111572.5,
+      "d2_additive_m3": -94271.9296875,
+      "required_interaction_m3": -17300.5703125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t12300",
+      "candidate_index": 0,
+      "true_total_m3": -29923.75,
+      "d2_additive_m3": -41405.2734375,
+      "required_interaction_m3": 11481.5234375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t12300",
+      "candidate_index": 1,
+      "true_total_m3": -163722.5,
+      "d2_additive_m3": -105827.5390625,
+      "required_interaction_m3": -57894.9609375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t12300",
+      "candidate_index": 2,
+      "true_total_m3": -261610.0,
+      "d2_additive_m3": -18188.640625,
+      "required_interaction_m3": -243421.359375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t12300",
+      "candidate_index": 3,
+      "true_total_m3": -124526.25,
+      "d2_additive_m3": -66362.21875,
+      "required_interaction_m3": -58164.03125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t12300",
+      "candidate_index": 4,
+      "true_total_m3": -129568.25,
+      "d2_additive_m3": -201899.40625,
+      "required_interaction_m3": 72331.15625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t12300",
+      "candidate_index": 5,
+      "true_total_m3": -16491.75,
+      "d2_additive_m3": -24768.853515625,
+      "required_interaction_m3": 8277.103515625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t12300",
+      "candidate_index": 6,
+      "true_total_m3": -97138.5,
+      "d2_additive_m3": -16802.94140625,
+      "required_interaction_m3": -80335.5625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t12300",
+      "candidate_index": 7,
+      "true_total_m3": -91018.0,
+      "d2_additive_m3": -55905.44140625,
+      "required_interaction_m3": -35112.55859375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t14400",
+      "candidate_index": 0,
+      "true_total_m3": -75479.75,
+      "d2_additive_m3": -197641.71875,
+      "required_interaction_m3": 122161.96875
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t14400",
+      "candidate_index": 1,
+      "true_total_m3": -65445.0,
+      "d2_additive_m3": -226000.328125,
+      "required_interaction_m3": 160555.328125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t14400",
+      "candidate_index": 2,
+      "true_total_m3": -148230.25,
+      "d2_additive_m3": -184050.9375,
+      "required_interaction_m3": 35820.6875
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t14400",
+      "candidate_index": 3,
+      "true_total_m3": -185460.25,
+      "d2_additive_m3": 6616.2255859375,
+      "required_interaction_m3": -192076.46875
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t14400",
+      "candidate_index": 4,
+      "true_total_m3": -95117.25,
+      "d2_additive_m3": -49801.94140625,
+      "required_interaction_m3": -45315.30859375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t14400",
+      "candidate_index": 5,
+      "true_total_m3": -93557.75,
+      "d2_additive_m3": -274487.9375,
+      "required_interaction_m3": 180930.1875
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t14400",
+      "candidate_index": 6,
+      "true_total_m3": -305102.75,
+      "d2_additive_m3": -106153.609375,
+      "required_interaction_m3": -198949.140625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t14400",
+      "candidate_index": 7,
+      "true_total_m3": -143517.75,
+      "d2_additive_m3": -23537.025390625,
+      "required_interaction_m3": -119980.7265625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t18000",
+      "candidate_index": 0,
+      "true_total_m3": -95858.25,
+      "d2_additive_m3": 47547.26953125,
+      "required_interaction_m3": -143405.515625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t18000",
+      "candidate_index": 1,
+      "true_total_m3": -98158.625,
+      "d2_additive_m3": -53654.3515625,
+      "required_interaction_m3": -44504.2734375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t18000",
+      "candidate_index": 2,
+      "true_total_m3": -111849.375,
+      "d2_additive_m3": -133910.390625,
+      "required_interaction_m3": 22061.015625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t18000",
+      "candidate_index": 3,
+      "true_total_m3": -36181.375,
+      "d2_additive_m3": -174461.5,
+      "required_interaction_m3": 138280.125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t18000",
+      "candidate_index": 4,
+      "true_total_m3": -37436.5,
+      "d2_additive_m3": -417280.125,
+      "required_interaction_m3": 379843.625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t18000",
+      "candidate_index": 5,
+      "true_total_m3": -39330.125,
+      "d2_additive_m3": -151342.390625,
+      "required_interaction_m3": 112012.265625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t18000",
+      "candidate_index": 6,
+      "true_total_m3": -188673.0,
+      "d2_additive_m3": -153950.390625,
+      "required_interaction_m3": -34722.609375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t18000",
+      "candidate_index": 7,
+      "true_total_m3": -111441.5,
+      "d2_additive_m3": -203026.28125,
+      "required_interaction_m3": 91584.78125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t20700",
+      "candidate_index": 0,
+      "true_total_m3": -38985.125,
+      "d2_additive_m3": 173674.015625,
+      "required_interaction_m3": -212659.140625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t20700",
+      "candidate_index": 1,
+      "true_total_m3": -63101.5,
+      "d2_additive_m3": -28114.732421875,
+      "required_interaction_m3": -34986.765625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t20700",
+      "candidate_index": 2,
+      "true_total_m3": -113370.5,
+      "d2_additive_m3": -287229.6875,
+      "required_interaction_m3": 173859.1875
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t20700",
+      "candidate_index": 3,
+      "true_total_m3": -151893.5,
+      "d2_additive_m3": -60841.38671875,
+      "required_interaction_m3": -91052.109375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t20700",
+      "candidate_index": 4,
+      "true_total_m3": -69976.25,
+      "d2_additive_m3": -208045.4375,
+      "required_interaction_m3": 138069.1875
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t20700",
+      "candidate_index": 5,
+      "true_total_m3": -54114.875,
+      "d2_additive_m3": -143192.1875,
+      "required_interaction_m3": 89077.3125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t20700",
+      "candidate_index": 6,
+      "true_total_m3": -107042.75,
+      "d2_additive_m3": -216026.953125,
+      "required_interaction_m3": 108984.203125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t20700",
+      "candidate_index": 7,
+      "true_total_m3": -91251.5,
+      "d2_additive_m3": -80414.9296875,
+      "required_interaction_m3": -10836.5703125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t24000",
+      "candidate_index": 0,
+      "true_total_m3": -133348.0625,
+      "d2_additive_m3": 5142.2451171875,
+      "required_interaction_m3": -138490.3125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t24000",
+      "candidate_index": 1,
+      "true_total_m3": -61860.8125,
+      "d2_additive_m3": -97730.4765625,
+      "required_interaction_m3": 35869.6640625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t24000",
+      "candidate_index": 2,
+      "true_total_m3": -108653.5625,
+      "d2_additive_m3": -171867.234375,
+      "required_interaction_m3": 63213.671875
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t24000",
+      "candidate_index": 3,
+      "true_total_m3": -88521.4375,
+      "d2_additive_m3": 10782.4208984375,
+      "required_interaction_m3": -99303.859375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t24000",
+      "candidate_index": 4,
+      "true_total_m3": -118689.375,
+      "d2_additive_m3": 2760.94189453125,
+      "required_interaction_m3": -121450.3203125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t24000",
+      "candidate_index": 5,
+      "true_total_m3": -78151.6875,
+      "d2_additive_m3": -251974.140625,
+      "required_interaction_m3": 173822.453125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t24000",
+      "candidate_index": 6,
+      "true_total_m3": -80948.4375,
+      "d2_additive_m3": -136262.40625,
+      "required_interaction_m3": 55313.96875
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t24000",
+      "candidate_index": 7,
+      "true_total_m3": -80125.1875,
+      "d2_additive_m3": -158930.84375,
+      "required_interaction_m3": 78805.65625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t6600",
+      "candidate_index": 0,
+      "true_total_m3": -54765.0,
+      "d2_additive_m3": 36740.58984375,
+      "required_interaction_m3": -91505.59375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t6600",
+      "candidate_index": 1,
+      "true_total_m3": -93899.0,
+      "d2_additive_m3": -126284.890625,
+      "required_interaction_m3": 32385.890625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t6600",
+      "candidate_index": 2,
+      "true_total_m3": -111252.5,
+      "d2_additive_m3": -27367.173828125,
+      "required_interaction_m3": -83885.328125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t6600",
+      "candidate_index": 3,
+      "true_total_m3": -57396.0,
+      "d2_additive_m3": -113457.5546875,
+      "required_interaction_m3": 56061.5546875
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t6600",
+      "candidate_index": 4,
+      "true_total_m3": -100270.5,
+      "d2_additive_m3": -21419.564453125,
+      "required_interaction_m3": -78850.9375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t6600",
+      "candidate_index": 5,
+      "true_total_m3": -8479.75,
+      "d2_additive_m3": -54512.58203125,
+      "required_interaction_m3": 46032.83203125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t6600",
+      "candidate_index": 6,
+      "true_total_m3": -131129.75,
+      "d2_additive_m3": -31421.962890625,
+      "required_interaction_m3": -99707.7890625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t6600",
+      "candidate_index": 7,
+      "true_total_m3": -175361.75,
+      "d2_additive_m3": -122171.7265625,
+      "required_interaction_m3": -53190.0234375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t8400",
+      "candidate_index": 0,
+      "true_total_m3": -23378.5,
+      "d2_additive_m3": -17475.919921875,
+      "required_interaction_m3": -5902.580078125
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t8400",
+      "candidate_index": 1,
+      "true_total_m3": -83734.0,
+      "d2_additive_m3": -105203.5234375,
+      "required_interaction_m3": 21469.5234375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t8400",
+      "candidate_index": 2,
+      "true_total_m3": -186714.5,
+      "d2_additive_m3": -40267.78125,
+      "required_interaction_m3": -146446.71875
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t8400",
+      "candidate_index": 3,
+      "true_total_m3": -136816.0,
+      "d2_additive_m3": -126737.3125,
+      "required_interaction_m3": -10078.6875
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t8400",
+      "candidate_index": 4,
+      "true_total_m3": -132466.5,
+      "d2_additive_m3": -223720.75,
+      "required_interaction_m3": 91254.25
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t8400",
+      "candidate_index": 5,
+      "true_total_m3": -12575.5,
+      "d2_additive_m3": -209260.015625,
+      "required_interaction_m3": 196684.515625
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t8400",
+      "candidate_index": 6,
+      "true_total_m3": -187924.0,
+      "d2_additive_m3": -282931.375,
+      "required_interaction_m3": 95007.375
+    },
+    {
+      "group": "D3::T5_D300_chicago::T5_D300_chicago::T5_D300_chicago:t8400",
+      "candidate_index": 7,
+      "true_total_m3": 25116.75,
+      "d2_additive_m3": 126077.203125,
+      "required_interaction_m3": -100960.453125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t10200",
+      "candidate_index": 0,
+      "true_total_m3": -103450.125,
+      "d2_additive_m3": -303435.21875,
+      "required_interaction_m3": 199985.09375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t10200",
+      "candidate_index": 1,
+      "true_total_m3": -118037.5,
+      "d2_additive_m3": 16808.794921875,
+      "required_interaction_m3": -134846.296875
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t10200",
+      "candidate_index": 2,
+      "true_total_m3": -30050.4375,
+      "d2_additive_m3": -196289.046875,
+      "required_interaction_m3": 166238.609375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t10200",
+      "candidate_index": 3,
+      "true_total_m3": -81886.375,
+      "d2_additive_m3": -113282.3828125,
+      "required_interaction_m3": 31396.0078125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t10200",
+      "candidate_index": 4,
+      "true_total_m3": -76137.15625,
+      "d2_additive_m3": -76885.0,
+      "required_interaction_m3": 747.84375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t10200",
+      "candidate_index": 5,
+      "true_total_m3": -67471.6875,
+      "d2_additive_m3": -254349.5,
+      "required_interaction_m3": 186877.8125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t10200",
+      "candidate_index": 6,
+      "true_total_m3": -27261.0,
+      "d2_additive_m3": -42267.84375,
+      "required_interaction_m3": 15006.84375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t10200",
+      "candidate_index": 7,
+      "true_total_m3": -46881.28125,
+      "d2_additive_m3": -56552.984375,
+      "required_interaction_m3": 9671.703125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4200",
+      "candidate_index": 0,
+      "true_total_m3": -30295.25,
+      "d2_additive_m3": -44455.64453125,
+      "required_interaction_m3": 14160.39453125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4200",
+      "candidate_index": 1,
+      "true_total_m3": -31412.25,
+      "d2_additive_m3": -90676.3125,
+      "required_interaction_m3": 59264.0625
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4200",
+      "candidate_index": 2,
+      "true_total_m3": -167916.03125,
+      "d2_additive_m3": -143626.5625,
+      "required_interaction_m3": -24289.46875
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4200",
+      "candidate_index": 3,
+      "true_total_m3": -79507.3125,
+      "d2_additive_m3": 67061.6171875,
+      "required_interaction_m3": -146568.9375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4200",
+      "candidate_index": 4,
+      "true_total_m3": -91093.78125,
+      "d2_additive_m3": 27774.0703125,
+      "required_interaction_m3": -118867.8515625
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4200",
+      "candidate_index": 5,
+      "true_total_m3": -89982.59375,
+      "d2_additive_m3": -97546.9765625,
+      "required_interaction_m3": 7564.3828125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4200",
+      "candidate_index": 6,
+      "true_total_m3": -49556.3125,
+      "d2_additive_m3": 24780.8828125,
+      "required_interaction_m3": -74337.1953125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4200",
+      "candidate_index": 7,
+      "true_total_m3": -36221.21875,
+      "d2_additive_m3": 13809.455078125,
+      "required_interaction_m3": -50030.671875
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4800",
+      "candidate_index": 0,
+      "true_total_m3": -87296.5625,
+      "d2_additive_m3": -171650.671875,
+      "required_interaction_m3": 84354.109375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4800",
+      "candidate_index": 1,
+      "true_total_m3": -88021.71875,
+      "d2_additive_m3": -153162.875,
+      "required_interaction_m3": 65141.15625
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4800",
+      "candidate_index": 2,
+      "true_total_m3": -85790.03125,
+      "d2_additive_m3": -112241.2734375,
+      "required_interaction_m3": 26451.2421875
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4800",
+      "candidate_index": 3,
+      "true_total_m3": -103453.46875,
+      "d2_additive_m3": -139190.546875,
+      "required_interaction_m3": 35737.078125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4800",
+      "candidate_index": 4,
+      "true_total_m3": -88619.3125,
+      "d2_additive_m3": -53850.71484375,
+      "required_interaction_m3": -34768.59765625
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4800",
+      "candidate_index": 5,
+      "true_total_m3": -131055.09375,
+      "d2_additive_m3": -90647.59375,
+      "required_interaction_m3": -40407.5
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4800",
+      "candidate_index": 6,
+      "true_total_m3": -125565.4375,
+      "d2_additive_m3": -158475.21875,
+      "required_interaction_m3": 32909.78125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t4800",
+      "candidate_index": 7,
+      "true_total_m3": -105723.5,
+      "d2_additive_m3": 17042.142578125,
+      "required_interaction_m3": -122765.640625
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5100",
+      "candidate_index": 0,
+      "true_total_m3": -97976.375,
+      "d2_additive_m3": -82138.953125,
+      "required_interaction_m3": -15837.421875
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5100",
+      "candidate_index": 1,
+      "true_total_m3": -75818.375,
+      "d2_additive_m3": -80634.5078125,
+      "required_interaction_m3": 4816.1328125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5100",
+      "candidate_index": 2,
+      "true_total_m3": -93181.75,
+      "d2_additive_m3": -125770.6015625,
+      "required_interaction_m3": 32588.8515625
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5100",
+      "candidate_index": 3,
+      "true_total_m3": -59974.46875,
+      "d2_additive_m3": -61746.83984375,
+      "required_interaction_m3": 1772.37109375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5100",
+      "candidate_index": 4,
+      "true_total_m3": -37059.375,
+      "d2_additive_m3": -172884.53125,
+      "required_interaction_m3": 135825.15625
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5100",
+      "candidate_index": 5,
+      "true_total_m3": -52959.71875,
+      "d2_additive_m3": 36293.89453125,
+      "required_interaction_m3": -89253.609375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5100",
+      "candidate_index": 6,
+      "true_total_m3": -94277.75,
+      "d2_additive_m3": 5827.05908203125,
+      "required_interaction_m3": -100104.8125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5100",
+      "candidate_index": 7,
+      "true_total_m3": -144273.15625,
+      "d2_additive_m3": 180081.34375,
+      "required_interaction_m3": -324354.5
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5700",
+      "candidate_index": 0,
+      "true_total_m3": -106169.65625,
+      "d2_additive_m3": -138651.765625,
+      "required_interaction_m3": 32482.109375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5700",
+      "candidate_index": 1,
+      "true_total_m3": -78532.375,
+      "d2_additive_m3": 83923.359375,
+      "required_interaction_m3": -162455.734375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5700",
+      "candidate_index": 2,
+      "true_total_m3": -134706.125,
+      "d2_additive_m3": -178005.375,
+      "required_interaction_m3": 43299.25
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5700",
+      "candidate_index": 3,
+      "true_total_m3": -22394.5,
+      "d2_additive_m3": -111095.9921875,
+      "required_interaction_m3": 88701.4921875
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5700",
+      "candidate_index": 4,
+      "true_total_m3": -74824.65625,
+      "d2_additive_m3": -153188.75,
+      "required_interaction_m3": 78364.09375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5700",
+      "candidate_index": 5,
+      "true_total_m3": -110087.90625,
+      "d2_additive_m3": -109450.2578125,
+      "required_interaction_m3": -637.6484375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5700",
+      "candidate_index": 6,
+      "true_total_m3": 17958.78125,
+      "d2_additive_m3": 27401.61328125,
+      "required_interaction_m3": -9442.83203125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t5700",
+      "candidate_index": 7,
+      "true_total_m3": -62920.40625,
+      "d2_additive_m3": 53468.02734375,
+      "required_interaction_m3": -116388.4375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t7800",
+      "candidate_index": 0,
+      "true_total_m3": -99776.75,
+      "d2_additive_m3": -92215.6015625,
+      "required_interaction_m3": -7561.1484375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t7800",
+      "candidate_index": 1,
+      "true_total_m3": -65248.28125,
+      "d2_additive_m3": -35934.06640625,
+      "required_interaction_m3": -29314.21484375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t7800",
+      "candidate_index": 2,
+      "true_total_m3": -124000.40625,
+      "d2_additive_m3": -32471.69140625,
+      "required_interaction_m3": -91528.71875
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t7800",
+      "candidate_index": 3,
+      "true_total_m3": -69429.71875,
+      "d2_additive_m3": -94787.7734375,
+      "required_interaction_m3": 25358.0546875
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t7800",
+      "candidate_index": 4,
+      "true_total_m3": -71952.5,
+      "d2_additive_m3": -17061.251953125,
+      "required_interaction_m3": -54891.25
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t7800",
+      "candidate_index": 5,
+      "true_total_m3": -87979.28125,
+      "d2_additive_m3": -164946.8125,
+      "required_interaction_m3": 76967.53125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t7800",
+      "candidate_index": 6,
+      "true_total_m3": -161062.09375,
+      "d2_additive_m3": -55165.26171875,
+      "required_interaction_m3": -105896.828125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t7800",
+      "candidate_index": 7,
+      "true_total_m3": -66692.59375,
+      "d2_additive_m3": -213362.609375,
+      "required_interaction_m3": 146670.015625
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t8100",
+      "candidate_index": 0,
+      "true_total_m3": -155564.96875,
+      "d2_additive_m3": -48203.1328125,
+      "required_interaction_m3": -107361.8359375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t8100",
+      "candidate_index": 1,
+      "true_total_m3": -49525.53125,
+      "d2_additive_m3": 80695.234375,
+      "required_interaction_m3": -130220.765625
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t8100",
+      "candidate_index": 2,
+      "true_total_m3": -56218.59375,
+      "d2_additive_m3": -174904.4375,
+      "required_interaction_m3": 118685.84375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t8100",
+      "candidate_index": 3,
+      "true_total_m3": -14647.375,
+      "d2_additive_m3": -176888.046875,
+      "required_interaction_m3": 162240.671875
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t8100",
+      "candidate_index": 4,
+      "true_total_m3": -102191.8125,
+      "d2_additive_m3": -70930.4296875,
+      "required_interaction_m3": -31261.3828125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t8100",
+      "candidate_index": 5,
+      "true_total_m3": -92406.71875,
+      "d2_additive_m3": -136062.0,
+      "required_interaction_m3": 43655.28125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t8100",
+      "candidate_index": 6,
+      "true_total_m3": -104470.78125,
+      "d2_additive_m3": -202612.515625,
+      "required_interaction_m3": 98141.734375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t8100",
+      "candidate_index": 7,
+      "true_total_m3": -74971.5625,
+      "d2_additive_m3": -15719.021484375,
+      "required_interaction_m3": -59252.5390625
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t9000",
+      "candidate_index": 0,
+      "true_total_m3": -43136.0625,
+      "d2_additive_m3": -79725.8828125,
+      "required_interaction_m3": 36589.8203125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t9000",
+      "candidate_index": 1,
+      "true_total_m3": -19909.8125,
+      "d2_additive_m3": -163816.890625,
+      "required_interaction_m3": 143907.078125
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t9000",
+      "candidate_index": 2,
+      "true_total_m3": -45511.875,
+      "d2_additive_m3": -217953.296875,
+      "required_interaction_m3": 172441.421875
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t9000",
+      "candidate_index": 3,
+      "true_total_m3": -87430.625,
+      "d2_additive_m3": 47661.3203125,
+      "required_interaction_m3": -135091.9375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t9000",
+      "candidate_index": 4,
+      "true_total_m3": -96866.34375,
+      "d2_additive_m3": -115699.28125,
+      "required_interaction_m3": 18832.9375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t9000",
+      "candidate_index": 5,
+      "true_total_m3": -14992.90625,
+      "d2_additive_m3": -223347.28125,
+      "required_interaction_m3": 208354.375
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t9000",
+      "candidate_index": 6,
+      "true_total_m3": -73323.78125,
+      "d2_additive_m3": 79984.4765625,
+      "required_interaction_m3": -153308.25
+    },
+    {
+      "group": "D3::T5_D60_chicago::T5_D60_chicago::T5_D60_chicago:t9000",
+      "candidate_index": 7,
+      "true_total_m3": -83434.28125,
+      "d2_additive_m3": -301735.4375,
+      "required_interaction_m3": 218301.15625
+    }
+  ],
+  "verdict": "SUPERPOSITION INVALID",
+  "direct_v45_authorized": true,
+  "device": "cuda"
+}
+```
