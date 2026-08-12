@@ -4,7 +4,8 @@ The MPC-facing value model predicts signed counterfactual Delta-TFV directly in 
 volume units. It does not route the objective through a tiny flooding-rate difference
 and a 72-step integration. The action encoder is state-conditioned at each actuator,
 uses the six frozen temporal basis functions, current actuator flow, actuator physics,
-and then performs set-level multi-actuator interaction.
+and then performs set-level multi-actuator interaction. A linear action skip preserves
+the low-order signal demonstrated by the frozen action-only diagnostic baseline.
 """
 from __future__ import annotations
 
@@ -100,7 +101,7 @@ class TemporalActionProjectorV70(nn.Module):
 
 
 class ControlValueSurrogateV70(nn.Module):
-    """Direct signed Delta-TFV model for candidate scoring and differentiable MPC."""
+    """Linear control backbone plus state-conditioned nonlinear Delta-TFV residual."""
 
     def __init__(
         self,
@@ -139,9 +140,11 @@ class ControlValueSurrogateV70(nn.Module):
             + actuator_embedding_dim
         )
         self.effect_encoder = _mlp(base_dim + k, hidden_dim, hidden_dim)
+        self.linear_action_head = nn.Linear(self.actuator_count * k, 1, bias=False)
         self.direct_head = _bias_free_head(4 * hidden_dim, hidden_dim)
         scale = max(float(tfv_scale_m3), 1.0)
         self.register_buffer("tfv_scale_m3", torch.tensor(scale, dtype=torch.float32))
+        nn.init.zeros_(self.linear_action_head.weight)
         for module in self.direct_head.modules():
             if isinstance(module, nn.Linear):
                 nn.init.xavier_uniform_(module.weight, gain=0.35)
@@ -229,25 +232,18 @@ class ControlValueSurrogateV70(nn.Module):
             1.0,
         )
         pooled = torch.cat((summed, mean, maximum, pair), dim=-1)
-        normalized = self.direct_head(pooled).squeeze(-1)
+        linear = self.linear_action_head(delta_features.reshape(batch, candidates, -1)).squeeze(-1)
+        nonlinear = self.direct_head(pooled).squeeze(-1)
+        normalized = linear + nonlinear
         limit = float(self.contract.transformed_limit)
         normalized = limit * torch.tanh(normalized / limit)
         delta_tfv = self.tfv_scale_m3.to(normalized) * torch.sinh(normalized)
 
-        # Fail closed on the exact counterfactual identity. This is a structural
-        # contract, not a learned shortcut; all non-identical candidate gradients
-        # remain unchanged.
-        same_action = torch.all(
-            candidate_settings == reference_expanded, dim=(2, 3)
-        )
+        same_action = torch.all(candidate_settings == reference_expanded, dim=(2, 3))
         normalized = torch.where(same_action, torch.zeros_like(normalized), normalized)
         delta_tfv = torch.where(same_action, torch.zeros_like(delta_tfv), delta_tfv)
-        effect = torch.where(
-            same_action[..., None, None], torch.zeros_like(effect), effect
-        )
-        pooled = torch.where(
-            same_action[..., None], torch.zeros_like(pooled), pooled
-        )
+        effect = torch.where(same_action[..., None, None], torch.zeros_like(effect), effect)
+        pooled = torch.where(same_action[..., None], torch.zeros_like(pooled), pooled)
         return DirectValueOutputV70(
             delta_tfv_m3=delta_tfv,
             normalized_delta_tfv=normalized,
@@ -295,9 +291,7 @@ class DualStep2SurrogateV70(nn.Module):
         self.hydraulic = hydraulic_model
 
     def assert_disjoint_parameters(self) -> None:
-        if {id(p) for p in self.value.parameters()} & {
-            id(p) for p in self.hydraulic.parameters()
-        }:
+        if {id(p) for p in self.value.parameters()} & {id(p) for p in self.hydraulic.parameters()}:
             raise RuntimeError("V7 value/hydraulic parameter sets must be disjoint")
 
 
