@@ -1,4 +1,4 @@
-"""Select a bounded second-round Train-only V6 D3 active-learning batch."""
+"""Select a bounded second-round TrainFit-only V6 D3 active-learning batch."""
 from __future__ import annotations
 
 import argparse
@@ -25,6 +25,13 @@ def main() -> None:
         str(value).strip().lower() for value in frame["development_fold"]
     } != {"train"}:
         raise ValueError("V6 active learning is Train-only")
+    if "v60_internal_role" not in frame.columns:
+        raise ValueError(
+            "V6 active learning requires v60_internal_role and may only select TrainFit; "
+            "the frozen TrainInternalHoldout must remain untouched"
+        )
+    if {str(value).strip().lower() for value in frame["v60_internal_role"]} != {"fit"}:
+        raise ValueError("V6 active learning refuses TrainInternalHoldout candidates")
     forbidden = {
         "authoritative_delta_tfv_m3",
         "true_delta_tfv_m3",
@@ -46,6 +53,8 @@ def main() -> None:
                 "contract": "PROJECT7_STEP2_V60_ACTIVE_LEARNING_SELECTION_V1",
                 "rows": int(len(selected)),
                 "rainfall_groups": int(selected["rainfall_group"].nunique()),
+                "internal_role": "fit",
+                "internal_holdout_used": False,
                 "out": str(out),
                 "authoritative_outcome_used": False,
             },
