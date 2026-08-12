@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
 from types import SimpleNamespace
 import numpy as np
 import torch
@@ -12,7 +14,11 @@ from rtc.step2_train_response_v70 import value_loss_v70
 
 
 def test_v70_report_lineage_reads_source_manifest(monkeypatch):
-    import scripts.run_step2_v70 as runner
+    path = Path(__file__).parents[1] / "scripts" / "run_step2_v70.py"
+    spec = importlib.util.spec_from_file_location("run_step2_v70_test_module", path)
+    assert spec is not None and spec.loader is not None
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
 
     monkeypatch.setattr(
         runner,
