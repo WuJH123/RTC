@@ -29,6 +29,14 @@ def _events(cache: V60TrainCache, names: Sequence[str]) -> dict[str, list[str]]:
     return {key: sorted(values) for key, values in sorted(grouped.items())}
 
 
+def _emit_progress(prefix: str, payload: dict[str, Any]) -> None:
+    fields = " ".join(
+        f"{key}={value:.6g}" if isinstance(value, float) else f"{key}={value}"
+        for key, value in payload.items()
+    )
+    print(f"[{prefix}] {fields}", flush=True)
+
+
 def train_value_event_balanced_v70(
     model: ControlValueSurrogateV70,
     cache: V60TrainCache,
@@ -100,7 +108,9 @@ def train_value_event_balanced_v70(
             )
             torch.nn.utils.clip_grad_norm_(model.parameters(), contract.grad_clip)
             optimizer.step()
-        history.append(summarize("D2_direct_sensitivity", epoch, records))
+        row = summarize("D2_direct_sensitivity", epoch, records)
+        history.append(row)
+        _emit_progress("V7_VALUE", row)
 
     d2_keys = list(d2_events)
     for epoch in range(1, contract.joint_epochs + 1):
@@ -126,7 +136,9 @@ def train_value_event_balanced_v70(
             )
             torch.nn.utils.clip_grad_norm_(model.parameters(), contract.grad_clip)
             optimizer.step()
-        history.append(summarize("D3_primary_with_D2_anchor", epoch, records))
+        row = summarize("D3_primary_with_D2_anchor", epoch, records)
+        history.append(row)
+        _emit_progress("V7_VALUE", row)
     return history
 
 
@@ -203,14 +215,15 @@ def train_hydraulic_event_balanced_v70(
             )
             torch.nn.utils.clip_grad_norm_(model.parameters(), contract.grad_clip)
             optimizer.step()
-        summary: dict[str, Any] = {
+        row: dict[str, Any] = {
             "stage": "D3_hydraulic_effect_with_D2_anchor",
             "epoch": int(epoch),
         }
-        for metric in sorted({k for row in records for k in row}):
-            values = [float(row[metric]) for row in records if np.isfinite(float(row[metric]))]
-            summary[metric] = float(np.mean(values)) if values else float("nan")
-        history.append(summary)
+        for metric in sorted({k for record in records for k in record}):
+            values = [float(record[metric]) for record in records if np.isfinite(float(record[metric]))]
+            row[metric] = float(np.mean(values)) if values else float("nan")
+        history.append(row)
+        _emit_progress("V7_HYDRAULIC", row)
     return history
 
 
