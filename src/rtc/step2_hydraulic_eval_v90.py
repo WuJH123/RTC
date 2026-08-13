@@ -494,12 +494,13 @@ def evaluate_hydraulic_effect_v90(
     horizon_buckets: dict[str, dict[str, float]] = {}
     for bucket, _, _ in HORIZON_BUCKETS_V90:
         prefix = bucket + "__"
-        names = sorted({
+        bucket_metric_names = sorted({
             key for record in records for key, value in record.items()
             if key.startswith(prefix) and isinstance(value, (int, float))
         })
         horizon_buckets[bucket] = {
-            key[len(prefix):]: _event_balanced(records, key) for key in names
+            key[len(prefix):]: _event_balanced(records, key)
+            for key in bucket_metric_names
         }
 
     by_type: dict[str, dict[str, float]] = {}

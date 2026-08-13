@@ -13,6 +13,7 @@ from rtc.step2_hydraulic_eval_v90 import (
     _bucket_effect_records,
     _effect_record,
     _horizon_bucket_masks,
+    _single_changed_actuator,
     _timing_record,
     _top_overlap,
     decide_state_sufficiency_v90,
@@ -174,6 +175,17 @@ def test_v90_managed_flow_active_metrics_use_per_actuator_scales():
     # a perfect sign score.
     assert metrics["flow_active_fraction"] == 0.5
     assert metrics["flow_active_sign"] == 0.0
+
+
+def test_v90_single_changed_actuator_reduces_batch_candidate_and_time_axes():
+    reference = torch.zeros(1, 4, 3)
+    candidate = reference[:, None].clone()
+    candidate[:, 0, :, 2] = 0.4
+    batch = SimpleNamespace(
+        candidate_settings=candidate,
+        reference_settings=reference,
+    )
+    assert _single_changed_actuator(batch, 0) == 2
 
 
 def test_v90_top_overlap_zero_truth_support_is_not_applicable():
