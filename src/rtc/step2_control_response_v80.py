@@ -157,6 +157,7 @@ class DirectHydraulicEffectSurrogateV80(nn.Module):
         node_static_dim: int,
         actuator_count: int,
         contract: DirectHydraulicEffectLossContractV80 = DirectHydraulicEffectLossContractV80(),
+        trajectory_conditioning: bool = False,
     ) -> None:
         super().__init__()
         contract.validate()
@@ -168,6 +169,7 @@ class DirectHydraulicEffectSurrogateV80(nn.Module):
         self.contract = contract
         self.actuator_count = int(actuator_count)
         self.hidden_dim = int(contract.hidden_dim)
+        self.trajectory_conditioning = bool(trajectory_conditioning)
         context_dim = int(reference_model.hidden_dim)
         self.prefix = CausalPrefixActionProjectorV80(
             temporal_basis, control_block_steps=control_block_steps
@@ -183,6 +185,10 @@ class DirectHydraulicEffectSurrogateV80(nn.Module):
             + 1  # reference setting at the retained time
             + contract.time_embedding_dim
         )
+        if self.trajectory_conditioning:
+            # Predicted/oracle reference endpoint state (6+6) plus the
+            # reference actuator flow.  This is detached at the call boundary.
+            base_dim += 13
         effect_dim = k + 1  # causal prefix basis + instantaneous setting delta
         self.actuator_effect_encoder = _mlp(
             base_dim + effect_dim, self.hidden_dim, self.hidden_dim
@@ -251,6 +257,7 @@ class DirectHydraulicEffectSurrogateV80(nn.Module):
         candidate_settings: torch.Tensor,
         previous_actuator_flow: torch.Tensor,
         prepared: PreparedStaticV80,
+        reference_trajectory_context: tuple[torch.Tensor, torch.Tensor] | None = None,
     ) -> HydraulicOutputV60:
         if candidate_settings.ndim != 4:
             raise ValueError("V8 candidate settings must be [B,C,H,A]")
@@ -287,12 +294,37 @@ class DirectHydraulicEffectSurrogateV80(nn.Module):
             batch, retained_count, -1, -1
         )
         reference_current = reference_settings.index_select(1, indices)[..., None]
+        if self.trajectory_conditioning:
+            if reference_trajectory_context is None:
+                trajectory_states = base_output.reference_states_physical[:, 0]
+                trajectory_flows = base_output.reference_flows_physical[:, 0]
+            else:
+                trajectory_states, trajectory_flows = reference_trajectory_context
+                trajectory_states = trajectory_states.detach()
+                trajectory_flows = trajectory_flows.detach()
+                if trajectory_states.ndim != 4 or trajectory_flows.ndim != 3:
+                    raise ValueError("V9 reference trajectory must be [B,H,N,6] and [B,H,A]")
+                if trajectory_states.shape[1] != horizon:
+                    raise ValueError("V9 reference state trajectory horizon mismatch")
+                if trajectory_flows.shape[1] != horizon:
+                    raise ValueError("V9 reference flow trajectory horizon mismatch")
+                trajectory_states = trajectory_states.index_select(1, indices)
+                trajectory_flows = trajectory_flows.index_select(1, indices)
+            if trajectory_states.shape[:3] != (batch, retained_count, node_count):
+                raise ValueError("V9 reference state trajectory shape mismatch")
+            if trajectory_states.shape[-1] != 6 or trajectory_flows.shape != (batch, retained_count, actuators):
+                raise ValueError("V9 reference trajectory channel shape mismatch")
+            trajectory_up = trajectory_states[..., prepared.base.actuator_upstream, :]
+            trajectory_down = trajectory_states[..., prepared.base.actuator_downstream, :]
+            trajectory_flow = trajectory_flows[..., None]
+            trajectory_features = torch.cat((trajectory_up, trajectory_down, trajectory_flow), dim=-1)
+        else:
+            trajectory_features = None
         time = self.time_embedding(
             torch.arange(retained_count, device=initial_state.device)
         )[None, :, None].expand(batch, -1, actuators, -1)
-        base = torch.cat(
-            (up, down, physics, previous_flow, reference_current, time), dim=-1
-        )
+        base_parts = (up, down, physics, previous_flow, reference_current, time)
+        base = torch.cat(base_parts + ((trajectory_features,) if trajectory_features is not None else ()), dim=-1)
         base = base[:, None].expand(batch, candidates, -1, -1, -1)
         effect_features = torch.cat((prefix_delta, current_delta), dim=-1)
         zeros = torch.zeros_like(effect_features)
@@ -385,6 +417,8 @@ class DirectHydraulicEffectSurrogateV80(nn.Module):
         delta_states = torch.where(state_mask, torch.zeros_like(delta_states), delta_states)
         candidate_flows = torch.where(flow_mask, reference_flows, candidate_flows)
         delta_flows = torch.where(flow_mask, torch.zeros_like(delta_flows), delta_flows)
+        raw_delta_state = torch.where(state_mask, torch.zeros_like(raw_delta_state), raw_delta_state)
+        raw_flow_delta = torch.where(flow_mask, torch.zeros_like(raw_flow_delta), raw_flow_delta)
         candidate_logits = torch.where(logit_mask, reference_logits, candidate_logits)
         token = torch.where(same_action[..., None, None, None], torch.zeros_like(token), token)
 
@@ -399,6 +433,8 @@ class DirectHydraulicEffectSurrogateV80(nn.Module):
             reference_flood_onset_logits=reference_logits,
             candidate_flood_onset_logits=candidate_logits,
             joint_context_before_scatter=token,
+            raw_delta_states_physical=raw_delta_state,
+            raw_delta_flows_physical=raw_flow_delta,
         )
 
 

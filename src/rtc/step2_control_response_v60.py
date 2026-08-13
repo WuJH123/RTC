@@ -109,6 +109,10 @@ class HydraulicOutputV60:
     reference_flood_onset_logits: torch.Tensor
     candidate_flood_onset_logits: torch.Tensor
     joint_context_before_scatter: torch.Tensor
+    # Optional V9 signed-effect fields.  V6/V7/V8 callers continue to use the
+    # projected ``delta_*`` fields; V9 trains only on these raw signed tensors.
+    raw_delta_states_physical: torch.Tensor | None = None
+    raw_delta_flows_physical: torch.Tensor | None = None
 
 
 def prepare_static_v60(graph: Any, device: torch.device | str = "cpu") -> PreparedStaticV60:
