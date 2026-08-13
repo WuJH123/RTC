@@ -41,16 +41,21 @@ def main() -> None:
     ap.add_argument("--step1-audit", required=True)
     ap.add_argument("--prior", required=True)
     ap.add_argument("--out-dir", required=True)
+    ap.add_argument("--run-dir", default=None, help="Directory containing current-head mechanism reports")
     args = ap.parse_args()
     study = Path(args.study_dir); out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
     split, signed, atlas, step1 = map(lambda x: load(Path(x)), (args.nested_split, args.signed_audit, args.atlas_info, args.step1_audit))
+    run_dir = Path(args.run_dir) if args.run_dir else study
+    # Current-head DevCheck reports are authoritative for the decision.  Tiny
+    # and micro are execution gates only and may come from the preceding
+    # uncommitted run when a current-head rerun is not requested.
     reports = {
-        "tiny_phase_presence": load(study / "tiny_phase_presence_seed42.json"),
-        "micro_phase_presence": load(study / "micro_phase_presence_seed42.json"),
-        "devcheck_none": load(study / "devcheck_none_seed42.json"),
-        "devcheck_overall": load(study / "devcheck_overall_seed42.json"),
-        "devcheck_phase": load(study / "devcheck_phase_presence_seed42.json"),
-        "devcheck_oracle_support": load(study / "devcheck_oracle_support_seed42.json"),
+        "tiny_phase_presence": load(run_dir / "tiny_phase_seed42.json"),
+        "micro_phase_presence": load(run_dir / "micro_phase_seed42.json"),
+        "devcheck_none": load(run_dir / "devcheck_none_seed42.json"),
+        "devcheck_overall": load(run_dir / "devcheck_overall_seed42.json"),
+        "devcheck_phase": load(run_dir / "devcheck_phase_seed42.json"),
+        "devcheck_oracle_support": load(run_dir / "devcheck_oracle_seed42.json"),
     }
     channels = ("depth_m", "flood_m3s", "storage_m3", "inflow_m3s", "outflow_m3s", "managed_flow_m3s")
     facility = {}
