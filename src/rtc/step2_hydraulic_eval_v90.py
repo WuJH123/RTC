@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from dataclasses import dataclass
+import math
 from typing import Any, Sequence
 
 import numpy as np
@@ -78,6 +80,140 @@ def _effect_record(
         f"{prefix}_active_sign": active_sign,
         f"{prefix}_active_fraction": float(active.mean()),
     }
+
+
+@dataclass
+class _PooledEffectStatistics:
+    """Sufficient physical-error statistics for one event and one channel.
+
+    Candidate-level ratios are undefined when a valid counterfactual happens to
+    have zero true effect.  Pool the numerator and denominator within an event
+    before taking skill/response ratios, then event-balance those quantities.
+    This keeps a real zero-effect candidate from creating an arbitrary ``1e-12``
+    denominator that dominates every other candidate in its rainfall event.
+    """
+
+    count: int = 0
+    squared_error: float = 0.0
+    squared_truth: float = 0.0
+    absolute_prediction: float = 0.0
+    absolute_truth: float = 0.0
+    active_count: int = 0
+    active_squared_error: float = 0.0
+    active_squared_truth: float = 0.0
+    active_sign_correct: int = 0
+
+    def update(
+        self,
+        predicted: np.ndarray,
+        truth: np.ndarray,
+        *,
+        scale: float | np.ndarray,
+        active_fraction: float,
+    ) -> None:
+        predicted = np.asarray(predicted, dtype=np.float64)
+        truth = np.asarray(truth, dtype=np.float64)
+        if predicted.shape != truth.shape:
+            raise ValueError("V9 pooled effect prediction/truth shape mismatch")
+        try:
+            scale_array = np.broadcast_to(
+                np.maximum(np.asarray(scale, dtype=np.float64), 1e-12), truth.shape
+            )
+        except ValueError as exc:
+            raise ValueError("V9 pooled effect scale cannot broadcast to target shape") from exc
+        if not np.isfinite(predicted).all() or not np.isfinite(truth).all():
+            raise ValueError("V9 pooled effect metrics require finite physical tensors")
+        error = predicted - truth
+        self.count += int(truth.size)
+        self.squared_error += float(np.square(error).sum())
+        self.squared_truth += float(np.square(truth).sum())
+        self.absolute_prediction += float(np.abs(predicted).sum())
+        self.absolute_truth += float(np.abs(truth).sum())
+        active = np.abs(truth) / scale_array >= float(active_fraction)
+        if active.any():
+            self.active_count += int(active.sum())
+            self.active_squared_error += float(np.square(error[active]).sum())
+            self.active_squared_truth += float(np.square(truth[active]).sum())
+            self.active_sign_correct += int(
+                (np.sign(predicted[active]) == np.sign(truth[active])).sum()
+            )
+
+
+def _summarize_pooled_event_effects(
+    by_event: dict[str, _PooledEffectStatistics], *, prefix: str
+) -> dict[str, float]:
+    """Return event-balanced metrics from pooled physical sufficient statistics."""
+
+    def average(values: list[float]) -> float:
+        finite = [value for value in values if np.isfinite(value)]
+        return float(np.mean(finite)) if finite else float("nan")
+
+    rows = [stats for _, stats in sorted(by_event.items()) if stats.count]
+    rmse = [math.sqrt(stats.squared_error / stats.count) for stats in rows]
+    response = [
+        stats.absolute_prediction / stats.absolute_truth
+        for stats in rows
+        if stats.absolute_truth > 1e-12
+    ]
+    skill = [
+        1.0 - stats.squared_error / stats.squared_truth
+        for stats in rows
+        if stats.squared_truth > 1e-12
+    ]
+    active_skill = [
+        1.0 - stats.active_squared_error / stats.active_squared_truth
+        for stats in rows
+        if stats.active_squared_truth > 1e-12
+    ]
+    active_sign = [
+        stats.active_sign_correct / stats.active_count
+        for stats in rows
+        if stats.active_count > 0
+    ]
+    active_fraction = [stats.active_count / stats.count for stats in rows]
+    return {
+        f"{prefix}_rmse": average(rmse),
+        f"{prefix}_response_ratio": average(response),
+        f"{prefix}_skill_vs_zero": average(skill),
+        f"{prefix}_active_skill_vs_zero": average(active_skill),
+        f"{prefix}_active_sign": average(active_sign),
+        f"{prefix}_active_fraction": average(active_fraction),
+        f"{prefix}_events_with_truth_support": float(len(skill)),
+        f"{prefix}_events_total": float(len(rows)),
+    }
+
+
+def _pooled_event_effect_metrics(
+    records: Sequence[tuple[str, np.ndarray, np.ndarray, float | np.ndarray]],
+    *,
+    active_fraction: float,
+    prefix: str,
+) -> dict[str, float]:
+    """Small testable adapter for event-pooled physical effect semantics."""
+
+    by_event: dict[str, _PooledEffectStatistics] = {}
+    for event, predicted, truth, scale in records:
+        by_event.setdefault(str(event), _PooledEffectStatistics()).update(
+            predicted, truth, scale=scale, active_fraction=active_fraction
+        )
+    return _summarize_pooled_event_effects(by_event, prefix=prefix)
+
+
+def _accumulate_event_effect(
+    storage: dict[tuple[str | None, str], dict[str, _PooledEffectStatistics]],
+    *,
+    bucket: str | None,
+    prefix: str,
+    event: str,
+    predicted: np.ndarray,
+    truth: np.ndarray,
+    scale: float | np.ndarray,
+    active_fraction: float,
+) -> None:
+    by_event = storage.setdefault((bucket, prefix), {})
+    by_event.setdefault(event, _PooledEffectStatistics()).update(
+        predicted, truth, scale=scale, active_fraction=active_fraction
+    )
 
 
 def _adjacency(edge_index: np.ndarray, node_count: int) -> list[list[int]]:
@@ -360,6 +496,15 @@ def evaluate_hydraulic_effect_v90(
     adjacency = _adjacency(np.asarray(graph.edge_index), len(graph.node_ids))
     distance_cache: dict[int, np.ndarray] = {}
     records: list[dict[str, Any]] = []
+    effect_prefixes = (
+        "delta_depth_m",
+        "delta_flood_m3s",
+        "delta_storage_m3",
+        "delta_managed_flow_m3s",
+    )
+    pooled_effects: dict[tuple[str | None, str], dict[str, _PooledEffectStatistics]] = {}
+    pooled_by_type: dict[str, dict[tuple[str | None, str], dict[str, _PooledEffectStatistics]]] = defaultdict(dict)
+    pooled_by_actuator: dict[str, dict[tuple[str | None, str], dict[str, _PooledEffectStatistics]]] = defaultdict(dict)
 
     with torch.no_grad():
         for name in names:
@@ -392,6 +537,7 @@ def evaluate_hydraulic_effect_v90(
             )
             event = f"{cache.entry(name).rainfall_group}::{cache.entry(name).event_id}"
             retained_indices = indices.detach().cpu().numpy()
+            bucket_masks = _horizon_bucket_masks(retained_indices)
 
             for candidate in range(output.raw_delta_states_physical.shape[1]):
                 predicted_state = (
@@ -412,10 +558,36 @@ def evaluate_hydraulic_effect_v90(
                 )
                 record: dict[str, Any] = {"event": event, "group": name}
                 actuator = _single_changed_actuator(batch, candidate)
+                actuator_type: str | None = None
+                actuator_id: str | None = None
                 if actuator is not None:
                     record["actuator_index"] = actuator
-                    record["actuator_id"] = str(graph.actuator_ids[actuator])
-                    record["actuator_type"] = _actuator_type(graph, actuator)
+                    actuator_id = str(graph.actuator_ids[actuator])
+                    actuator_type = _actuator_type(graph, actuator)
+                    record["actuator_id"] = actuator_id
+                    record["actuator_type"] = actuator_type
+
+                def accumulate(
+                    bucket: str | None,
+                    prefix: str,
+                    predicted: np.ndarray,
+                    truth: np.ndarray,
+                    scale: float | np.ndarray,
+                ) -> None:
+                    kwargs = {
+                        "bucket": bucket,
+                        "prefix": prefix,
+                        "event": event,
+                        "predicted": predicted,
+                        "truth": truth,
+                        "scale": scale,
+                        "active_fraction": contract.active_effect_fraction,
+                    }
+                    _accumulate_event_effect(pooled_effects, **kwargs)
+                    if actuator_type is not None:
+                        _accumulate_event_effect(pooled_by_type[actuator_type], **kwargs)
+                    if actuator_id is not None:
+                        _accumulate_event_effect(pooled_by_actuator[actuator_id], **kwargs)
 
                 for channel, label in (
                     (0, "depth_m"),
@@ -432,6 +604,7 @@ def evaluate_hydraulic_effect_v90(
                         active_fraction=contract.active_effect_fraction,
                         prefix=prefix,
                     ))
+                    accumulate(None, prefix, predicted, truth, channel_scale)
                     record.update(_localization_record(
                         predicted, truth,
                         scale=channel_scale,
@@ -456,6 +629,8 @@ def evaluate_hydraulic_effect_v90(
                         prefix=prefix,
                     ).items():
                         record.update({f"{bucket}__{key}": value for key, value in metrics.items()})
+                        mask = bucket_masks[bucket]
+                        accumulate(bucket, prefix, predicted[mask], truth[mask], channel_scale)
 
                 # Preserve raw physical flow metrics while using the matching scale of
                 # each individual actuator for sparse active/sign diagnostics.
@@ -466,6 +641,7 @@ def evaluate_hydraulic_effect_v90(
                     active_fraction=contract.active_effect_fraction,
                     prefix="delta_managed_flow_m3s",
                 ))
+                accumulate(None, "delta_managed_flow_m3s", predicted_flow, truth_flow, flow_scale)
                 record.update(_timing_record(
                     predicted_flow, truth_flow,
                     retained_indices=retained_indices,
@@ -482,6 +658,14 @@ def evaluate_hydraulic_effect_v90(
                     prefix="delta_managed_flow_m3s",
                 ).items():
                     record.update({f"{bucket}__{key}": value for key, value in metrics.items()})
+                    mask = bucket_masks[bucket]
+                    accumulate(
+                        bucket,
+                        "delta_managed_flow_m3s",
+                        predicted_flow[mask],
+                        truth_flow[mask],
+                        flow_scale,
+                    )
                 records.append(record)
 
     excluded = {"event", "group", "actuator_id", "actuator_type", "actuator_index"}
@@ -490,6 +674,10 @@ def evaluate_hydraulic_effect_v90(
         if key not in excluded and "__" not in key and isinstance(value, (int, float))
     })
     overall = {key: _event_balanced(records, key) for key in metric_names}
+    for prefix in effect_prefixes:
+        overall.update(_summarize_pooled_event_effects(
+            pooled_effects.get((None, prefix), {}), prefix=prefix
+        ))
 
     horizon_buckets: dict[str, dict[str, float]] = {}
     for bucket, _, _ in HORIZON_BUCKETS_V90:
@@ -502,6 +690,10 @@ def evaluate_hydraulic_effect_v90(
             key[len(prefix):]: _event_balanced(records, key)
             for key in bucket_metric_names
         }
+        for effect_prefix in effect_prefixes:
+            horizon_buckets[bucket].update(_summarize_pooled_event_effects(
+                pooled_effects.get((bucket, effect_prefix), {}), prefix=effect_prefix
+            ))
 
     by_type: dict[str, dict[str, float]] = {}
     for actuator_type in ("pump", "orifice", "weir"):
@@ -510,6 +702,10 @@ def evaluate_hydraulic_effect_v90(
             by_type[actuator_type] = {
                 key: _event_balanced(subset, key) for key in metric_names
             }
+            for prefix in effect_prefixes:
+                by_type[actuator_type].update(_summarize_pooled_event_effects(
+                    pooled_by_type[actuator_type].get((None, prefix), {}), prefix=prefix
+                ))
 
     by_actuator: dict[str, dict[str, float]] = {}
     actuator_ids = sorted({
@@ -520,6 +716,10 @@ def evaluate_hydraulic_effect_v90(
         by_actuator[actuator_id] = {
             key: _event_balanced(subset, key) for key in metric_names
         }
+        for prefix in effect_prefixes:
+            by_actuator[actuator_id].update(_summarize_pooled_event_effects(
+                pooled_by_actuator[actuator_id].get((None, prefix), {}), prefix=prefix
+            ))
 
     return {
         "conditioning_level": model.conditioning_level,

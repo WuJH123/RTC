@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import torch
 import numpy as np
+import pytest
 
 from rtc.step2_control_response_v90 import (
     project_candidate_flows_v90,
@@ -12,6 +13,7 @@ from rtc.step2_control_response_v90 import (
 from rtc.step2_hydraulic_eval_v90 import (
     _bucket_effect_records,
     _effect_record,
+    _pooled_event_effect_metrics,
     _horizon_bucket_masks,
     _single_changed_actuator,
     _timing_record,
@@ -257,3 +259,35 @@ def test_v90_horizon_bucket_effect_metrics_include_primary_sparse_diagnostics():
         assert metrics["depth_skill_vs_zero"] == 1.0
         assert metrics["depth_response_ratio"] == 1.0
         assert metrics["depth_active_sign"] == 1.0
+
+
+def test_v90_event_effect_skill_pools_error_before_balancing_events():
+    """Near-zero candidates must not make an event score singular.
+
+    The former evaluator averaged candidate-level ratios.  A tiny nonzero
+    prediction for a zero-effect candidate then divided by ``1e-12`` and could
+    overwhelm an otherwise correct candidate in the same rainfall event.
+    """
+    records = [
+        ("event", np.asarray([0.01]), np.asarray([0.0]), 1.0),
+        ("event", np.asarray([1.0]), np.asarray([1.0]), 1.0),
+    ]
+    old_candidate_mean = np.mean([
+        _effect_record(predicted, truth, scale=scale, active_fraction=0.25, prefix="x")["x_skill_vs_zero"]
+        for _, predicted, truth, scale in records
+    ])
+    metrics = _pooled_event_effect_metrics(records, active_fraction=0.25, prefix="x")
+    assert old_candidate_mean < -1e6
+    assert metrics["x_skill_vs_zero"] > 0.99
+    assert metrics["x_response_ratio"] == pytest.approx(1.01)
+
+
+def test_v90_zero_support_event_is_not_a_huge_negative_skill():
+    metrics = _pooled_event_effect_metrics(
+        [("zero_event", np.asarray([0.1]), np.asarray([0.0]), 1.0)],
+        active_fraction=0.25,
+        prefix="x",
+    )
+    assert np.isnan(metrics["x_skill_vs_zero"])
+    assert np.isnan(metrics["x_response_ratio"])
+    assert metrics["x_events_with_truth_support"] == 0.0
