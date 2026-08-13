@@ -118,6 +118,15 @@ def _signed_log1p(values: torch.Tensor) -> torch.Tensor:
 class DirectHydraulicEffectSurrogateV90(DirectHydraulicEffectSurrogateV80):
     """V8 direct effect with signed outputs and optional reference-trajectory context."""
 
+    # This is a fixed corrective diffusion schedule, not a graph-depth sweep.
+    # The original four-hop path made every more-remote node structurally zero
+    # for a single changed actuator despite the H360 target containing material
+    # remote response.  Existing zero-preserving blocks are deliberately reused
+    # cyclically: reach expands to eight hops without adding a second parameter
+    # stack or changing hidden width.
+    _MULTISCALE_HOPS = (1, 2, 4, 8)
+    _ACTUATOR_IDENTITY_DIM = 16
+
     def __init__(
         self,
         *,
@@ -148,12 +157,53 @@ class DirectHydraulicEffectSurrogateV90(DirectHydraulicEffectSurrogateV80):
         # Same capacity for A/B/C.  A receives zeros in these 13 slots, B receives
         # predicted reference endpoint states/flow, C receives oracle counterparts.
         trajectory_features = 2 * 6 + 1
+        self.actuator_identity_embedding = nn.Embedding(
+            self.actuator_count, self._ACTUATOR_IDENTITY_DIM
+        )
         old_input_dim = int(self.actuator_effect_encoder[0].in_features)
         self.actuator_effect_encoder = _mlp(
-            old_input_dim + trajectory_features,
+            old_input_dim + trajectory_features + self._ACTUATOR_IDENTITY_DIM,
             self.hidden_dim,
             self.hidden_dim,
         )
+        # Gates only mix signed, zero-preserving diffusion states.  A non-zero
+        # gate bias cannot create an action effect when every diffusion state is
+        # zero, so the candidate==reference structural invariant is retained.
+        self.multiscale_gate = nn.Linear(
+            len(self._MULTISCALE_HOPS) * self.hidden_dim,
+            len(self._MULTISCALE_HOPS),
+        )
+
+    def _multiscale_diffuse_v90(
+        self,
+        seed: torch.Tensor,
+        prepared: PreparedStaticV80,
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple[int, ...]]:
+        """Fuse fixed 1/2/4/8-hop signed diffusion fields.
+
+        The four inherited graph blocks are reused in a deterministic cycle to
+        prevent the former hard four-hop cutoff.  All operations remain
+        zero-preserving because every source field is zero under zero action.
+        """
+        if not self.graph_blocks:
+            raise RuntimeError("V9 multiscale diffusion requires inherited graph blocks")
+        value = seed
+        fields: list[torch.Tensor] = []
+        wanted = set(self._MULTISCALE_HOPS)
+        for hop in range(1, max(self._MULTISCALE_HOPS) + 1):
+            block = self.graph_blocks[(hop - 1) % len(self.graph_blocks)]
+            value = block(value, prepared.edge_index, prepared.node_degree)
+            if hop in wanted:
+                fields.append(value)
+        if len(fields) != len(self._MULTISCALE_HOPS):
+            raise RuntimeError("V9 multiscale diffusion did not retain every fixed hop")
+        joined = torch.cat(fields, dim=-1)
+        weights = torch.softmax(self.multiscale_gate(joined), dim=-1)
+        fused = sum(
+            field * weights[..., index, None]
+            for index, field in enumerate(fields)
+        )
+        return fused, weights, self._MULTISCALE_HOPS
 
     def _trajectory_condition(
         self,
@@ -240,6 +290,10 @@ class DirectHydraulicEffectSurrogateV90(DirectHydraulicEffectSurrogateV80):
         physics = prepared.base.actuator_physics[None, None].expand(batch, retained_count, -1, -1)
         previous_flow = previous_actuator_flow[:, None, :, None].expand(batch, retained_count, -1, -1)
         reference_current = reference_settings.index_select(1, indices)[..., None]
+        actuator_ids = torch.arange(self.actuator_count, device=initial_state.device)
+        identity = self.actuator_identity_embedding(actuator_ids)[None, None].expand(
+            batch, retained_count, -1, -1
+        )
         time = self.time_embedding(torch.arange(retained_count, device=initial_state.device))[
             None, :, None
         ].expand(batch, -1, actuators, -1)
@@ -253,7 +307,18 @@ class DirectHydraulicEffectSurrogateV90(DirectHydraulicEffectSurrogateV80):
             oracle_reference_flows_physical=oracle_reference_flows_physical,
         )
         base = torch.cat(
-            (up, down, physics, previous_flow, reference_current, time, ref_up, ref_down, ref_flow),
+            (
+                up,
+                down,
+                physics,
+                previous_flow,
+                reference_current,
+                time,
+                ref_up,
+                ref_down,
+                ref_flow,
+                identity,
+            ),
             dim=-1,
         )
         base = base[:, None].expand(batch, candidates, -1, -1, -1)
@@ -268,8 +333,9 @@ class DirectHydraulicEffectSurrogateV90(DirectHydraulicEffectSurrogateV80):
             prepared.base.actuator_downstream,
             node_count,
         )
-        for block in self.graph_blocks:
-            node_effect = block(node_effect, prepared.edge_index, prepared.node_degree)
+        node_effect, _multiscale_weights, _ = self._multiscale_diffuse_v90(
+            node_effect, prepared
+        )
 
         static = prepared.base.node_static[None, None].expand(batch, retained_count, -1, -1)
         gate = self.context_gate(torch.cat((retained_context, static), dim=-1))
