@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 import torch
 
-from rtc.step2_mpc_v110 import RuntimeNormalizationV110, _integrated_positive_flood_m3
+from rtc.step2_mpc_v110 import (
+    RuntimeNormalizationV110,
+    _deterministic_warm_start,
+    _integrated_positive_flood_m3,
+)
 
 
 def test_runtime_normalization_round_trip_payload_and_tensor_scaling() -> None:
@@ -35,6 +39,21 @@ def test_runtime_normalization_rejects_zero_std() -> None:
             flow_mean=np.zeros(1, dtype=np.float32),
             flow_std=np.ones(1, dtype=np.float32),
         ).validate()
+
+
+def test_deterministic_warm_start_leaves_exact_zero_branch_without_randomness() -> None:
+    first = _deterministic_warm_start(
+        6, 17, device=torch.device("cpu"), dtype=torch.float32
+    )
+    second = _deterministic_warm_start(
+        6, 17, device=torch.device("cpu"), dtype=torch.float32
+    )
+    assert first.shape == (1, 1, 6, 17)
+    assert torch.equal(first, second)
+    assert torch.any(first < 0)
+    assert torch.any(first > 0)
+    assert float(first.abs().max()) == pytest.approx(1.0e-3)
+    assert float(first.abs().sum()) > 0.0
 
 
 def test_positive_flood_deterioration_uses_irregular_physical_time() -> None:
