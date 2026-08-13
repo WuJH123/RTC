@@ -1,8 +1,13 @@
 """V12.0 value-only candidate policy for Project7 rolling RTC.
 
 The policy searches the same low-dimensional candidate families used for targeted
-D3-v2 generation. It never needs a nodewise Hydraulic rollout: the direct Value
+D3-v2 generation.  It never needs a nodewise Hydraulic rollout: the direct Value
 model scores joint action sequences by signed authoritative Delta-TFV.
+
+A critical execution invariant is enforced here rather than after scoring: every
+candidate is projected to the *same* current-setting / previous-target temporal
+continuity envelope that the SWMM write path uses.  Therefore the first move the
+Value model scores is the first move the controller can actually execute.
 """
 from __future__ import annotations
 
@@ -91,6 +96,8 @@ class ValueOnlyPolicyResultV120:
     candidate_count: int
     scenario_count: int
     reference_is_best: bool
+    scoring_projection_applied: bool = False
+    scoring_projection_max: float = 0.0
 
 
 def _upper_tail_cvar_per_candidate(values: torch.Tensor, alpha: float) -> torch.Tensor:
@@ -133,8 +140,83 @@ def candidate_coefficients_v120(
     return result
 
 
+def _project_executable_sequences_v120(
+    candidate_settings: torch.Tensor,
+    *,
+    current_settings: torch.Tensor,
+    previous_requested_settings: torch.Tensor | None,
+    min_settings: torch.Tensor,
+    max_settings: torch.Tensor,
+    max_delta_per_update: float,
+    control_block_steps: int,
+) -> tuple[torch.Tensor, float]:
+    """Project all candidates before Value scoring to the runtime command envelope.
+
+    ``candidate_settings`` is ``[C,H,A]`` on the 5-minute model grid.  Projection
+    happens on 10-minute control blocks.  The first block is bounded from both the
+    physical current readback and the active SWMM target readback; every later
+    block is bounded from its preceding projected block.  This is the tensor
+    equivalent of the runtime ``choose_first_move``/continuity contract.
+    """
+
+    if candidate_settings.ndim != 3:
+        raise ValueError("V120 candidate settings must be [C,H,A]")
+    if control_block_steps <= 0 or candidate_settings.shape[1] % control_block_steps:
+        raise ValueError("V120 candidate horizon/control-block mismatch")
+    current = current_settings.reshape(-1).to(candidate_settings)
+    previous = (
+        None
+        if previous_requested_settings is None
+        else previous_requested_settings.reshape(-1).to(candidate_settings)
+    )
+    lows = min_settings.reshape(-1).to(candidate_settings)
+    highs = max_settings.reshape(-1).to(candidate_settings)
+    actuators = candidate_settings.shape[-1]
+    if current.numel() != actuators or lows.numel() != actuators or highs.numel() != actuators:
+        raise ValueError("V120 execution anchors/bounds do not align with actuators")
+    if previous is not None and previous.numel() != actuators:
+        raise ValueError("V120 previous target does not align with actuators")
+    delta = float(max_delta_per_update)
+    if not math.isfinite(delta) or delta < 0:
+        raise ValueError("V120 runtime setting delta must be finite and non-negative")
+
+    lower = torch.maximum(lows, current - delta)
+    upper = torch.minimum(highs, current + delta)
+    if previous is not None:
+        lower = torch.maximum(lower, previous - delta)
+        upper = torch.minimum(upper, previous + delta)
+    if bool(torch.any(lower > upper + 1.0e-9)):
+        raise ValueError("V120 current/previous target leave no executable first-move interval")
+
+    # HOLD is the exact Value reference.  If the current setting itself no longer
+    # satisfies the cross-decision envelope, Value ranking is not a valid way to
+    # repair the write path; let the controller fail closed to its readback fallback.
+    if bool(torch.any(current < lower - 1.0e-9) or torch.any(current > upper + 1.0e-9)):
+        raise ValueError("V120 HOLD reference is outside the executable first-move interval")
+
+    blocks = candidate_settings[:, ::control_block_steps, :]
+    original = blocks.clone()
+    first = torch.maximum(torch.minimum(blocks[:, 0, :], upper), lower)
+    projected = [first]
+    last = first
+    for block in range(1, blocks.shape[1]):
+        target = blocks[:, block, :]
+        step = (target - last).clamp(-delta, delta)
+        value = torch.maximum(torch.minimum(last + step, highs), lows)
+        projected.append(value)
+        last = value
+    block_values = torch.stack(projected, dim=1)
+    sequence = block_values.repeat_interleave(control_block_steps, dim=1)
+    projection_max = float((block_values - original).abs().max().detach())
+    return sequence, projection_max
+
+
 class ValueOnlyCandidatePolicyV120:
     """Robust finite-candidate policy on the frozen D3 control manifold."""
+
+    # TorchMPCController uses this capability flag so legacy MPC implementations
+    # are not forced to accept a new keyword argument.
+    accepts_previous_requested_settings = True
 
     def __init__(
         self,
@@ -168,11 +250,11 @@ class ValueOnlyCandidatePolicyV120:
         fallback_settings: torch.Tensor,
         *,
         current_settings: torch.Tensor | None = None,
+        previous_requested_settings: torch.Tensor | None = None,
         previous_actuator_flow: torch.Tensor | None = None,
         max_delta_per_update: float | torch.Tensor | None = None,
         **_controller_compatibility: object,
     ) -> ValueOnlyPolicyResultV120:
-        # TorchMPCController passes the Step1 batch dimension (B=1).
         if initial_state.ndim == 3 and initial_state.shape[0] == 1:
             initial_state = initial_state[0]
         if initial_state.ndim != 2:
@@ -183,7 +265,13 @@ class ValueOnlyCandidatePolicyV120:
             raise ValueError("V120 fallback settings must be [1,H,A]")
         if fallback_settings.shape[1] != self.basis.horizon.horizon_steps:
             raise ValueError("V120 fallback/value horizons differ")
+        if current_settings is None:
+            raise ValueError("V120 requires the physical current-setting readback before scoring")
+
         actuator_count = self.basis.grouping.actuator_count
+        current_settings = current_settings.reshape(-1)
+        if current_settings.numel() != actuator_count:
+            raise ValueError("V120 current actuator setting count mismatch")
         if previous_actuator_flow is None:
             previous_actuator_flow = torch.zeros(
                 actuator_count, dtype=initial_state.dtype, device=initial_state.device
@@ -191,6 +279,7 @@ class ValueOnlyCandidatePolicyV120:
         previous_actuator_flow = previous_actuator_flow.reshape(-1)
         if previous_actuator_flow.numel() != actuator_count:
             raise ValueError("V120 previous actuator flow count mismatch")
+
         scenarios = int(rainfall_scenarios.shape[0])
         coeff = torch.as_tensor(
             self._coefficients,
@@ -202,11 +291,33 @@ class ValueOnlyCandidatePolicyV120:
             1, coeff.shape[0], -1, -1
         )
         candidate_one = self.basis.decode(reference_for_candidates, coeff[None])[0]
+
+        frozen = float(self.basis.contract.max_setting_delta_per_update)
+        requested = frozen
         if max_delta_per_update is not None:
-            frozen = float(self.basis.contract.max_setting_delta_per_update)
-            requested = float(torch.as_tensor(max_delta_per_update).reshape(-1).max())
+            raw_delta = torch.as_tensor(max_delta_per_update, dtype=torch.float32).reshape(-1)
+            if not bool(torch.isfinite(raw_delta).all()):
+                raise ValueError("V120 runtime max delta is non-finite")
+            requested = float(raw_delta.max())
             if requested > frozen + 1e-9:
                 raise ValueError("V120 runtime max delta is looser than frozen basis")
+        candidate_one, projection_max = _project_executable_sequences_v120(
+            candidate_one,
+            current_settings=current_settings,
+            previous_requested_settings=previous_requested_settings,
+            min_settings=torch.as_tensor(
+                self.basis.min_setting, dtype=candidate_one.dtype, device=candidate_one.device
+            ),
+            max_settings=torch.as_tensor(
+                self.basis.max_setting, dtype=candidate_one.dtype, device=candidate_one.device
+            ),
+            max_delta_per_update=requested,
+            control_block_steps=int(self.basis.horizon.control_block_steps),
+        )
+
+        # Candidate 0 must remain the exact HOLD/reference after executable projection.
+        if not torch.allclose(candidate_one[0], reference_one[0], rtol=0.0, atol=1.0e-7):
+            raise RuntimeError("V120 executable projection changed the HOLD reference")
 
         state = initial_state[None].expand(scenarios, -1, -1)
         reference = reference_one.expand(scenarios, -1, -1)
@@ -250,6 +361,8 @@ class ValueOnlyCandidatePolicyV120:
             candidate_count=int(candidate_one.shape[0]),
             scenario_count=scenarios,
             reference_is_best=bool(selected == 0),
+            scoring_projection_applied=bool(projection_max > 1.0e-9),
+            scoring_projection_max=float(projection_max),
         )
 
 
@@ -257,5 +370,6 @@ __all__ = [
     "RuntimeNormalizationV120",
     "ValueOnlyCandidatePolicyV120",
     "ValueOnlyPolicyResultV120",
+    "_project_executable_sequences_v120",
     "candidate_coefficients_v120",
 ]
