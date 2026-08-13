@@ -1,0 +1,58 @@
+{
+  "contract": "PRODUCTION_CONTROLLER_CONFIG_V5_TFV_FIRST_TEMPORAL_CONTINUITY",
+  "v120_contract": "PROJECT7_V120_TFV_ONLY_CAUSAL_CONTROLLER_V1",
+  "instruction": "Project7 V120 execution-bound controller. Step1 reconstructs the causal current full state from sparse sensing. Step2 scores direct whole-system Delta-TFV for joint executable candidates using the same deterministic checkpoint-current persistence/decay rainfall definition used in training. Step3 selects from the frozen targeted-D3 distribution and executes only the first 10-minute move. Priority flooding and Global Peak are report-only. No value below may be tuned on Validation or Final.",
+  "model_step_seconds": 300,
+  "control_update_seconds": 600,
+  "record_stride_seconds": 300,
+  "control_start_minutes": 60,
+  "swmm_threads": 1,
+  "exact_global_peak": false,
+  "depth_state_index": 0,
+  "flood_rate_state_index": 2,
+  "methodology_testbed": {
+    "claim_scope": "IDEALIZED_METHODOLOGY_TESTBED_NOT_FIELD_DIGITAL_TWIN",
+    "effective_warmup_minutes": 120,
+    "dwf_background_loading": true,
+    "baseline_true_state_advantage": ["internal_rtc", "auto_rbc", "efd"]
+  },
+  "objective": {
+    "primary": "minimize predicted whole-system cumulative TFV",
+    "priority_role": "report_only",
+    "global_peak_role": "report_only",
+    "tfv_cvar_alpha": 0.90,
+    "movement_tiebreak": 1e-06,
+    "min_predicted_tfv_improvement_m3": 0.0,
+    "min_predicted_tfv_improvement_relative": 0.0
+  },
+  "forecast": {
+    "contract": "PROJECT7_V120_CURRENT_RAIN_PERSISTENCE_DECAY_RUNTIME_V1",
+    "decay_per_step": 0.92,
+    "scenario_multipliers": [1.0],
+    "history_steps_for_level": 1
+  },
+  "controller": {
+    "history_steps": 13,
+    "horizon_steps": 72,
+    "optimizer_iterations": 1,
+    "optimizer_learning_rate": 1.0,
+    "max_setting_delta_per_update": 0.5,
+    "enforce_cross_decision_target_continuity": true,
+    "enforce_sequential_horizon_continuity": true,
+    "readback_target_tolerance": 1e-06,
+    "readback_current_tolerance": 0.05,
+    "decision_runtime_budget_seconds": 300.0,
+    "fallback_policy_id": "CAUSAL_HOLD_CURRENT_V1"
+  },
+  "execution_freeze": {
+    "candidate_search": "finite_targeted_D3_distribution_matched",
+    "continuous_gradient_search": false,
+    "execute_first_move_only": true,
+    "score_only_executable_sequences": true,
+    "rainfall_uncertainty_scenario_search": false,
+    "controller_forecast_sweep_allowed": false,
+    "runtime_benchmark_count": 1,
+    "runtime_benchmark_role": "verify fixed compute budget and readback/continuity only",
+    "automatic_retuning_after_benchmark_failure": false
+  }
+}

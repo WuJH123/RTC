@@ -1,4 +1,4 @@
-"""Compatibility entrypoint for the canonical causal execution-bound V120 trainer."""
+"""Compatibility alias for the one canonical causal execution-bound V120 trainer."""
 from __future__ import annotations
 
 from run_step2_v120_causal import main
