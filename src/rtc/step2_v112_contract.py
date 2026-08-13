@@ -49,7 +49,7 @@ class Step2V112Contract:
     def development_order(self) -> tuple[str, ...]:
         return (
             "reconcile_full_4800_source_vs_current_derived_cache",
-            "build_trainfit_state_conditioned_influence_atlas_0_120",
+            "build_trainfit_state_conditioned_influence_atlas",
             "audit_trainfit_delayed_influence_120_360_diagnostic_only",
             "verify_setting_to_realized_facility_flow_gate",
             "verify_support_lag_sign_and_global_escape",
