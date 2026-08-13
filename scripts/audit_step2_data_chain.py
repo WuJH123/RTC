@@ -803,7 +803,11 @@ def main() -> None:
     parser.add_argument("--cache-manifest", type=Path, required=True)
     parser.add_argument("--run-index", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--raw-groups-per-source", type=int, default=4)
+    # One complete 25-branch D2 group and one complete targeted-D3 group give
+    # 50 independent raw compact recompilations (48 signed effect pairs) while
+    # keeping the audit safe on the Windows workstation.  The metadata/pairing
+    # census and effect-distribution scan remain exhaustive across all groups.
+    parser.add_argument("--raw-groups-per-source", type=int, default=1)
     args = parser.parse_args()
     if args.raw_groups_per_source <= 0:
         raise ValueError("raw-groups-per-source must be positive")
