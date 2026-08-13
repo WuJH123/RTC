@@ -152,13 +152,18 @@ def test_v90_ladder_never_calls_oracle_failure_reference_bottleneck():
     assert result["decision"] == "REFERENCE_HYDRAULIC_ACCURACY_PRIMARY_BOTTLENECK"
 
 
-def test_v90_markov_insufficiency_requires_oracle_at_or_below_zero():
+def test_v90_oracle_failure_is_scoped_to_the_current_snapshot_model_contract():
     result = decide_state_sufficiency_v90({
         LEVEL_A: _ladder([-0.10, -0.10, -0.10, -0.10]),
         LEVEL_B: _ladder([-0.08, -0.05, -0.06, -0.07]),
         LEVEL_C: _ladder([-0.01, 0.0, -0.02, -0.03]),
     })
-    assert result["decision"] == "MARKOV_INSUFFICIENCY_SUPPORTED"
+    # A single graph/model configuration cannot prove that every possible
+    # Markov representation lacks information.  History and local/edge-aware
+    # representation controls remain required before any data-insufficiency
+    # conclusion.
+    assert result["decision"] == "CURRENT_SNAPSHOT_MODEL_CONTRACT_UNSUPPORTED"
+    assert "MARKOV" not in result["decision"]
 
 
 def test_v90_managed_flow_active_metrics_use_per_actuator_scales():

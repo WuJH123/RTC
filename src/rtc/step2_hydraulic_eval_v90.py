@@ -773,9 +773,13 @@ def decide_state_sufficiency_v90(
 
     mean_a, mean_b, mean_c = float(a.mean()), float(b.mean()), float(c.mean())
     if np.all(c <= 0.0):
-        decision = "MARKOV_INSUFFICIENCY_SUPPORTED"
+        # This ladder controls only the three V9 snapshot/reference contexts.
+        # It has not controlled causal history, actuator identity, receptive
+        # field, or directed hydraulic edge representation, so it must not make
+        # an information-theoretic Markov-insufficiency claim.
+        decision = "CURRENT_SNAPSHOT_MODEL_CONTRACT_UNSUPPORTED"
         next_step = (
-            "audit existing 60-min pre-action history cache; do not run new SWMM yet"
+            "run existing causal-history and local/representation controls; do not run new SWMM"
         )
     else:
         b_beats_a = int(np.sum(b > a)) >= 3 and mean_b - mean_a >= 0.05
