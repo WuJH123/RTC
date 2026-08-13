@@ -181,3 +181,34 @@ def test_v90_base_ladder_keeps_oracle_level_available():
         contract=DirectHydraulicEffectLossContractV90(hidden_dim=16, graph_blocks=2),
     )
     assert model.conditioning_level == LEVEL_C
+
+
+def test_v90_physical_activation_recomputation_preserves_output_and_gradients():
+    graph, checkpointed = _physical_model(parallel=True)
+    _, direct = _physical_model(parallel=True)
+    direct.load_state_dict(checkpointed.state_dict())
+    prepared = prepare_static_v80(graph)
+    reference = torch.randn(1, 2, 14, 6)
+    seed_checkpointed = torch.randn(1, 3, 2, 14, 16, requires_grad=True)
+    seed_direct = seed_checkpointed.detach().clone().requires_grad_(True)
+
+    checkpointed_out, _, _ = checkpointed._multiscale_diffuse_v90(
+        seed_checkpointed, prepared, reference_states_physical=reference
+    )
+    direct_out, _, _ = direct._physical_multiscale_v90(
+        seed_direct,
+        prepared,
+        reference_states_physical=reference,
+        activation_checkpointing=False,
+    )
+    checkpointed_out.square().mean().backward()
+    direct_out.square().mean().backward()
+
+    assert torch.allclose(checkpointed_out, direct_out, rtol=1e-5, atol=1e-6)
+    assert torch.allclose(seed_checkpointed.grad, seed_direct.grad, rtol=1e-5, atol=1e-6)
+    for (name_a, parameter_a), (name_b, parameter_b) in zip(
+        checkpointed.named_parameters(), direct.named_parameters(), strict=True
+    ):
+        assert name_a == name_b
+        if parameter_a.requires_grad and parameter_a.grad is not None:
+            assert torch.allclose(parameter_a.grad, parameter_b.grad, rtol=1e-5, atol=1e-6)

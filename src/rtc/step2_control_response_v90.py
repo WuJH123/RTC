@@ -16,6 +16,7 @@ from typing import Sequence
 import numpy as np
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 from .step2_control_response_v70 import HydraulicResponseSurrogateV70
 from .step2_control_response_v80 import (
@@ -519,6 +520,50 @@ class PhysicalConduitHydraulicEffectSurrogateV90(DirectHydraulicEffectSurrogateV
         reference_states_physical: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, tuple[int, ...]]:
         """Causal directed conduit message diffusion at fixed 1/2/4/8 hops."""
+        return self._physical_multiscale_v90(
+            seed,
+            prepared,
+            reference_states_physical=reference_states_physical,
+            activation_checkpointing=True,
+        )
+
+    def _physical_message_update_v90(
+        self,
+        value: torch.Tensor,
+        condition: torch.Tensor,
+        source: torch.Tensor,
+        destination: torch.Tensor,
+        degree: torch.Tensor,
+    ) -> torch.Tensor:
+        """One zero-preserving directed physical multiedge message update."""
+        _, _, _, nodes, _ = value.shape
+        source_field = value[..., source, :]
+        destination_field = value[..., destination, :]
+        message = self.physical_edge_source(source_field) + self.physical_edge_destination(
+            destination_field
+        )
+        message = torch.tanh(message) * condition[:, None]
+        message = self.physical_edge_output(message)
+        accumulated = torch.zeros_like(value)
+        accumulated.index_add_(-2, destination, message)
+        update = accumulated / degree.reshape(1, 1, 1, nodes, 1)
+        return value + 0.5 * update
+
+    def _physical_multiscale_v90(
+        self,
+        seed: torch.Tensor,
+        prepared: PreparedStaticV80,
+        *,
+        reference_states_physical: torch.Tensor | None,
+        activation_checkpointing: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple[int, ...]]:
+        """Physical diffusion with optional activation recomputation.
+
+        Recomputing the E-by-H message tensors in backward preserves the exact
+        full 24-candidate loss while avoiding a second experiment-only loss
+        reduction.  It is a numerically equivalent execution guard, not an
+        architectural or optimizer change.
+        """
         if reference_states_physical is None:
             raise ValueError("physical conduit diffusion requires frozen predicted reference states")
         if seed.ndim != 5:
@@ -554,17 +599,20 @@ class PhysicalConduitHydraulicEffectSurrogateV90(DirectHydraulicEffectSurrogateV
         fields: list[torch.Tensor] = []
         wanted = set(self._MULTISCALE_HOPS)
         for hop in range(1, max(self._MULTISCALE_HOPS) + 1):
-            source_field = value[..., source, :]
-            destination_field = value[..., destination, :]
-            message = self.physical_edge_source(source_field) + self.physical_edge_destination(
-                destination_field
-            )
-            message = torch.tanh(message) * condition[:, None]
-            message = self.physical_edge_output(message)
-            accumulated = torch.zeros_like(value)
-            accumulated.index_add_(-2, destination, message)
-            update = accumulated / degree.reshape(1, 1, 1, nodes, 1)
-            value = value + 0.5 * update
+            if activation_checkpointing and torch.is_grad_enabled():
+                value = activation_checkpoint(
+                    self._physical_message_update_v90,
+                    value,
+                    condition,
+                    source,
+                    destination,
+                    degree,
+                    use_reentrant=False,
+                )
+            else:
+                value = self._physical_message_update_v90(
+                    value, condition, source, destination, degree
+                )
             if hop in wanted:
                 fields.append(value)
         if len(fields) != len(self._MULTISCALE_HOPS):

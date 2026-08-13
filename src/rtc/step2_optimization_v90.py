@@ -91,7 +91,6 @@ def train_d2_mechanism_v90(
     device: str = "cuda",
     seed: int = 42,
     contract: DirectHydraulicEffectLossContractV90 = DirectHydraulicEffectLossContractV90(),
-    candidate_chunk_size: int | None = None,
 ) -> list[dict[str, Any]]:
     """Four-epoch D2-only mechanism test used by the A/B/C sufficiency ladder."""
     contract.validate()
@@ -121,27 +120,17 @@ def train_d2_mechanism_v90(
             groups = events[key]
             for name in groups:
                 batch = cache.batch(name, normalization, target)
-                chunks = tuple(
-                    candidate_batch_chunks_v90(
-                        batch, candidate_chunk_size=candidate_chunk_size
-                    )
+                output = _forward(model, batch, prepared)
+                loss, metrics = hydraulic_effect_loss_v90(
+                    output,
+                    batch,
+                    normalization,
+                    scales,
+                    onset_positive_weight=onset_positive_weight,
+                    contract=contract,
                 )
-                candidates = int(batch.candidate_settings.shape[1])
-                for chunk in chunks:
-                    output = _forward(model, chunk, prepared)
-                    loss, metrics = hydraulic_effect_loss_v90(
-                        output,
-                        chunk,
-                        normalization,
-                        scales,
-                        onset_positive_weight=onset_positive_weight,
-                        contract=contract,
-                    )
-                    weight = float(chunk.candidate_settings.shape[1]) / float(candidates)
-                    (loss * weight / len(groups)).backward()
-                    # Preserve candidate-weighted diagnostic summaries even
-                    # when the final execution chunk is smaller.
-                    rows.extend([metrics] * int(chunk.candidate_settings.shape[1]))
+                (loss / len(groups)).backward()
+                rows.append(metrics)
             norm = torch.nn.utils.clip_grad_norm_(trainable, contract.grad_clip)
             norms.append(float(norm.detach()))
             optimizer.step()

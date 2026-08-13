@@ -45,9 +45,9 @@ from rtc.step2_v90_contract import DirectHydraulicEffectLossContractV90, LEVEL_B
 
 _CANONICAL_SEED = 42
 _CANONICAL_HOLDOUT_FRACTION = 0.20
-# Execution-only memory guard.  It partitions the fixed 24 candidates into six
-# loss-equivalent chunks before one event-level optimizer step; it never changes
-# data, optimizer updates, loss weights, or scientific model capacity.
+# Execution-only memory guard for preflight probes.  Training preserves the
+# original full-group loss exactly; the physical message operator itself uses
+# activation recomputation to fit the frozen full 24-candidate objective.
 _EXECUTION_CANDIDATE_CHUNK_SIZE = 4
 
 
@@ -530,7 +530,6 @@ def main() -> None:
         basis=basis,
         hydraulic_state=hydraulic_checkpoint["state_dict"],
         contract=contract,
-        candidate_chunk_size=_EXECUTION_CANDIDATE_CHUNK_SIZE,
         seed=args.seed,
         assets=assets,
         dynamic_scales=dynamic_scales,
@@ -596,8 +595,8 @@ def main() -> None:
             "weight_decay": float(contract.weight_decay),
             "grad_clip": float(contract.grad_clip),
             "fp32": True,
-            "execution_candidate_chunk_size": _EXECUTION_CANDIDATE_CHUNK_SIZE,
-            "execution_chunking": "loss-equivalent candidate partition before one event optimizer step",
+            "preflight_candidate_chunk_size": _EXECUTION_CANDIDATE_CHUNK_SIZE,
+            "training_execution": "full-group frozen objective with physical-message activation recomputation",
         },
         "preflight": preflight,
         "training_history": history,
