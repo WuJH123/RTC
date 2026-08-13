@@ -148,7 +148,12 @@ def _balanced_direct(pred: torch.Tensor, truth: torch.Tensor,
                      scale: torch.Tensor, threshold: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     active = truth.abs() >= threshold
     active_loss = F.smooth_l1_loss(pred / scale, truth / scale, beta=0.5, reduction="none")
+    # The denominator is the physical meaningful-effect threshold by contract.
+    # A detached threshold/scale factor keeps tiny SI floors from producing a
+    # 10^3--10^6 larger gradient than the active branch while retaining the
+    # intended normalized leakage penalty.
     inactive_loss = F.smooth_l1_loss(pred / threshold, torch.zeros_like(pred), beta=0.5, reduction="none")
+    inactive_loss = inactive_loss * (threshold / scale).detach().clamp_max(1.0)
     per_channel = []
     active_parts = []
     inactive_parts = []
@@ -170,7 +175,8 @@ def _balanced_direct(pred: torch.Tensor, truth: torch.Tensor,
 
 
 def hydraulic_effect_loss_v111(output, batch: V60GroupBatch, scales: EffectScalesV111,
-                               *, contract: V111LossContract = V111LossContract()) -> tuple[torch.Tensor, dict[str, float]]:
+                               *, contract: V111LossContract = V111LossContract(),
+                               return_terms: bool = False):
     contract.validate()
     idx = output.horizon_indices
     true_ref_state = batch.true_reference_states.index_select(1, idx)[:, None]
@@ -218,7 +224,7 @@ def hydraulic_effect_loss_v111(output, batch: V60GroupBatch, scales: EffectScale
     total = (contract.direct_weight * direct + contract.temporal_weight * temporal
              + contract.active_aux_weight * active_aux + contract.sign_aux_weight * sign_aux
              + contract.magnitude_aux_weight * magnitude_aux)
-    return total, {
+    metrics = {
         "loss": float(total.detach()), "direct_signed": float(direct.detach()),
         "direct_active": float((active_state_direct + active_flow_direct).mul(.5).detach()),
         "direct_inactive": float((inactive_state_direct + inactive_flow_direct).mul(.5).detach()),
@@ -233,6 +239,14 @@ def hydraulic_effect_loss_v111(output, batch: V60GroupBatch, scales: EffectScale
         "state_active_fraction": float(state_active.float().mean().detach()),
         "flow_active_fraction": float(flow_active.float().mean().detach()),
     }
+    if return_terms:
+        return total, metrics, {
+            "direct_active": 0.5 * (active_state_direct + active_flow_direct),
+            "direct_inactive": 0.5 * (inactive_state_direct + inactive_flow_direct),
+            "active_aux": active_aux, "sign_aux": sign_aux,
+            "magnitude_aux": magnitude_aux, "temporal": temporal,
+        }
+    return total, metrics
 
 
 __all__ = ["EffectScalesV111", "derive_effect_scales_v111", "hydraulic_effect_loss_v111"]

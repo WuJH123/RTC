@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from rtc.step2_control_response_v60 import PreparedStaticV60
-from rtc.step2_hydraulic_objective_v111 import derive_effect_scales_v111, hydraulic_effect_loss_v111
+from rtc.step2_hydraulic_objective_v111 import _balanced_direct, derive_effect_scales_v111, hydraulic_effect_loss_v111
 from rtc.step2_train_response_v60 import V60GroupBatch
 
 
@@ -93,3 +93,14 @@ def test_v111_balanced_direct_loss_reports_primary_components():
     loss.backward()
     assert output.raw_delta_states_physical.grad is not None
     assert bool(torch.isfinite(output.raw_delta_states_physical.grad).all())
+
+
+def test_v111_inactive_floor_does_not_create_unbounded_gradient():
+    pred = torch.full((1, 1, 2, 1), 1.0e-4, requires_grad=True)
+    truth = torch.zeros_like(pred)
+    scale = torch.ones_like(pred)
+    threshold = torch.full_like(pred, 1.0e-5)
+    loss, _active, _inactive = _balanced_direct(pred, truth, scale, threshold)
+    loss.backward()
+    assert bool(torch.isfinite(pred.grad).all())
+    assert float(pred.grad.abs().max()) < 1.0
