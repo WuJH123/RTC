@@ -58,6 +58,14 @@ Controller = Callable[[CausalObservation], ControllerAction | Mapping[str, float
 RainfallObserver = Callable[[datetime, tuple[str, ...]], np.ndarray]
 
 
+def _observation_time(sim: object, elapsed_seconds: int) -> datetime:
+    """Use the declared start timestamp before PySWMM starts iterating."""
+
+    if int(elapsed_seconds) == 0:
+        return getattr(sim, "start_time")
+    return getattr(sim, "current_time")
+
+
 def _normalize_action(action: ControllerAction | Mapping[str, float]) -> ControllerAction:
     return action if isinstance(action, ControllerAction) else ControllerAction(settings=action)
 
@@ -176,10 +184,16 @@ def run_authoritative_closed_loop(
                 raise ValueError("rainfall_observer must return finite non-negative scalar/node vector")
             return rain.astype(np.float32)
 
-        def build_observation(elapsed: int, rain: np.ndarray) -> CausalObservation:
+        def build_observation(
+            elapsed: int, rain: np.ndarray, *, current_time: datetime | None = None
+        ) -> CausalObservation:
             return CausalObservation(
                 elapsed_seconds=elapsed,
-                current_time=sim.current_time,
+                current_time=(
+                    _observation_time(sim, elapsed)
+                    if current_time is None
+                    else current_time
+                ),
                 sensor_ids=tuple(sensor_nodes),
                 sensor_depth_m=length_to_m(
                     np.array([sensor_obj[n].depth for n in sensor_nodes], dtype=float), system_units
@@ -223,7 +237,9 @@ def run_authoritative_closed_loop(
         # t=0 belongs to the causal information set. No supervisory command has yet been sent.
         rain_zero = observed_rainfall()
         if controller is not None and hasattr(controller, "observe"):
-            controller.observe(build_observation(0, rain_zero))  # type: ignore[attr-defined]
+            controller.observe(  # type: ignore[attr-defined]
+                build_observation(0, rain_zero, current_time=sim.start_time)
+            )
         append_record(0, rain_zero, "INITIAL", "NATIVE")
         initial_total_flooding = sum(max(0.0, float(obj.flooding)) for obj in node_obj.values())
         global_peak_m3s = float(flow_rate_to_m3s(initial_total_flooding, flow_units))
