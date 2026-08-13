@@ -290,6 +290,7 @@ def _raw_recompute(
     branches = 0
     pairs = 0
     timeline_samples: list[dict[str, Any]] = []
+    timeline_samples_by_source: Counter[str] = Counter()
     groups_checked: list[str] = []
     for source in ("D2", "D3"):
         for name in _selected_raw_groups(cache, source, groups_per_source):
@@ -320,7 +321,11 @@ def _raw_recompute(
                     error = _max_abs(np.asarray(actual[field]), np.asarray(expected[field]))
                     max_error[field] = max(max_error[field], error)
                     mismatch += int(error > 1e-6)
-                if len(timeline_samples) < 6:
+                # Keep direct raw-timeline evidence from both data sources.  A
+                # global cap used to fill with the first D2 group before the D3
+                # loop began, which made the report less useful for verifying the
+                # shared time contract on targeted D3.
+                if timeline_samples_by_source[source] < 3:
                     elapsed = np.asarray(branch.elapsed_seconds, dtype=np.int64)
                     timeline_samples.append(
                         {
@@ -337,6 +342,7 @@ def _raw_recompute(
                             "model_step_seconds": int(branch.model_step_seconds),
                         }
                     )
+                    timeline_samples_by_source[source] += 1
             reference = compiled[int(entry.reference_index)]
             for index, branch in compiled.items():
                 if index == entry.reference_index:
