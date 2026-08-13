@@ -1,8 +1,9 @@
 """Canonical causal execution-bound Project7 V120 trainer.
 
-The SWMM outcomes in the existing D2/D3 cache are unchanged.  Only the model
-rainfall input is replaced by the online-legal checkpoint persistence/decay
-forecast, removing future-realised rainfall leakage from Step2 Value learning.
+Existing authoritative SWMM outcomes are reused unchanged.  Future realised
+rainfall is removed from the model input and replaced by the same checkpoint-
+current persistence/decay forecast used online.  Only frozen Train18 labels are
+eligible; Validation and Final are fail-closed.
 """
 from __future__ import annotations
 
@@ -12,15 +13,6 @@ from pathlib import Path
 
 import torch
 
-from run_step2_v120_final import (
-    _branch_count,
-    _candidate_count,
-    _gate,
-    _git_head,
-    _load_frozen_train_events,
-    _load_graph,
-    _sha256,
-)
 from rtc.code_contract import rtc_implementation_contract_sha256
 from rtc.step2_causal_forecast_v120 import (
     CausalForecastCacheV120,
@@ -54,6 +46,15 @@ from rtc.step2_v120_contract import (
     v120_graph_semantic_sha256,
     v120_runtime_contract_sha256,
 )
+from rtc.step2_v120_train_helpers import (
+    branch_count_v120,
+    candidate_count_v120,
+    git_head_v120,
+    load_frozen_train_events_v120,
+    load_graph_v120,
+    sha256_file_v120,
+    value_gate_v120,
+)
 from rtc.step2_v70_contract import DirectValueLossContractV70, V70_CONTRACT
 
 CAUSAL_DECAY_PER_STEP = 0.92
@@ -79,8 +80,8 @@ def main() -> None:
 
     contract = Step2V120Contract(seed=int(args.seed))
     contract.validate()
-    split_payload, frozen_train = _load_frozen_train_events(args.split_contract)
-    graph = _load_graph(args.graph)
+    split_payload, frozen_train = load_frozen_train_events_v120(args.split_contract)
+    graph = load_graph_v120(args.graph)
     if len(graph.actuator_ids) != contract.actuator_count:
         raise ValueError("V120 requires frozen 109 actuators")
 
@@ -107,8 +108,8 @@ def main() -> None:
     if len(cache_events) != contract.training_event_count:
         raise ValueError("V120 cache must contain exactly frozen Train18")
 
-    d2_branches = _branch_count(truth_cache, d2)
-    d3_branches = _branch_count(truth_cache, d3)
+    d2_branches = branch_count_v120(truth_cache, d2)
+    d3_branches = branch_count_v120(truth_cache, d3)
     if d3_branches != TARGETED_D3_AUTHORITATIVE_BRANCH_CENSUS:
         raise ValueError(
             f"V120 requires targeted D3=3600 branches; got {d3_branches}"
@@ -136,8 +137,7 @@ def main() -> None:
             f"V120 requires frozen 14/4 internal split; got {len(fit_events)}/{len(holdout_events)}"
         )
 
-    # Model inputs use only checkpoint rainfall.  Targets/scales continue to come
-    # from the original authoritative SWMM branches.
+    # Inputs are causal; labels/scales remain authoritative SWMM outcomes.
     norm = derive_causal_input_normalization_v120(
         truth_cache, fit, decay_per_step=CAUSAL_DECAY_PER_STEP
     )
@@ -204,7 +204,7 @@ def main() -> None:
         q33_m3=float(strata["q33_m3"]),
         q67_m3=float(strata["q67_m3"]),
     )
-    gate_ok, reasons = _gate(metrics["holdout_d3"])
+    gate_ok, reasons = value_gate_v120(metrics["holdout_d3"])
     cache_lineage = validate_v60_cache_lineage(args.cache_manifest)
     normalization = RuntimeNormalizationV120(
         norm.state_mean,
@@ -241,12 +241,12 @@ def main() -> None:
         "rtc_implementation_contract_sha256": rtc_implementation_contract_sha256(),
         "v120_runtime_contract_sha256": v120_runtime_contract_sha256(),
         "lineage": {
-            "git_head": _git_head(),
-            "graph_sha256": _sha256(args.graph),
+            "git_head": git_head_v120(),
+            "graph_sha256": sha256_file_v120(args.graph),
             "graph_semantic_sha256": v120_graph_semantic_sha256(graph),
-            "cache_manifest_sha256": _sha256(args.cache_manifest),
-            "split_contract_sha256": _sha256(args.split_contract),
-            "training_entrypoint_sha256": _sha256(Path(__file__)),
+            "cache_manifest_sha256": sha256_file_v120(args.cache_manifest),
+            "split_contract_sha256": sha256_file_v120(args.split_contract),
+            "training_entrypoint_sha256": sha256_file_v120(Path(__file__)),
             "basis_sha256_from_cache_lineage": str(
                 cache_lineage["v60_control_basis_sha256"]
             ),
@@ -260,7 +260,8 @@ def main() -> None:
             "checkpoint_rainfall_only": True,
             "decay_per_step": CAUSAL_DECAY_PER_STEP,
             "training_scenario_multiplier": 1.0,
-            "runtime_scenario_multipliers": [0.75, 1.0, 1.25],
+            "runtime_scenario_multipliers": [1.0],
+            "rainfall_uncertainty_scenario_search": False,
             "required_runtime_history_steps_for_level": 1,
         },
         "data_census": {
@@ -269,10 +270,10 @@ def main() -> None:
             "source_d2_census_role": "upstream intervention census; not pooled across frozen split",
             "eligible_cache_d2_groups": len(d2),
             "eligible_cache_d2_branches": d2_branches,
-            "eligible_cache_d2_candidates": _candidate_count(truth_cache, d2),
+            "eligible_cache_d2_candidates": candidate_count_v120(truth_cache, d2),
             "targeted_d3_groups": len(d3),
             "targeted_d3_branches": d3_branches,
-            "targeted_d3_candidates": _candidate_count(truth_cache, d3),
+            "targeted_d3_candidates": candidate_count_v120(truth_cache, d3),
             "eligible_event_count": len(cache_events),
             "eligible_events": sorted(cache_events),
             "non_train_events_loaded": [],
