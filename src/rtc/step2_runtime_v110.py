@@ -153,7 +153,7 @@ def load_v7_v11_rolling_mpc(
     near_opt_penalty: float = 1.0e4,
     movement_tiebreak: float = 1.0e-6,
     min_predicted_tfv_improvement_m3: float = 0.0,
-    hydraulic_secondary_iterations: int = 8,
+    hydraulic_secondary_iterations: int | None = None,
 ) -> V7V11RollingMPC:
     """Load a lineage-consistent V7/V11 stack and return the controller-facing MPC."""
     value_payload = _load_payload(v70_value_checkpoint)
