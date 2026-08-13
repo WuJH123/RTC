@@ -32,14 +32,15 @@ V120_CANDIDATE_POLICY_CONTRACT = "D3_V2_DISTRIBUTION_MATCHED_FINITE_CANDIDATE_PO
 V120_DATA_ELIGIBILITY_CONTRACT = "PROJECT7_V120_FROZEN_18TRAIN_ONLY_V1"
 V120_GRAPH_CONTRACT = "PROJECT7_V120_GRAPH_SEMANTIC_IDENTITY_V1"
 
-# These are source-census facts, not an instruction to pool all rows as IID
-# training samples.  D2 source membership is still filtered by the frozen 18/6/6
-# event split before V120 sees any label.
+# Source-census facts are provenance, not an instruction to pool all branches as
+# IID training rows. D2 is filtered by the frozen 18/6/6 split before V120 labels
+# can enter fitting.
 SOURCE_D2_AUTHORITATIVE_BRANCH_CENSUS = 4800
 TARGETED_D3_AUTHORITATIVE_BRANCH_CENSUS = 3600
 
 _V120_BOUND_FILES = (
     "controller.py",
+    "controller_v120.py",
     "runtime.py",
     "runtime_controller_guard.py",
     "step2_control_basis_v60.py",
@@ -51,7 +52,7 @@ _V120_BOUND_FILES = (
     "step2_train_response_v60.py",
     "step2_train_response_v70.py",
     "step2_v70_contract.py",
-    "production_v120.py",
+    "production_v120_bound.py",
     "production_v120_router.py",
     "production_cli_router.py",
     "production_guard.py",
@@ -59,12 +60,7 @@ _V120_BOUND_FILES = (
 
 
 def v120_runtime_contract_sha256() -> str:
-    """Hash the exact V120 training/search/execution implementation.
-
-    The hash is content-addressed rather than a manually bumped version string.
-    Any edit to a bound file invalidates an old V120 bundle fail-closed.
-    """
-
+    """Hash the exact V120 training/search/execution implementation."""
     root = Path(__file__).resolve().parent
     digest = hashlib.sha256()
     digest.update(V120_CONTRACT.encode("utf-8"))
@@ -78,13 +74,13 @@ def v120_runtime_contract_sha256() -> str:
     return digest.hexdigest()
 
 
-def _hash_string_sequence(digest: "hashlib._Hash", name: str, values: Any) -> None:
+def _hash_string_sequence(digest: Any, name: str, values: Any) -> None:
     digest.update(name.encode("utf-8"))
     canonical = json.dumps([str(x) for x in values], ensure_ascii=False, separators=(",", ":"))
     digest.update(canonical.encode("utf-8"))
 
 
-def _hash_array(digest: "hashlib._Hash", name: str, value: Any) -> None:
+def _hash_array(digest: Any, name: str, value: Any) -> None:
     array = np.ascontiguousarray(np.asarray(value))
     digest.update(name.encode("utf-8"))
     digest.update(str(array.dtype).encode("utf-8"))
@@ -93,13 +89,7 @@ def _hash_array(digest: "hashlib._Hash", name: str, value: Any) -> None:
 
 
 def v120_graph_semantic_sha256(graph: Any) -> str:
-    """Content identity for every graph field consumed by Step1/V120 control.
-
-    A raw NPZ file hash is still recorded for provenance.  This semantic identity
-    additionally protects runtime callers that already hold a ``GraphSchema`` and
-    therefore no longer know the original file bytes.
-    """
-
+    """Content identity for every graph field consumed by Step1/V120 control."""
     digest = hashlib.sha256()
     digest.update(V120_GRAPH_CONTRACT.encode("utf-8"))
     _hash_string_sequence(digest, "node_ids", graph.node_ids)
