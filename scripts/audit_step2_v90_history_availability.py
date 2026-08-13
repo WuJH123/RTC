@@ -1,9 +1,16 @@
 """Audit whether existing Train-only assets can supply causal pre-action history.
 
-This is a read-only evidence tool for the V9 state-sufficiency gate.  It does
+This is a read-only evidence tool for the V9 state-sufficiency gate. It does
 not run SWMM and deliberately uses only the frozen development/train
 checkpoint table, the Train no-control compact trajectories, and the V60
 cache's representative initial states.
+
+Important semantics: the recovered 13-frame full-network state history comes
+from authoritative *past* SWMM compact trajectories.  It is causal and useful
+as an oracle-history diagnostic, but it is not automatically production-
+eligible.  A formal online history path must use observations available at
+runtime (e.g. frozen Step1 reconstructions from sparse sensors) and document
+that lineage separately.
 """
 
 from __future__ import annotations
@@ -20,6 +27,7 @@ import numpy as np
 
 REQUIRED_FRAMES = 13
 FRAME_SECONDS = 300
+HISTORY_AUDIT_CONTRACT = "PROJECT7_STEP2_V90_HISTORY_AVAILABILITY_AUDIT_V2"
 
 
 def _sha256(path: Path) -> str:
@@ -44,7 +52,9 @@ def _train_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     ]
 
 
-def _representative_cache_rows(cache_root: Path, manifest: dict[str, Any]) -> dict[str, tuple[str, np.ndarray]]:
+def _representative_cache_rows(
+    cache_root: Path, manifest: dict[str, Any]
+) -> dict[str, tuple[str, np.ndarray]]:
     representatives: dict[str, tuple[str, np.ndarray]] = {}
     for shard in manifest["shards"]:
         directory = cache_root / shard["directory"]
@@ -94,10 +104,14 @@ def audit_history_availability(
         compact_path = baseline_by_event.get(event_id)
         representative = representatives.get(checkpoint_id)
         if compact_path is None or not compact_path.exists():
-            failures.append({"checkpoint_id": checkpoint_id, "reason": "missing_train_no_control_compact"})
+            failures.append(
+                {"checkpoint_id": checkpoint_id, "reason": "missing_train_no_control_compact"}
+            )
             continue
         if representative is None:
-            failures.append({"checkpoint_id": checkpoint_id, "reason": "missing_cache_representative"})
+            failures.append(
+                {"checkpoint_id": checkpoint_id, "reason": "missing_cache_representative"}
+            )
             continue
         try:
             compact = np.load(compact_path, allow_pickle=False)
@@ -125,9 +139,13 @@ def audit_history_availability(
                 )
                 continue
             current_index = int(current_positions[0])
-            history = compact["state_si"][current_index - REQUIRED_FRAMES + 1 : current_index + 1]
+            history = compact["state_si"][
+                current_index - REQUIRED_FRAMES + 1 : current_index + 1
+            ]
             if history.shape[0] != REQUIRED_FRAMES:
-                failures.append({"checkpoint_id": checkpoint_id, "reason": "history_frame_count_mismatch"})
+                failures.append(
+                    {"checkpoint_id": checkpoint_id, "reason": "history_frame_count_mismatch"}
+                )
                 continue
             _, cache_initial = representative
             max_difference = float(np.max(np.abs(history[-1] - cache_initial)))
@@ -137,18 +155,24 @@ def audit_history_availability(
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
                 source_contracts.add(str(metadata.get("data_contract", "")))
         except Exception as exc:  # pragma: no cover - evidence should fail closed
-            failures.append({"checkpoint_id": checkpoint_id, "reason": "audit_error", "error": repr(exc)})
+            failures.append(
+                {"checkpoint_id": checkpoint_id, "reason": "audit_error", "error": repr(exc)}
+            )
 
     link_flow_fields = sorted(
         key
         for key in compact_keys
-        if any(token in key.lower() for token in ("link_flow", "conduit_flow", "link_q", "conduit_q"))
+        if any(
+            token in key.lower()
+            for token in ("link_flow", "conduit_flow", "link_q", "conduit_q")
+        )
     )
     actuator_flow_fields = sorted(
         key for key in compact_keys if "actuator_flow" in key.lower()
     )
+    full_history_available = len(comparisons) == len(checkpoint_rows) and not failures
     return {
-        "contract": "PROJECT7_STEP2_V90_HISTORY_AVAILABILITY_AUDIT_V1",
+        "contract": HISTORY_AUDIT_CONTRACT,
         "scope": {
             "scientific_split": "development",
             "development_fold": "train",
@@ -169,13 +193,24 @@ def audit_history_availability(
             "no_control_train_events": len(no_control_rows),
             "recoverable_checkpoints": len(comparisons),
             "failed_checkpoints": len(failures),
-            "all_required_checkpoints_recoverable": len(comparisons) == len(checkpoint_rows) and not failures,
-            "current_state_max_abs_difference_m3_or_channel_units": max(comparisons) if comparisons else None,
-            "current_state_median_abs_difference": float(np.median(comparisons)) if comparisons else None,
+            "all_required_checkpoints_recoverable": full_history_available,
+            "current_state_max_abs_difference_m3_or_channel_units": (
+                max(comparisons) if comparisons else None
+            ),
+            "current_state_median_abs_difference": (
+                float(np.median(comparisons)) if comparisons else None
+            ),
             "source_data_contracts": sorted(source_contracts),
         },
         "history_sources": {
             "primary": "Train no_control compact trajectories referenced by step1_index/train_run_index.csv",
+            "source_semantics": "authoritative_past_swmm_full_state",
+            "oracle_diagnostic_eligible": bool(full_history_available),
+            "production_online_eligible": False,
+            "production_requirement": (
+                "Use frozen Step1 causal reconstruction from sparse online sensor history, "
+                "or an equivalently lineage-bound online-available reconstructed history."
+            ),
             "checkpoint_source": str(checkpoints_path),
             "trajectory_contract": sorted(source_contracts),
             "trajectory_sampling_seconds": FRAME_SECONDS,
@@ -205,11 +240,13 @@ def audit_history_availability(
             "graph_or_swmm": "not read; no SWMM executed",
         },
         "decision_input": {
-            "history_available_for_all_train_checkpoints": len(comparisons) == len(checkpoint_rows) and not failures,
+            "oracle_past_history_available_for_all_train_checkpoints": full_history_available,
+            "production_online_full_state_history_proven": False,
             "all_link_flow_available_online": bool(link_flow_fields),
             "recommended_next_step": (
-                "Use the recovered causal 13-frame history for a diagnostic/history-enhanced cache; "
-                "do not generate SWMM or claim all-link flow availability."
+                "First locate or construct frozen-Step1 reconstructed 13-frame Train-only history "
+                "from sparse causal observations. Use authoritative past SWMM history only as an "
+                "oracle diagnostic. Do not generate new SWMM or claim all-link flow availability."
             ),
         },
     }
@@ -232,6 +269,7 @@ def main() -> None:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps(report["checkpoint_coverage"], indent=2, sort_keys=True))
+    print(json.dumps(report["history_sources"], indent=2, sort_keys=True))
     print(json.dumps(report["flow_availability"], indent=2, sort_keys=True))
 
 
