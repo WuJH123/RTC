@@ -89,8 +89,8 @@ def run_policy_v120_bound_main() -> None:
     if abs(float(forecast_cfg.get("decay_per_step", -1)) - 0.92) > 1e-12:
         raise ValueError("V120 runtime rainfall decay differs from training")
     scenario_multipliers = tuple(float(x) for x in forecast_cfg.get("scenario_multipliers", []))
-    if scenario_multipliers != (0.75, 1.0, 1.25):
-        raise ValueError("V120 frozen rainfall scenario multipliers drift")
+    if scenario_multipliers != (1.0,):
+        raise ValueError("V120 requires the single train-aligned rainfall forecast")
 
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     graph = _load_graph(args.graph)
@@ -137,7 +137,7 @@ def run_policy_v120_bound_main() -> None:
     policy = PreviousTargetBoundPolicyV120(raw_policy)
     forecast = PersistenceDecayForecast(
         decay_per_step=0.92,
-        scenario_multipliers=scenario_multipliers,
+        scenario_multipliers=(1.0,),
         history_steps_for_level=1,
     )
     controller = V120TorchMPCController(
@@ -184,6 +184,7 @@ def run_policy_v120_bound_main() -> None:
         "primary_objective": "whole_system_cumulative_TFV_m3",
         "nodewise_hydraulic_surrogate_online": False,
         "future_realized_rainfall_online": False,
+        "rainfall_scenario_count": 1,
         "candidate_scoring_execution_bound": True,
         "value_horizon_minutes": 360,
         "control_update_seconds": 600,
