@@ -15,6 +15,7 @@ from .step2_v80_contract import DirectHydraulicEffectLossContractV80
 def initial_flood_physical_v80(
     batch: V60GroupBatch, normalization: InputNormalizationV60
 ) -> torch.Tensor:
+    """Recover physical current flooding from the normalized runtime batch."""
     mean = torch.as_tensor(
         float(normalization.state_mean[2]),
         dtype=batch.initial_state.dtype,
@@ -60,18 +61,27 @@ def derive_onset_sqrt_positive_weight_v80(
     *,
     contract: DirectHydraulicEffectLossContractV80 = DirectHydraulicEffectLossContractV80(),
 ) -> float:
-    """TrainFit-only square-root class correction; milder than V7's capped inverse prevalence."""
+    """TrainFit-only square-root class correction from physical cached states.
+
+    V60TrainCache.batch normalizes current state for model input, but the backing
+    shard arrays are authoritative physical values.  Do not de-normalize those raw
+    arrays a second time here.
+    """
+    del normalization  # kept in signature to make the TrainFit-only lineage explicit
     contract.validate()
     positive = total = 0
     for name in fit_names:
-        entry, arrays, ref = cache.entry(name), cache.entry(name).arrays, cache.entry(name).reference_index
+        entry = cache.entry(name)
+        arrays, ref = entry.arrays, entry.reference_index
         candidates = [i for i in entry.indices if i != ref]
-        current_norm = np.asarray(arrays["initial_state"][ref], dtype=np.float64)[..., 2]
         current = (
-            current_norm * max(float(normalization.state_std[2]), 1e-6)
-            + float(normalization.state_mean[2])
-        ) > contract.onset_epsilon_m3s
-        future = np.asarray(arrays["target_states"][candidates], dtype=np.float64)[..., 2] > contract.onset_epsilon_m3s
+            np.asarray(arrays["initial_state"][ref], dtype=np.float64)[..., 2]
+            > contract.onset_epsilon_m3s
+        )
+        future = (
+            np.asarray(arrays["target_states"][candidates], dtype=np.float64)[..., 2]
+            > contract.onset_epsilon_m3s
+        )
         transition = np.zeros_like(future, dtype=bool)
         transition[:, 0] = future[:, 0] & ~current[None]
         transition[:, 1:] = future[:, 1:] & ~future[:, :-1]
