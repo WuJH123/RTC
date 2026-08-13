@@ -49,17 +49,38 @@ def _channel_metrics(ladder: Mapping[str, Any]) -> dict[str, dict[str, float]]:
 
 
 def _local_positive_channels(baselines: Mapping[str, Any]) -> list[str]:
-    holdout = _deep(baselines, "baselines", "local_mlp", "holdout", default={})
+    # The standalone baseline emits the explicit scientific subset name rather
+    # than a generic ``holdout`` field.  Keep the legacy fallback solely for
+    # hand-authored fixtures used by older reports.
+    holdout = _deep(
+        baselines,
+        "baselines",
+        "local_mlp",
+        "TrainInternalHoldout_D2",
+        "channels",
+        default=None,
+    )
+    if holdout is None:
+        holdout = _deep(baselines, "baselines", "local_mlp", "holdout", default={})
     mapping = {
-        "depth": "depth",
-        "flood": "flood",
-        "storage": "storage",
-        "managed_flow": "managed_flow",
+        "depth": ("delta_depth_m", "depth"),
+        "flood": ("delta_flood_m3s", "flood"),
+        "storage": ("delta_storage_m3", "storage"),
+        "managed_flow": ("delta_managed_flow_m3s", "managed_flow"),
     }
     return [
         channel
-        for channel, key in mapping.items()
-        if float(_deep(holdout, key, "skill_vs_zero", default=float("nan"))) > 0.0
+        for channel, keys in mapping.items()
+        if float(
+            next(
+                (
+                    _deep(holdout, key, "skill_vs_zero", default=float("nan"))
+                    for key in keys
+                    if _deep(holdout, key, "skill_vs_zero", default=None) is not None
+                ),
+                float("nan"),
+            )
+        ) > 0.0
     ]
 
 

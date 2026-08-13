@@ -53,3 +53,29 @@ def test_predicted_reference_success_authorizes_only_development_v9() -> None:
     )
     assert root["formal_v9_authorized"] is True
     assert root["new_swmm_authorized"] is False
+
+
+def test_current_local_baseline_schema_is_used_for_learnability() -> None:
+    """The report must consume the emitted TrainInternalHoldout_D2 schema."""
+    module = _module()
+    root, _, _ = module.build_decision(
+        {"reference_candidate_pairing": {}, "target_recomputation_from_raw_compacts": {}, "hydraulic_effect_identifiability": {}},
+        {},
+        {
+            "baselines": {
+                "local_mlp": {
+                    "TrainInternalHoldout_D2": {
+                        "channels": {
+                            "delta_depth_m": {"skill_vs_zero": 0.2},
+                            "delta_flood_m3s": {"skill_vs_zero": -0.1},
+                            "delta_storage_m3": {"skill_vs_zero": 0.3},
+                            "delta_managed_flow_m3s": {"skill_vs_zero": -0.1},
+                        }
+                    }
+                }
+            }
+        },
+        _ladder("MARKOV_INSUFFICIENCY_SUPPORTED"),
+    )
+    learnability = next(item for item in root["findings"] if item["root_cause"] == "ALL_ACTION_EFFECT_DATA_UNLEARNABLE")
+    assert learnability["evidence"]["local_mlp_holdout_positive_channels"] == ["depth", "storage"]
