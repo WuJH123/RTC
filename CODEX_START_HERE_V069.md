@@ -1,120 +1,244 @@
-# Codex start here — Project7 v0.6.9 execution freeze
+# Codex start here — Project7 v0.6.9 current execution contract
 
-This is the single active entrypoint for the Project7 TFV-first methodology testbed. The v0.6.7 and v0.6.8 names that remain in physical-input and simulation-asset documents are active source/identity contracts, not alternative controller versions.
+This file is the single active entrypoint.  Do **not** infer current Step2
+semantics from the highest historical version number in the repository.
 
-Before running SWMM or training, read exactly these active files:
+## 1. Study identity
 
-1. `FORMAL_PIPELINE_LATEST.md` — Step0→Step9 scientific sequence and fail-closed gates.
-2. `configs/project7_v069_parameter_register.json` — original execution freeze and all unchanged scientific/runtime choices.
-3. `configs/step2_multishooting_amendment_v3.json` — **active pre-Formal Step2 training amendment** after the Train-only V1/V2 diagnostics exposed first `ACTION_LOSS_PATHWAY` and then persistent H60 recurrent action amplification. It supersedes the older Step2 training amendments only; it does not change D2/D3 data, splits, controller objective, SWMM truth, or Formal acceptance gates.
-4. `configs/project7_v069_split_contract.json` — preregistered 18 Train / 6 Validation / 6 Final forcing-only allocation.
-5. `configs/project7_v069_events_with_splits.csv` — active portable 30-event registry.
-6. `configs/formal_controller_v5.json` — resolved controller/runtime configuration; no `REPLACE_*` values remain.
-7. `configs/formal_baseline_plan.v6.json` — active seven-strategy comparison contract.
-8. `configs/model_acceptance_contract_v4.json` — preregistered dimensionless acceptance gates; unchanged by the Step2 amendments.
-9. `docs/METHOD_TESTBED_V067.md` — still-active frozen physical/rainfall source contract.
-10. `docs/SIMULATION_ASSET_MANAGEMENT_V068.md` — still-active large-data identity/reuse contract.
+- Project: Project7 urban-drainage real-time control methodology testbed.
+- Frozen INP: `wuhan_method_testbed_v067.inp`.
+- Authoritative truth: EPA SWMM.
+- Study positioning: idealized SWMM methodology testbed, not a field digital twin.
+- Final control objective: system-wide cumulative sewer-node overflow volume
+  (`TFV`) minimization.
+- PFV at 8 priority nodes and Global Peak are diagnostics, not current hard
+  objectives.
+- No explicit surface ponding/2-D routing is represented; TFV must be described
+  as **sewer-node overflow volume**, not street inundation volume.
 
-Do not search old versioned controller/split/acceptance files to decide current semantics. The active split contains only `development/train`, `development/validation`, and untouched `final`; calibration/safety-audit are no longer active roles.
+## 2. Frozen physical/time contract
 
-## Step0 event-clock lineage
+- 109 controlled links = 57 pumps + 42 orifices + 10 weirs.
+- ~932 nodes, 1167 conduits, 10 storages, 89 sensors.
+- SWMM/model sample step = 300 s.
+- MPC update = 600 s.
+- Long value horizon = 360 min / 72 model steps / 36 control blocks.
+- Maximum setting change = 0.5 per 10-min update.
+- Effective warm-up = 120 min; tail = 360 min.
+- Chicago events = 5 return periods × 6 durations = 30.
+- Frozen forcing split = 18 Train / 6 Validation / 6 Final.
+- Validation and Final are not tuning data.
 
-The authoritative Step0 bootstrap is `scripts/adopt_and_step0_project7_v067.ps1`. It must:
+## 3. Current canonical Step2 contract
 
-1. verify the extracted v0.6.7 physical/rainfall source bundle and the frozen 18/6/6 source registry;
-2. deterministically prepare all 30 event INPs to **effective pre-rain warm-up = 120 min** with **post-rain tail = 360 min**;
-3. validate the prepared 18/6/6 registry;
-4. initialize `study_v069` against that **prepared effective-120 registry**, not against the original 60-min source registry;
-5. write canonical preflight/readiness evidence at the paths later consumed by Policy Lock.
+Read:
 
-This ordering is mandatory. Initializing the fresh workspace against the original 60-min source registry and later replacing it with the prepared registry would create a registry-SHA mismatch at Policy Lock.
+1. `configs/step2_current_contract.json`
+2. `docs/STEP2_V110_ARCHITECTURE.md`
+3. `src/rtc/step2_current.py`
 
-## Frozen choices — do not ask Codex to rediscover them
+New development/production-facing code must import Step2 through
+`rtc.step2_current`.
 
-- 30 events = **18 Train + 6 Validation + 6 Final**.
-- D1 first action = **elapsed 60 min**.
-- Model/record step = **300 s**; control update = **600 s**; history = **13 frames**.
-- First Proposed control = **elapsed 60 min**; effective warm-up = **120 min**.
-- MPC prediction horizon = **360 min / 72 model steps / 36 control blocks**.
-- Max setting change = **0.5 per 10-min update**.
-- MPC controller/forecast parameters = the concrete values in `configs/formal_controller_v5.json`; **no sweep**.
-- Phase-0 = **6 development/train events × 4 checkpoints/event × 12 actuators/checkpoint, epsilon=0.15, one authoritative h360 run per unique action**.
-- D1 = control start 60 min, perturbation std 0.12, change probability 0.35, exploration max delta 0.20.
-- D3 = 8 sequences/checkpoint, std 0.20, change probability 0.25; **no sweep**.
-- Step1 remains frozen by the original parameter register.
-- Step2 uses the **single active Train-only mechanism-driven V3 amendment** in `configs/step2_multishooting_amendment_v3.json`; older V1/V2 Step2 amendments remain historical evidence and are not active execution contracts.
-- The active Step2 path retains explicit same-prefix `Δflow`, `Δstate`, `ΔTFV` and ranking supervision, the bounded Train-only state/flow residual scales and explicit D3 HOLD reference from V2, replaces the predicted counterfactual TFV hard-clamp gradient with a smooth positive proxy for training only, and trains the full 360-min action sequence through six 60-min/12-step multiple-shooting windows rather than H24–H72 full BPTT.
-- Authoritative SWMM exact flooding volume remains the truth for Formal acceptance. The smooth flooding proxy is not an authoritative metric.
-- Hard dimensionless gates remain unchanged: NSE/rank/sign = **0.70**, gradient cosine = **0.60**, D2/D3 top-1 = **0.50**.
-- Absolute RMSE/MAE/regret metrics remain mandatory diagnostics but are not post-hoc hard thresholds.
-- Runtime budget = **300 s**; target readback tolerance = **1e-6**; current-setting tolerance = **0.05**.
-- Exactly one small development runtime/readback benchmark is allowed to verify those fixed values. Failure is fail-closed and requires human review; do not auto-retune.
-- Auto-RBC and EFD use their fixed defaults; **never event-tune them**.
-- Phase-0 pulse/recovery is conditional diagnostic only and is not an automatic batch.
+### 3.1 Long-horizon Control Value — V7, supported and frozen
 
-## Cohort scope — mandatory
+`rtc.step2_control_response_v70.ControlValueSurrogateV70`
 
-- Phase-0 high-frequency D0/D2 uses only the frozen **6 selected Train events**.
-- Step3 production D0 at the frozen 300-s grid must cover **all 24 development events = 18 Train + 6 Validation**, because Step1 held-out acceptance requires real Validation trajectories.
-- D1 controlled exploration is **18 Train only**; no D1 on Validation or Final.
-- Step4 production D2/D3 must cover **Train and Validation development cohorts** sufficiently for Step2 training and held-out action-effect/ranking evidence; no Final rows are allowed pre-lock.
-- Step1 and Step2 fit only on **18 Train** and accept only on **6 Validation**.
-- Step6 development closed-loop comparison should use the **6 Validation** events as the held-out development comparison set; do not tune from those outcomes.
-- Step9 uses only the **6 untouched Final** events after Policy Lock.
+Input:
+- current causal state,
+- causal rainfall boundary,
+- reference action,
+- candidate action,
+- previous controlled-link flow,
+- actuator physics/identity.
 
-## Step2 post-diagnostic execution rule — mandatory
+Output:
+- direct signed authoritative `Delta-TFV` in m3.
 
-The original absolute-trajectory Step2 trainer and the V1/V2 long-BPTT amendments are no longer active. Development/train-only diagnostics established two successive mechanisms before any Formal fit: (1) same-state action sensitivity/ranking could be lost under the absolute trajectory objective, and (2) even after bounded residuals the V2 smoke still entered H60 action amplification while earlier H24/H36 stages showed a counterfactual TFV/ranking dead zone. The active V3 amendment is therefore a mechanism-driven pre-Formal repair, not permission to tune against Validation.
+Meaning:
+`Delta-TFV = TFV_candidate - TFV_reference`.
 
-The active public CLI `rtc-train-step2-large` is routed to `step2_train_v4.train_step2_large_v4_main` and must use the fixed V3 contract.
+V7 does not route the objective through a tiny flooding-rate head and H72
+integration.  It is the current long-horizon 0–360 min MPC value model.
 
-Execution order:
+Do not redesign or retrain V7 merely because the Hydraulic Effect model is
+under development.
 
-1. leave all existing D2/D3 SWMM assets untouched; **do not regenerate D2/D3 because the trainer changed**;
-2. reuse the existing final D2+D3 index and lineage-valid **V6 counterfactual-group-preserving** Train18/Validation6 shards; rebuild only deletable training caches when source-shard SHA requires it;
-3. first run a fresh **Train-only V3 micro-smoke** from seed 42. Never resume a V1/V2 trainstate;
-4. the V3 micro-smoke must demonstrate that the previous signatures are gone: no persistent zero counterfactual sensitivity/ranking dead zone, no order-of-magnitude long-horizon action amplification, all losses/gradients finite, and a stable full 72-step free-run diagnostic after the multiple-shooting fit;
-5. only after that micro-smoke is healthy, run one bounded full Train-only smoke with the same fixed V3 contract;
-6. only after the full Train-only smoke is healthy, fit exactly one Formal Step2 model on Train18 from fresh initialization;
-7. only then read Validation6 outcomes and run the unchanged Step2 exact-truth, SWMM-gradient and D2/D3 ranking gates;
-8. if any held-out gate fails, stop and diagnose that mechanism. Do not lower a threshold, reshuffle events, inspect Final, or start a parameter sweep.
+### 3.2 Short/medium-horizon Hydraulic Effect — V11, development
 
-Multiple shooting is a **training strategy only**. Runtime/acceptance still require the model to execute the frozen free-running 72-step/360-min rollout from the current state and the full future action sequence. Formal acceptance must therefore include free-run H72 trajectory/TFV/ranking and SWMM finite-difference gradient evidence; teacher-forced segment metrics cannot substitute for those gates.
+`rtc.step2_control_response_v110.ActuatorSetHydraulicResponseV110`
 
-## CLI scope — do not propagate the Phase-0 budget into production D2
+Hydraulic horizon is deliberately **0–120 min**, not six-hour centimetre-level
+nodewise prediction.  The 360-min anti-myopia objective remains V7 Delta-TFV.
 
-The small `4 checkpoints/event × 12 actuators/checkpoint` budget is **Phase-0 only**.
+Authoritative target at response time tau remains the same-prefix
+counterfactual:
 
-Use these guarded commands only for Phase-0:
+`Delta x(t+tau) = x_candidate(t+tau) - x_reference(t+tau)`.
 
-```text
-rtc-design-phase0-events
-rtc-design-phase0-checkpoints
-rtc-design-phase0-probes
-```
+This target is correct for delayed effects.  Lag is handled by ensuring that
+the prediction at tau can only see candidate/reference actions that have
+already occurred by tau.
 
-For Step4 production D2 generation, use the general commands:
+V11 predicts signed changes in:
+- node depth/head,
+- node flooding rate,
+- node volume/storage,
+- node total inflow/outflow,
+- 109 managed-link flows.
 
-```text
-rtc-design-checkpoints
-rtc-design-probes-efficient
-```
+It does not require flooding to occur before a hydraulic effect exists.
 
-The general Step4 commands are deliberately not forced to the Phase-0 4/12 budget. Their production design must provide sufficient Train/Validation coverage of the 109-actuator action space, use the current normal production defaults once unless the frozen workflow explicitly specifies otherwise, and must not be hyperparameter-swept.
+## 4. V11 architecture requirements
 
-D1 and D3 values remain globally frozen by their guarded public CLIs because the user explicitly froze those settings for the study.
+The design handles four coupled RTC properties.
 
-## Expensive-compute rules
+### Lag
+For each retained response time, use only the causal action prefix.  A setting
+change scheduled after that response time must have exactly zero influence on
+that earlier output.
 
-- Never grid-search controller, forecast, model architecture, training, D1/D2/D3 or baseline parameters unless the frozen contract is explicitly revised by the user before Final.
-- The active V3 Step2 amendment is already the current explicit pre-Formal mechanism repair; do not create another automatic amendment from Validation outcomes.
-- Never reshuffle Train/Validation/Final after any hydraulic outcome is observed.
-- Never use Final data for training, acceptance, controller tuning, baseline tuning, threshold selection or debugging decisions.
-- Never run h210/h240/h300 as separate SWMM branches merely to inspect timing when an identity-equivalent h360 trajectory can be sliced; shorter-window exact TFV still requires an exact endpoint statistics snapshot.
-- Before every large D2/D3 batch, write a branch-count/disk/runtime census, deduplicate actions, check endpoint executability, query the simulation-asset registry, then execute only required new branches.
-- Reuse authoritative SWMM results only through the v0.6.8 simulation-identity/hash contract.
-- When a gate fails, diagnose the specific data/model/runtime mechanism before increasing data volume. Do not lower the gate.
+### Nonlocality
+A changed pump/orifice/weir may affect remote upstream/downstream nodes.
+Hydraulic influence is not restricted to a fixed 1/2/4/8-hop receptive field.
+Every node/time query may attend to the changed-actuator set with static
+all-range graph-relation bias.
 
-## Current public CLI names
+### Multi-actuator combination
+The changed facilities form a variable-size set.  Use actuator self-attention
+before node/time cross-attention.  D3 is a joint nonlinear response problem.
 
-Use `rtc-policy-lock-v6` and `rtc-compile-final-v5`. Historical mismatched aliases are not part of the active interface.
+Forbidden:
+`SUM(predicted D2 effects) + interaction residual`.
+
+D2 is mechanism supervision/anchor, never a formula for D3 truth.
+
+### Rolling MPC
+Every 10 min the real system is observed/reconstructed and the MPC problem is
+solved again.  V11 therefore focuses detailed hydraulics on 0–120 min while V7
+keeps the 0–360 min value objective.  Only the first 10-min control block is
+executed before re-estimation/re-optimization.
+
+## 5. Hydraulic Effect learning target
+
+Each node/variable/time response is decomposed into:
+
+1. `active`: is the candidate-reference effect locally meaningful?
+2. `sign`: if active, is it positive or negative?
+3. `magnitude`: if active, how large is it?
+
+The raw signed counterfactual delta is primary.  Physical projection of an
+absolute candidate trajectory must never clip or rewrite the raw signed delta.
+
+### Active-effect definition
+
+Do not use one global channel median/scale.
+
+V11 freezes TrainFit-D2-only local thresholds using:
+`max(0.25 * P90(abs(Delta)), physical floor)`.
+
+Physical floors:
+- depth: >= 0.01 m and >= 1% of local maximum node depth,
+- flooding: >= 1e-5 m3/s,
+- volume: >= 1e-3 m3 and, for storages, >= 0.5% capacity,
+- node inflow/outflow: >= 1e-4 m3/s,
+- managed flow: >= 1e-4 m3/s.
+
+Holdout, Validation and Final never select these thresholds.
+
+## 6. Time-domain supervision
+
+Retained V11 responses:
+5, 10, 15, 20, 25, 30 min, then every 10 min through 120 min.
+
+The model is direct response, not recurrent free-run.  In addition to
+active/sign/magnitude supervision, compare authoritative finite differences
+between adjacent retained response times.  This teaches response rise/decay and
+lag without recursively feeding predicted state into the next state.
+
+## 7. Existing Step2 data
+
+Use the existing lineage-valid V6 counterfactual-group-preserving cache:
+- canonical D2 groups,
+- targeted D3-v2 groups,
+- same-prefix reference/candidate branches,
+- no legacy dense D3 training.
+
+Do not regenerate SWMM because the surrogate architecture changed.
+
+D2 has already shown learnable single-actuator control signal.  The historic
+finite-hop full-network Hydraulic failures do not imply that D2 is unlearnable.
+
+## 8. V11 development order
+
+Canonical runner:
+
+`scripts/run_step2_v110.py`
+
+### Stage D2
+- TrainFit D2 only.
+- 4 epochs.
+- seed 42.
+- FP32 AdamW.
+- no sweep.
+- evaluate independent TrainInternalHoldout D2.
+
+D3 remains blocked unless holdout skill-vs-zero is > 0 for:
+- depth,
+- flooding,
+- volume,
+- managed flow.
+
+### Stage D3
+Only after an accepted V11 D2 report/checkpoint:
+- targeted TrainFit D3,
+- 10 epochs,
+- D3/D2 authoritative supervision = 0.75/0.25,
+- same model and seed contract,
+- no hyperparameter sweep.
+
+D2 outputs are never summed to synthesize D3 labels.
+
+## 9. Development boundaries
+
+Until V11 D2 and D3 development gates pass:
+
+- no Validation tuning,
+- no Final access,
+- no Formal,
+- no Policy Lock,
+- no production wiring,
+- no new SWMM,
+- no new all-link-flow data,
+- no active learning,
+- no V7 Value redesign.
+
+Future SWMM truth is training/evaluation label only and is forbidden online.
+
+## 10. Historical Step2 modules
+
+V4–V10 Hydraulic branches/files are forensic provenance, not active
+implementations.  They document failed or superseded hypotheses:
+- additive D2 superposition,
+- local finite-hop propagation,
+- rate-integration value collapse,
+- post-projection signed-effect corruption,
+- state-sufficiency and history diagnostics,
+- V10 nonlocal prototype before the final dual-timescale/set formulation.
+
+Do not import those modules into new canonical code.
+
+The only active import surface is:
+`rtc.step2_current`.
+
+## 11. Final MPC scientific claim
+
+The controller may claim only:
+
+> the best control found within the generated engineering-feasible candidates /
+> frozen control manifold.
+
+Do not claim a global optimum over the full continuous 109-dimensional action
+space.
+
+All final control-effect claims remain authoritative SWMM results.
