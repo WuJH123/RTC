@@ -148,9 +148,6 @@ def run_policy_v110_main() -> None:
         min_predicted_tfv_improvement_m3=float(
             objective_cfg.get("min_predicted_tfv_improvement_m3", 0.0)
         ),
-        hydraulic_secondary_iterations=int(
-            objective_cfg.get("v110_hydraulic_secondary_iterations", 8)
-        ),
     )
 
     forecast_cfg = cfg.get("forecast", {})
