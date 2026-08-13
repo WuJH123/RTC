@@ -143,6 +143,24 @@ def _primary_skills(metrics: dict) -> dict[str, float]:
     return {key: float(overall[key]) for key in PRIMARY_SKILL_KEYS}
 
 
+def _checkpoint_payload_v100(model: torch.nn.Module, *, lineage: dict, schedule: dict) -> dict:
+    """Build a local, development-only V10 checkpoint for post-run diagnostics."""
+    state_dict = {
+        name: tensor.detach().cpu().clone()
+        for name, tensor in model.state_dict().items()
+        if torch.is_tensor(tensor)
+    }
+    return {
+        "contract": V100_CONTRACT,
+        "kind": "nonlocal_hydraulic_effect_d2",
+        "production_compatible": False,
+        "development_only": True,
+        "state_dict": state_dict,
+        "lineage": dict(lineage),
+        "schedule": dict(schedule),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Project7 V10 nonlocal hydraulic operator D2 mechanism")
     parser.add_argument("--graph", required=True)
@@ -315,6 +333,16 @@ def main() -> None:
         "d3_authorized": bool(mechanism_supported),
         "new_swmm_authorized": False,
         "elapsed_seconds": time.perf_counter() - started,
+    }
+    checkpoint_path = out_dir / "step2_v100_nonlocal_d2_development.pt"
+    torch.save(
+        _checkpoint_payload_v100(model, lineage=payload["lineage"], schedule=payload["schedule"]),
+        checkpoint_path,
+    )
+    payload["model_checkpoint"] = {
+        "path": str(checkpoint_path),
+        "sha256": _sha256(checkpoint_path),
+        "production_compatible": False,
     }
     report = out_dir / "STEP2_V100_NONLOCAL_D2_MECHANISM.json"
     report.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
