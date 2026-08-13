@@ -26,6 +26,10 @@ from .step2_control_response_v80 import (
     _scatter_actuators_to_nodes,
     prepare_static_v80,
 )
+from .step2_physical_edge_v90 import (
+    ConduitPhysicalEdgeAssetsV90,
+    causal_reference_dynamic_edge_features_v90,
+)
 from .step2_v90_contract import (
     DirectHydraulicEffectLossContractV90,
     LEVEL_A,
@@ -178,6 +182,8 @@ class DirectHydraulicEffectSurrogateV90(DirectHydraulicEffectSurrogateV80):
         self,
         seed: torch.Tensor,
         prepared: PreparedStaticV80,
+        *,
+        reference_states_physical: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, tuple[int, ...]]:
         """Fuse fixed 1/2/4/8-hop signed diffusion fields.
 
@@ -334,7 +340,9 @@ class DirectHydraulicEffectSurrogateV90(DirectHydraulicEffectSurrogateV80):
             node_count,
         )
         node_effect, _multiscale_weights, _ = self._multiscale_diffuse_v90(
-            node_effect, prepared
+            node_effect,
+            prepared,
+            reference_states_physical=base_output.reference_states_physical[:, 0],
         )
 
         static = prepared.base.node_static[None, None].expand(batch, retained_count, -1, -1)
@@ -414,9 +422,166 @@ class DirectHydraulicEffectSurrogateV90(DirectHydraulicEffectSurrogateV80):
         )
 
 
+class PhysicalConduitHydraulicEffectSurrogateV90(DirectHydraulicEffectSurrogateV90):
+    """V9 signed effect branch with a frozen conduit physical multigraph.
+
+    This is deliberately a representation control, not a revival of the V4
+    additive residual.  It keeps the V9 direct signed output equation and
+    endpoint action seed, but replaces the deduplicated, unweighted legacy
+    adjacency in the effect diffusion with the conduit-only directed physical
+    multigraph.  Physical parallel conduits remain separate ``index_add`` rows.
+
+    Pumps, orifices and weirs are intentionally excluded by
+    :class:`ConduitPhysicalEdgeAssetsV90`: their control effect already enters
+    through the actuator endpoint seed and including them again would double
+    count the action pathway.
+    """
+
+    def __init__(
+        self,
+        *args,
+        physical_edge_assets: ConduitPhysicalEdgeAssetsV90,
+        head_scale_m: float,
+        depth_scale_m: float,
+        gradient_scale: float,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        if self.conditioning_level != LEVEL_B:
+            raise ValueError(
+                "V9 physical conduit control is predicted-reference-only and requires LEVEL_B"
+            )
+        assets = physical_edge_assets
+        if assets.node_count <= 0 or assets.directed_edge_count <= 0:
+            raise ValueError("V9 physical conduit propagation requires nonempty edge assets")
+        if assets.regulator_propagation_edge_count != 0:
+            raise ValueError("V9 physical conduit propagation must exclude regulators")
+        if any(link_type != "conduit" for link_type in assets.edge_to_link_type):
+            raise ValueError("V9 physical edge assets admitted a non-conduit propagation row")
+        if assets.static_features_normalized.shape != (
+            assets.directed_edge_count,
+            33,
+        ):
+            raise ValueError("V9 physical edge assets require [E,33] static conduit features")
+        if not torch.isfinite(assets.static_features_normalized).all():
+            raise ValueError("V9 physical static edge features must be finite")
+        if not torch.isfinite(assets.edge_length_m).all() or torch.any(assets.edge_length_m <= 0):
+            raise ValueError("V9 physical conduit lengths must be positive finite")
+        for name, value in (
+            ("head_scale_m", head_scale_m),
+            ("depth_scale_m", depth_scale_m),
+            ("gradient_scale", gradient_scale),
+        ):
+            if not np.isfinite(float(value)) or float(value) <= 0.0:
+                raise ValueError(f"{name} must be positive finite")
+
+        self.physical_edge_assets = assets
+        self.physical_head_scale_m = float(head_scale_m)
+        self.physical_depth_scale_m = float(depth_scale_m)
+        self.physical_gradient_scale = float(gradient_scale)
+        # No bias may leak an effect from an all-zero action seed.  Static and
+        # dynamic hydraulic attributes only gate/source-transform an existing
+        # signed action field; they cannot broadcast a global offset.
+        self.physical_edge_condition = nn.Sequential(
+            nn.Linear(33 + 7, self.hidden_dim, bias=False),
+            nn.Sigmoid(),
+        )
+        self.physical_edge_source = nn.Linear(self.hidden_dim, self.hidden_dim, bias=False)
+        self.physical_edge_destination = nn.Linear(self.hidden_dim, self.hidden_dim, bias=False)
+        self.physical_edge_output = nn.Linear(self.hidden_dim, self.hidden_dim, bias=False)
+
+    def _physical_edge_tensors(
+        self,
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+        node_count: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        assets = self.physical_edge_assets
+        if assets.node_count != node_count:
+            raise ValueError(
+                "physical conduit asset node count differs from the prepared V9 graph"
+            )
+        edge_index = assets.edge_index.to(device=device)
+        static = assets.static_features_normalized.to(device=device, dtype=dtype)
+        degree = assets.in_degree.to(device=device, dtype=dtype).clamp_min(1.0)
+        if edge_index.ndim != 2 or edge_index.shape != (2, static.shape[0]):
+            raise RuntimeError("invalid V9 physical directed edge contract")
+        if int(edge_index.max()) >= node_count or int(edge_index.min()) < 0:
+            raise RuntimeError("V9 physical directed edge indices are outside graph nodes")
+        return edge_index, static, degree
+
+    def _multiscale_diffuse_v90(
+        self,
+        seed: torch.Tensor,
+        prepared: PreparedStaticV80,
+        *,
+        reference_states_physical: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple[int, ...]]:
+        """Causal directed conduit message diffusion at fixed 1/2/4/8 hops."""
+        if reference_states_physical is None:
+            raise ValueError("physical conduit diffusion requires frozen predicted reference states")
+        if seed.ndim != 5:
+            raise ValueError("V9 physical diffusion seed must be [B,C,T,N,H]")
+        batch, candidates, retained, nodes, hidden = seed.shape
+        if hidden != self.hidden_dim:
+            raise ValueError("V9 physical diffusion hidden width mismatch")
+        if reference_states_physical.shape != (batch, retained, nodes, 6):
+            raise ValueError("V9 physical diffusion reference trajectory shape mismatch")
+        edge_index, static, degree = self._physical_edge_tensors(
+            device=seed.device, dtype=seed.dtype, node_count=nodes
+        )
+        source, destination = edge_index[0], edge_index[1]
+        dynamic = causal_reference_dynamic_edge_features_v90(
+            self.physical_edge_assets,
+            reference_head_m=reference_states_physical[..., 1],
+            reference_depth_m=reference_states_physical[..., 0],
+            head_scale_m=self.physical_head_scale_m,
+            depth_scale_m=self.physical_depth_scale_m,
+            gradient_scale=self.physical_gradient_scale,
+        ).to(dtype=seed.dtype)
+        # [B,T,E,H]: all dynamic quantities come from the frozen causal
+        # reference trajectory, never candidate or future SWMM truth.
+        edge_context = torch.cat(
+            (
+                static[None, None].expand(batch, retained, -1, -1),
+                dynamic,
+            ),
+            dim=-1,
+        )
+        condition = self.physical_edge_condition(edge_context)
+        value = seed
+        fields: list[torch.Tensor] = []
+        wanted = set(self._MULTISCALE_HOPS)
+        for hop in range(1, max(self._MULTISCALE_HOPS) + 1):
+            source_field = value[..., source, :]
+            destination_field = value[..., destination, :]
+            message = self.physical_edge_source(source_field) + self.physical_edge_destination(
+                destination_field
+            )
+            message = torch.tanh(message) * condition[:, None]
+            message = self.physical_edge_output(message)
+            accumulated = torch.zeros_like(value)
+            accumulated.index_add_(-2, destination, message)
+            update = accumulated / degree.reshape(1, 1, 1, nodes, 1)
+            value = value + 0.5 * update
+            if hop in wanted:
+                fields.append(value)
+        if len(fields) != len(self._MULTISCALE_HOPS):
+            raise RuntimeError("V9 physical diffusion did not retain all fixed scales")
+        joined = torch.cat(fields, dim=-1)
+        weights = torch.softmax(self.multiscale_gate(joined), dim=-1)
+        fused = sum(
+            field * weights[..., index, None]
+            for index, field in enumerate(fields)
+        )
+        return fused, weights, self._MULTISCALE_HOPS
+
+
 __all__ = [
     "CausalPrefixActionProjectorV80",
     "DirectHydraulicEffectSurrogateV90",
+    "PhysicalConduitHydraulicEffectSurrogateV90",
     "HydraulicEffectOutputV90",
     "PreparedStaticV80",
     "prepare_static_v80",
