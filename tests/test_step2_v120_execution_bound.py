@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import torch
 
+from rtc.runtime import choose_first_move
 from rtc.step2_causal_forecast_v120 import causal_rainfall_from_checkpoint_v120
 from rtc.step2_policy_v120 import _project_executable_sequences_v120
 from rtc.step2_v120_contract import (
@@ -64,6 +65,21 @@ def test_candidate_projection_occurs_before_scoring_and_preserves_hold() -> None
     assert torch.equal(projected[1, 0], projected[1, 1])
     assert float((projected[1, 2] - projected[1, 0]).abs().max()) <= 0.5 + 1.0e-7
     assert maximum > 0.0
+
+    # The generic write-path projection must be a no-op for a sequence already
+    # projected before Value scoring. This is the core score==execute invariant.
+    decision = choose_first_move(
+        optimized_sequence=projected[1].numpy(),
+        surrogate_admissible=True,
+        fallback_first_move=hold[0].numpy(),
+        current_settings=current.numpy(),
+        previous_requested_settings=previous_target.numpy(),
+        min_settings=0.0,
+        max_settings=1.0,
+        max_delta_per_update=0.5,
+    )
+    assert np.allclose(decision.requested, projected[1, 0].numpy())
+    assert decision.projected is False
 
 
 def test_projection_fails_closed_if_hold_breaks_target_continuity() -> None:
