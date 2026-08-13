@@ -102,7 +102,8 @@ def main() -> None:
                     "tiny_phase_presence": selected(reports["tiny_phase_presence"]), "micro_phase_presence": selected(reports["micro_phase_presence"]),
                     "preflight": reports["micro_phase_presence"]["preflight"]}
     devcheck_report = {"contract": "PROJECT7_STEP2_V113_DEVCHECK_REPORT_V1", "development_only": True, "lineage": lineage,
-                       "arms": {k: {"train_events": reports[k]["train_events"], "eval_events": reports[k]["eval_events"], "metrics": selected(reports[k]), "preflight": reports[k]["preflight"]}
+                       "signed_magnitude_audit_path": str(Path(args.signed_audit)),
+                       "arms": {k: {"train_events": reports[k]["train_events"], "eval_events": reports[k]["eval_events"], "metrics": selected(reports[k]), "horizon_buckets": reports[k]["metrics"].get("horizon_buckets"), "preflight": reports[k]["preflight"]}
                                 for k in ("devcheck_none", "devcheck_overall", "devcheck_phase", "devcheck_oracle_support")},
                        "gate_passed": bool(devcheck_pass), "no_internal_holdout_outcome_access": True}
     ablation_report = {"contract": "PROJECT7_STEP2_V113_ABLATION_V1", "development_only": True, "lineage": lineage,
