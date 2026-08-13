@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 import pytest
 
-from test_step2_v80 import _graph, _model
+from test_step2_v80 import _graph, _inputs, _model
 from rtc.step2_control_response_v80 import prepare_static_v80
 from rtc.step2_control_response_v90 import (
     DirectHydraulicEffectSurrogateV90,
@@ -212,3 +212,22 @@ def test_v90_physical_activation_recomputation_preserves_output_and_gradients():
         assert name_a == name_b
         if parameter_a.requires_grad and parameter_a.grad is not None:
             assert torch.allclose(parameter_a.grad, parameter_b.grad, rtol=1e-5, atol=1e-6)
+
+
+def test_v90_physical_effect_is_causal_at_the_first_retained_horizon():
+    graph, model = _physical_model(parallel=True)
+    prepared = prepare_static_v80(graph)
+    initial, rain, reference, candidate, previous_flow = _inputs(2)
+    candidate = candidate[:, 1:2]
+    later = candidate.clone()
+    later[:, :, 1:] += 0.123
+    baseline = model(initial, rain, reference, candidate, previous_flow, prepared)
+    changed = model(initial, rain, reference, later, previous_flow, prepared)
+    assert torch.equal(
+        baseline.raw_delta_states_physical[:, :, 0],
+        changed.raw_delta_states_physical[:, :, 0],
+    )
+    assert torch.equal(
+        baseline.raw_delta_flows_physical[:, :, 0],
+        changed.raw_delta_flows_physical[:, :, 0],
+    )

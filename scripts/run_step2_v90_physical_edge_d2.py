@@ -45,6 +45,7 @@ from rtc.step2_v90_contract import DirectHydraulicEffectLossContractV90, LEVEL_B
 
 _CANONICAL_SEED = 42
 _CANONICAL_HOLDOUT_FRACTION = 0.20
+_CAUSALITY_FP32_ATOL = 1e-6
 # Execution-only memory guard for preflight probes.  Training preserves the
 # original full-group loss exactly; the physical message operator itself uses
 # activation recomputation to fit the frozen full 24-candidate objective.
@@ -187,19 +188,21 @@ def _assert_full_horizon_causality(
         later[:, :, cutoff:] += 0.123
         with torch.no_grad():
             changed = forward(later)
-        if not torch.equal(
-            baseline_state[:, :, output_index],
-            changed.raw_delta_states_physical[:, :, output_index],
-        ):
+        state_before = baseline_state[:, :, output_index]
+        state_after = changed.raw_delta_states_physical[:, :, output_index]
+        if not torch.allclose(state_before, state_after, rtol=0.0, atol=_CAUSALITY_FP32_ATOL):
+            maximum = float((state_before - state_after).abs().max().detach().cpu())
             raise RuntimeError(
-                f"future candidate action affected retained V9 physical-edge state at output {output_index}"
+                "future candidate action affected retained V9 physical-edge state "
+                f"at output {output_index}; max_abs_difference={maximum:.9g}"
             )
-        if not torch.equal(
-            baseline_flow[:, :, output_index],
-            changed.raw_delta_flows_physical[:, :, output_index],
-        ):
+        flow_before = baseline_flow[:, :, output_index]
+        flow_after = changed.raw_delta_flows_physical[:, :, output_index]
+        if not torch.allclose(flow_before, flow_after, rtol=0.0, atol=_CAUSALITY_FP32_ATOL):
+            maximum = float((flow_before - flow_after).abs().max().detach().cpu())
             raise RuntimeError(
-                f"future candidate action affected retained V9 physical-edge flow at output {output_index}"
+                "future candidate action affected retained V9 physical-edge flow "
+                f"at output {output_index}; max_abs_difference={maximum:.9g}"
             )
 
 

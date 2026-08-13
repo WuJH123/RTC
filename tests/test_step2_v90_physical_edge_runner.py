@@ -173,3 +173,30 @@ def test_physical_edge_runner_checks_future_actions_for_every_retained_state_and
             baseline_output=leaky_flow(candidate),
             forward=leaky_flow,
         )
+
+
+def test_physical_edge_runner_allows_only_documented_fp32_roundoff_in_equivalent_modes():
+    from scripts.run_step2_v90_physical_edge_d2 import _assert_full_horizon_causality
+
+    candidate = torch.zeros(1, 1, 5, 1)
+    retained = torch.tensor([0, 2, 4])
+
+    def forward(settings):
+        values = settings[:, :, retained, :]
+        # Simulate different but equivalent CUDA checkpoint/no-grad execution
+        # paths: tiny roundoff is not a future-action dependency.
+        return SimpleNamespace(
+            raw_delta_states_physical=values[..., None] + 1e-8,
+            raw_delta_flows_physical=values + 1e-8,
+            horizon_indices=retained,
+        )
+
+    _assert_full_horizon_causality(
+        candidate_settings=candidate,
+        baseline_output=SimpleNamespace(
+            raw_delta_states_physical=torch.zeros(1, 1, 3, 1, 1),
+            raw_delta_flows_physical=torch.zeros(1, 1, 3, 1),
+            horizon_indices=retained,
+        ),
+        forward=forward,
+    )
