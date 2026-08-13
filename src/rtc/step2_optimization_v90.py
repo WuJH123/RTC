@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from typing import Any, Sequence
 
 import numpy as np
@@ -12,6 +13,34 @@ from .step2_hydraulic_objective_v90 import hydraulic_effect_loss_v90
 from .step2_train_response_v60 import InputNormalizationV60, V60TrainCache
 from .step2_train_response_v70 import TargetScalesV70
 from .step2_v90_contract import DirectHydraulicEffectLossContractV90, LEVEL_C
+
+
+def candidate_batch_chunks_v90(batch, *, candidate_chunk_size: int | None):
+    """Yield a loss-equivalent partition over candidate rows only.
+
+    This is an execution-memory guard, not a model or scientific-training
+    hyperparameter: initial state, causal rainfall, reference action and all
+    target semantics are retained exactly.  A caller weights each chunk by its
+    candidate count before one event-level optimizer step.
+    """
+    candidate_count = int(batch.candidate_settings.shape[1])
+    if candidate_count <= 0:
+        raise ValueError("V9 candidate batch must be nonempty")
+    if candidate_chunk_size is None:
+        yield batch
+        return
+    size = int(candidate_chunk_size)
+    if size <= 0:
+        raise ValueError("V9 candidate chunk size must be positive")
+    for start in range(0, candidate_count, size):
+        stop = min(start + size, candidate_count)
+        yield replace(
+            batch,
+            candidate_settings=batch.candidate_settings[:, start:stop],
+            true_candidate_states=batch.true_candidate_states[:, start:stop],
+            true_candidate_flows=batch.true_candidate_flows[:, start:stop],
+            true_delta_tfv_m3=batch.true_delta_tfv_m3[:, start:stop],
+        )
 
 
 def _events(cache: V60TrainCache, names: Sequence[str]) -> dict[str, list[str]]:
@@ -62,6 +91,7 @@ def train_d2_mechanism_v90(
     device: str = "cuda",
     seed: int = 42,
     contract: DirectHydraulicEffectLossContractV90 = DirectHydraulicEffectLossContractV90(),
+    candidate_chunk_size: int | None = None,
 ) -> list[dict[str, Any]]:
     """Four-epoch D2-only mechanism test used by the A/B/C sufficiency ladder."""
     contract.validate()
@@ -91,17 +121,27 @@ def train_d2_mechanism_v90(
             groups = events[key]
             for name in groups:
                 batch = cache.batch(name, normalization, target)
-                output = _forward(model, batch, prepared)
-                loss, metrics = hydraulic_effect_loss_v90(
-                    output,
-                    batch,
-                    normalization,
-                    scales,
-                    onset_positive_weight=onset_positive_weight,
-                    contract=contract,
+                chunks = tuple(
+                    candidate_batch_chunks_v90(
+                        batch, candidate_chunk_size=candidate_chunk_size
+                    )
                 )
-                (loss / len(groups)).backward()
-                rows.append(metrics)
+                candidates = int(batch.candidate_settings.shape[1])
+                for chunk in chunks:
+                    output = _forward(model, chunk, prepared)
+                    loss, metrics = hydraulic_effect_loss_v90(
+                        output,
+                        chunk,
+                        normalization,
+                        scales,
+                        onset_positive_weight=onset_positive_weight,
+                        contract=contract,
+                    )
+                    weight = float(chunk.candidate_settings.shape[1]) / float(candidates)
+                    (loss * weight / len(groups)).backward()
+                    # Preserve candidate-weighted diagnostic summaries even
+                    # when the final execution chunk is smaller.
+                    rows.extend([metrics] * int(chunk.candidate_settings.shape[1]))
             norm = torch.nn.utils.clip_grad_norm_(trainable, contract.grad_clip)
             norms.append(float(norm.detach()))
             optimizer.step()
@@ -204,4 +244,8 @@ def train_hydraulic_effect_v90(
     return history
 
 
-__all__ = ["train_d2_mechanism_v90", "train_hydraulic_effect_v90"]
+__all__ = [
+    "candidate_batch_chunks_v90",
+    "train_d2_mechanism_v90",
+    "train_hydraulic_effect_v90",
+]

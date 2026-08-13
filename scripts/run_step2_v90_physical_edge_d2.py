@@ -26,7 +26,7 @@ from rtc.step2_control_response_v70 import HydraulicResponseSurrogateV70
 from rtc.step2_control_response_v80 import prepare_static_v80
 from rtc.step2_hydraulic_eval_v90 import evaluate_hydraulic_effect_v90
 from rtc.step2_hydraulic_objective_v90 import derive_onset_sqrt_positive_weight_v80
-from rtc.step2_optimization_v90 import train_d2_mechanism_v90
+from rtc.step2_optimization_v90 import candidate_batch_chunks_v90, train_d2_mechanism_v90
 from rtc.step2_physical_edge_v90 import (
     ConduitPhysicalEdgeAssetsV90,
     build_conduit_physical_edge_assets_v90,
@@ -45,6 +45,10 @@ from rtc.step2_v90_contract import DirectHydraulicEffectLossContractV90, LEVEL_B
 
 _CANONICAL_SEED = 42
 _CANONICAL_HOLDOUT_FRACTION = 0.20
+# Execution-only memory guard.  It partitions the fixed 24 candidates into six
+# loss-equivalent chunks before one event-level optimizer step; it never changes
+# data, optimizer updates, loss weights, or scientific model capacity.
+_EXECUTION_CANDIDATE_CHUNK_SIZE = 4
 
 
 def _sha256(path: str | Path) -> str:
@@ -358,34 +362,45 @@ def _preflight(
     if any(parameter.requires_grad for parameter in model.reference_model.parameters()):
         raise RuntimeError("V9 physical-edge runner found trainable frozen V7 Hydraulic parameters")
 
-    candidate = batch.candidate_settings.detach().clone().requires_grad_(True)
-    output = model(
-        batch.initial_state,
-        batch.rainfall,
-        batch.reference_settings,
-        candidate,
-        batch.previous_actuator_flow,
-        prepared,
-    )
-    score = output.raw_delta_states_physical.square().mean() + output.raw_delta_flows_physical.square().mean()
-    (gradient,) = torch.autograd.grad(score, candidate, allow_unused=False)
-    if not bool(torch.isfinite(gradient).all()):
-        raise RuntimeError("V9 physical-edge action gradient is nonfinite")
-    if int(torch.count_nonzero(gradient)) == 0:
-        raise RuntimeError("V9 physical-edge action gradient is identically zero")
-
-    _assert_full_horizon_causality(
-        candidate_settings=candidate,
-        baseline_output=output,
-        forward=lambda settings: model(
-            batch.initial_state,
-            batch.rainfall,
-            batch.reference_settings,
-            settings,
-            batch.previous_actuator_flow,
+    gradient_total = 0
+    gradient_finite = 0
+    gradient_nonzero = 0
+    for chunk in candidate_batch_chunks_v90(
+        batch, candidate_chunk_size=_EXECUTION_CANDIDATE_CHUNK_SIZE
+    ):
+        candidate = chunk.candidate_settings.detach().clone().requires_grad_(True)
+        output = model(
+            chunk.initial_state,
+            chunk.rainfall,
+            chunk.reference_settings,
+            candidate,
+            chunk.previous_actuator_flow,
             prepared,
-        ),
-    )
+        )
+        score = (
+            output.raw_delta_states_physical.square().mean()
+            + output.raw_delta_flows_physical.square().mean()
+        )
+        (gradient,) = torch.autograd.grad(score, candidate, allow_unused=False)
+        if not bool(torch.isfinite(gradient).all()):
+            raise RuntimeError("V9 physical-edge action gradient is nonfinite")
+        if int(torch.count_nonzero(gradient)) == 0:
+            raise RuntimeError("V9 physical-edge action gradient is identically zero")
+        _assert_full_horizon_causality(
+            candidate_settings=candidate,
+            baseline_output=output,
+            forward=lambda settings: model(
+                chunk.initial_state,
+                chunk.rainfall,
+                chunk.reference_settings,
+                settings,
+                chunk.previous_actuator_flow,
+                prepared,
+            ),
+        )
+        gradient_total += int(gradient.numel())
+        gradient_finite += int(torch.isfinite(gradient).sum().item())
+        gradient_nonzero += int(torch.count_nonzero(gradient).item())
 
     return {
         "signed_state_exact_zero": True,
@@ -393,8 +408,8 @@ def _preflight(
         "reference_frozen": True,
         "physical_asset_contract": _physical_edge_lineage(assets),
         "future_action_causality": True,
-        "action_gradient_finite_fraction": float(torch.isfinite(gradient).float().mean().item()),
-        "action_gradient_nonzero_fraction": float((gradient != 0).float().mean().item()),
+        "action_gradient_finite_fraction": float(gradient_finite / max(gradient_total, 1)),
+        "action_gradient_nonzero_fraction": float(gradient_nonzero / max(gradient_total, 1)),
     }
 
 
@@ -515,6 +530,7 @@ def main() -> None:
         basis=basis,
         hydraulic_state=hydraulic_checkpoint["state_dict"],
         contract=contract,
+        candidate_chunk_size=_EXECUTION_CANDIDATE_CHUNK_SIZE,
         seed=args.seed,
         assets=assets,
         dynamic_scales=dynamic_scales,
@@ -580,6 +596,8 @@ def main() -> None:
             "weight_decay": float(contract.weight_decay),
             "grad_clip": float(contract.grad_clip),
             "fp32": True,
+            "execution_candidate_chunk_size": _EXECUTION_CANDIDATE_CHUNK_SIZE,
+            "execution_chunking": "loss-equivalent candidate partition before one event optimizer step",
         },
         "preflight": preflight,
         "training_history": history,
