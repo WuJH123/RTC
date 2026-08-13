@@ -1,6 +1,6 @@
 {
   "contract": "PRODUCTION_CONTROLLER_CONFIG_V5_TFV_FIRST_TEMPORAL_CONTINUITY",
-  "instruction": "Project7 simplified RTC contract. Sparse sensors are reconstructed by Step1; Step2 predicts direct whole-system Delta-TFV for joint candidate actions; Step3 searches the frozen targeted-D3 control manifold. Model/observation step=5 min, supervisory update=10 min, first Proposed control=elapsed 60 min, value horizon=360 min, causal history=13 frames, and max setting delta=0.5 per 10-min update. Priority flooding and Global Peak are report-only diagnostics and do not gate or optimize the online policy.",
+  "instruction": "Project7 v0.6.9 execution-frozen controller. These controller/forecast values are preregistered and must not be grid-searched or retuned. Model/observation step=5 min, supervisory update=10 min, first Proposed control=elapsed 60 min, prediction horizon=360 min, causal history=13 frames, and max setting delta=0.5 per 10-min update. PFV/priority depth remain soft/reporting quantities; Global Peak is report-only. Runtime/readback thresholds are frozen below and may only be verified by one small development benchmark, not tuned hydrologically.",
   "model_step_seconds": 300,
   "control_update_seconds": 600,
   "record_stride_seconds": 300,
@@ -16,10 +16,13 @@
     "baseline_true_state_advantage": ["internal_rtc", "auto_rbc", "efd"]
   },
   "objective": {
-    "primary": "minimize rainfall-ensemble risk-adjusted whole-system cumulative TFV",
-    "priority_role": "report_only",
-    "global_peak_role": "report_only",
+    "primary": "minimize rainfall-ensemble risk-adjusted cumulative TFV",
+    "priority_role": "soft lexicographic secondary preference within TFV near-optimal set",
+    "forecast_quantile": 0.95,
     "tfv_cvar_alpha": 0.90,
+    "tfv_near_opt_relative": 0.01,
+    "tfv_near_opt_absolute_m3": 1.0,
+    "near_opt_penalty": 10000.0,
     "movement_tiebreak": 1e-06,
     "min_predicted_tfv_improvement_m3": 0.0,
     "min_predicted_tfv_improvement_relative": 0.0
