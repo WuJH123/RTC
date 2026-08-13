@@ -31,6 +31,9 @@ def main() -> None:
     audit_sha = sha256_file(audit)
     if not isinstance(lineage, dict) or lineage.get("d2_source_audit_sha256") != audit_sha:
         raise ValueError("locked V120 bundle belongs to another D2 audit")
+    strict_trainer = Path(__file__).resolve().parents[2] / "scripts" / "run_step2_v120.py"
+    if lineage.get("strict_training_entrypoint_sha256") != sha256_file(strict_trainer):
+        raise ValueError("strict V120 training entrypoint changed after bundle training")
     if not isinstance(state, dict) or state.get("contract") != STATE_DOMAIN_CONTRACT:
         raise ValueError("locked V120 bundle lacks state-domain evidence")
     if not isinstance(promotion, dict) or promotion.get("low_sensor_step1_closed_loop_executed") is not True:
