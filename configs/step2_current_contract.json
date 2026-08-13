@@ -1,0 +1,44 @@
+{
+  "contract": "PROJECT7_STEP2_CURRENT_V110_V1",
+  "value_model": {
+    "version": "V7",
+    "module": "rtc.step2_control_response_v70.ControlValueSurrogateV70",
+    "horizon_minutes": 360,
+    "target": "direct_signed_authoritative_delta_TFV_m3",
+    "status": "SUPPORTED_FROZEN"
+  },
+  "hydraulic_effect_model": {
+    "version": "V11",
+    "module": "rtc.step2_control_response_v110.ActuatorSetHydraulicResponseV110",
+    "horizon_minutes": 120,
+    "targets": [
+      "signed_delta_depth",
+      "signed_delta_head",
+      "signed_delta_flooding_rate",
+      "signed_delta_node_volume",
+      "signed_delta_total_inflow",
+      "signed_delta_total_outflow",
+      "signed_delta_managed_flow"
+    ],
+    "decomposition": ["active", "sign", "magnitude"],
+    "status": "DEVELOPMENT_D2_GATE_REQUIRED"
+  },
+  "causality": {
+    "response_time_uses_action_prefix_only": true,
+    "future_SWMM_truth_online": false,
+    "oracle_reference_online": false,
+    "future_action_leakage": false
+  },
+  "multi_actuator": {
+    "variable_length_changed_actuator_set": true,
+    "self_attention": true,
+    "global_node_cross_attention": true,
+    "sum_D2_plus_residual": false
+  },
+  "rolling_mpc": {
+    "control_update_minutes": 10,
+    "execute_first_block_only": true,
+    "recompute_after_each_update": true
+  },
+  "blocked_historical_hydraulic_versions": ["V4", "V5", "V6", "V7", "V8", "V9", "V10"]
+}
