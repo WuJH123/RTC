@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -84,7 +85,69 @@ def _local_positive_channels(baselines: Mapping[str, Any]) -> list[str]:
     ]
 
 
-def _next_action(ladder: Mapping[str, Any], local_positive: list[str]) -> str:
+def _json_safe(value: Any) -> Any:
+    """Make optional evidence safe for strict JSON without hiding missing support."""
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    return value
+
+
+def _artifact_provenance(payload: Mapping[str, Any]) -> dict[str, Any]:
+    lineage = _deep(payload, "lineage", default={})
+    return _json_safe(
+        {
+            "contract": payload.get("contract"),
+            "git_head": _deep(lineage, "git_head", default=None),
+            "implementation_sha256": _deep(lineage, "implementation_sha256", default=None),
+            "graph_sha256": _deep(lineage, "graph_sha256", default=None),
+            "cache_manifest_sha256": _deep(lineage, "cache_manifest_sha256", default=None),
+        }
+    )
+
+
+def _physical_holdout_skills(report: Mapping[str, Any]) -> dict[str, Any]:
+    metrics = _deep(report, "metrics", "TrainInternalHoldout_D2", default={})
+    if not isinstance(metrics, Mapping):
+        return {}
+    overall = _deep(
+        metrics,
+        "overall",
+        default=_deep(metrics, "event_balanced", default=metrics),
+    )
+    if not isinstance(overall, Mapping):
+        return {}
+    return _json_safe(
+        {key: overall.get(key) for key in PRIMARY_SKILL_KEYS if key in overall}
+    )
+
+
+def _physical_primary_supported(report: Mapping[str, Any]) -> bool:
+    skills = _physical_holdout_skills(report)
+    return len(skills) == len(PRIMARY_SKILL_KEYS) and all(
+        value is not None and float(value) > 0.0 for value in skills.values()
+    )
+
+
+def _next_action(
+    ladder: Mapping[str, Any],
+    local_positive: list[str],
+    *,
+    history_ladder: Mapping[str, Any] | None = None,
+    graph_audit: Mapping[str, Any] | None = None,
+    physical_edge: Mapping[str, Any] | None = None,
+) -> str:
+    if physical_edge is not None:
+        if _physical_primary_supported(physical_edge):
+            return "STOP_FOR_EXTERNAL_REVIEW; PHYSICAL_EDGE_D2_MECHANISM_SUPPORTED_BEFORE_ANY_D3_STAGE"
+        return "STOP_FOR_EXTERNAL_REVIEW; STATIC_DIRECTED_EDGE_PHYSICS_D2_CONTROL_INSUFFICIENT; NEW_SWMM_NOT_AUTHORIZED"
+    if graph_audit is not None:
+        return "RUN_FROZEN_INP_PHYSICAL_EDGE_D2_CONTROL_BEFORE_ANY_NEW_SWMM"
+    if history_ladder is not None:
+        return "RUN_FROZEN_INP_PHYSICAL_EDGE_D2_CONTROL_BEFORE_ANY_NEW_SWMM"
     decision = str(_deep(ladder, "decision", "decision", default="MISSING"))
     if decision == "PREDICTED_REFERENCE_TRAJECTORY_SUFFICIENT":
         return "FORMAL_V9_DEVELOPMENT_TRAINING_ONLY_AFTER_EXTERNAL_REVIEW"
@@ -102,13 +165,29 @@ def build_decision(
     history_audit: Mapping[str, Any],
     baselines: Mapping[str, Any],
     ladder: Mapping[str, Any],
+    *,
+    fair_local_control: Mapping[str, Any] | None = None,
+    history_ladder: Mapping[str, Any] | None = None,
+    graph_audit: Mapping[str, Any] | None = None,
+    physical_edge: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], str]:
+    fair_local_control = fair_local_control or {}
+    history_ladder = history_ladder or {}
+    graph_audit = graph_audit or {}
+    physical_edge = physical_edge or {}
     local_positive = _local_positive_channels(baselines)
     ladder_decision = str(_deep(ladder, "decision", "decision", default="MISSING"))
     channel_metrics = _channel_metrics(ladder)
     pairing = _deep(data_audit, "reference_candidate_pairing", default={})
     recompute = _deep(data_audit, "target_recomputation_from_raw_compacts", default={})
     effect = _deep(data_audit, "hydraulic_effect_identifiability", "effect_distribution", default={})
+    next_action = _next_action(
+        ladder,
+        local_positive,
+        history_ladder=history_ladder or None,
+        graph_audit=graph_audit or None,
+        physical_edge=physical_edge or None,
+    )
     root = {
         "contract": "PROJECT7_STEP2_ROOT_CAUSE_DIAGNOSIS_V1",
         "scope": {
@@ -119,6 +198,16 @@ def build_decision(
             "formal_accessed": False,
         },
         "canonical_ladder_decision": ladder_decision,
+        "artifact_provenance": {
+            "data_audit": _artifact_provenance(data_audit),
+            "history_availability_audit": _artifact_provenance(history_audit),
+            "standalone_local_baselines": _artifact_provenance(baselines),
+            "canonical_abc": _artifact_provenance(ladder),
+            "fair_local_control": _artifact_provenance(fair_local_control),
+            "history_ladder": _artifact_provenance(history_ladder),
+            "graph_audit": _artifact_provenance(graph_audit),
+            "physical_edge": _artifact_provenance(physical_edge),
+        },
         "findings": [
             {
                 "root_cause": "DATA_ALIGNMENT_BUG",
@@ -160,6 +249,8 @@ def build_decision(
                         "zero-support Top-K returns not-applicable rather than tie overlap",
                         "sparse onset uses normalized spatial maximum",
                         "fixed 0-30/30-120/120-360 minute diagnostics",
+                        "V9 physical preflight validates both state and flow causality across every retained horizon",
+                        "V9 physical runner fails closed on V7 graph/cache/basis/design/split lineage",
                     ],
                     "training_target": "raw signed delta state and managed flow",
                 },
@@ -194,7 +285,7 @@ def build_decision(
                     "ladder": _deep(ladder, "decision", default={}),
                 },
                 "counter_evidence": "A graph model failure alone is not an information-theoretic impossibility proof.",
-                "recommended_fix": _next_action(ladder, local_positive),
+                "recommended_fix": next_action,
             },
             {
                 "root_cause": "EXISTING_HISTORY_AND_LINK_FLOW_AVAILABILITY",
@@ -206,10 +297,58 @@ def build_decision(
                     "flow_availability": _deep(history_audit, "flow_availability", default={}),
                 },
                 "counter_evidence": "Authoritative past SWMM state is oracle-only; all-link flow is unavailable.",
-                "recommended_fix": "Construct frozen-Step1 causal history where eligible before requesting new SWMM.",
+                "recommended_fix": "Do not substitute oracle history online; use the completed frozen-Step1 history control only as causal diagnostic evidence.",
+            },
+            {
+                "root_cause": "GRAPH_REPRESENTATION_FAILURE",
+                "status": "SUPPORTED" if graph_audit else "PENDING",
+                "confidence": "high" if graph_audit else "pending",
+                "evidence": _json_safe(
+                    {
+                        "receptive_field": _deep(
+                            graph_audit, "authoritative_absolute_effect_mass", default={}
+                        ),
+                        "legacy_graph": _deep(graph_audit, "current_v9_graph", default={}),
+                        "fair_local_control": _deep(
+                            fair_local_control, "baselines", "event_scheduled_local_mlp", default={}
+                        ),
+                    }
+                ),
+                "counter_evidence": "Endpoint-local skill is not itself a full-network propagation result.",
+                "recommended_fix": "Interpret the frozen-INP physical conduit control before considering unavailable link-flow data or new SWMM.",
+            },
+            {
+                "root_cause": "CAUSAL_HISTORY_CONTEXT_PRIMARY_LIMIT",
+                "status": "NOT_SUPPORTED" if history_ladder else "PENDING",
+                "confidence": "medium" if history_ladder else "pending",
+                "evidence": _json_safe(
+                    {
+                        "history_ladder": _deep(history_ladder, "arms", default={}),
+                        "step1_reconstruction_vs_oracle": _deep(
+                            history_ladder, "step1_reconstruction_vs_oracle_past", default={}
+                        ),
+                    }
+                ),
+                "counter_evidence": "The matched history ladder is endpoint-local and is not a full-network ceiling.",
+                "recommended_fix": "Do not add history as the next architecture change solely from this evidence.",
+            },
+            {
+                "root_cause": "STATIC_DIRECTED_EDGE_PHYSICS",
+                "status": "SUPPORTED" if physical_edge and _physical_primary_supported(physical_edge)
+                else ("INSUFFICIENT" if physical_edge else "PENDING"),
+                "confidence": "high" if physical_edge else "pending",
+                "evidence": _json_safe(
+                    {
+                        "physical_edge_lineage": _deep(physical_edge, "lineage", "physical_edge", default={}),
+                        "holdout_primary_skill": _physical_holdout_skills(physical_edge),
+                        "preflight": _deep(physical_edge, "preflight", default={}),
+                    }
+                ),
+                "counter_evidence": "This bounded D2 control does not by itself establish D3 performance or formal readiness.",
+                "recommended_fix": next_action,
             },
         ],
-        "primary_remaining_bottleneck": _next_action(ladder, local_positive),
+        "primary_remaining_bottleneck": next_action,
         "new_swmm_authorized": False,
         "formal_v9_authorized": ladder_decision == "PREDICTED_REFERENCE_TRAJECTORY_SUFFICIENT",
     }
@@ -237,11 +376,37 @@ def build_decision(
                 "horizon_buckets": ["0-30 min", "30-120 min", "120-360 min"],
             },
         },
+        "implementation_fixes": [
+            {
+                "commit": "3ea49f4",
+                "change": "per-actuator managed-flow active metrics; Top-K no-support; sparse onset; horizon buckets",
+            },
+            {
+                "commit": "7a35493",
+                "change": "pool event effect errors before event balancing",
+            },
+            {
+                "commit": "19e42e9,b1dd500",
+                "change": "memory-safe physical conduit execution while preserving the frozen full-group objective",
+            },
+            {
+                "commit": "3bccc1b",
+                "change": "FP32-robust full-horizon state/flow causality preflight",
+            },
+        ],
         "current_train_only_local_baselines": _deep(baselines, "baselines", default={}),
         "canonical_current_head_ABC": {
             "decision": _deep(ladder, "decision", default={}),
             "primary_channel_skill": channel_metrics,
         },
+        "post_ladder_controls": _json_safe(
+            {
+                "fair_local_control": fair_local_control,
+                "history_ladder": history_ladder,
+                "graph_audit": graph_audit,
+                "physical_edge": physical_edge,
+            }
+        ),
     }
     markdown = "\n".join(
         [
@@ -269,7 +434,7 @@ def build_decision(
             "",
             "## Decision",
             "",
-            f"Next single priority: `{_next_action(ladder, local_positive)}`.",
+            f"Next single priority: `{next_action}`.",
             "",
             "New SWMM is not authorized by this evidence. V7 Value remains frozen.",
             "",
@@ -284,6 +449,10 @@ def main() -> None:
     parser.add_argument("--history-audit", required=True)
     parser.add_argument("--baselines", required=True)
     parser.add_argument("--ladder", required=True)
+    parser.add_argument("--fair-local-control")
+    parser.add_argument("--history-ladder")
+    parser.add_argument("--graph-audit")
+    parser.add_argument("--physical-edge")
     parser.add_argument("--out-dir", required=True)
     args = parser.parse_args()
     root, before_after, markdown = build_decision(
@@ -291,6 +460,10 @@ def main() -> None:
         _load(args.history_audit),
         _load(args.baselines),
         _load(args.ladder),
+        fair_local_control=_load(args.fair_local_control) if args.fair_local_control else None,
+        history_ladder=_load(args.history_ladder) if args.history_ladder else None,
+        graph_audit=_load(args.graph_audit) if args.graph_audit else None,
+        physical_edge=_load(args.physical_edge) if args.physical_edge else None,
     )
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
