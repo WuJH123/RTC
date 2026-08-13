@@ -1,8 +1,7 @@
 """Export human-readable top actuator->node support from a V11.2 atlas NPZ.
 
-Storage-volume support is reported only on physical storage nodes; depth,
-flooding, inflow and outflow retain the node domain. This object-type domain
-filter is not a graph-distance/reachability gate.
+Storage-volume support is reported only on physical storage nodes. Graph hop
+counts are diagnostics only and never a reachability/training cutoff.
 """
 from __future__ import annotations
 
@@ -13,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from rtc.step2_control_response_v60 import prepare_static_v60
+from rtc.step2_graph_distance_v112 import all_actuator_endpoint_hops_v112
 from rtc.step2_influence_support_v112 import STATE_EFFECT_NAMES_V112
 from rtc.step2_v110_contract import HydraulicHorizonV110
 from run_step2_v110 import _load_graph
@@ -24,10 +24,8 @@ def main() -> None:
     ap.add_argument("--graph", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--top-k", type=int, default=20)
-    ap.add_argument(
-        "--majority-probability", type=float, default=0.50,
-        help="Reporting threshold only; never a training/reachability gate.",
-    )
+    ap.add_argument("--majority-probability", type=float, default=0.50,
+                    help="Reporting threshold only; never a training/reachability gate.")
     args = ap.parse_args()
     if args.top_k <= 0 or not 0.0 < args.majority_probability < 1.0:
         raise ValueError("invalid V112 reporting options")
@@ -36,6 +34,7 @@ def main() -> None:
     graph = _load_graph(Path(args.graph))
     prepared = prepare_static_v60(graph, "cpu")
     storage_mask = prepared.storage_mask.detach().cpu().numpy().astype(bool)
+    endpoint_hops = all_actuator_endpoint_hops_v112(graph)
     minutes = np.asarray(HydraulicHorizonV110().response_minutes(), dtype=np.float64)
     rows: list[dict[str, object]] = []
 
@@ -73,6 +72,7 @@ def main() -> None:
                         "rank": rank,
                         "node_index": int(node),
                         "node_id": str(graph.node_ids[node]),
+                        "min_endpoint_hops": int(endpoint_hops[a, node]),
                         "max_support_probability": float(series[peak_t]),
                         "mean_support_probability": float(series.mean()),
                         "peak_support_min": float(minutes[peak_t]),
@@ -85,8 +85,7 @@ def main() -> None:
     frame.to_csv(path, index=False)
     print(
         f"[V112_ATLAS_SUMMARY] rows={len(frame)} actuators={frame.source_actuator_id.nunique()} "
-        f"nodes={frame.node_id.nunique()} storage_nodes={int(storage_mask.sum())} -> {path}",
-        flush=True,
+        f"nodes={frame.node_id.nunique()} storage_nodes={int(storage_mask.sum())} -> {path}", flush=True
     )
 
 
