@@ -153,7 +153,10 @@ def _balanced_direct(pred: torch.Tensor, truth: torch.Tensor,
     # 10^3--10^6 larger gradient than the active branch while retaining the
     # intended normalized leakage penalty.
     inactive_loss = F.smooth_l1_loss(pred / threshold, torch.zeros_like(pred), beta=0.5, reduction="none")
-    inactive_loss = inactive_loss * (threshold / scale).detach().clamp_max(1.0)
+    # Do not let a tiny physical floor on a high-variance volume channel make
+    # the inactive branch numerically irrelevant.  The fixed 0.05 lower bound
+    # is a loss-unit balance, not a learned/holdout-derived threshold.
+    inactive_loss = inactive_loss * (threshold / scale).detach().clamp(0.05, 1.0)
     per_channel = []
     active_parts = []
     inactive_parts = []
