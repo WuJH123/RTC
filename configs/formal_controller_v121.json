@@ -1,0 +1,66 @@
+{
+  "contract": "PRODUCTION_CONTROLLER_CONFIG_V5_TFV_FIRST_TEMPORAL_CONTINUITY",
+  "v120_contract": "PROJECT7_V120_TFV_ONLY_CAUSAL_CONTROLLER_V1",
+  "v121_contract": "PROJECT7_V121_FIRST_MOVE_ROBUST_CONTROLLER_V1",
+  "model_step_seconds": 300,
+  "control_update_seconds": 600,
+  "record_stride_seconds": 300,
+  "control_start_minutes": 60,
+  "swmm_threads": 1,
+  "exact_global_peak": false,
+  "depth_state_index": 0,
+  "flood_rate_state_index": 2,
+  "methodology_testbed": {
+    "claim_scope": "IDEALIZED_METHODOLOGY_TESTBED_NOT_FIELD_DIGITAL_TWIN",
+    "effective_warmup_minutes": 120,
+    "dwf_background_loading": true,
+    "baseline_true_state_advantage": ["internal_rtc", "auto_rbc", "efd"]
+  },
+  "objective": {
+    "primary": "minimize robust first-move-conditioned predicted whole-system cumulative TFV",
+    "priority_role": "report_only",
+    "global_peak_role": "report_only",
+    "scoring_operator": "median_H360_delta_TFV_within_identical_executable_first_move",
+    "tfv_cvar_alpha": 0.0,
+    "movement_tiebreak": 0.0,
+    "min_predicted_tfv_improvement_m3": 0.0,
+    "min_predicted_tfv_improvement_relative": 0.0
+  },
+  "step3": {
+    "contract": "PROJECT7_V121_FIRST_MOVE_CONDITIONED_ROBUST_TFV_V1",
+    "first_move_minutes": 10,
+    "first_move_group_atol": 1e-7,
+    "tail_aggregation": "median_within_identical_first_move",
+    "hold_group_value_m3": 0.0,
+    "tail_only_noop_cannot_beat_hold": true
+  },
+  "forecast": {
+    "contract": "PROJECT7_V120_CURRENT_RAIN_PERSISTENCE_DECAY_RUNTIME_V1",
+    "decay_per_step": 0.92,
+    "scenario_multipliers": [1.0],
+    "history_steps_for_level": 1
+  },
+  "controller": {
+    "history_steps": 13,
+    "horizon_steps": 72,
+    "optimizer_iterations": 1,
+    "optimizer_learning_rate": 1.0,
+    "max_setting_delta_per_update": 0.5,
+    "enforce_cross_decision_target_continuity": true,
+    "enforce_sequential_horizon_continuity": true,
+    "readback_target_tolerance": 1e-6,
+    "readback_current_tolerance": 1.0,
+    "decision_runtime_budget_seconds": 300.0,
+    "fallback_policy_id": "CAUSAL_HOLD_CURRENT_V1"
+  },
+  "execution_freeze": {
+    "candidate_search": "finite_targeted_D3_distribution_matched",
+    "continuous_gradient_search": false,
+    "execute_first_move_only": true,
+    "score_only_executable_sequences": true,
+    "rainfall_uncertainty_scenario_search": false,
+    "controller_forecast_sweep_allowed": false,
+    "runtime_benchmark_count": 1,
+    "automatic_retuning_after_benchmark_failure": false
+  }
+}
