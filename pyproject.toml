@@ -67,9 +67,9 @@ rtc-build-policy-artifacts = "rtc.policy_artifacts_cli:main"
 rtc-policy-lock-v6 = "rtc.policy_lock_v6:main"
 rtc-formalize-run = "rtc.formalize_run_v2:main"
 rtc-compile-final-v5 = "rtc.formal_final_v5:main"
-rtc-promote-v120 = "rtc.promote_v120:main"
-rtc-policy-lock-v120 = "rtc.policy_lock_v120:main"
-rtc-compile-final-v120 = "rtc.formal_final_v120:main"
+rtc-promote-v120 = "rtc.promote_v120_guard:main"
+rtc-policy-lock-v120 = "rtc.policy_lock_v120_guard:main"
+rtc-compile-final-v120 = "rtc.formal_final_v120_guard:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

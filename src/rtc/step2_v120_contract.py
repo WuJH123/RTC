@@ -53,6 +53,7 @@ _V120_BOUND_FILES = (
     "step2_runtime_v120.py",
     "step2_train_response_v60.py",
     "step2_train_response_v70.py",
+    "step2_v120_data_contract.py",
     "step2_v120_train_helpers.py",
     "step2_v70_contract.py",
     "production_v120_bound.py",

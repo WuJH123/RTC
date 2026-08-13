@@ -1,7 +1,7 @@
-"""Compatibility alias for the one canonical causal execution-bound V120 trainer."""
+"""Compatibility alias for the strict canonical V120 trainer."""
 from __future__ import annotations
 
-from run_step2_v120_causal import main
+from run_step2_v120 import main
 
 
 if __name__ == "__main__":

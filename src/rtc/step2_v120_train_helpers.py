@@ -10,6 +10,12 @@ from typing import Any
 import numpy as np
 
 from .graph import GraphSchema
+from .step2_v120_data_contract import (
+    finite_auxiliary_value_metrics,
+    validate_canonical_cache_population,
+    validate_internal_holdout_fraction,
+    verify_d2_source_audit,
+)
 
 FROZEN_SPLIT_CONTRACT = "PROJECT7_V069_30_EVENT_SPLIT_18TRAIN_6VALIDATION_6FINAL_V1"
 
@@ -93,9 +99,13 @@ __all__ = [
     "FROZEN_SPLIT_CONTRACT",
     "branch_count_v120",
     "candidate_count_v120",
+    "finite_auxiliary_value_metrics",
     "git_head_v120",
     "load_frozen_train_events_v120",
     "load_graph_v120",
     "sha256_file_v120",
+    "validate_canonical_cache_population",
+    "validate_internal_holdout_fraction",
     "value_gate_v120",
+    "verify_d2_source_audit",
 ]

@@ -4,13 +4,18 @@
   "step1": {
     "role": "causal sparse-sensor reconstruction of current full hydraulic state",
     "status": "REQUIRED",
-    "online_step2_state_source": "accepted Step1 reconstruction"
+    "online_step2_state_source": "accepted Step1 reconstruction",
+    "promotion_must_bind_exact_step1_checkpoint": true
   },
   "step2": {
     "version": "V120",
     "base_model": "rtc.step2_control_response_v70.ControlValueSurrogateV70",
     "horizon_minutes": 360,
     "target": "direct_signed_authoritative_delta_TFV_m3",
+    "training_state_source": "authoritative SWMM checkpoint-current state",
+    "internal_value_gate_scope": "Train-only oracle-current-state screening",
+    "runtime_state_source": "accepted Step1 reconstruction from sparse sensors",
+    "state_domain_shift_explicit": true,
     "training_rainfall_input": "checkpoint-current rainfall persisted/decayed with factor 0.92",
     "future_realized_rainfall_as_model_input": false,
     "hydraulic_trajectory_prediction_required": false,
@@ -30,6 +35,7 @@
     "sum_D2_effects": false,
     "continuous_gradient_extrapolation": false,
     "rainfall_scenario_multipliers": [1.0],
+    "scoring_operator": "single_causal_scenario_predicted_delta_TFV",
     "score_only_executable_sequences": true,
     "first_move_bound_to_current_and_target_readback": true,
     "selection": "minimum predicted joint-action delta_TFV",
@@ -37,11 +43,19 @@
   },
   "data": {
     "D2_source_authoritative_branch_census": 4800,
+    "D2_source_audit_required_before_training": true,
     "D2_source_census_is_not_IID_training_population": true,
     "D2_training_eligibility": "frozen Train18 only",
+    "D2_train_groups_required": 144,
+    "D2_train_branches_required": 3600,
+    "targeted_D3_train_groups_required": 144,
     "targeted_D3_train_branches_required": 3600,
+    "branches_per_counterfactual_group": 25,
+    "candidates_per_counterfactual_group": 24,
     "scientific_split": "18 Train / 6 Development-Validation / 6 Final",
     "internal_train_split": "14 TrainFit / 4 InternalHoldout",
+    "internal_holdout_fraction": 0.20,
+    "internal_holdout_fraction_tunable": false,
     "validation_or_final_labels_in_step2_training": false
   },
   "causality": {
@@ -59,6 +73,12 @@
     "SWMM_readback_after_write": true,
     "reconstruct_and_reoptimize_each_update": true,
     "max_setting_delta_per_update": 0.5
+  },
+  "promotion_and_lock": {
+    "development_closed_loop_uses_sparse_sensor_step1": true,
+    "promotion_requires_exact_step1_sha": true,
+    "promotion_requires_d2_source_audit_sha": true,
+    "policy_lock_requires_same_step1_and_d2_audit": true
   },
   "evaluation": {
     "primary": "authoritative_SWMM_whole_system_cumulative_TFV_m3",

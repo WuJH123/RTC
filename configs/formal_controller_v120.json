@@ -20,7 +20,8 @@
     "primary": "minimize predicted whole-system cumulative TFV",
     "priority_role": "report_only",
     "global_peak_role": "report_only",
-    "tfv_cvar_alpha": 0.90,
+    "scoring_operator": "single_causal_scenario_predicted_delta_TFV",
+    "tfv_cvar_alpha": 0.0,
     "movement_tiebreak": 1e-06,
     "min_predicted_tfv_improvement_m3": 0.0,
     "min_predicted_tfv_improvement_relative": 0.0
