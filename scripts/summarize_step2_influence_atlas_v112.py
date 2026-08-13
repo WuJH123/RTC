@@ -1,4 +1,9 @@
-"""Export human-readable top actuator->node support from a V11.2 atlas NPZ."""
+"""Export human-readable top actuator->node support from a V11.2 atlas NPZ.
+
+Storage-volume support is reported only on physical storage nodes; depth,
+flooding, inflow and outflow retain the node domain. This object-type domain
+filter is not a graph-distance/reachability gate.
+"""
 from __future__ import annotations
 
 import argparse
@@ -7,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from rtc.step2_control_response_v60 import prepare_static_v60
 from rtc.step2_influence_support_v112 import STATE_EFFECT_NAMES_V112
 from rtc.step2_v110_contract import HydraulicHorizonV110
 from run_step2_v110 import _load_graph
@@ -19,9 +25,7 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--top-k", type=int, default=20)
     ap.add_argument(
-        "--majority-probability",
-        type=float,
-        default=0.50,
+        "--majority-probability", type=float, default=0.50,
         help="Reporting threshold only; never a training/reachability gate.",
     )
     args = ap.parse_args()
@@ -30,15 +34,16 @@ def main() -> None:
 
     z = np.load(args.atlas, allow_pickle=False)
     graph = _load_graph(Path(args.graph))
+    prepared = prepare_static_v60(graph, "cpu")
+    storage_mask = prepared.storage_mask.detach().cpu().numpy().astype(bool)
     minutes = np.asarray(HydraulicHorizonV110().response_minutes(), dtype=np.float64)
     rows: list[dict[str, object]] = []
 
     for phase in ("overall", "low", "mid", "high"):
-        key = f"{phase}__state_support_probability"
-        exposure_key = f"{phase}__exposure"
+        key, exposure_key = f"{phase}__state_support_probability", f"{phase}__exposure"
         if key not in z or exposure_key not in z:
             raise KeyError(f"V112 atlas missing {key}/{exposure_key}")
-        support = np.asarray(z[key], dtype=np.float64)  # [A,T,N,5]
+        support = np.asarray(z[key], dtype=np.float64)
         exposure = np.asarray(z[exposure_key], dtype=np.int64)
         if support.shape != (len(graph.actuator_ids), len(minutes), len(graph.node_ids), 5):
             raise ValueError(f"V112 atlas shape mismatch for {phase}: {support.shape}")
@@ -46,9 +51,11 @@ def main() -> None:
             if exposure[a] <= 0 or not np.isfinite(support[a]).all():
                 continue
             for c, channel in enumerate(STATE_EFFECT_NAMES_V112):
-                node_peak = support[a, :, :, c].max(axis=0)
-                order = np.argsort(-node_peak, kind="mergesort")[: args.top_k]
-                for rank, node in enumerate(order, 1):
+                domain = storage_mask if channel == "storage_volume_m3" else np.ones(len(graph.node_ids), bool)
+                domain_nodes = np.flatnonzero(domain)
+                node_peak = support[a, :, domain_nodes, c].max(axis=0)
+                chosen = domain_nodes[np.argsort(-node_peak, kind="mergesort")[: args.top_k]]
+                for rank, node in enumerate(chosen, 1):
                     series = support[a, :, node, c]
                     peak_t = int(np.argmax(series))
                     majority = np.flatnonzero(series >= args.majority_probability)
@@ -58,6 +65,7 @@ def main() -> None:
                         "source_actuator_id": str(actuator_id),
                         "probe_exposure": int(exposure[a]),
                         "channel": channel,
+                        "physical_domain": "storage_nodes" if channel == "storage_volume_m3" else "all_nodes",
                         "rank": rank,
                         "node_index": int(node),
                         "node_id": str(graph.node_ids[node]),
@@ -73,7 +81,7 @@ def main() -> None:
     frame.to_csv(path, index=False)
     print(
         f"[V112_ATLAS_SUMMARY] rows={len(frame)} actuators={frame.source_actuator_id.nunique()} "
-        f"nodes={frame.node_id.nunique()} -> {path}",
+        f"nodes={frame.node_id.nunique()} storage_nodes={int(storage_mask.sum())} -> {path}",
         flush=True,
     )
 
