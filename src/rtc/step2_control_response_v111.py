@@ -73,8 +73,11 @@ class ActuatorSetHydraulicResponseV111(ActuatorSetHydraulicResponseV110):
         )
         self.state_direct_effect_head = nn.Linear(self.hidden_dim, 5)
         self.flow_direct_effect_head = nn.Linear(self.hidden_dim, 1)
-        zero_anchored_direct_head(self.state_direct_effect_head)
-        zero_anchored_direct_head(self.flow_direct_effect_head)
+        # Five-times-smaller than ordinary Xavier-scale responses, but large
+        # enough that the direct primary has a measurable first-step gradient
+        # under the frozen AdamW schedule.
+        zero_anchored_direct_head(self.state_direct_effect_head, weight_value=5.0e-4)
+        zero_anchored_direct_head(self.flow_direct_effect_head, weight_value=5.0e-4)
         self._last_node_hidden: torch.Tensor | None = None
         self._last_flow_hidden: torch.Tensor | None = None
         self._node_hook = self.node_decoder.register_forward_hook(self._capture_node_hidden)
