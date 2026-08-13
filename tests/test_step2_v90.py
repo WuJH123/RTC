@@ -3,12 +3,20 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import torch
+import numpy as np
 
 from rtc.step2_control_response_v90 import (
     project_candidate_flows_v90,
     project_candidate_states_v90,
 )
-from rtc.step2_hydraulic_eval_v90 import decide_state_sufficiency_v90
+from rtc.step2_hydraulic_eval_v90 import (
+    _bucket_effect_records,
+    _effect_record,
+    _horizon_bucket_masks,
+    _timing_record,
+    _top_overlap,
+    decide_state_sufficiency_v90,
+)
 from rtc.step2_v90_contract import LEVEL_A, LEVEL_B, LEVEL_C
 
 
@@ -148,3 +156,92 @@ def test_v90_markov_insufficiency_requires_oracle_at_or_below_zero():
         LEVEL_C: _ladder([-0.01, 0.0, -0.02, -0.03]),
     })
     assert result["decision"] == "MARKOV_INSUFFICIENCY_SUPPORTED"
+
+
+def test_v90_managed_flow_active_metrics_use_per_actuator_scales():
+    """A global median must not relabel heterogeneous actuator effects."""
+    truth = np.asarray([[0.30, 15.0]], dtype=np.float64)
+    predicted = np.asarray([[-0.30, 15.0]], dtype=np.float64)
+    metrics = _effect_record(
+        predicted,
+        truth,
+        scale=np.asarray([1.0, 100.0], dtype=np.float64),
+        active_fraction=0.25,
+        prefix="flow",
+    )
+    # Only actuator 0 is active after its own normalization (0.30 / 1.0).
+    # A median scale would instead label actuator 1 active and incorrectly report
+    # a perfect sign score.
+    assert metrics["flow_active_fraction"] == 0.5
+    assert metrics["flow_active_sign"] == 0.0
+
+
+def test_v90_top_overlap_zero_truth_support_is_not_applicable():
+    result = _top_overlap(
+        np.asarray([0.0, 2.0, 0.0, 1.0]),
+        np.zeros(4, dtype=np.float64),
+        2,
+    )
+    assert np.isnan(result)
+
+
+def test_v90_top_overlap_zero_prediction_on_true_support_is_zero():
+    result = _top_overlap(
+        np.zeros(4, dtype=np.float64),
+        np.asarray([0.0, 0.0, 0.0, 1.0]),
+        1,
+    )
+    assert result == 0.0
+
+
+def test_v90_top_overlap_uses_meaningful_active_support():
+    result = _top_overlap(
+        np.asarray([0.0, 4.0, 0.0, 1.0]),
+        np.asarray([0.0, 2.0, 0.0, 3.0]),
+        2,
+    )
+    assert result == 1.0
+
+
+def test_v90_sparse_onset_uses_normalized_spatial_response_not_network_mean():
+    truth = np.zeros((2, 100), dtype=np.float64)
+    predicted = np.zeros_like(truth)
+    truth[0, 0] = 1.0
+    truth[1, :] = 0.5
+    predicted[0, 0] = 100.0
+    predicted[1, :] = 0.6
+    metrics = _timing_record(
+        predicted,
+        truth,
+        retained_indices=np.asarray([0, 1], dtype=np.int64),
+        scale=1.0,
+        active_fraction=0.25,
+        prefix="depth",
+    )
+    # Peak timing intentionally remains its distinct mass-style statistic, while
+    # onset must identify the true local time-0 activation.
+    assert metrics["depth_peak_effect_timing_error_min"] == 5.0
+    assert metrics["depth_response_onset_timing_error_min"] == 0.0
+
+
+def test_v90_horizon_buckets_are_fixed_and_partition_h360_exactly():
+    masks = _horizon_bucket_masks(np.arange(72, dtype=np.int64))
+    assert tuple(masks) == ("0_30_min", "30_120_min", "120_360_min")
+    assert [int(mask.sum()) for mask in masks.values()] == [6, 18, 48]
+    assert np.array_equal(np.logical_or.reduce(tuple(masks.values())), np.ones(72, dtype=bool))
+
+
+def test_v90_horizon_bucket_effect_metrics_include_primary_sparse_diagnostics():
+    values = np.ones((72, 2), dtype=np.float64)
+    buckets = _bucket_effect_records(
+        values,
+        values,
+        retained_indices=np.arange(72, dtype=np.int64),
+        scale=1.0,
+        active_fraction=0.25,
+        prefix="depth",
+    )
+    for metrics in buckets.values():
+        assert metrics["depth_skill_vs_zero"] == 1.0
+        assert metrics["depth_response_ratio"] == 1.0
+        assert metrics["depth_active_sign"] == 1.0

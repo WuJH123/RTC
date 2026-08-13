@@ -13,6 +13,15 @@ from .step2_train_response_v70 import TargetScalesV70
 from .step2_v90_contract import DirectHydraulicEffectLossContractV90, LEVEL_C
 
 
+# Fixed diagnostic-only slices.  They are not model-selection knobs and are
+# deliberately expressed as elapsed prediction end-times, matching the H360 cache.
+HORIZON_BUCKETS_V90 = (
+    ("0_30_min", 0.0, 30.0),
+    ("30_120_min", 30.0, 120.0),
+    ("120_360_min", 120.0, 360.0),
+)
+
+
 def _event_balanced(records: Sequence[dict[str, Any]], key: str) -> float:
     by_event: dict[str, list[float]] = defaultdict(list)
     for record in records:
@@ -27,16 +36,29 @@ def _effect_record(
     predicted: np.ndarray,
     truth: np.ndarray,
     *,
-    scale: float,
+    scale: float | np.ndarray,
     active_fraction: float,
     prefix: str,
 ) -> dict[str, float]:
+    predicted = np.asarray(predicted, dtype=np.float64)
+    truth = np.asarray(truth, dtype=np.float64)
+    if predicted.shape != truth.shape:
+        raise ValueError("V9 effect metric prediction/truth shape mismatch")
+    try:
+        scale_array = np.broadcast_to(
+            np.maximum(np.asarray(scale, dtype=np.float64), 1e-12), truth.shape
+        )
+    except ValueError as exc:
+        raise ValueError("V9 effect metric scale cannot broadcast to target shape") from exc
     error = predicted - truth
     mse = float(np.mean(np.square(error)))
     zero_mse = float(np.mean(np.square(truth)))
     truth_abs = float(np.mean(np.abs(truth)))
     predicted_abs = float(np.mean(np.abs(predicted)))
-    active = np.abs(truth) >= float(active_fraction) * max(float(scale), 1e-12)
+    # Flow targets have a distinct RMS scale for every actuator.  Using a global
+    # median changes which physical effects are called active, so all sparse metrics
+    # must normalize elementwise before thresholding.
+    active = np.abs(truth) / scale_array >= float(active_fraction)
     active_mse = float(np.mean(np.square(error[active]))) if active.any() else float("nan")
     active_zero = float(np.mean(np.square(truth[active]))) if active.any() else float("nan")
     active_sign = (
@@ -54,6 +76,7 @@ def _effect_record(
             else float("nan")
         ),
         f"{prefix}_active_sign": active_sign,
+        f"{prefix}_active_fraction": float(active.mean()),
     }
 
 
@@ -120,13 +143,46 @@ def _graph_effect_medoid(
     return best_node
 
 
-def _top_overlap(predicted: np.ndarray, truth: np.ndarray, k: int) -> float:
-    k = min(int(k), int(predicted.size))
-    if k <= 0:
+def _top_overlap(
+    predicted: np.ndarray,
+    truth: np.ndarray,
+    k: int,
+    *,
+    support_threshold: float = 0.0,
+) -> float:
+    """Top-K overlap only where a meaningful effect exists.
+
+    ``argpartition`` over an all-zero target is non-deterministic with respect to
+    semantic node identity: arbitrary zero ties must never become apparent
+    localization skill.  Empty truth support is therefore not applicable; a real
+    truth support with empty prediction support scores zero.
+    """
+    predicted = np.asarray(predicted, dtype=np.float64).reshape(-1)
+    truth = np.asarray(truth, dtype=np.float64).reshape(-1)
+    if predicted.shape != truth.shape:
+        raise ValueError("V9 Top-K prediction/truth shape mismatch")
+    if not np.isfinite(predicted).all() or not np.isfinite(truth).all():
         return float("nan")
-    p = set(np.argpartition(np.abs(predicted), -k)[-k:].tolist())
-    t = set(np.argpartition(np.abs(truth), -k)[-k:].tolist())
-    return len(p & t) / float(k)
+    if int(k) <= 0:
+        return float("nan")
+    threshold = max(float(support_threshold), 0.0)
+    truth_support = np.flatnonzero(np.abs(truth) > threshold)
+    if truth_support.size == 0:
+        return float("nan")
+    predicted_support = np.flatnonzero(np.abs(predicted) > threshold)
+    if predicted_support.size == 0:
+        return 0.0
+    selected = min(int(k), int(truth_support.size))
+    truth_top = truth_support[
+        np.argpartition(np.abs(truth[truth_support]), -selected)[-selected:]
+    ]
+    predicted_selected = min(selected, int(predicted_support.size))
+    predicted_top = predicted_support[
+        np.argpartition(np.abs(predicted[predicted_support]), -predicted_selected)[
+            -predicted_selected:
+        ]
+    ]
+    return len(set(predicted_top.tolist()) & set(truth_top.tolist())) / float(selected)
 
 
 def _localization_record(
@@ -142,8 +198,8 @@ def _localization_record(
     p = np.mean(np.abs(predicted), axis=0)
     t = np.mean(np.abs(truth), axis=0)
     threshold = float(active_fraction) * max(float(scale), 1e-12)
-    p_active = p >= threshold
-    t_active = t >= threshold
+    p_active = p > threshold
+    t_active = t > threshold
     tp = int(np.logical_and(p_active, t_active).sum())
     precision = tp / max(int(p_active.sum()), 1)
     recall = tp / max(int(t_active.sum()), 1)
@@ -164,8 +220,12 @@ def _localization_record(
             centroid_distance = float("nan")
 
     return {
-        f"{prefix}_top10_overlap": _top_overlap(p, t, 10),
-        f"{prefix}_top20_overlap": _top_overlap(p, t, 20),
+        f"{prefix}_top10_overlap": _top_overlap(
+            p, t, 10, support_threshold=threshold
+        ),
+        f"{prefix}_top20_overlap": _top_overlap(
+            p, t, 20, support_threshold=threshold
+        ),
         f"{prefix}_active_node_precision": float(precision),
         f"{prefix}_active_node_recall": float(recall),
         f"{prefix}_effect_centroid_graph_distance_hops": centroid_distance,
@@ -177,10 +237,20 @@ def _timing_record(
     truth: np.ndarray,
     *,
     retained_indices: np.ndarray,
-    scale: float,
+    scale: float | np.ndarray,
     active_fraction: float,
     prefix: str,
 ) -> dict[str, float]:
+    predicted = np.asarray(predicted, dtype=np.float64)
+    truth = np.asarray(truth, dtype=np.float64)
+    if predicted.shape != truth.shape or predicted.ndim < 1:
+        raise ValueError("V9 timing prediction/truth shape mismatch")
+    try:
+        scale_array = np.broadcast_to(
+            np.maximum(np.asarray(scale, dtype=np.float64), 1e-12), truth.shape
+        )
+    except ValueError as exc:
+        raise ValueError("V9 timing scale cannot broadcast to target shape") from exc
     reduce_dims = tuple(range(1, predicted.ndim))
     p = np.mean(np.abs(predicted), axis=reduce_dims)
     t = np.mean(np.abs(truth), axis=reduce_dims)
@@ -188,9 +258,19 @@ def _timing_record(
     peak_error = abs(
         float(minutes[int(np.argmax(p))]) - float(minutes[int(np.argmax(t))])
     )
-    threshold = float(active_fraction) * max(float(scale), 1e-12)
-    t_idx = np.flatnonzero(t >= threshold)
-    p_idx = np.flatnonzero(p >= threshold)
+    # Peak timing stays a separate total-response-mass diagnostic.  Sparse onset
+    # instead uses a fixed normalized spatial maximum, so one physically active
+    # flooded/storage node cannot be erased by 931 inactive nodes.
+    normalized_predicted = np.abs(predicted) / scale_array
+    normalized_truth = np.abs(truth) / scale_array
+    if reduce_dims:
+        p_onset = np.max(normalized_predicted, axis=reduce_dims)
+        t_onset = np.max(normalized_truth, axis=reduce_dims)
+    else:  # scalar one-dimensional time series
+        p_onset = normalized_predicted
+        t_onset = normalized_truth
+    t_idx = np.flatnonzero(t_onset >= float(active_fraction))
+    p_idx = np.flatnonzero(p_onset >= float(active_fraction))
     if t_idx.size:
         truth_onset = float(minutes[int(t_idx[0])])
         predicted_onset = (
@@ -202,6 +282,44 @@ def _timing_record(
     return {
         f"{prefix}_peak_effect_timing_error_min": peak_error,
         f"{prefix}_response_onset_timing_error_min": onset_error,
+    }
+
+
+def _horizon_bucket_masks(retained_indices: np.ndarray) -> dict[str, np.ndarray]:
+    """Return the fixed exhaustive H360 diagnostic partition."""
+    indices = np.asarray(retained_indices, dtype=np.int64).reshape(-1)
+    minutes = (indices.astype(np.float64) + 1.0) * 5.0
+    masks = {
+        name: (minutes > start) & (minutes <= end)
+        for name, start, end in HORIZON_BUCKETS_V90
+    }
+    membership = np.zeros(indices.shape, dtype=np.int64)
+    for mask in masks.values():
+        membership += mask.astype(np.int64)
+    if not np.all(membership == 1):
+        raise ValueError("V9 retained horizon does not partition into fixed H360 buckets")
+    return masks
+
+
+def _bucket_effect_records(
+    predicted: np.ndarray,
+    truth: np.ndarray,
+    *,
+    retained_indices: np.ndarray,
+    scale: float | np.ndarray,
+    active_fraction: float,
+    prefix: str,
+) -> dict[str, dict[str, float]]:
+    masks = _horizon_bucket_masks(retained_indices)
+    return {
+        label: _effect_record(
+            predicted[mask],
+            truth[mask],
+            scale=scale,
+            active_fraction=active_fraction,
+            prefix=prefix,
+        )
+        for label, mask in masks.items()
     }
 
 
@@ -329,8 +447,19 @@ def evaluate_hydraulic_effect_v90(
                         active_fraction=contract.active_effect_fraction,
                         prefix=prefix,
                     ))
+                    for bucket, metrics in _bucket_effect_records(
+                        predicted,
+                        truth,
+                        retained_indices=retained_indices,
+                        scale=channel_scale,
+                        active_fraction=contract.active_effect_fraction,
+                        prefix=prefix,
+                    ).items():
+                        record.update({f"{bucket}__{key}": value for key, value in metrics.items()})
 
-                flow_scale = float(np.median(scales.flow_delta_scale))
+                # Preserve raw physical flow metrics while using the matching scale of
+                # each individual actuator for sparse active/sign diagnostics.
+                flow_scale = np.asarray(scales.flow_delta_scale, dtype=np.float64)[None, :]
                 record.update(_effect_record(
                     predicted_flow, truth_flow,
                     scale=flow_scale,
@@ -344,14 +473,34 @@ def evaluate_hydraulic_effect_v90(
                     active_fraction=contract.active_effect_fraction,
                     prefix="delta_managed_flow_m3s",
                 ))
+                for bucket, metrics in _bucket_effect_records(
+                    predicted_flow,
+                    truth_flow,
+                    retained_indices=retained_indices,
+                    scale=flow_scale,
+                    active_fraction=contract.active_effect_fraction,
+                    prefix="delta_managed_flow_m3s",
+                ).items():
+                    record.update({f"{bucket}__{key}": value for key, value in metrics.items()})
                 records.append(record)
 
     excluded = {"event", "group", "actuator_id", "actuator_type", "actuator_index"}
     metric_names = sorted({
         key for record in records for key, value in record.items()
-        if key not in excluded and isinstance(value, (int, float))
+        if key not in excluded and "__" not in key and isinstance(value, (int, float))
     })
     overall = {key: _event_balanced(records, key) for key in metric_names}
+
+    horizon_buckets: dict[str, dict[str, float]] = {}
+    for bucket, _, _ in HORIZON_BUCKETS_V90:
+        prefix = bucket + "__"
+        names = sorted({
+            key for record in records for key, value in record.items()
+            if key.startswith(prefix) and isinstance(value, (int, float))
+        })
+        horizon_buckets[bucket] = {
+            key[len(prefix):]: _event_balanced(records, key) for key in names
+        }
 
     by_type: dict[str, dict[str, float]] = {}
     for actuator_type in ("pump", "orifice", "weir"):
@@ -378,7 +527,16 @@ def evaluate_hydraulic_effect_v90(
         "events": len({record["event"] for record in records}),
         "scientific_primary": "event_balanced_raw_signed_candidate_minus_reference_effect",
         "centroid_definition": "top20_effect_mass_weighted_graph_medoid",
+        "onset_timing_definition": "max_spatial_abs_effect_normalized_by_trainfit_scale",
+        "horizon_bucket_contract": {
+            "units": "prediction end-time minutes",
+            "buckets": [
+                {"name": name, "start_exclusive_min": start, "end_inclusive_min": end}
+                for name, start, end in HORIZON_BUCKETS_V90
+            ],
+        },
         "overall": overall,
+        "horizon_buckets": horizon_buckets,
         "by_actuator_type": by_type,
         "by_actuator_identity": by_actuator,
     }
