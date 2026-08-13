@@ -5,7 +5,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from scripts.run_step2_v100_nonlocal_d2 import _checkpoint_payload_v100
+from run_step2_v100_nonlocal_d2 import _checkpoint_payload_v100
 
 
 def test_v100_checkpoint_payload_is_development_only_and_cpu_serializable():
