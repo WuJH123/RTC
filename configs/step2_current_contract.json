@@ -1,44 +1,57 @@
 {
-  "contract": "PROJECT7_STEP2_CURRENT_V110_V1",
-  "value_model": {
-    "version": "V7",
-    "module": "rtc.step2_control_response_v70.ControlValueSurrogateV70",
+  "contract": "PROJECT7_STEP2_V120_TFV_VALUE_ONLY_V1",
+  "research_goal": "reduce whole-system cumulative TFV under sparse-sensor real-time control",
+  "step1": {
+    "role": "causal sparse-sensor reconstruction of current full hydraulic state",
+    "status": "REQUIRED"
+  },
+  "step2": {
+    "version": "V120",
+    "base_model": "rtc.step2_control_response_v70.ControlValueSurrogateV70",
     "horizon_minutes": 360,
     "target": "direct_signed_authoritative_delta_TFV_m3",
-    "status": "SUPPORTED_FROZEN"
+    "hydraulic_trajectory_prediction_required": false,
+    "nodewise_action_effect_required": false,
+    "status": "CONTROL_ORIENTED_VALUE_ONLY"
   },
-  "hydraulic_effect_model": {
-    "version": "V11",
-    "module": "rtc.step2_control_response_v110.ActuatorSetHydraulicResponseV110",
-    "horizon_minutes": 120,
-    "targets": [
-      "signed_delta_depth",
-      "signed_delta_head",
-      "signed_delta_flooding_rate",
-      "signed_delta_node_volume",
-      "signed_delta_total_inflow",
-      "signed_delta_total_outflow",
-      "signed_delta_managed_flow"
+  "step3": {
+    "policy": "finite_candidate_search_on_targeted_D3_v2_control_manifold",
+    "candidate_families": [
+      "hold",
+      "single_group",
+      "same_zone",
+      "cross_zone",
+      "sparse_low_discrepancy"
     ],
-    "decomposition": ["active", "sign", "magnitude"],
-    "status": "DEVELOPMENT_D2_GATE_REQUIRED"
+    "joint_actions_scored_directly": true,
+    "sum_D2_effects": false,
+    "continuous_gradient_extrapolation": false,
+    "robust_score": "upper_tail_CVaR_of_predicted_delta_TFV",
+    "fallback": "hold_current_if_no_predicted_improvement"
   },
   "causality": {
-    "response_time_uses_action_prefix_only": true,
     "future_SWMM_truth_online": false,
-    "oracle_reference_online": false,
-    "future_action_leakage": false
+    "future_realized_rainfall_online": false,
+    "causal_rainfall_forecast_only": true,
+    "current_state_from_step1_online": true
   },
-  "multi_actuator": {
-    "variable_length_changed_actuator_set": true,
-    "self_attention": true,
-    "global_node_cross_attention": true,
-    "sum_D2_plus_residual": false
-  },
-  "rolling_mpc": {
+  "rolling_control": {
+    "model_step_minutes": 5,
     "control_update_minutes": 10,
     "execute_first_block_only": true,
-    "recompute_after_each_update": true
+    "SWMM_readback_after_write": true,
+    "reconstruct_and_reoptimize_each_update": true
   },
-  "blocked_historical_hydraulic_versions": ["V4", "V5", "V6", "V7", "V8", "V9", "V10"]
+  "evaluation": {
+    "primary": "authoritative_SWMM_whole_system_cumulative_TFV_m3",
+    "reported_diagnostics": [
+      "global_peak_flood_rate",
+      "priority_node_flooding",
+      "engineering_execution",
+      "fallback_fraction"
+    ]
+  },
+  "historical_hydraulic_models": {
+    "V8_to_V113": "research_diagnostics_only_not_production_gate"
+  }
 }
