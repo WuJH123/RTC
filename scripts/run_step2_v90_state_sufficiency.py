@@ -79,6 +79,31 @@ def _git_head() -> str:
         return "UNKNOWN"
 
 
+def _implementation_sha256() -> str:
+    """Hash the exact V9 ladder implementation, including evaluation semantics.
+
+    Git HEAD alone does not identify an accidental dirty worktree at execution time.
+    The compact content digest makes the evidence self-describing without treating a
+    whole repository checkout as a data artifact.
+    """
+    root = Path(__file__).resolve().parents[1]
+    members = (
+        "scripts/run_step2_v90_state_sufficiency.py",
+        "src/rtc/step2_v90_contract.py",
+        "src/rtc/step2_control_response_v90.py",
+        "src/rtc/step2_hydraulic_objective_v90.py",
+        "src/rtc/step2_hydraulic_eval_v90.py",
+        "src/rtc/step2_optimization_v90.py",
+    )
+    digest = hashlib.sha256()
+    for relative in members:
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update((root / relative).read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def _load_checkpoint(path: str | Path, expected_kind: str) -> dict[str, Any]:
     payload = torch.load(path, map_location="cpu", weights_only=False)
     if not isinstance(payload, dict):
@@ -256,6 +281,7 @@ def main() -> None:
         "oracle_level_c_forbidden_online": True,
         "lineage": {
             "git_head": _git_head(),
+            "implementation_sha256": _implementation_sha256(),
             "graph_sha256": _sha256(args.graph),
             "cache_manifest_sha256": _sha256(args.cache_manifest),
             "value_checkpoint_sha256": _sha256(args.v70_value_checkpoint),
@@ -265,6 +291,15 @@ def main() -> None:
             "fit_d2_group_digest": fit_d2_digest,
             "seed": args.seed,
             "value_checkpoint_contract": value_checkpoint.get("contract"),
+        },
+        "diagnostic_schedule": {
+            "source": "TRAINFIT_D2_ONLY",
+            "epochs_per_level": int(contract.d2_pretrain_epochs),
+            "optimizer": "AdamW",
+            "learning_rate": float(contract.learning_rate),
+            "weight_decay": float(contract.weight_decay),
+            "grad_clip": float(contract.grad_clip),
+            "fp32": True,
         },
         "preflight": preflight,
         "training_history": histories,

@@ -29,6 +29,7 @@ _REQUIRED_BOUNDARY_FALSE = (
     "formal_accessed",
 )
 _REQUIRED_LINEAGE_SHA_KEYS = (
+    "implementation_sha256",
     "graph_sha256",
     "cache_manifest_sha256",
     "value_checkpoint_sha256",
@@ -132,6 +133,14 @@ def validate_state_sufficiency_evidence_v90(
 
     diagnostic_epochs = DirectHydraulicEffectLossContractV90().d2_pretrain_epochs
     _validate_training_history(history, expected_epochs=diagnostic_epochs)
+    schedule = _require_mapping(report.get("diagnostic_schedule"), "diagnostic_schedule")
+    if str(schedule.get("source")) != "TRAINFIT_D2_ONLY":
+        raise ValueError("V9 evidence diagnostic_schedule.source must be TRAINFIT_D2_ONLY")
+    if int(schedule.get("epochs_per_level", -1)) != diagnostic_epochs:
+        raise ValueError(
+            "V9 evidence diagnostic_schedule.epochs_per_level must equal canonical "
+            f"{diagnostic_epochs}"
+        )
 
     decision = _require_mapping(report.get("decision"), "decision")
     if not str(decision.get("decision", "")).strip():

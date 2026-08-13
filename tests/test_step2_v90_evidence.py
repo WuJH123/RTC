@@ -25,6 +25,7 @@ def _payload() -> dict:
         "oracle_level_c_forbidden_online": True,
         "lineage": {
             "git_head": HEAD,
+            "implementation_sha256": SHA256,
             "graph_sha256": SHA256,
             "cache_manifest_sha256": SHA256,
             "value_checkpoint_sha256": SHA256,
@@ -32,6 +33,10 @@ def _payload() -> dict:
             "fit_d2_group_count": 112,
             "fit_d2_group_digest": SHA256,
             "seed": 42,
+        },
+        "diagnostic_schedule": {
+            "source": "TRAINFIT_D2_ONLY",
+            "epochs_per_level": 4,
         },
         "preflight": {
             level: {
@@ -83,6 +88,18 @@ def test_v90_evidence_rejects_noncanonical_three_epoch_diagnostic():
             {"epoch": epoch} for epoch in range(1, 4)
         ]
     with pytest.raises(ValueError, match="epochs=3 != canonical 4"):
+        validate_state_sufficiency_evidence_v90(payload, expected_git_head=HEAD)
+
+
+def test_v90_evidence_rejects_missing_implementation_or_schedule_provenance():
+    payload = _payload()
+    payload["lineage"].pop("implementation_sha256")
+    with pytest.raises(ValueError, match="implementation_sha256"):
+        validate_state_sufficiency_evidence_v90(payload, expected_git_head=HEAD)
+
+    payload = _payload()
+    payload["diagnostic_schedule"]["epochs_per_level"] = 3
+    with pytest.raises(ValueError, match="epochs_per_level"):
         validate_state_sufficiency_evidence_v90(payload, expected_git_head=HEAD)
 
 
