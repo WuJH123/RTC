@@ -19,6 +19,8 @@ TRAIN_D2_BRANCHES = 3600
 TARGETED_D3_BRANCHES = 3600
 D2_GROUPS = 144
 D3_GROUPS = 144
+SOURCE_D2_GROUPS = 192
+DEVELOPMENT_VALIDATION_D2_GROUPS = 48
 BRANCHES_PER_GROUP = 25
 CANDIDATES_PER_GROUP = 24
 INTERNAL_HOLDOUT_FRACTION = 0.20
@@ -33,6 +35,17 @@ def sha256_file(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def _is_sha256(value: object) -> bool:
+    text = str(value)
+    if len(text) != 64:
+        return False
+    try:
+        int(text, 16)
+    except ValueError:
+        return False
+    return True
+
+
 def verify_d2_source_audit(
     path: str | Path,
     *,
@@ -43,8 +56,12 @@ def verify_d2_source_audit(
         raise ValueError("V120 requires D2 source-census audit V1")
     expected = {
         "unique_authoritative_branches": SOURCE_D2_BRANCHES,
+        "source_group_count": SOURCE_D2_GROUPS,
+        "branches_per_group": BRANCHES_PER_GROUP,
         "frozen_train_eligible_branches": TRAIN_D2_BRANCHES,
+        "frozen_train_group_count": D2_GROUPS,
         "development_validation_branches": SOURCE_D2_BRANCHES - TRAIN_D2_BRANCHES,
+        "development_validation_group_count": DEVELOPMENT_VALIDATION_D2_GROUPS,
         "final_branches": 0,
         "frozen_train_event_count": 18,
         "development_validation_event_count": 6,
@@ -52,6 +69,8 @@ def verify_d2_source_audit(
     for key, value in expected.items():
         if int(payload.get(key, -1)) != value:
             raise ValueError(f"D2 source audit {key}={payload.get(key)!r}, expected {value}")
+    if not _is_sha256(payload.get("source_index_sha256")):
+        raise ValueError("D2 source audit lacks a valid source-index SHA256")
     if payload.get("validation_branches_excluded_from_training") is not True:
         raise ValueError("D2 source audit does not prove Validation exclusion")
     if payload.get("final_untouched") is not True:
@@ -143,8 +162,10 @@ __all__ = [
     "D2_GROUPS",
     "D2_SOURCE_AUDIT_CONTRACT",
     "D3_GROUPS",
+    "DEVELOPMENT_VALIDATION_D2_GROUPS",
     "INTERNAL_HOLDOUT_FRACTION",
     "SOURCE_D2_BRANCHES",
+    "SOURCE_D2_GROUPS",
     "STATE_DOMAIN_CONTRACT",
     "TARGETED_D3_BRANCHES",
     "TRAIN_D2_BRANCHES",
