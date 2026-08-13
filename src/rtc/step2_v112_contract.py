@@ -1,9 +1,10 @@
 """Scientific gate order for Project7 Step2 V11.2.
 
-V11.2 does not authorize a new production model by itself. It changes the
-Hydraulic development order so sparse D2 counterfactual effects are first
-represented as state-conditioned response support before another dense
-full-network decoder is trained.
+V11.2 does not authorize a new production model by itself. Sparse D2 effects are
+first represented as state-conditioned support. The Hydraulic learning horizon
+remains 0-120 min, while the original 360-min D2 branch is retained as a
+read-only lag/non-local diagnostic so delayed responses are not misclassified
+as impossible.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ class Step2V112Contract:
     model_step_seconds: int = 300
     control_update_seconds: int = 600
     hydraulic_effect_horizon_minutes: int = 120
+    diagnostic_source_horizon_minutes: int = 360
     mpc_horizon_minutes: int = 360
     seed: int = 42
     formal_authorized: bool = False
@@ -34,8 +36,8 @@ class Step2V112Contract:
             raise ValueError("V112 D2 source census drift")
         if (self.model_step_seconds, self.control_update_seconds) != (300, 600):
             raise ValueError("V112 causal/control clock drift")
-        if (self.hydraulic_effect_horizon_minutes, self.mpc_horizon_minutes) != (120, 360):
-            raise ValueError("V112 Hydraulic/MPC horizon drift")
+        if (self.hydraulic_effect_horizon_minutes, self.diagnostic_source_horizon_minutes, self.mpc_horizon_minutes) != (120, 360, 360):
+            raise ValueError("V112 Hydraulic/diagnostic/MPC horizon drift")
         if self.seed != 42:
             raise ValueError("V112 seed drift")
         if any((self.formal_authorized, self.validation_outcomes_allowed,
@@ -47,7 +49,8 @@ class Step2V112Contract:
     def development_order(self) -> tuple[str, ...]:
         return (
             "reconcile_full_4800_source_vs_current_derived_cache",
-            "build_trainfit_state_conditioned_influence_atlas",
+            "build_trainfit_state_conditioned_influence_atlas_0_120",
+            "audit_trainfit_delayed_influence_120_360_diagnostic_only",
             "verify_setting_to_realized_facility_flow_gate",
             "verify_support_lag_sign_and_global_escape",
             "local_endpoint_representation_sanity_control",
