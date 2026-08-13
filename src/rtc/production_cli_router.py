@@ -23,8 +23,8 @@ def run_policy_main() -> None:
     known, _ = parser.parse_known_args()
     strategy = canonical_baseline_id(known.strategy)
     if strategy == "proposed" and is_v120_bundle(known.step2):
-        from .production_v120 import run_policy_v120_main
-        run_policy_v120_main()
+        from .production_v120_bound import run_policy_v120_bound_main
+        run_policy_v120_bound_main()
         return
     if strategy not in {"auto_rbc", "efd"}:
         legacy_run_policy_main()
