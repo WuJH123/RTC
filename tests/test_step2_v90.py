@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import torch
 
 from rtc.step2_control_response_v90 import (
@@ -74,6 +76,41 @@ def test_v90_zero_action_raw_effect_is_exact_zero_after_projection():
     )
     assert torch.equal(raw_delta, torch.zeros_like(raw_delta))
     assert torch.equal(projected, reference)
+
+
+def test_v90_objective_binds_primary_loss_to_raw_signed_effect(monkeypatch):
+    import rtc.step2_hydraulic_objective_v90 as objective
+
+    raw_state = torch.tensor([-3.0])
+    raw_flow = torch.tensor([-4.0])
+    output = SimpleNamespace(
+        horizon_indices=torch.tensor([0]),
+        reference_states_physical=torch.tensor([1.0]),
+        raw_delta_states_physical=raw_state,
+        candidate_states_projected_physical=torch.tensor([0.0]),
+        reference_flows_physical=torch.tensor([1.0]),
+        raw_delta_flows_physical=raw_flow,
+        candidate_flows_projected_physical=torch.tensor([0.0]),
+        reference_flood_onset_logits=torch.tensor([0.0]),
+        candidate_flood_onset_logits=torch.tensor([0.0]),
+    )
+    captured = {}
+
+    def fake_v80(proxy, *args, **kwargs):
+        captured["state"] = proxy.delta_states_physical
+        captured["flow"] = proxy.delta_flows_physical
+        return torch.tensor(0.0), {"loss": 0.0}
+
+    monkeypatch.setattr(objective, "hydraulic_effect_loss_v80", fake_v80)
+    objective.hydraulic_effect_loss_v90(
+        output,
+        None,
+        None,
+        None,
+        onset_positive_weight=1.0,
+    )
+    assert captured["state"] is raw_state
+    assert captured["flow"] is raw_flow
 
 
 def _ladder(skills):
