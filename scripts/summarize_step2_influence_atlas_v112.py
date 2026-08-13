@@ -40,11 +40,14 @@ def main() -> None:
     rows: list[dict[str, object]] = []
 
     for phase in ("overall", "low", "mid", "high"):
-        key, exposure_key = f"{phase}__state_support_probability", f"{phase}__exposure"
-        if key not in z or exposure_key not in z:
-            raise KeyError(f"V112 atlas missing {key}/{exposure_key}")
+        key = f"{phase}__state_support_probability"
+        exposure_key = f"{phase}__exposure"
+        source_flow_key = f"{phase}__source_flow_effective_probability"
+        if any(name not in z for name in (key, exposure_key, source_flow_key)):
+            raise KeyError(f"V112 atlas missing a required {phase} support/exposure/source-flow array")
         support = np.asarray(z[key], dtype=np.float64)
         exposure = np.asarray(z[exposure_key], dtype=np.int64)
+        source_flow = np.asarray(z[source_flow_key], dtype=np.float64)
         if support.shape != (len(graph.actuator_ids), len(minutes), len(graph.node_ids), 5):
             raise ValueError(f"V112 atlas shape mismatch for {phase}: {support.shape}")
         for a, actuator_id in enumerate(graph.actuator_ids):
@@ -64,6 +67,7 @@ def main() -> None:
                         "source_actuator_index": a,
                         "source_actuator_id": str(actuator_id),
                         "probe_exposure": int(exposure[a]),
+                        "source_flow_effective_probability": float(source_flow[a]),
                         "channel": channel,
                         "physical_domain": "storage_nodes" if channel == "storage_volume_m3" else "all_nodes",
                         "rank": rank,
