@@ -7,7 +7,7 @@ from pathlib import Path
 from .baselines import baseline_sensor_nodes, canonical_baseline_id, fixed_baseline_controller
 from .closed_loop import run_authoritative_closed_loop
 from .production_cli import _controls_disabled_runtime, run_policy_main as legacy_run_policy_main
-from .production_v120_router import is_v120_bundle
+from .production_v120_router import is_v120_bundle, require_strict_v120_evidence
 from .runtime_controller_guard import ContinuityGuardController
 
 
@@ -23,6 +23,8 @@ def run_policy_main() -> None:
     known, _ = parser.parse_known_args()
     strategy = canonical_baseline_id(known.strategy)
     if strategy == "proposed" and is_v120_bundle(known.step2):
+        assert known.step2 is not None
+        require_strict_v120_evidence(known.step2)
         from .production_v120_bound import run_policy_v120_bound_main
         run_policy_v120_bound_main()
         return
