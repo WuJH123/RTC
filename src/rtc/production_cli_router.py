@@ -7,6 +7,7 @@ from pathlib import Path
 from .baselines import baseline_sensor_nodes, canonical_baseline_id, fixed_baseline_controller
 from .closed_loop import run_authoritative_closed_loop
 from .production_cli import _controls_disabled_runtime, run_policy_main as legacy_run_policy_main
+from .production_v120_router import is_v120_bundle
 from .runtime_controller_guard import ContinuityGuardController
 
 
@@ -17,9 +18,14 @@ def run_policy_main() -> None:
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--config", required=True)
+    parser.add_argument("--step2")
     parser.add_argument("--runtime-inp-cache-dir")
     known, _ = parser.parse_known_args()
     strategy = canonical_baseline_id(known.strategy)
+    if strategy == "proposed" and is_v120_bundle(known.step2):
+        from .production_v120 import run_policy_v120_main
+        run_policy_v120_main()
+        return
     if strategy not in {"auto_rbc", "efd"}:
         legacy_run_policy_main()
         return
@@ -45,27 +51,15 @@ def run_policy_main() -> None:
     max_delta = float(raw_delta)
 
     source_inp = Path(known.inp)
-    cache_dir = (
-        Path(known.runtime_inp_cache_dir)
-        if known.runtime_inp_cache_dir
-        else Path(known.out_dir) / "_runtime_inp"
-    )
+    cache_dir = Path(known.runtime_inp_cache_dir) if known.runtime_inp_cache_dir else Path(known.out_dir) / "_runtime_inp"
     runtime_inp = _controls_disabled_runtime(
         source_inp=source_inp,
         cache_dir=cache_dir,
         swmm_threads=int(cfg.get("swmm_threads", 1)),
     )
     sensors = baseline_sensor_nodes(strategy, source_inp)
-    raw_controller = fixed_baseline_controller(
-        strategy,
-        inp_path=source_inp,
-        max_delta_per_update=max_delta,
-    )
-    controller = ContinuityGuardController(
-        raw_controller,
-        max_delta_per_update=max_delta,
-        allow_projection=True,
-    )
+    raw_controller = fixed_baseline_controller(strategy, inp_path=source_inp, max_delta_per_update=max_delta)
+    controller = ContinuityGuardController(raw_controller, max_delta_per_update=max_delta, allow_projection=True)
     result = run_authoritative_closed_loop(
         inp_path=runtime_inp,
         output_dir=known.out_dir,
