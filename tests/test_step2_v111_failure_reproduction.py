@@ -45,7 +45,7 @@ def test_v111_direct_decoder_is_zero_anchored_and_has_changed_action_gradient():
     assert float(head.weight.detach().abs().max()) <= 1.0e-4 + 1.0e-12
     x = torch.ones(1, 4, requires_grad=True)
     y = head(x)
-    assert float(y.abs().max()) < 1.0e-3
+    assert float(y.detach().abs().max()) < 1.0e-3
     grad = torch.autograd.grad(y.sum(), x)[0]
     assert bool(torch.isfinite(grad).all())
     assert int(torch.count_nonzero(grad)) > 0
