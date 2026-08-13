@@ -205,7 +205,10 @@ def main() -> None:
     if args.profile == "tiny":
         history = _tiny(model, cache, names[0], normalization, prepared, scales, target, steps=contract.tiny_steps)
     elif args.profile == "micro":
-        history = train_d2_v111(model, cache, names, normalization, prepared, scales, device=target, epochs=4)
+        # The V111 micro diagnostic uses the same preregistered maximum
+        # schedule as canonical D2; it is not a parameter sweep.
+        history = train_d2_v111(model, cache, names, normalization, prepared, scales, device=target,
+                                 epochs=contract.canonical_max_epochs)
     else:
         history = train_d2_v111(model, cache, names, normalization, prepared, scales, device=target, epochs=contract.canonical_max_epochs)
     fit_metrics = _collect(model, cache, names, normalization, prepared, scales, target)
