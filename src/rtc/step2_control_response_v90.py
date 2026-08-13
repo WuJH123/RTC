@@ -99,10 +99,15 @@ def project_candidate_flows_v90(
     reference_flows_physical: torch.Tensor,
     raw_delta_flows_physical: torch.Tensor,
 ) -> torch.Tensor:
-    """Project absolute managed flow only; the signed delta remains an independent tensor."""
+    """Reconstruct signed absolute managed flow without a global clamp.
+
+    The frozen actuator-flow audit contains negative orifice and weir flows.
+    Physical projection is therefore only a reconstruction of the authoritative
+    signed quantity; it must not impose a false non-negative prior.
+    """
     if reference_flows_physical.shape != raw_delta_flows_physical.shape:
         raise ValueError("V9 reference/raw flow shapes differ")
-    return (reference_flows_physical + raw_delta_flows_physical).clamp_min(0.0)
+    return reference_flows_physical + raw_delta_flows_physical
 
 
 def _signed_log1p(values: torch.Tensor) -> torch.Tensor:

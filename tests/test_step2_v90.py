@@ -58,7 +58,9 @@ def test_v90_signed_flow_semantics_are_not_projection_semantics():
     reference = torch.tensor([[[[0.02, 0.30]]]])
     raw_delta = torch.tensor([[[[-0.25, -0.10]]]])
     projected = project_candidate_flows_v90(reference, raw_delta)
-    assert torch.allclose(projected, torch.tensor([[[[0.0, 0.20]]]]))
+    # Orifice/weir authoritative flows can be negative; V9 must not impose a
+    # global non-negative projection on signed managed-flow semantics.
+    assert torch.allclose(projected, torch.tensor([[[[-0.23, 0.20]]]]))
     assert torch.allclose(raw_delta, torch.tensor([[[[-0.25, -0.10]]]]))
 
 
