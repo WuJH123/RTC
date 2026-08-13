@@ -28,6 +28,27 @@ BUNDLE_NAME = "step2_v120_execution_bound_causal_bundle.pt"
 REPORT_NAME = "STEP2_V120_EXECUTION_BOUND_CAUSAL_REPORT.json"
 
 
+def _verify_cache_header(path: str, expected_engine: str) -> dict[str, object]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("V120 training cache manifest must be a JSON object")
+    if int(payload.get("source_row_count", -1)) != 7200:
+        raise ValueError("V120 training cache must bind exactly 7200 Train-only D2+D3 branches")
+    if int(payload.get("model_step_seconds", -1)) != 300:
+        raise ValueError("V120 training cache model step must be 300 s")
+    if int(payload.get("horizon_steps", -1)) != 72:
+        raise ValueError("V120 training cache horizon must be H72")
+    cache_engine = str(payload.get("swmm_engine_version", "")).strip()
+    requested_engine = str(expected_engine).strip()
+    if not cache_engine or not requested_engine:
+        raise ValueError("V120 SWMM engine lineage must be non-empty")
+    if cache_engine != requested_engine:
+        raise ValueError(
+            f"V120 SWMM engine mismatch: cache={cache_engine!r}, requested={requested_engine!r}"
+        )
+    return payload
+
+
 def main() -> None:
     repo = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Strict canonical Project7 V120 trainer")
@@ -46,6 +67,7 @@ def main() -> None:
     args = parser.parse_args()
 
     fraction = validate_internal_holdout_fraction(args.holdout_fraction)
+    cache_header = _verify_cache_header(args.cache_manifest, args.swmm_engine_version)
     _, frozen_train = load_frozen_train_events_v120(args.split_contract)
     audit = verify_d2_source_audit(args.d2_source_audit, split_contract_path=args.split_contract)
     cache = V60TrainCache(args.cache_manifest)
@@ -95,6 +117,8 @@ def main() -> None:
     lineage["d2_source_audit_sha256"] = sha256_file(args.d2_source_audit)
     lineage["d2_source_index_sha256"] = str(audit["source_index_sha256"])
     lineage["strict_training_entrypoint_sha256"] = sha256_file(Path(__file__))
+    lineage["training_cache_manifest_sha256"] = sha256_file(args.cache_manifest)
+    lineage["training_cache_swmm_engine_version"] = str(cache_header["swmm_engine_version"])
     census.update({
         "source_d2_authoritative_branch_census": SOURCE_D2_BRANCHES,
         "source_d2_audit_contract": str(audit["contract"]),
