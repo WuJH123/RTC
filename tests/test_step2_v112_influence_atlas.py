@@ -5,6 +5,7 @@ from rtc.step2_d2_lineage_v112 import (
     classify_d2_population_v112,
     require_full_d2_source_claim_v112,
 )
+from rtc.step2_graph_distance_v112 import undirected_endpoint_hops_v112
 from rtc.step2_influence_prior_v112 import (
     InfluencePriorAccumulatorV112,
     combine_support_proposals_noisy_or_v112,
@@ -42,11 +43,11 @@ def test_single_actuator_probe_is_fail_closed_for_joint_actions():
 def _targets():
     ref_s = np.zeros((4, 2, 6), dtype=float)
     cand_s = ref_s.copy()
-    cand_s[1:, 0, 0] = -0.2  # signed depth reduction must survive
-    cand_s[2:, 1, 2] = 0.5   # flooding increase at another node with a lag
+    cand_s[1:, 0, 0] = -0.2
+    cand_s[2:, 1, 2] = 0.5
     ref_f = np.zeros((4, 2), dtype=float)
     cand_f = ref_f.copy()
-    cand_f[1:, 0] = -0.3     # signed managed-flow response
+    cand_f[1:, 0] = -0.3
     return build_influence_support_targets_v112(
         reference_states=ref_s,
         candidate_states=cand_s,
@@ -72,7 +73,6 @@ def test_soft_prior_keeps_global_escape_and_no_action_is_exact_zero():
     t = _targets()
     acc = InfluencePriorAccumulatorV112(actuator_count=2, retained_count=4, node_count=2)
     acc.update(0, t)
-    # give actuator 1 an exposure too so joint-combination is fully observed/fail-closed clean
     acc.update(1, t)
     prior = acc.finalize()["state_support_probability"]
     assert np.nanmin(prior) > 0.0
@@ -89,5 +89,13 @@ def test_joint_support_union_is_not_additive_magnitude_superposition():
     prior = np.full((2, 1, 1, 1), 0.6, dtype=np.float32)
     active = np.ones((1, 1, 2), dtype=bool)
     proposal = combine_support_proposals_noisy_or_v112(prior, active)
-    # noisy-OR support union = 1 - (1-.6)^2 = .84, not 1.2 and not a signed effect sum
     assert proposal.item() == pytest.approx(0.84, abs=1e-6)
+
+
+def test_endpoint_hops_are_diagnostic_without_hard_cutoff():
+    edge_index = np.asarray([[0, 1, 2, 3], [1, 2, 3, 4]], dtype=np.int64)
+    hops = undirected_endpoint_hops_v112(
+        edge_index, node_count=5, upstream=1, downstream=2
+    )
+    assert hops.tolist() == [1, 0, 0, 1, 2]
+    assert hops[4] == 2
