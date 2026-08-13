@@ -1,7 +1,7 @@
 {
   "contract": "PRODUCTION_CONTROLLER_CONFIG_V5_TFV_FIRST_TEMPORAL_CONTINUITY",
   "v120_contract": "PROJECT7_V120_TFV_ONLY_CAUSAL_CONTROLLER_V1",
-  "instruction": "Project7 V120 execution-bound controller. Step1 reconstructs the causal current full state from sparse sensing. Step2 scores direct whole-system Delta-TFV for joint executable candidates. Step3 selects from the frozen targeted-D3 distribution and executes only the first 10-minute move. Priority flooding and Global Peak are report-only. No value below may be tuned on Validation or Final.",
+  "instruction": "Project7 V120 execution-bound controller. Step1 reconstructs the causal current full state from sparse sensing. Step2 scores direct whole-system Delta-TFV for joint executable candidates using the same deterministic checkpoint-current persistence/decay rainfall definition used in training. Step3 selects from the frozen targeted-D3 distribution and executes only the first 10-minute move. Priority flooding and Global Peak are report-only. No value below may be tuned on Validation or Final.",
   "model_step_seconds": 300,
   "control_update_seconds": 600,
   "record_stride_seconds": 300,
@@ -17,7 +17,7 @@
     "baseline_true_state_advantage": ["internal_rtc", "auto_rbc", "efd"]
   },
   "objective": {
-    "primary": "minimize rainfall-ensemble risk-adjusted whole-system cumulative TFV",
+    "primary": "minimize predicted whole-system cumulative TFV",
     "priority_role": "report_only",
     "global_peak_role": "report_only",
     "tfv_cvar_alpha": 0.90,
@@ -28,7 +28,7 @@
   "forecast": {
     "contract": "PROJECT7_V120_CURRENT_RAIN_PERSISTENCE_DECAY_RUNTIME_V1",
     "decay_per_step": 0.92,
-    "scenario_multipliers": [0.75, 1.0, 1.25],
+    "scenario_multipliers": [1.0],
     "history_steps_for_level": 1
   },
   "controller": {
@@ -49,6 +49,7 @@
     "continuous_gradient_search": false,
     "execute_first_move_only": true,
     "score_only_executable_sequences": true,
+    "rainfall_uncertainty_scenario_search": false,
     "controller_forecast_sweep_allowed": false,
     "runtime_benchmark_count": 1,
     "runtime_benchmark_role": "verify fixed compute budget and readback/continuity only",
