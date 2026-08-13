@@ -10,7 +10,8 @@ Two hashes are intentionally separated:
 * :func:`rtc_implementation_contract_sha256` in ``code_contract`` is the legacy
   project-wide scientific contract and remains stable for old Step1 checkpoints;
 * :func:`v120_runtime_contract_sha256` below binds the exact files that determine
-  V120 training, candidate generation, online scoring and first-move execution.
+  V120 training, causal forcing, candidate generation, online scoring and
+  first-move execution.
 
 This prevents a V120 bundle from being silently reused after the value policy or
 execution semantics change, without needlessly invalidating the frozen Step1
@@ -43,6 +44,7 @@ _V120_BOUND_FILES = (
     "controller_v120.py",
     "runtime.py",
     "runtime_controller_guard.py",
+    "step2_causal_forecast_v120.py",
     "step2_control_basis_v60.py",
     "step2_control_response_v70.py",
     "step2_d3_design_v60.py",
