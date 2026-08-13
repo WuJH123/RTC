@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from .baselines import baseline_sensor_nodes, canonical_baseline_id, fixed_baseline_controller
@@ -20,6 +21,16 @@ def run_policy_main() -> None:
     parser.add_argument("--runtime-inp-cache-dir")
     known, _ = parser.parse_known_args()
     strategy = canonical_baseline_id(known.strategy)
+
+    # The current V7/V11 Proposed path is explicit and fail-closed. Historical
+    # --step2 keeps routing to the legacy world-model runner until Formal
+    # promotion deliberately removes that compatibility surface.
+    if strategy == "proposed" and "--step2-v110" in sys.argv:
+        from .production_v110 import run_policy_v110_main
+
+        run_policy_v110_main()
+        return
+
     if strategy not in {"auto_rbc", "efd"}:
         legacy_run_policy_main()
         return
