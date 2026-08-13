@@ -1,5 +1,10 @@
 import numpy as np
 import pytest
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from summarize_step2_influence_atlas_v112 import _select_top_nodes
 
 from rtc.step2_d2_lineage_v112 import (
     classify_d2_population_v112,
@@ -99,3 +104,14 @@ def test_endpoint_hops_are_diagnostic_without_hard_cutoff():
     )
     assert hops.tolist() == [1, 0, 0, 1, 2]
     assert hops[4] == 2
+
+
+def test_atlas_summary_preserves_small_storage_domain_axis():
+    # The real frozen graph has only ten storage nodes.  The summary must
+    # rank those nodes, not accidentally rank time positions after NumPy's
+    # advanced-index axis reordering.
+    support = np.asarray(
+        [[0.1, 0.8, 0.2], [0.3, 0.4, 0.9]], dtype=np.float64
+    )  # [retained_time, domain_node]
+    domain_nodes = np.asarray([11, 27, 42], dtype=np.int64)
+    assert _select_top_nodes(support, domain_nodes, 20).tolist() == [42, 27, 11]

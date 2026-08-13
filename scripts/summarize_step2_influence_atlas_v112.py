@@ -18,6 +18,22 @@ from rtc.step2_v110_contract import HydraulicHorizonV110
 from run_step2_v110 import _load_graph
 
 
+def _select_top_nodes(
+    support_by_time_node: np.ndarray,
+    domain_nodes: np.ndarray,
+    top_k: int,
+) -> np.ndarray:
+    """Select top nodes while preserving the [time, node] axis order."""
+    support = np.asarray(support_by_time_node, dtype=np.float64)
+    nodes = np.asarray(domain_nodes, dtype=np.int64)
+    if support.ndim != 2 or support.shape[1] != nodes.size:
+        raise ValueError("V112 support/domain shape mismatch")
+    if top_k <= 0:
+        raise ValueError("V112 top_k must be positive")
+    node_peak = support.max(axis=0)
+    return nodes[np.argsort(-node_peak, kind="mergesort")[: min(top_k, nodes.size)]]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--atlas", required=True)
@@ -55,8 +71,12 @@ def main() -> None:
             for c, channel in enumerate(STATE_EFFECT_NAMES_V112):
                 domain = storage_mask if channel == "storage_volume_m3" else np.ones(len(graph.node_ids), bool)
                 domain_nodes = np.flatnonzero(domain)
-                node_peak = support[a, :, domain_nodes, c].max(axis=0)
-                chosen = domain_nodes[np.argsort(-node_peak, kind="mergesort")[: args.top_k]]
+                # Slice the time axis before applying the node index.  With
+                # NumPy advanced indexing in ``support[a, :, domain_nodes, c]``
+                # the indexed node axis is moved ahead of time, which caused
+                # the old implementation to index beyond small domains such
+                # as the ten physical storage nodes.
+                chosen = _select_top_nodes(support[a][:, domain_nodes, c], domain_nodes, args.top_k)
                 for rank, node in enumerate(chosen, 1):
                     series = support[a, :, node, c]
                     peak_t = int(np.argmax(series))
