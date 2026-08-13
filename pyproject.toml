@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "wuhan-rtc"
 version = "0.6.9"
-description = "Sparse-sensing, actuator-agnostic differentiable MPC for large urban drainage networks"
+description = "Sparse-sensing, control-oriented real-time control for large urban drainage networks"
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.26",
@@ -67,6 +67,9 @@ rtc-build-policy-artifacts = "rtc.policy_artifacts_cli:main"
 rtc-policy-lock-v6 = "rtc.policy_lock_v6:main"
 rtc-formalize-run = "rtc.formalize_run_v2:main"
 rtc-compile-final-v5 = "rtc.formal_final_v5:main"
+rtc-promote-v120 = "rtc.promote_v120:main"
+rtc-policy-lock-v120 = "rtc.policy_lock_v120:main"
+rtc-compile-final-v120 = "rtc.formal_final_v120:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
