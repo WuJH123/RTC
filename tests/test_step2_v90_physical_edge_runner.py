@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -7,9 +9,19 @@ import pytest
 import torch
 
 
+def _runner_module():
+    """Load the script by path because CI exposes only ``src`` on PYTHONPATH."""
+    path = Path(__file__).resolve().parents[1] / "scripts" / "run_step2_v90_physical_edge_d2.py"
+    spec = importlib.util.spec_from_file_location("step2_v90_physical_edge_runner", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_physical_edge_runner_refuses_a_model_that_cannot_receive_assets():
     """The mechanism runner must not silently fall back to the old topology path."""
-    from scripts.run_step2_v90_physical_edge_d2 import _construct_physical_edge_model
+    _construct_physical_edge_model = _runner_module()._construct_physical_edge_model
 
     class NoPhysicalEdgeKeyword:
         def __init__(self, *, value):
@@ -24,7 +36,7 @@ def test_physical_edge_runner_refuses_a_model_that_cannot_receive_assets():
 
 
 def test_physical_edge_runner_passes_the_frozen_assets_to_the_model():
-    from scripts.run_step2_v90_physical_edge_d2 import _construct_physical_edge_model
+    _construct_physical_edge_model = _runner_module()._construct_physical_edge_model
 
     assets = object()
 
@@ -44,7 +56,7 @@ def test_physical_edge_runner_passes_the_frozen_assets_to_the_model():
 
 
 def test_physical_edge_runner_emits_conduit_only_lineage_evidence():
-    from scripts.run_step2_v90_physical_edge_d2 import _physical_edge_lineage
+    _physical_edge_lineage = _runner_module()._physical_edge_lineage
 
     assets = SimpleNamespace(
         contract="PROJECT7_STEP2_V90_CONDUIT_PHYSICAL_EDGE_ASSETS_V1",
@@ -69,7 +81,7 @@ def test_physical_edge_runner_emits_conduit_only_lineage_evidence():
 
 
 def test_physical_edge_runner_derives_dynamic_scales_without_effect_targets():
-    from scripts.run_step2_v90_physical_edge_d2 import _physical_dynamic_scales
+    _physical_dynamic_scales = _runner_module()._physical_dynamic_scales
 
     normalization = SimpleNamespace(state_std=[0.25, 3.0, 7.0, 9.0, 11.0, 13.0])
     assets = SimpleNamespace(edge_length_m=np.asarray([10.0, 20.0, 30.0], dtype=np.float32))
@@ -109,7 +121,7 @@ def _checkpoint(*, graph="graph", cache="cache", basis="basis", design="design",
 def test_physical_edge_runner_fails_closed_on_v7_lineage_mismatch(
     component, value_patch, hydraulic_patch
 ):
-    from scripts.run_step2_v90_physical_edge_d2 import _validate_v7_lineage
+    _validate_v7_lineage = _runner_module()._validate_v7_lineage
 
     value = _checkpoint(**value_patch)
     hydraulic = _checkpoint(**hydraulic_patch)
@@ -131,14 +143,14 @@ def test_physical_edge_runner_fails_closed_on_v7_lineage_mismatch(
     ((41, 0.20, "seed"), (42, 0.25, "split")),
 )
 def test_physical_edge_runner_rejects_noncanonical_schedule(seed, holdout_fraction, message):
-    from scripts.run_step2_v90_physical_edge_d2 import _validate_canonical_schedule
+    _validate_canonical_schedule = _runner_module()._validate_canonical_schedule
 
     with pytest.raises(ValueError, match=message):
         _validate_canonical_schedule(seed=seed, holdout_fraction=holdout_fraction)
 
 
 def test_physical_edge_runner_checks_future_actions_for_every_retained_state_and_flow():
-    from scripts.run_step2_v90_physical_edge_d2 import _assert_full_horizon_causality
+    _assert_full_horizon_causality = _runner_module()._assert_full_horizon_causality
 
     candidate = torch.zeros(1, 1, 5, 1)
     retained = torch.tensor([0, 2, 4])
@@ -176,7 +188,7 @@ def test_physical_edge_runner_checks_future_actions_for_every_retained_state_and
 
 
 def test_physical_edge_runner_allows_only_documented_fp32_roundoff_in_equivalent_modes():
-    from scripts.run_step2_v90_physical_edge_d2 import _assert_full_horizon_causality
+    _assert_full_horizon_causality = _runner_module()._assert_full_horizon_causality
 
     candidate = torch.zeros(1, 1, 5, 1)
     retained = torch.tensor([0, 2, 4])
