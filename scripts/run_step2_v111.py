@@ -54,7 +54,8 @@ def _select_micro(cache: V60TrainCache, fit_names: list[str]) -> list[str]:
         if changed.size:
             # The graph actuator catalog is not in the cache; source metadata
             # retains the actuator type in candidate_roles when available.
-            role = str(entry.arrays.get("actuator_type", ["unknown"])[ref]).lower()
+            type_values = entry.arrays.get("actuator_type")
+            role = str(type_values[ref]).lower() if type_values is not None and len(type_values) > ref else "unknown"
             if role not in by_type:
                 role = ("pump" if int(changed[0]) < 57 else "orifice" if int(changed[0]) < 99 else "weir")
             by_type[role].append(name)
