@@ -1,15 +1,18 @@
 {
-  "contract": "PROJECT7_STEP2_V120_TFV_VALUE_ONLY_V1",
+  "contract": "PROJECT7_STEP2_V120_TFV_VALUE_ONLY_V2_EXECUTION_BOUND",
   "research_goal": "reduce whole-system cumulative TFV under sparse-sensor real-time control",
   "step1": {
     "role": "causal sparse-sensor reconstruction of current full hydraulic state",
-    "status": "REQUIRED"
+    "status": "REQUIRED",
+    "online_step2_state_source": "accepted Step1 reconstruction"
   },
   "step2": {
     "version": "V120",
     "base_model": "rtc.step2_control_response_v70.ControlValueSurrogateV70",
     "horizon_minutes": 360,
     "target": "direct_signed_authoritative_delta_TFV_m3",
+    "training_rainfall_input": "checkpoint-current rainfall persisted/decayed with factor 0.92",
+    "future_realized_rainfall_as_model_input": false,
     "hydraulic_trajectory_prediction_required": false,
     "nodewise_action_effect_required": false,
     "status": "CONTROL_ORIENTED_VALUE_ONLY"
@@ -26,13 +29,27 @@
     "joint_actions_scored_directly": true,
     "sum_D2_effects": false,
     "continuous_gradient_extrapolation": false,
-    "robust_score": "upper_tail_CVaR_of_predicted_delta_TFV",
-    "fallback": "hold_current_if_no_predicted_improvement"
+    "rainfall_scenario_multipliers": [1.0],
+    "score_only_executable_sequences": true,
+    "first_move_bound_to_current_and_target_readback": true,
+    "selection": "minimum predicted joint-action delta_TFV",
+    "fallback": "hold_current_if_no_predicted_improvement_or_runtime_guard_fails"
+  },
+  "data": {
+    "D2_source_authoritative_branch_census": 4800,
+    "D2_source_census_is_not_IID_training_population": true,
+    "D2_training_eligibility": "frozen Train18 only",
+    "targeted_D3_train_branches_required": 3600,
+    "scientific_split": "18 Train / 6 Development-Validation / 6 Final",
+    "internal_train_split": "14 TrainFit / 4 InternalHoldout",
+    "validation_or_final_labels_in_step2_training": false
   },
   "causality": {
     "future_SWMM_truth_online": false,
     "future_realized_rainfall_online": false,
     "causal_rainfall_forecast_only": true,
+    "rainfall_decay_per_5min_step": 0.92,
+    "rainfall_history_steps_for_level": 1,
     "current_state_from_step1_online": true
   },
   "rolling_control": {
@@ -40,7 +57,8 @@
     "control_update_minutes": 10,
     "execute_first_block_only": true,
     "SWMM_readback_after_write": true,
-    "reconstruct_and_reoptimize_each_update": true
+    "reconstruct_and_reoptimize_each_update": true,
+    "max_setting_delta_per_update": 0.5
   },
   "evaluation": {
     "primary": "authoritative_SWMM_whole_system_cumulative_TFV_m3",
@@ -49,7 +67,8 @@
       "priority_node_flooding",
       "engineering_execution",
       "fallback_fraction"
-    ]
+    ],
+    "aggregation": "equal_weight_per_independent_rainfall_group"
   },
   "historical_hydraulic_models": {
     "V8_to_V113": "research_diagnostics_only_not_production_gate"
