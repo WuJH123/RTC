@@ -29,6 +29,18 @@ def _model_engine(path: str, *, name: str) -> str:
     return engine
 
 
+def _v110_engine(path: str) -> str:
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    if not isinstance(payload, dict):
+        raise ValueError("V11 runtime bundle must be a dictionary")
+    if not bool(payload.get("runtime_compatible", False)):
+        raise ValueError("V11 checkpoint is not runtime-compatible")
+    engine = str(payload.get("swmm_engine_version", "")).strip()
+    if not engine:
+        raise ValueError("V11 runtime bundle lacks SWMM engine lineage")
+    return engine
+
+
 def _replace_cli_value(flag: str, value: str) -> None:
     if flag not in sys.argv:
         raise RuntimeError(f"public production guard expected CLI flag {flag}")
@@ -57,6 +69,9 @@ def _stamp_run_metadata(
     graph: str | None,
     step1: str | None,
     step2: str | None,
+    step2_value: str | None,
+    step2_reference: str | None,
+    step2_v110: str | None,
     expected_swmm_engine_version: str | None,
     project7_runtime_contract: dict[str, object],
     event_clock: dict[str, float | str],
@@ -91,6 +106,13 @@ def _stamp_run_metadata(
         payload["step1_model_sha256"] = sha256_file(step1)
     if step2:
         payload["step2_model_sha256"] = sha256_file(step2)
+    if step2_value:
+        payload["step2_v70_value_sha256"] = sha256_file(step2_value)
+    if step2_reference:
+        payload["step2_v70_reference_sha256"] = sha256_file(step2_reference)
+    if step2_v110:
+        payload["step2_v110_runtime_bundle_sha256"] = sha256_file(step2_v110)
+        payload["step2_stack"] = "V7_VALUE_PLUS_V11_HYDRAULIC"
     tmp = metadata_path.with_suffix(metadata_path.suffix + ".tmp")
     tmp.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -112,6 +134,9 @@ def main() -> None:
     parser.add_argument("--graph")
     parser.add_argument("--step1")
     parser.add_argument("--step2")
+    parser.add_argument("--step2-value")
+    parser.add_argument("--step2-reference")
+    parser.add_argument("--step2-v110")
     known, _ = parser.parse_known_args()
     raw = json.loads(Path(known.config).read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
@@ -153,10 +178,23 @@ def main() -> None:
 
     expected_engine: str | None = None
     if strategy == "proposed":
-        if not known.step1 or not known.step2:
-            raise ValueError("Proposed requires Step1 and Step2 checkpoints")
+        if not known.step1:
+            raise ValueError("Proposed requires a Step1 checkpoint")
         step1_engine = _model_engine(known.step1, name="Step1")
-        step2_engine = _model_engine(known.step2, name="Step2")
+        if known.step2_v110:
+            if known.step2:
+                raise ValueError("V11 Proposed must not mix legacy --step2 with --step2-v110")
+            if not known.step2_value or not known.step2_reference:
+                raise ValueError(
+                    "V11 Proposed requires --step2-value, --step2-reference and --step2-v110"
+                )
+            step2_engine = _v110_engine(known.step2_v110)
+        else:
+            if not known.step2:
+                raise ValueError("Legacy Proposed requires Step1 and Step2 checkpoints")
+            if known.step2_value or known.step2_reference:
+                raise ValueError("legacy Proposed must not receive partial V7/V11 Step2 flags")
+            step2_engine = _model_engine(known.step2, name="Step2")
         if step1_engine != step2_engine:
             raise ValueError(
                 f"Step1/Step2 SWMM engine lineage differs: {step1_engine} != {step2_engine}"
@@ -179,6 +217,9 @@ def main() -> None:
         graph=known.graph,
         step1=known.step1,
         step2=known.step2,
+        step2_value=known.step2_value,
+        step2_reference=known.step2_reference,
+        step2_v110=known.step2_v110,
         expected_swmm_engine_version=expected_engine,
         project7_runtime_contract=project7_evidence,
         event_clock=event_clock,
