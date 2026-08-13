@@ -1,0 +1,76 @@
+{
+  "contract": "STEP2_RESPONSE_CALIBRATION_V41_REVIEW_SUMMARY",
+  "verdict": "AMBER",
+  "boundary": {
+    "scientific_split": "development",
+    "development_fold": "train",
+    "swmm_launched": false,
+    "d2_regenerated": false,
+    "d3_regenerated": false,
+    "validation_outcomes_accessed": false,
+    "final_accessed": false,
+    "formal_step2_run": false,
+    "full_train_smoke_run": false,
+    "closed_loop_run": false,
+    "acceptance_thresholds_changed": false,
+    "precision": "fp32"
+  },
+  "tiny": {
+    "D2": {
+      "spread_ratio": 1.1939814847450936,
+      "rank": 0.9867306865151323,
+      "pairwise": 0.967032967032967,
+      "sign": 0.9565217391304348,
+      "top1": true,
+      "regret_m3": 0.0,
+      "verdict": "PASS"
+    },
+    "D3": {
+      "additive_spread_m3": 93619.8125,
+      "interaction_residual_spread_m3": 177249.4609375,
+      "spread_ratio": 1.6085802242288487,
+      "rank": 0.9761904761904763,
+      "pairwise": 0.9642857142857143,
+      "sign": 0.875,
+      "top1": true,
+      "regret_m3": 0.0,
+      "verdict": "PASS"
+    }
+  },
+  "micro": {
+    "D2": {
+      "spread_ratio": 1.3107962027027513,
+      "rank": 0.6631612296732702,
+      "pairwise": 0.7620198169408953,
+      "sign": 0.7539251207729468,
+      "top1_count": 3,
+      "groups": 6,
+      "regret_mean_m3": 2063.4166666666665,
+      "regret_max_m3": 10820.0
+    },
+    "D3": {
+      "spread_ratio": 0.9113413896358327,
+      "rank": 0.27777777777777785,
+      "pairwise": 0.6071428571428571,
+      "sign": 0.7083333333333334,
+      "top1_count": 1,
+      "groups": 6,
+      "regret_mean_m3": 121941.125,
+      "regret_max_m3": 372115.0
+    }
+  },
+  "D3_large_effect": {
+    "train_only_q67_m3": 111775.91666666666,
+    "candidate_count": 21,
+    "mean_abs_response_ratio": 0.4113782853460539,
+    "rank": 0.3311688311688311,
+    "mae_m3": 162528.2154017857
+  },
+  "physical_flooding_negative_fraction": 0.0,
+  "simultaneous_action_pass": [1, 5, 10, 20],
+  "ready_to_replace_active_step2_trainer": false,
+  "ready_for_full_train_only_smoke": false,
+  "ready_for_formal": false,
+  "need_new_swmm": false,
+  "next_bounded_action": "Repair cross-group D3 magnitude-conditioned interaction calibration on the unchanged Train-only 12-group cohort."
+}

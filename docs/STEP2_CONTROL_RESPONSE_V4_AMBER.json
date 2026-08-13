@@ -1,0 +1,66 @@
+{
+  "contract": "STEP2_CONTROL_RESPONSE_V4_AMBER_CHECKPOINT",
+  "git_baseline": "49115c49c0ef895243abf2b071c30d2b1feba7e6",
+  "working_branch": "agent/step2-control-response-v4",
+  "scientific_boundary": {
+    "swmm_launched": false,
+    "d2_regenerated": false,
+    "d3_regenerated": false,
+    "validation_outcomes_accessed": false,
+    "final_accessed": false,
+    "formal_step2_run": false,
+    "closed_loop_run": false
+  },
+  "mechanism": {
+    "branch_specific_teacher_forcing_later_failures": 300,
+    "reference_action_effect_separation": "PASS",
+    "zero_action_exact_zero": "PASS",
+    "future_action_causality": "PASS",
+    "actuator_identity": "PASS",
+    "simultaneous_action_5": "PASS",
+    "simultaneous_action_10": "PASS",
+    "physical_flooding_rate": "FAIL_AMBER",
+    "maximum_negative_flood_fraction": 0.5363484293037672
+  },
+  "tiny_overfit": {
+    "D2": {
+      "predicted_spread_m3": 3929.16845703125,
+      "true_spread_m3": 132976.33056640625,
+      "spread_ratio": 0.02954787848555564,
+      "rank": -0.01652173913043478,
+      "sign": 0.7083333333333334,
+      "top1": false
+    },
+    "D3": {
+      "predicted_spread_m3": 53524.0615234375,
+      "true_spread_m3": 111030.40625,
+      "spread_ratio": 0.48206669984545336,
+      "rank": 0.5714285714285715,
+      "sign": 1.0,
+      "top1": false
+    }
+  },
+  "micro_12_group": {
+    "D2": {
+      "mean_predicted_spread_m3": 3772.5,
+      "mean_true_spread_m3": 27771.166666666668,
+      "mean_spread_ratio": 0.163,
+      "mean_rank": 0.04492753623188406,
+      "mean_sign": 0.4236111111111111,
+      "top1": "0/6"
+    },
+    "D3": {
+      "mean_predicted_spread_m3": 35690.0,
+      "mean_true_spread_m3": 375543.5,
+      "mean_spread_ratio": 0.145,
+      "mean_rank": -0.015873015873015872,
+      "mean_sign": 0.6458333333333334,
+      "top1": "1/6"
+    }
+  },
+  "verdict": "AMBER",
+  "ready_for_active_step2_trainer": false,
+  "ready_for_full_train_only_smoke": false,
+  "ready_for_formal": false,
+  "need_new_swmm": false
+}

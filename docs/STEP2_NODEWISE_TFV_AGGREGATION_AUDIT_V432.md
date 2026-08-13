@@ -1,0 +1,124 @@
+# STEP2 NODEWISE TFV AGGREGATION AUDIT V4.3.2
+
+```json
+{
+  "contract": "STEP2_NODEWISE_TFV_AGGREGATION_AUDIT_V432",
+  "old_pooling": "node_latent.mean(dim=node) -> scalar direct TFV",
+  "new_pooling": "causal per-node signed contribution -> sum over time and nodes",
+  "max_over_mean_reference": null,
+  "variant_results": {
+    "A_global_mean_summed": {
+      "nodewise_tfv": false,
+      "d3": {
+        "groups": 6,
+        "spread_ratio": 0.6124728531132703,
+        "rank": 0.43253968253968256,
+        "pairwise": 0.630952380952381,
+        "sign": 0.7708333333333334,
+        "top1": 1,
+        "mean_regret_m3": 124145.04166666667,
+        "max_regret_m3": 372115.0
+      },
+      "d3_magnitude_strata": {
+        "small": {
+          "count": 15,
+          "mae_m3": 49293.81627604167,
+          "bias_m3": -42356.310286458334,
+          "response_ratio": 2.45752425512491,
+          "rank": 0.6749999999999999,
+          "pairwise": 0.7833333333333333,
+          "sign": 0.7333333333333333
+        },
+        "medium": {
+          "count": 12,
+          "mae_m3": 41041.804524739586,
+          "bias_m3": 15427.40869140625,
+          "response_ratio": 0.64137878661255,
+          "rank": -0.2666666666666666,
+          "pairwise": 0.3333333333333333,
+          "sign": 0.75
+        },
+        "large": {
+          "count": 21,
+          "mae_m3": 164570.96382068453,
+          "bias_m3": -30749.57691592262,
+          "response_ratio": 0.3176303987118747,
+          "rank": 0.25999999999999995,
+          "pairwise": 0.6,
+          "sign": 0.8095238095238095
+        }
+      }
+    },
+    "B_nodewise_summed": {
+      "nodewise_tfv": true,
+      "d3": {
+        "groups": 1,
+        "spread_ratio": 520.8381844484322,
+        "rank": 0.261904761904762,
+        "pairwise": 0.6071428571428571,
+        "sign": 1.0,
+        "top1": 0,
+        "mean_regret_m3": 8404.5,
+        "max_regret_m3": 8404.5
+      },
+      "d3_magnitude_strata": {}
+    },
+    "C_global_mean_surgery": {
+      "nodewise_tfv": false,
+      "d3": {
+        "groups": 6,
+        "spread_ratio": 0.6246892049038952,
+        "rank": 0.43253968253968256,
+        "pairwise": 0.630952380952381,
+        "sign": 0.75,
+        "top1": 1,
+        "mean_regret_m3": 124145.04166666667,
+        "max_regret_m3": 372115.0
+      },
+      "d3_magnitude_strata": {
+        "small": {
+          "count": 15,
+          "mae_m3": 46508.23385416667,
+          "bias_m3": -38640.4859375,
+          "response_ratio": 2.349482939537957,
+          "rank": 0.6749999999999999,
+          "pairwise": 0.7833333333333333,
+          "sign": 0.7333333333333333
+        },
+        "medium": {
+          "count": 12,
+          "mae_m3": 42484.609375,
+          "bias_m3": 20486.252604166668,
+          "response_ratio": 0.6123534074171365,
+          "rank": -0.2666666666666666,
+          "pairwise": 0.3333333333333333,
+          "sign": 0.6666666666666666
+        },
+        "large": {
+          "count": 21,
+          "mae_m3": 165704.75093005953,
+          "bias_m3": -26660.79334077381,
+          "response_ratio": 0.30129856649347253,
+          "rank": 0.25999999999999995,
+          "pairwise": 0.6,
+          "sign": 0.8095238095238095
+        }
+      }
+    },
+    "D_nodewise_surgery": {
+      "nodewise_tfv": true,
+      "d3": {
+        "groups": 1,
+        "spread_ratio": 520.8555610705968,
+        "rank": 0.261904761904762,
+        "pairwise": 0.6071428571428571,
+        "sign": 1.0,
+        "top1": 0,
+        "mean_regret_m3": 8404.5,
+        "max_regret_m3": 8404.5
+      },
+      "d3_magnitude_strata": {}
+    }
+  }
+}
+```

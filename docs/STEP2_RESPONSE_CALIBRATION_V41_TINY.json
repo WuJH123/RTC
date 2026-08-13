@@ -1,0 +1,77 @@
+{
+  "contract": "STEP2_RESPONSE_CALIBRATION_V41_TINY_EVIDENCE",
+  "status": "D2_D3_COMBINED_PASS",
+  "boundary": {
+    "scientific_split": "development",
+    "development_fold": "train",
+    "swmm_launched": false,
+    "d2_regenerated": false,
+    "d3_regenerated": false,
+    "validation_outcomes_accessed": false,
+    "final_accessed": false,
+    "formal_step2_run": false,
+    "full_train_smoke_run": false,
+    "closed_loop_run": false,
+    "precision": "fp32"
+  },
+  "full_train_scale_manifest_sha256": "7c69211823f5419a7fabcae03c68f6578b364d1f948f0dbfd76534c0cc48f20d",
+  "scale_census": {
+    "D2_groups": 144,
+    "D2_candidates": 3456,
+    "D2_delta_tfv_rms_m3": 8885.9140625,
+    "D3_groups": 144,
+    "D3_candidates": 1152,
+    "D3_delta_tfv_rms_m3": 117846.578125
+  },
+  "old_v4_d2": {
+    "predicted_spread_m3": 3929.16845703125,
+    "sampled_rate_surrogate_spread_m3": 132976.33056640625,
+    "reported_surrogate_spread_ratio": 0.02954787848555564,
+    "authoritative_exact_spread_m3": 17732.0,
+    "authoritative_exact_spread_ratio": 0.2215863104574357
+  },
+  "tiny": {
+    "D2": {
+      "spread_ratio": 1.1939814847450936,
+      "rank": 0.9867306865151323,
+      "pairwise": 0.967032967032967,
+      "sign": 0.9565217391304348,
+      "top1": true,
+      "regret_m3": 0.0,
+      "verdict": "PASS"
+    },
+    "D3": {
+      "spread_ratio": 1.6085802242288487,
+      "rank": 0.9761904761904763,
+      "pairwise": 0.9642857142857143,
+      "sign": 0.875,
+      "top1": true,
+      "regret_m3": 0.0,
+      "additive_spread_m3": 93619.8125,
+      "interaction_residual_spread_m3": 177249.4609375,
+      "verdict": "PASS"
+    }
+  },
+  "combined": {
+    "D2": {
+      "spread_ratio": 1.3956519397311358,
+      "rank": 0.9823800221125084,
+      "pairwise": 0.9633699633699634,
+      "sign": 0.9130434782608695,
+      "top1": true,
+      "regret_m3": 0.0,
+      "verdict": "PASS"
+    },
+    "D3": {
+      "spread_ratio": 2.1724341270750345,
+      "rank": 0.8571428571428572,
+      "pairwise": 0.8928571428571429,
+      "sign": 0.875,
+      "top1": true,
+      "regret_m3": 0.0,
+      "verdict": "PASS"
+    }
+  },
+  "physical_flooding_negative_fraction": 0.0,
+  "next_bounded_action": "unchanged frozen 12-group development/train micro"
+}

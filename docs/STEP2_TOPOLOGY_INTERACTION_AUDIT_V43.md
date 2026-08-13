@@ -1,0 +1,115 @@
+# STEP2 TOPOLOGY INTERACTION AUDIT V4.3
+
+```json
+{
+  "contract": "STEP2_TOPOLOGY_INTERACTION_AUDIT_V43",
+  "graph_contract": {
+    "node_count": 932,
+    "edge_count": 2420,
+    "directed_contract": "bidirectional",
+    "reverse_edge_count": 2420,
+    "self_loop_count": 0,
+    "duplicate_edge_count": 0,
+    "isolated_node_count": 0,
+    "edge_index_used_by_forward": true
+  },
+  "old_v4_2_1_topology_active": false,
+  "old_v4_2_1_edge_ablation_max_abs_m3": 0.0,
+  "v4_3_topology_active": true,
+  "topology_ablation": {
+    "normal": {
+      "groups": 6,
+      "spread_ratio": 0.5045575758290036,
+      "rank": 0.21031746031746035,
+      "pairwise": 0.5892857142857143,
+      "sign": 0.8125,
+      "top1": 2,
+      "mean_regret_m3": 50019.291666666664,
+      "max_regret_m3": 162405.75
+    },
+    "ablated": {
+      "groups": 6,
+      "spread_ratio": 0.4946208051207716,
+      "rank": 0.1785714285714286,
+      "pairwise": 0.5714285714285715,
+      "sign": 0.7291666666666666,
+      "top1": 2,
+      "mean_regret_m3": 50019.291666666664,
+      "max_regret_m3": 162405.75
+    },
+    "delta_rank": 0.031746031746031744,
+    "delta_pairwise": 0.017857142857142794,
+    "delta_spread": 0.009936770708232012,
+    "delta_mean_regret_m3": 0.0,
+    "prediction_change_max_abs_m3": 42251.75
+  },
+  "state_context_ablation": {
+    "normal": {
+      "groups": 6,
+      "spread_ratio": 0.5045575625451681,
+      "rank": 0.21031746031746035,
+      "pairwise": 0.5892857142857143,
+      "sign": 0.8125,
+      "top1": 2,
+      "mean_regret_m3": 50019.291666666664,
+      "max_regret_m3": 162405.75
+    },
+    "global_context_ablated": {
+      "groups": 6,
+      "spread_ratio": 0.5045577425646477,
+      "rank": 0.21031746031746035,
+      "pairwise": 0.5892857142857143,
+      "sign": 0.8125,
+      "top1": 2,
+      "mean_regret_m3": 50019.291666666664,
+      "max_regret_m3": 162405.75
+    },
+    "delta_rank": 0.0,
+    "delta_pairwise": 0.0,
+    "delta_mean_regret_m3": 0.0,
+    "prediction_change_max_abs_m3": 2.03125
+  },
+  "topology_gradient": {
+    "changed_actuator_gradient_nonzero_fraction": 1.0,
+    "gradient_finite_fraction": 0.9999999403953552,
+    "active_actuator_count": 109,
+    "endpoint_node_count": 117,
+    "response_by_topological_distance": {
+      "0": {
+        "node_count": 117,
+        "mean_abs_interaction_response": 6.622970104217529,
+        "max_abs_interaction_response": 96.34546661376953
+      },
+      "1": {
+        "node_count": 128,
+        "mean_abs_interaction_response": 2.5537095069885254,
+        "max_abs_interaction_response": 8.370548248291016
+      },
+      "2": {
+        "node_count": 89,
+        "mean_abs_interaction_response": 2.3460140228271484,
+        "max_abs_interaction_response": 10.856837272644043
+      },
+      "3": {
+        "node_count": 93,
+        "mean_abs_interaction_response": 2.23085618019104,
+        "max_abs_interaction_response": 11.20804500579834
+      }
+    },
+    "network_response_magnitude": 2.606915235519409,
+    "all_nodes_nearly_identical": false
+  },
+  "local_hydraulic_state_conditioning": true,
+  "zero_single_multi_invariants": {
+    "zero_action_exact_zero": true,
+    "single_action_interaction_exact_zero": true,
+    "multi_action_interaction_nonzero": true,
+    "future_action_cannot_affect_past": true,
+    "gradient_finite": true,
+    "gradient_nonzero": true,
+    "nonnegative_candidate_flooding": true,
+    "head_depth_consistency": true,
+    "horizon_steps": 72
+  }
+}
+```

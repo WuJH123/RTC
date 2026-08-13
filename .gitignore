@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.cache/
+cache/
+
+# Local model/data products are evidence artifacts, not source.
+*.pt
+*.pth
+*.ckpt
+*.trainstate.*
+*.npz
+*.npy
