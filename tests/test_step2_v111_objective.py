@@ -103,7 +103,7 @@ def test_v111_inactive_floor_does_not_create_unbounded_gradient():
     loss, _active, _inactive = _balanced_direct(pred, truth, scale, threshold)
     loss.backward()
     assert bool(torch.isfinite(pred.grad).all())
-    assert float(pred.grad.abs().max()) < 1.0
+    assert float(pred.grad.abs().max()) <= 1.0 + 1.0e-6
 
 
 def test_v111_inactive_volume_floor_keeps_a_bounded_nonzero_penalty():
@@ -114,4 +114,4 @@ def test_v111_inactive_volume_floor_keeps_a_bounded_nonzero_penalty():
     loss, _active, _inactive = _balanced_direct(pred, truth, scale, threshold)
     loss.backward()
     assert float(loss.detach()) > 0.0
-    assert 0.0 < float(pred.grad.abs().mean()) < 100.0
+    assert 0.0 < float(pred.grad.abs().mean()) <= 1.0 + 1.0e-6
