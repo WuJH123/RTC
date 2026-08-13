@@ -121,13 +121,40 @@ def _integrated_positive_flood_m3(
     return (0.5 * (values[:, :, 1:] + values[:, :, :-1]) * dt[None, None, :, None]).sum(dim=2)
 
 
+def _deterministic_warm_start(
+    temporal_basis_count: int,
+    group_count: int,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+    amplitude: float = 1.0e-3,
+) -> torch.Tensor:
+    """Leave V7's exact-zero branch so gradient-based MPC can start moving.
+
+    V7 intentionally forces candidate==reference to exact zero with ``torch.where``.
+    Starting the optimiser at exactly zero coefficients would therefore select a
+    constant-zero graph branch and can yield a zero action gradient.  This tiny,
+    deterministic, sign-balanced perturbation is an optimiser initialisation only;
+    it is not executed unless the final candidate passes the improvement gate.
+    """
+    count = int(temporal_basis_count) * int(group_count)
+    if count <= 0 or amplitude <= 0:
+        raise ValueError("V11 MPC warm start requires positive dimensions/amplitude")
+    seed = torch.linspace(-1.0, 1.0, count, device=device, dtype=dtype)
+    if count == 1:
+        seed = torch.ones_like(seed)
+    seed = seed.reshape(1, 1, int(temporal_basis_count), int(group_count))
+    return float(amplitude) * seed
+
+
 class V7V11RollingMPC:
     """Lexicographic V7/V11 MPC on the frozen low-dimensional control basis.
 
     Stage 1 minimizes robust V7 Delta-TFV. Stage 2 may move only inside a V7
-    near-optimal envelope and minimizes V11-predicted *positive local flood
-    deterioration*. This preserves TFV-first semantics while making V11 useful
-    to distinguish hydraulically safer near-equivalent control sequences.
+    near-optimal envelope and minimizes V11-predicted positive priority-site flood
+    deterioration. This preserves the frozen TFV-first / priority-secondary
+    semantics while making V11 useful to distinguish hydraulically safer
+    near-equivalent control sequences.
     """
 
     def __init__(
@@ -145,7 +172,7 @@ class V7V11RollingMPC:
         near_opt_penalty: float = 1.0e4,
         movement_tiebreak: float = 1.0e-6,
         min_predicted_tfv_improvement_m3: float = 0.0,
-        hydraulic_secondary_iterations: int = 8,
+        hydraulic_secondary_iterations: int | None = None,
     ) -> None:
         basis.validate()
         normalization.validate()
@@ -157,7 +184,7 @@ class V7V11RollingMPC:
             raise ValueError("V11 MPC penalty/tiebreak values are invalid")
         if min_predicted_tfv_improvement_m3 < 0:
             raise ValueError("V11 MPC minimum improvement must be non-negative")
-        if hydraulic_secondary_iterations < 0:
+        if hydraulic_secondary_iterations is not None and hydraulic_secondary_iterations < 0:
             raise ValueError("V11 MPC secondary iterations must be non-negative")
         self.model = _V7V11Stack(value_model, hydraulic_model)
         for parameter in self.model.parameters():
@@ -172,7 +199,9 @@ class V7V11RollingMPC:
         self.near_opt_penalty = float(near_opt_penalty)
         self.movement_tiebreak = float(movement_tiebreak)
         self.min_predicted_tfv_improvement_m3 = float(min_predicted_tfv_improvement_m3)
-        self.hydraulic_secondary_iterations = int(hydraulic_secondary_iterations)
+        self.hydraulic_secondary_iterations = (
+            None if hydraulic_secondary_iterations is None else int(hydraulic_secondary_iterations)
+        )
         self.runtime_contract = V110_MPC_RUNTIME_CONTRACT
 
     def _expand_boundary(
@@ -236,8 +265,12 @@ class V7V11RollingMPC:
         node_positive = _integrated_positive_flood_m3(
             output.raw_delta_states_physical[..., 2], output.response_minutes
         )
-        scenario_total = node_positive.sum(dim=-1)[:, 0]
-        robust = _upper_tail_cvar(scenario_total, self.tfv_cvar_alpha)
+        if self.priority_indices is None or not self.priority_indices.numel():
+            robust = node_positive.new_tensor(0.0)
+        else:
+            p = self.priority_indices.to(node_positive.device)
+            scenario_priority = node_positive.index_select(-1, p).sum(dim=-1)[:, 0]
+            robust = _upper_tail_cvar(scenario_priority, self.tfv_cvar_alpha)
         return robust, output, node_positive[:, 0]
 
     def optimize(
@@ -281,10 +314,14 @@ class V7V11RollingMPC:
             initial_state, rainfall_scenarios, fallback_settings, previous_actuator_flow
         )
         device, dtype = initial.device, initial.dtype
-        coefficients = nn.Parameter(torch.zeros(
-            1, 1, self.basis.temporal_basis_count, self.basis.group_count,
-            device=device, dtype=dtype,
-        ))
+        coefficients = nn.Parameter(
+            _deterministic_warm_start(
+                self.basis.temporal_basis_count,
+                self.basis.group_count,
+                device=device,
+                dtype=dtype,
+            )
+        )
         optimizer = torch.optim.Adam([coefficients], lr=float(learning_rate))
         current = current_settings.reshape(-1).to(device=device, dtype=dtype)
 
@@ -294,22 +331,33 @@ class V7V11RollingMPC:
         with torch.no_grad():
             fallback_candidate = reference[:, None]
             fallback_delta, _ = self._value(initial, rainfall, reference, previous, fallback_candidate)
-            best_coeff = coefficients.detach().clone()
+            best_coeff: torch.Tensor | None = None
             best_primary = float(fallback_delta)
 
-        primary_iterations = max(1, int(iterations) - self.hydraulic_secondary_iterations)
+        default_primary = max(1, int(round(int(iterations) * 0.7)))
+        if self.hydraulic_secondary_iterations is None:
+            primary_iterations = default_primary
+            secondary_iterations = max(0, int(iterations) - primary_iterations)
+        else:
+            secondary_iterations = min(int(iterations) - 1, self.hydraulic_secondary_iterations)
+            primary_iterations = max(1, int(iterations) - secondary_iterations)
+        if self.priority_indices is None or not self.priority_indices.numel():
+            secondary_iterations = 0
+            primary_iterations = int(iterations)
+
         for _ in range(primary_iterations):
             optimizer.zero_grad(set_to_none=True)
             candidate = self._candidate_from_coefficients(reference, coefficients)
             value, _ = self._value(initial, rainfall, reference, previous, candidate)
-            candidate_coeff = coefficients.detach().clone()
             loss = value + self.movement_tiebreak * movement(candidate)
             if not bool(torch.isfinite(loss)):
                 break
             if float(value.detach()) < best_primary:
                 best_primary = float(value.detach())
-                best_coeff = candidate_coeff
+                best_coeff = coefficients.detach().clone()
             loss.backward()
+            if coefficients.grad is None or not bool(torch.isfinite(coefficients.grad).all()):
+                break
             optimizer.step()
             with torch.no_grad():
                 coefficients.clamp_(
@@ -318,9 +366,23 @@ class V7V11RollingMPC:
                 )
 
         with torch.no_grad():
-            coefficients.copy_(best_coeff)
-            primary_candidate = self._candidate_from_coefficients(reference, coefficients)
-            primary_value, _ = self._value(initial, rainfall, reference, previous, primary_candidate)
+            candidate = self._candidate_from_coefficients(reference, coefficients)
+            tail_value, _ = self._value(initial, rainfall, reference, previous, candidate)
+            if float(tail_value) < best_primary:
+                best_primary = float(tail_value)
+                best_coeff = coefficients.detach().clone()
+            if best_coeff is None:
+                # No strictly better candidate was discovered. The final
+                # admissibility gate will therefore fall back instead of executing
+                # the deterministic warm-start perturbation.
+                primary_candidate = reference[:, None]
+                primary_value = fallback_delta
+            else:
+                coefficients.copy_(best_coeff)
+                primary_candidate = self._candidate_from_coefficients(reference, coefficients)
+                primary_value, _ = self._value(
+                    initial, rainfall, reference, previous, primary_candidate
+                )
             allowed = (
                 primary_value
                 + self.tfv_near_opt_absolute_m3
@@ -329,45 +391,50 @@ class V7V11RollingMPC:
             primary_hydraulic, _, _ = self._hydraulic(
                 initial, rainfall, reference, previous, primary_candidate
             )
-            best_secondary_coeff = coefficients.detach().clone()
+            best_secondary_coeff = None if best_coeff is None else best_coeff.clone()
             best_secondary_hydraulic = float(primary_hydraulic)
             best_secondary_value = float(primary_value)
 
-        for _ in range(self.hydraulic_secondary_iterations):
-            optimizer.zero_grad(set_to_none=True)
-            candidate = self._candidate_from_coefficients(reference, coefficients)
-            value, _ = self._value(initial, rainfall, reference, previous, candidate)
-            hydraulic, _, _ = self._hydraulic(
-                initial, rainfall, reference, previous, candidate
-            )
-            candidate_coeff = coefficients.detach().clone()
-            loss = (
-                hydraulic
-                + self.near_opt_penalty * torch.relu(value - allowed).square()
-                + self.movement_tiebreak * movement(candidate)
-            )
-            if not bool(torch.isfinite(loss)):
-                break
-            if float(value.detach()) <= float(allowed) + 1.0e-6:
-                h = float(hydraulic.detach())
-                v = float(value.detach())
-                if h < best_secondary_hydraulic - 1.0e-9 or (
-                    abs(h - best_secondary_hydraulic) <= 1.0e-9 and v < best_secondary_value
-                ):
-                    best_secondary_hydraulic = h
-                    best_secondary_value = v
-                    best_secondary_coeff = candidate_coeff
-            loss.backward()
-            optimizer.step()
-            with torch.no_grad():
-                coefficients.clamp_(
-                    -float(self.basis.contract.coefficient_limit),
-                    float(self.basis.contract.coefficient_limit),
+        if best_coeff is not None:
+            for _ in range(secondary_iterations):
+                optimizer.zero_grad(set_to_none=True)
+                candidate = self._candidate_from_coefficients(reference, coefficients)
+                value, _ = self._value(initial, rainfall, reference, previous, candidate)
+                hydraulic, _, _ = self._hydraulic(
+                    initial, rainfall, reference, previous, candidate
                 )
+                loss = (
+                    hydraulic
+                    + self.near_opt_penalty * torch.relu(value - allowed).square()
+                    + self.movement_tiebreak * movement(candidate)
+                )
+                if not bool(torch.isfinite(loss)):
+                    break
+                if float(value.detach()) <= float(allowed) + 1.0e-6:
+                    h = float(hydraulic.detach())
+                    v = float(value.detach())
+                    if h < best_secondary_hydraulic - 1.0e-9 or (
+                        abs(h - best_secondary_hydraulic) <= 1.0e-9 and v < best_secondary_value
+                    ):
+                        best_secondary_hydraulic = h
+                        best_secondary_value = v
+                        best_secondary_coeff = coefficients.detach().clone()
+                loss.backward()
+                if coefficients.grad is None or not bool(torch.isfinite(coefficients.grad).all()):
+                    break
+                optimizer.step()
+                with torch.no_grad():
+                    coefficients.clamp_(
+                        -float(self.basis.contract.coefficient_limit),
+                        float(self.basis.contract.coefficient_limit),
+                    )
 
         with torch.no_grad():
-            coefficients.copy_(best_secondary_coeff)
-            candidate = self._candidate_from_coefficients(reference, coefficients)
+            if best_secondary_coeff is None:
+                candidate = reference[:, None]
+            else:
+                coefficients.copy_(best_secondary_coeff)
+                candidate = self._candidate_from_coefficients(reference, coefficients)
             final_value, _ = self._value(initial, rainfall, reference, previous, candidate)
             _, hydraulic_output, node_positive = self._hydraulic(
                 initial, rainfall, reference, previous, candidate
@@ -378,8 +445,17 @@ class V7V11RollingMPC:
             if torch.any(settings < -1.0e-6) or torch.any(settings > 1.0 + 1.0e-6):
                 raise RuntimeError("V11 MPC produced settings outside [0,1]")
 
-            threshold = self.min_predicted_tfv_improvement_m3
-            candidate_valid = bool(torch.isfinite(final_value) and float(final_value) <= -threshold)
+            predicted_improvement = float(fallback_delta - final_value)
+            numeric_margin = max(
+                1.0e-6,
+                1.0e-9 * max(abs(float(fallback_delta)), 1.0),
+            )
+            required_improvement = self.min_predicted_tfv_improvement_m3
+            candidate_valid = bool(
+                best_secondary_coeff is not None
+                and torch.isfinite(final_value).item()
+                and predicted_improvement >= required_improvement + numeric_margin
+            )
             p_positive = 0.0
             if self.priority_indices is not None and self.priority_indices.numel():
                 p = self.priority_indices.to(node_positive.device)
@@ -406,4 +482,6 @@ __all__ = [
     "RuntimeNormalizationV110",
     "V110_MPC_RUNTIME_CONTRACT",
     "V7V11RollingMPC",
+    "_deterministic_warm_start",
+    "_integrated_positive_flood_m3",
 ]
