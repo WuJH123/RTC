@@ -27,8 +27,12 @@ class V111LossContract:
     micro_groups: int = 12
     canonical_max_epochs: int = 12
     canonical_patience: int = 3
-    learning_rate: float = 2.0e-4
-    weight_decay: float = 1.0e-4
+    # V111 uses the already-established FP32 AdamW scale from the supported
+    # V7 training contract.  This is a single preregistered value, not a
+    # holdout-tuned sweep; the gradient audit showed 2e-4 left the direct head
+    # effectively at its zero anchor over the fixed mechanism schedule.
+    learning_rate: float = 1.0e-3
+    weight_decay: float = 1.0e-5
     grad_clip: float = 1.0
     seed: int = 42
 
@@ -44,8 +48,8 @@ class V111LossContract:
             "micro_groups": 12,
             "canonical_max_epochs": 12,
             "canonical_patience": 3,
-            "learning_rate": 2.0e-4,
-            "weight_decay": 1.0e-4,
+            "learning_rate": 1.0e-3,
+            "weight_decay": 1.0e-5,
             "grad_clip": 1.0,
             "seed": 42,
         }
