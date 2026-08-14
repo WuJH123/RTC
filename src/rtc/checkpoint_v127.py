@@ -12,8 +12,40 @@ from .step2_differentiable_v127 import (
     ControlOrientedDifferentiableSurrogateV127,
     V127_STEP2_CONTRACT,
 )
+from .step2_train_response_v60 import InputNormalizationV60
 
-V127_CHECKPOINT_CONTRACT = "PROJECT7_V127_STEP2_CHECKPOINT_V1_CODE_BOUND"
+V127_CHECKPOINT_CONTRACT = "PROJECT7_V127_STEP2_CHECKPOINT_V2_CAUSAL_INPUT_BOUND"
+
+
+def _normalization_payload(value: InputNormalizationV60) -> dict[str, torch.Tensor]:
+    return {
+        "state_mean": torch.as_tensor(value.state_mean, dtype=torch.float32).cpu(),
+        "state_std": torch.as_tensor(value.state_std, dtype=torch.float32).cpu(),
+        "rainfall_mean": torch.as_tensor(value.rainfall_mean, dtype=torch.float32).cpu(),
+        "rainfall_std": torch.as_tensor(value.rainfall_std, dtype=torch.float32).cpu(),
+        "flow_mean": torch.as_tensor(value.flow_mean, dtype=torch.float32).cpu(),
+        "flow_std": torch.as_tensor(value.flow_std, dtype=torch.float32).cpu(),
+    }
+
+
+def input_normalization_from_v127_checkpoint(payload: dict[str, Any]) -> InputNormalizationV60:
+    raw = payload.get("input_normalization")
+    if not isinstance(raw, dict):
+        raise ValueError("V127 Step2 checkpoint lacks causal input_normalization")
+    required = {"state_mean", "state_std", "rainfall_mean", "rainfall_std", "flow_mean", "flow_std"}
+    missing = sorted(required - set(raw))
+    if missing:
+        raise ValueError(f"V127 Step2 checkpoint normalization missing {missing}")
+    arrays = {name: torch.as_tensor(raw[name]).detach().cpu().numpy().astype(np.float32) for name in required}
+    if any(not np.isfinite(value).all() for value in arrays.values()):
+        raise ValueError("V127 checkpoint normalization contains non-finite values")
+    if np.any(arrays["state_std"] <= 0) or np.any(arrays["rainfall_std"] <= 0) or np.any(arrays["flow_std"] <= 0):
+        raise ValueError("V127 checkpoint normalization contains non-positive standard deviation")
+    return InputNormalizationV60(
+        arrays["state_mean"], arrays["state_std"],
+        arrays["rainfall_mean"], arrays["rainfall_std"],
+        arrays["flow_mean"], arrays["flow_std"],
+    )
 
 
 def save_step2_v127(
@@ -21,6 +53,7 @@ def save_step2_v127(
     *,
     model: ControlOrientedDifferentiableSurrogateV127,
     graph: Any,
+    input_normalization: InputNormalizationV60,
     training_report: dict[str, Any],
     lineage: dict[str, Any],
 ) -> Path:
@@ -45,6 +78,7 @@ def save_step2_v127(
             "free_control_horizon_steps": 24,
             "time_contract": "PROJECT7_V127_300S_MODEL_600S_RECEDING_CONTROL_V1",
         },
+        "input_normalization": _normalization_payload(input_normalization),
         "state_dict": model.state_dict(),
         "training_report": training_report,
         "lineage": lineage,
@@ -74,6 +108,7 @@ def load_step2_v127(
         raise ValueError("V127 Step2 checkpoint is not development-lineage")
     if require_current_code and payload.get("rtc_implementation_contract_sha256") != rtc_implementation_contract_sha256():
         raise ValueError("V127 Step2 checkpoint was trained under another implementation contract")
+    _ = input_normalization_from_v127_checkpoint(payload)
     raw = payload.get("model_config")
     if not isinstance(raw, dict):
         raise ValueError("V127 Step2 checkpoint lacks model_config")
@@ -124,4 +159,9 @@ def load_step2_v127(
     return model.to(target).eval(), payload
 
 
-__all__ = ["V127_CHECKPOINT_CONTRACT", "load_step2_v127", "save_step2_v127"]
+__all__ = [
+    "V127_CHECKPOINT_CONTRACT",
+    "input_normalization_from_v127_checkpoint",
+    "load_step2_v127",
+    "save_step2_v127",
+]
