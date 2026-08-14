@@ -88,6 +88,7 @@ def main() -> None:
     basis = build_control_basis_v60(graph)
     normalization = derive_causal_input_normalization_v123(base, store, fit)
     broad_scales = derive_target_scales_v70(base, fit)
+    runtime_tfv_scale = float(broad_scales.direct_tfv_scale_m3)
     device = args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"
     prepared = prepare_static_v60(graph, device)
     first = base.entry(fit_d2[0]).arrays
@@ -98,7 +99,7 @@ def main() -> None:
         actuator_count=len(graph.actuator_ids),
         temporal_basis=basis.temporal_basis,
         control_block_steps=basis.horizon.control_block_steps,
-        tfv_scale_m3=float(broad_scales.direct_tfv_scale_m3),
+        tfv_scale_m3=runtime_tfv_scale,
         hidden_dim=96,
         actuator_embedding_dim=16,
         attention_heads=4,
@@ -129,7 +130,8 @@ def main() -> None:
         ),
     }
 
-    # Stage C: decision-task fine-tune. The scale is derived from D4-FIT truth only.
+    # Stage C: decision-task fine-tune. This local loss scale does not alter the model's
+    # physical output transform; runtime must keep using the broad V124 TFV scale.
     local_scale = derive_anchor_tfv_scale_v126(d4_fit, fit_d4)
     fine_contract = AnchorFineTuneContractV126()
     d4_history = train_anchor_advantage_finetune_v126(
@@ -178,8 +180,9 @@ def main() -> None:
             "hidden_dim": 96,
             "attention_heads": 4,
             "listwise_weight": 0.30,
-            "broad_tfv_scale_m3": float(broad_scales.direct_tfv_scale_m3),
-            "d4_local_tfv_scale_m3": float(local_scale),
+            "target_scale_tfv_m3": runtime_tfv_scale,
+            "broad_tfv_scale_m3": runtime_tfv_scale,
+            "d4_local_loss_scale_m3": float(local_scale),
             "d4_fit_cache_sha256": hashlib.sha256(Path(args.d4_fit_cache).read_bytes()).hexdigest(),
         },
         checkpoint,
@@ -193,8 +196,9 @@ def main() -> None:
         "scientific_change": "source-aware sequential curriculum; no architecture/seed sweep",
         "broad_stage": "D2 then targeted D3 using frozen V124 objective",
         "decision_stage": "D4-FIT-only anchor-advantage fine-tune",
-        "broad_tfv_scale_m3": float(broad_scales.direct_tfv_scale_m3),
-        "d4_local_tfv_scale_m3": float(local_scale),
+        "target_scale_tfv_m3": runtime_tfv_scale,
+        "broad_tfv_scale_m3": runtime_tfv_scale,
+        "d4_local_loss_scale_m3": float(local_scale),
         "fit_counts": {
             "d2_groups": len(fit_d2),
             "d2_branches": _branches(base, fit_d2),
@@ -243,7 +247,8 @@ def main() -> None:
             [
                 "# Project7 Step2 V126 source-aware curriculum",
                 "",
-                f"D4 local TFV scale (FIT-only): {local_scale:.3f} m3",
+                f"Runtime TFV transform scale: {runtime_tfv_scale:.3f} m3",
+                f"D4 local loss scale (FIT-only): {local_scale:.3f} m3",
                 f"D4-AUDIT rank before fine-tune: {audit_before['rank']:.4f}",
                 f"D4-AUDIT rank after fine-tune: {audit_after['rank']:.4f}",
                 f"D4-AUDIT pairwise after fine-tune: {audit_after['pairwise']:.4f}",
