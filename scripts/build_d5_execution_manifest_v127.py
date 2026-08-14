@@ -164,13 +164,6 @@ def build_manifest(
             if direction_fraction_json not in {"", "nan"}:
                 raise ValueError("V127 D5 center unexpectedly carries a direction")
         else:
-            direction = _fractions(
-                direction_fraction_json,
-                len(actuator_ids),
-                label="direction fractions",
-            )
-            # Direction components are signed and therefore are not [0,1]; _fractions is
-            # only for bounded variables. Re-parse with the appropriate contract here.
             direction = np.asarray(json.loads(direction_fraction_json), dtype=np.float32)
             if direction.shape != (12, len(actuator_ids)) or not np.isfinite(direction).all():
                 raise ValueError("V127 D5 direction must be finite 12 x actuator_count")
