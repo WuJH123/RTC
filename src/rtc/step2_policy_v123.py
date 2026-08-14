@@ -1,7 +1,7 @@
 """V12.3 finite shooting policy: TFV primary, PFV soft, first-move rich.
 
-This is intentionally still a finite policy.  Continuous coefficient optimisation is
-not enabled until the existing authoritative SWMM gradient gate passes.
+This remains intentionally finite.  Continuous coefficient optimisation is not enabled
+until the separate authoritative gradient gate passes.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from .step2_policy_v120 import RuntimeNormalizationV120, _project_executable_seq
 from .step3_candidates_v123 import FirstMoveCandidateDesignV123, candidate_coefficients_v123
 from .step3_objective_v123 import TFVPFVObjectiveV123, tfv_pfv_score_v123
 
-V123_POLICY_CONTRACT = "PROJECT7_V123_FIRST_MOVE_TFV_PRIMARY_PFV_SOFT_POLICY_V1"
+V123_POLICY_CONTRACT = "PROJECT7_V123_FIRST_MOVE_TFV_PRIMARY_PFV_SOFT_POLICY_V2"
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,15 @@ class FirstMoveTFVPFVResultV123:
     objective_score_m3_equivalent: float
     false_benefit_margin_m3: float
     scoring_projection_max: float
+    selected_group_score_m3: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.selected_group_score_m3 is None:
+            object.__setattr__(
+                self,
+                "selected_group_score_m3",
+                float(self.objective_score_m3_equivalent),
+            )
 
     @property
     def candidate_count(self) -> int:
@@ -46,9 +55,8 @@ class FirstMoveTFVPFVResultV123:
         return int(self.raw_candidate_count)
 
     @property
-    def selected_group_score_m3(self) -> float:
-        """Compatibility name for the combined score of the selected group."""
-        return float(self.objective_score_m3_equivalent)
+    def controller_source(self) -> str:
+        return "MPC_V123"
 
 
 class FirstMoveTFVPFVPolicyV123:
@@ -100,21 +108,39 @@ class FirstMoveTFVPFVPolicyV123:
             raise ValueError("V123 policy received incompatible state/rainfall shape")
         if fallback_settings.ndim != 3 or fallback_settings.shape[0] != 1:
             raise ValueError("V123 fallback settings must be [1,H,A]")
+        if fallback_settings.shape[1] != self.basis.horizon.horizon_steps:
+            raise ValueError("V123 fallback/value horizons differ")
         if current_settings is None:
             raise ValueError("V123 policy requires current-setting readback")
 
         actuator_count = self.basis.grouping.actuator_count
         current = current_settings.reshape(-1)
-        previous_target = None if previous_requested_settings is None else previous_requested_settings.reshape(-1)
-        if current.numel() != actuator_count or (previous_target is not None and previous_target.numel() != actuator_count):
+        previous_target = (
+            None
+            if previous_requested_settings is None
+            else previous_requested_settings.reshape(-1)
+        )
+        if current.numel() != actuator_count or (
+            previous_target is not None and previous_target.numel() != actuator_count
+        ):
             raise ValueError("V123 actuator readback count mismatch")
         if previous_actuator_flow is None:
-            previous_actuator_flow = torch.zeros(actuator_count, dtype=initial_state.dtype, device=initial_state.device)
+            previous_actuator_flow = torch.zeros(
+                actuator_count, dtype=initial_state.dtype, device=initial_state.device
+            )
         flow0 = previous_actuator_flow.reshape(-1)
+        if flow0.numel() != actuator_count:
+            raise ValueError("V123 previous actuator-flow count mismatch")
 
-        coeff = torch.as_tensor(self._coefficients, dtype=fallback_settings.dtype, device=fallback_settings.device)
+        coeff = torch.as_tensor(
+            self._coefficients,
+            dtype=fallback_settings.dtype,
+            device=fallback_settings.device,
+        )
         reference_one = fallback_settings
-        reference_for_candidates = reference_one[:, None].expand(1, coeff.shape[0], -1, -1)
+        reference_for_candidates = reference_one[:, None].expand(
+            1, coeff.shape[0], -1, -1
+        )
         candidate_one = self.basis.decode(reference_for_candidates, coeff[None])[0]
 
         frozen_delta = float(self.basis.contract.max_setting_delta_per_update)
@@ -131,12 +157,22 @@ class FirstMoveTFVPFVPolicyV123:
             candidate_one,
             current_settings=current,
             previous_requested_settings=previous_target,
-            min_settings=torch.as_tensor(self.basis.min_setting, dtype=candidate_one.dtype, device=candidate_one.device),
-            max_settings=torch.as_tensor(self.basis.max_setting, dtype=candidate_one.dtype, device=candidate_one.device),
+            min_settings=torch.as_tensor(
+                self.basis.min_setting,
+                dtype=candidate_one.dtype,
+                device=candidate_one.device,
+            ),
+            max_settings=torch.as_tensor(
+                self.basis.max_setting,
+                dtype=candidate_one.dtype,
+                device=candidate_one.device,
+            ),
             max_delta_per_update=runtime_delta,
             control_block_steps=int(self.basis.horizon.control_block_steps),
         )
-        if not torch.allclose(candidate_one[0], reference_one[0], rtol=0.0, atol=1.0e-7):
+        if not torch.allclose(
+            candidate_one[0], reference_one[0], rtol=0.0, atol=1.0e-7
+        ):
             raise RuntimeError("V123 engineering projection changed PASSIVE reference")
 
         scenarios = int(rainfall_scenarios.shape[0])
@@ -152,7 +188,8 @@ class FirstMoveTFVPFVPolicyV123:
             self.normalization.flow(flow),
             self.prepared,
         )
-        if output.delta_tfv_m3.shape != (scenarios, candidate_one.shape[0]):
+        expected_output = (scenarios, candidate_one.shape[0])
+        if output.delta_tfv_m3.shape != expected_output or output.delta_pfv_m3.shape != expected_output:
             raise RuntimeError("V123 Value output shape drift")
 
         block = int(self.basis.horizon.control_block_steps)
@@ -167,51 +204,94 @@ class FirstMoveTFVPFVPolicyV123:
         )
         score = scored["score_m3_equivalent"]
         tfv_risk = scored["tfv_risk_m3"]
-        if abs(float(tfv_risk[0].detach())) > 1.0e-5 or abs(float(scored["pfv_risk_m3"][0].detach())) > 1.0e-5:
+        pfv_risk = scored["pfv_risk_m3"]
+        if abs(float(tfv_risk[0].detach())) > 1.0e-5 or abs(
+            float(pfv_risk[0].detach())
+        ) > 1.0e-5:
             raise RuntimeError("V123 PASSIVE lost exact-zero TFV/PFV value")
 
-        rounded = torch.round(first / self.first_move_group_atol) * self.first_move_group_atol
+        rounded = (
+            torch.round(first / self.first_move_group_atol) * self.first_move_group_atol
+        )
         groups: dict[bytes, list[int]] = {}
         for index, row in enumerate(rounded.detach().cpu().numpy()):
             groups.setdefault(row.astype("float64").tobytes(), []).append(index)
         passive_indices = [
-            index for index in range(candidate_one.shape[0])
-            if bool(torch.allclose(first[index], reference_first, rtol=0.0, atol=self.first_move_group_atol))
+            index
+            for index in range(candidate_one.shape[0])
+            if bool(
+                torch.allclose(
+                    first[index],
+                    reference_first,
+                    rtol=0.0,
+                    atol=self.first_move_group_atol,
+                )
+            )
         ]
 
-        # Robustly summarize candidates that projection collapsed to the same executable
-        # first move. The representative closest to the median combined objective is kept.
-        records: list[tuple[int, float, float, bool]] = []
+        # Projection can collapse different future tails to the same command executable
+        # now.  Rank first-move groups by robust medians, then retain the sequence whose
+        # combined score is closest to that group median as a representative path.
+        records: list[dict[str, float | int | bool]] = []
         for indices in groups.values():
             passive = any(index in passive_indices for index in indices)
             if passive:
                 representative = next(index for index in indices if index in passive_indices)
-                records.append((representative, 0.0, 0.0, True))
+                records.append(
+                    {
+                        "representative": representative,
+                        "score": 0.0,
+                        "tfv_risk": 0.0,
+                        "pfv_risk": 0.0,
+                        "passive": True,
+                    }
+                )
                 continue
             values = score[indices]
             median_score = values.median()
             nearest = torch.argmin(torch.abs(values - median_score))
             representative = indices[int(nearest.item())]
-            median_tfv_risk = float(tfv_risk[indices].median().detach())
-            records.append((representative, float(median_score.detach()), median_tfv_risk, False))
+            records.append(
+                {
+                    "representative": representative,
+                    "score": float(median_score.detach()),
+                    "tfv_risk": float(tfv_risk[indices].median().detach()),
+                    "pfv_risk": float(pfv_risk[indices].median().detach()),
+                    "passive": False,
+                }
+            )
 
-        # Admission is evidence-aware: combined objective must improve and the TFV upper
-        # risk itself must beat a TrainFit-derived false-benefit margin. PFV remains soft.
+        # The TFV residual calibration is used exactly once: to establish that the TFV
+        # improvement remains beneficial after its one-sided error budget.  The combined
+        # TFV+soft-PFV objective only needs to beat PASSIVE (score < 0); applying the TFV
+        # residual margin to the combined score a second time would be double counting.
         eligible = [
-            item for item in records
-            if not item[3]
-            and item[1] < -self.false_benefit_margin_m3
-            and item[2] < -self.false_benefit_margin_m3
+            item
+            for item in records
+            if not bool(item["passive"])
+            and float(item["score"]) < 0.0
+            and float(item["tfv_risk"]) < -self.false_benefit_margin_m3
         ]
         if eligible:
-            selected, _, _, _ = min(eligible, key=lambda item: item[1])
+            selected_record = min(eligible, key=lambda item: float(item["score"]))
+            selected = int(selected_record["representative"])
             valid = True
         else:
+            selected_record = {
+                "representative": 0,
+                "score": 0.0,
+                "tfv_risk": 0.0,
+                "pfv_risk": 0.0,
+                "passive": True,
+            }
             selected, valid = 0, False
 
         def scalar(name: str) -> float:
             return float(scored[name][selected].detach()) if valid else 0.0
 
+        group_score = float(selected_record["score"]) if valid else 0.0
+        group_tfv_risk = float(selected_record["tfv_risk"]) if valid else 0.0
+        group_pfv_risk = float(selected_record["pfv_risk"]) if valid else 0.0
         return FirstMoveTFVPFVResultV123(
             settings=candidate_one[selected].detach(),
             candidate_valid=valid,
@@ -222,11 +302,12 @@ class FirstMoveTFVPFVPolicyV123:
             scenario_count=scenarios,
             predicted_delta_tfv_m3=scalar("delta_tfv_mean_m3"),
             predicted_delta_pfv_m3=scalar("delta_pfv_mean_m3"),
-            tfv_risk_m3=scalar("tfv_risk_m3"),
-            pfv_risk_m3=scalar("pfv_risk_m3"),
+            tfv_risk_m3=group_tfv_risk,
+            pfv_risk_m3=group_pfv_risk,
             pfv_soft_excess_m3=scalar("pfv_soft_excess_m3"),
             pfv_penalty_m3_equivalent=scalar("pfv_penalty_m3_equivalent"),
-            objective_score_m3_equivalent=scalar("score_m3_equivalent"),
+            objective_score_m3_equivalent=group_score,
+            selected_group_score_m3=group_score,
             false_benefit_margin_m3=float(self.false_benefit_margin_m3),
             scoring_projection_max=float(projection_max),
         )
