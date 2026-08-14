@@ -1,15 +1,10 @@
 """Project7 V127 control-oriented differentiable hydraulic surrogate.
 
-This module restores the original Project7 scientific target: learn a differentiable
-mapping from a causal current hydraulic state and causal rainfall forecast plus a
-continuous future actuator target sequence to future hydraulics and flood volumes.  It
-does not use Sparse-RBC as a Value reference and it does not restrict the learned action
-space to an anchor neighbourhood.
-
-The implementation deliberately reuses the graph-based differentiable world-model
-primitives that remain in :mod:`rtc.models`, but freezes a new scientific contract and
-an MPC-facing physical objective interface.  Sparse-RBC belongs to Step3 as a warm start
-and fail-safe, not inside this model.
+The model maps causal current hydraulics, causal rainfall and a continuous future target
+sequence to future hydraulic states.  It exposes both a hard physical flood-volume
+operator for prediction/reporting and a smooth positive proxy for action gradients.  The
+smooth proxy is never called authoritative SWMM truth; it exists solely to avoid the
+zero-gradient dead zone of a hard clamp at predicted flood rate zero.
 """
 from __future__ import annotations
 
@@ -19,10 +14,11 @@ from typing import Any
 import numpy as np
 import torch
 
-from .flood_volume import trapezoid_node_flood_volume
+from .flood_volume import smooth_trapezoid_node_flood_volume, trapezoid_node_flood_volume
 from .models import DifferentiableHydraulicWorldModel, Rollout
 
-V127_STEP2_CONTRACT = "PROJECT7_V127_CONTROL_ORIENTED_DIFFERENTIABLE_HYDRAULIC_SURROGATE_V1"
+V127_STEP2_CONTRACT = "PROJECT7_V127_CONTROL_ORIENTED_DIFFERENTIABLE_HYDRAULIC_SURROGATE_V2_SMOOTH_MPC_OBJECTIVE"
+V127_SMOOTH_FLOOD_SCALE_M3S = 0.01
 
 
 @dataclass(frozen=True)
@@ -36,6 +32,7 @@ class V127SurrogateDesign:
     direct_action_context: bool = True
     bounded_state_residual: bool = True
     bounded_flow_residual: bool = True
+    smooth_flood_scale_m3s: float = V127_SMOOTH_FLOOD_SCALE_M3S
 
     @property
     def control_block_steps(self) -> int:
@@ -64,6 +61,8 @@ class V127SurrogateDesign:
             raise ValueError("V127 requires direct action context in the hydraulic transition")
         if not self.bounded_state_residual or not self.bounded_flow_residual:
             raise ValueError("V127 requires bounded hydraulic and actuator residual dynamics")
+        if not np.isfinite(self.smooth_flood_scale_m3s) or self.smooth_flood_scale_m3s <= 0:
+            raise ValueError("V127 smooth flood scale must be finite and positive")
 
 
 @dataclass(frozen=True)
@@ -72,10 +71,13 @@ class V127ObjectiveOutput:
     node_flood_volume_m3: torch.Tensor
     tfv_m3: torch.Tensor
     pfv_m3: torch.Tensor
+    optimization_node_flood_volume_m3: torch.Tensor
+    optimization_tfv_m3: torch.Tensor
+    optimization_pfv_m3: torch.Tensor
 
 
 class ControlOrientedDifferentiableSurrogateV127(DifferentiableHydraulicWorldModel):
-    """Graph hydraulic world model with an explicit differentiable TFV/PFV interface."""
+    """Graph hydraulic world model with hard-reporting and smooth-optimization TFV."""
 
     contract = V127_STEP2_CONTRACT
 
@@ -91,8 +93,11 @@ class ControlOrientedDifferentiableSurrogateV127(DifferentiableHydraulicWorldMod
         actuator_embedding_dim: int = 16,
         delta_state_scale: torch.Tensor | np.ndarray | None = None,
         delta_flow_scale: torch.Tensor | np.ndarray | None = None,
+        smooth_flood_scale_m3s: float = V127_SMOOTH_FLOOD_SCALE_M3S,
         **runtime_metadata: Any,
     ) -> None:
+        if not np.isfinite(float(smooth_flood_scale_m3s)) or float(smooth_flood_scale_m3s) <= 0:
+            raise ValueError("V127 smooth flood scale must be finite and positive")
         super().__init__(
             state_dim=state_dim,
             rainfall_dim=rainfall_dim,
@@ -105,18 +110,20 @@ class ControlOrientedDifferentiableSurrogateV127(DifferentiableHydraulicWorldMod
             bounded_state_residual=True,
             bounded_flow_residual=True,
             delta_state_scale=(
-                None
-                if delta_state_scale is None
+                None if delta_state_scale is None
                 else torch.as_tensor(delta_state_scale, dtype=torch.float32)
             ),
             delta_flow_scale=(
-                None
-                if delta_flow_scale is None
+                None if delta_flow_scale is None
                 else torch.as_tensor(delta_flow_scale, dtype=torch.float32)
             ),
             **runtime_metadata,
         )
         self.v127_contract = V127_STEP2_CONTRACT
+        self.register_buffer(
+            "v127_smooth_flood_scale_m3s",
+            torch.as_tensor(float(smooth_flood_scale_m3s), dtype=torch.float32),
+        )
 
     def objective_rollout(
         self,
@@ -153,25 +160,38 @@ class ControlOrientedDifferentiableSurrogateV127(DifferentiableHydraulicWorldMod
             static_node_features,
             edge_index,
         )
-        node_volume = trapezoid_node_flood_volume(
+        hard_volume = trapezoid_node_flood_volume(
             initial_state,
             rollout.states,
             flood_rate_index=int(flood_rate_index),
             dt_seconds=float(dt_seconds),
         )
-        if not bool(torch.isfinite(node_volume).all()):
+        smooth_volume = smooth_trapezoid_node_flood_volume(
+            initial_state,
+            rollout.states,
+            flood_rate_index=int(flood_rate_index),
+            dt_seconds=float(dt_seconds),
+            softplus_scale_m3s=self.v127_smooth_flood_scale_m3s,
+        )
+        if not bool(torch.isfinite(hard_volume).all()) or not bool(torch.isfinite(smooth_volume).all()):
             raise RuntimeError("V127 surrogate produced non-finite flood volume")
-        tfv = node_volume.sum(dim=-1)
+        hard_tfv = hard_volume.sum(dim=-1)
+        smooth_tfv = smooth_volume.sum(dim=-1)
         if priority_indices is None or int(priority_indices.numel()) == 0:
-            pfv = torch.zeros_like(tfv)
+            hard_pfv = torch.zeros_like(hard_tfv)
+            smooth_pfv = torch.zeros_like(smooth_tfv)
         else:
-            p = priority_indices.to(device=node_volume.device, dtype=torch.long)
-            pfv = node_volume.index_select(-1, p).sum(dim=-1)
+            p = priority_indices.to(device=hard_volume.device, dtype=torch.long)
+            hard_pfv = hard_volume.index_select(-1, p).sum(dim=-1)
+            smooth_pfv = smooth_volume.index_select(-1, p).sum(dim=-1)
         return V127ObjectiveOutput(
             rollout=rollout,
-            node_flood_volume_m3=node_volume,
-            tfv_m3=tfv,
-            pfv_m3=pfv,
+            node_flood_volume_m3=hard_volume,
+            tfv_m3=hard_tfv,
+            pfv_m3=hard_pfv,
+            optimization_node_flood_volume_m3=smooth_volume,
+            optimization_tfv_m3=smooth_tfv,
+            optimization_pfv_m3=smooth_pfv,
         )
 
 
@@ -185,7 +205,7 @@ def build_v127_model_from_graph(
     design: V127SurrogateDesign = V127SurrogateDesign(),
 ) -> ControlOrientedDifferentiableSurrogateV127:
     design.validate()
-    model = ControlOrientedDifferentiableSurrogateV127(
+    return ControlOrientedDifferentiableSurrogateV127(
         state_dim=int(state_dim),
         rainfall_dim=int(rainfall_dim),
         node_static_dim=int(np.asarray(graph.static_node_features).shape[1]),
@@ -195,6 +215,7 @@ def build_v127_model_from_graph(
         actuator_embedding_dim=design.actuator_embedding_dim,
         delta_state_scale=delta_state_scale,
         delta_flow_scale=delta_flow_scale,
+        smooth_flood_scale_m3s=design.smooth_flood_scale_m3s,
         model_step_seconds=design.model_step_seconds,
         horizon_steps=design.prediction_horizon_steps,
         control_update_seconds=design.control_update_seconds,
@@ -202,13 +223,13 @@ def build_v127_model_from_graph(
         time_contract="PROJECT7_V127_300S_MODEL_600S_RECEDING_CONTROL_V1",
         v127_step2_contract=V127_STEP2_CONTRACT,
     )
-    return model
 
 
 __all__ = [
     "ControlOrientedDifferentiableSurrogateV127",
     "V127ObjectiveOutput",
     "V127SurrogateDesign",
+    "V127_SMOOTH_FLOOD_SCALE_M3S",
     "V127_STEP2_CONTRACT",
     "build_v127_model_from_graph",
 ]
