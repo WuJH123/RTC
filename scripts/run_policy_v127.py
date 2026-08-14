@@ -23,7 +23,6 @@ from rtc.production_cli import (
 )
 from rtc.project7_contract import EFFECTIVE_WARMUP_MINUTES, validate_project7_runtime_config
 from rtc.runtime_controller_guard import ContinuityGuardController
-from rtc.step2_causal_rainfall_v123 import load_causal_forecast_store_v123
 from rtc.step3_mpc_v127 import (
     ContinuousMPCDesignV127,
     DifferentiableRollingMPCV127,
@@ -31,7 +30,7 @@ from rtc.step3_mpc_v127 import (
     V127_STEP3_CONTRACT,
 )
 
-V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V4_CAUSAL_ASSET_BOUND"
+V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V5_CAUSAL_ASSET_BOUND"
 V127_EVIDENCE_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_EVIDENCE_V2_LINEAGE_BOUND_NOT_SCORE_GATED"
 V127_CAUSAL_FORECAST_CONTRACT = "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92,scenario_multiplier=1.0)"
 
@@ -105,7 +104,6 @@ def main() -> None:
     p.add_argument("--graph", required=True)
     p.add_argument("--step1", required=True)
     p.add_argument("--step2", required=True)
-    p.add_argument("--causal-store", required=True)
     p.add_argument("--continuous-gate", required=True)
     p.add_argument("--device", default="cuda")
     p.add_argument("--lbfgsb-maxiter", type=int, default=30)
@@ -138,19 +136,11 @@ def main() -> None:
     )
     priority = _priority_indices(args.priority_nodes, graph, device)
 
-    causal_store = load_causal_forecast_store_v123(args.causal_store)
-    causal_store.validate()
-    if causal_store.forecast_mmhr.shape[1] != 72:
-        raise ValueError("V127 causal rainfall store horizon differs from H72 runtime")
-    if causal_store.forecast_mmhr.shape[2] != len(graph.node_ids):
-        raise ValueError("V127 causal rainfall store node count differs from graph")
-    if causal_store.future_realized_rainfall_not_used is not True:
-        raise ValueError("V127 causal rainfall store does not prove future-rain exclusion")
-    if str(causal_store.forecast_contract) != V127_CAUSAL_FORECAST_CONTRACT:
-        raise ValueError("V127 causal rainfall store differs from runtime forecast semantics")
-    trained_rain_sha = str(checkpoint_lineage.get("causal_rainfall_sha256", "")).lower()
-    if not trained_rain_sha or trained_rain_sha != _sha(args.causal_store).lower():
-        raise ValueError("V127 runtime causal rainfall store differs from Step2 training")
+    stored_forecast_contract = str(
+        checkpoint_lineage.get("causal_rainfall_forecast_contract", "")
+    )
+    if stored_forecast_contract != V127_CAUSAL_FORECAST_CONTRACT:
+        raise ValueError("V127 runtime rainfall forecaster differs from Step2 training")
 
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
     project_contract = validate_project7_runtime_config(cfg)
@@ -163,12 +153,6 @@ def main() -> None:
         raise ValueError(
             "V127 requires optimizer_deadline < controller_runtime_budget < 600-s control period"
         )
-
-    stored_forecast_contract = str(
-        checkpoint_lineage.get("causal_rainfall_forecast_contract", "")
-    )
-    if stored_forecast_contract != V127_CAUSAL_FORECAST_CONTRACT:
-        raise ValueError("V127 runtime rainfall forecaster differs from Step2 training")
 
     controller_cfg = _controller_config(dict(cfg["controller"]), control_block_steps=2)
     controller_cfg = replace(
@@ -257,7 +241,6 @@ def main() -> None:
             "future_realized_rainfall_used_as_model_input": False,
             "rainfall_forecast_runtime": {
                 "contract": V127_CAUSAL_FORECAST_CONTRACT,
-                "causal_store_sha256": _sha(args.causal_store),
                 "future_realized_rainfall_not_used": True,
             },
             "step2_checkpoint_contract": step2_payload.get("checkpoint_contract"),
