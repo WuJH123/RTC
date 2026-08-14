@@ -1,4 +1,4 @@
-"""Calibration and audit helpers for V125 anchor-relative learned overrides."""
+"""Calibration and audit helpers for V125 direct anchor-relative learned overrides."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,7 +14,8 @@ from .step2_policy_v125 import V125_OVERRIDE_CALIBRATION_CONTRACT
 @dataclass(frozen=True)
 class AnchorOverrideCalibrationV125:
     quantile: float
-    margin_m3: float
+    tfv_margin_m3: float
+    pfv_error_margin_m3: float
     sample_count: int
     rainfall_groups: tuple[str, ...]
     row_identity_sha256: str
@@ -23,8 +24,12 @@ class AnchorOverrideCalibrationV125:
     def validate(self) -> None:
         if not 0.5 < float(self.quantile) < 1.0:
             raise ValueError("V125 calibration quantile must lie in (0.5,1)")
-        if not np.isfinite(self.margin_m3) or self.margin_m3 < 0.0:
-            raise ValueError("V125 calibration margin must be finite and non-negative")
+        for name, value in (
+            ("TFV anchor override margin", self.tfv_margin_m3),
+            ("PFV model error margin", self.pfv_error_margin_m3),
+        ):
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(f"V125 {name} must be finite and non-negative")
         if self.sample_count <= 0 or not self.rainfall_groups:
             raise ValueError("V125 calibration cannot be empty")
 
@@ -33,7 +38,8 @@ class AnchorOverrideCalibrationV125:
         return {
             "contract": self.contract,
             "quantile": float(self.quantile),
-            "anchor_override_margin_m3": float(self.margin_m3),
+            "anchor_override_margin_m3": float(self.tfv_margin_m3),
+            "pfv_anchor_relative_model_error_margin_m3": float(self.pfv_error_margin_m3),
             "sample_count": int(self.sample_count),
             "rainfall_groups": list(self.rainfall_groups),
             "row_identity_sha256": self.row_identity_sha256,
@@ -47,54 +53,56 @@ def _higher_quantile(values: np.ndarray, q: float) -> float:
         return float(np.quantile(values, q, interpolation="higher"))
 
 
+def _aligned(values: Sequence[float], *, name: str) -> np.ndarray:
+    result = np.asarray(values, dtype=np.float64).reshape(-1)
+    if result.size == 0 or not np.isfinite(result).all():
+        raise ValueError(f"V125 {name} must be finite and non-empty")
+    return result
+
+
 def calibrate_anchor_override_margin_v125(
     *,
-    truth_candidate_tfv_m3: Sequence[float],
-    truth_anchor_tfv_m3: Sequence[float],
-    predicted_candidate_delta_tfv_m3: Sequence[float],
-    predicted_anchor_delta_tfv_m3: Sequence[float],
+    truth_tfv_advantage_m3: Sequence[float],
+    predicted_tfv_advantage_m3: Sequence[float],
+    truth_pfv_advantage_m3: Sequence[float],
+    predicted_pfv_advantage_m3: Sequence[float],
     rainfall_groups: Sequence[str],
     row_ids: Sequence[str],
     quantile: float = 0.95,
 ) -> AnchorOverrideCalibrationV125:
-    """Calibrate a one-sided upper error budget for candidate-vs-anchor TFV advantage.
+    """Calibrate direct candidate-minus-anchor TFV/PFV one-sided error budgets.
 
-    Advantage is ``candidate - anchor``; negative is beneficial.  With
-    ``residual = truth_advantage - predicted_advantage``, admitting only when
-    ``predicted_advantage + margin < 0`` is an empirical one-sided false-benefit guard.
-    The caller must pass D4-FIT rows only; D4-AUDIT is intentionally external.
+    All four advantages use ``candidate - anchor``. Negative TFV is beneficial; positive
+    PFV is deterioration. For both targets ``residual = truth - prediction``. The upper
+    residual quantile protects against false TFV benefit and under-predicted PFV
+    deterioration. Only pre-frozen D4-FIT rows may be supplied by the caller.
     """
     q = float(quantile)
     if not 0.5 < q < 1.0:
         raise ValueError("V125 quantile must lie in (0.5,1)")
     arrays = [
-        np.asarray(x, dtype=np.float64).reshape(-1)
-        for x in (
-            truth_candidate_tfv_m3,
-            truth_anchor_tfv_m3,
-            predicted_candidate_delta_tfv_m3,
-            predicted_anchor_delta_tfv_m3,
-        )
+        _aligned(truth_tfv_advantage_m3, name="truth TFV advantage"),
+        _aligned(predicted_tfv_advantage_m3, name="predicted TFV advantage"),
+        _aligned(truth_pfv_advantage_m3, name="truth PFV advantage"),
+        _aligned(predicted_pfv_advantage_m3, name="predicted PFV advantage"),
     ]
     n = arrays[0].size
-    if n == 0 or any(x.size != n for x in arrays):
-        raise ValueError("V125 calibration arrays must be non-empty and aligned")
+    if any(x.size != n for x in arrays):
+        raise ValueError("V125 calibration arrays must be aligned")
     rain = tuple(str(x) for x in rainfall_groups)
     ids = tuple(str(x) for x in row_ids)
     if len(rain) != n or len(ids) != n or len(set(ids)) != n:
         raise ValueError("V125 calibration rainfall/row identities must be aligned and unique")
-    stacked = np.column_stack(arrays)
-    if not np.isfinite(stacked).all():
-        raise ValueError("V125 calibration contains non-finite values")
 
-    truth_adv = arrays[0] - arrays[1]
-    pred_adv = arrays[2] - arrays[3]
-    residual = truth_adv - pred_adv
-    margin = max(0.0, _higher_quantile(residual, q))
+    tfv_residual = arrays[0] - arrays[1]
+    pfv_residual = arrays[2] - arrays[3]
+    tfv_margin = max(0.0, _higher_quantile(tfv_residual, q))
+    pfv_margin = max(0.0, _higher_quantile(pfv_residual, q))
     identity = "\n".join(f"{rid}|{rg}" for rid, rg in sorted(zip(ids, rain, strict=True)))
     result = AnchorOverrideCalibrationV125(
         quantile=q,
-        margin_m3=margin,
+        tfv_margin_m3=tfv_margin,
+        pfv_error_margin_m3=pfv_margin,
         sample_count=n,
         rainfall_groups=tuple(sorted(set(rain))),
         row_identity_sha256=hashlib.sha256(identity.encode("utf-8")).hexdigest(),
@@ -135,6 +143,34 @@ def anchor_override_audit_v125(
     }
 
 
+def pfv_deterioration_audit_v125(
+    *,
+    truth_advantage_m3: Iterable[float],
+    predicted_advantage_m3: Iterable[float],
+    error_margin_m3: float,
+    soft_margin_m3: float,
+) -> dict[str, float | int]:
+    truth = np.asarray(list(truth_advantage_m3), dtype=np.float64)
+    pred = np.asarray(list(predicted_advantage_m3), dtype=np.float64)
+    if truth.size == 0 or truth.shape != pred.shape or not np.isfinite(truth).all() or not np.isfinite(pred).all():
+        raise ValueError("V125 PFV audit arrays must be finite, non-empty and aligned")
+    error = float(error_margin_m3)
+    soft = float(soft_margin_m3)
+    if min(error, soft) < 0.0 or not np.isfinite([error, soft]).all():
+        raise ValueError("V125 PFV audit margins must be finite and non-negative")
+    predicted_safe = pred + error <= soft
+    truth_safe = truth <= soft
+    false_safe = predicted_safe & ~truth_safe
+    return {
+        "count": int(truth.size),
+        "predicted_soft_safe_count": int(np.sum(predicted_safe)),
+        "truth_soft_safe_count": int(np.sum(truth_safe)),
+        "false_soft_safe_count": int(np.sum(false_safe)),
+        "false_soft_safe_rate": float(np.mean(false_safe)),
+        "max_truth_pfv_deterioration_m3": float(np.max(truth)),
+    }
+
+
 def calibration_json_v125(calibration: AnchorOverrideCalibrationV125) -> str:
     return json.dumps({"calibration": calibration.as_dict()}, indent=2, sort_keys=True) + "\n"
 
@@ -144,4 +180,5 @@ __all__ = [
     "anchor_override_audit_v125",
     "calibrate_anchor_override_margin_v125",
     "calibration_json_v125",
+    "pfv_deterioration_audit_v125",
 ]
