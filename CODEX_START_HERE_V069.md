@@ -1,244 +1,202 @@
-# Codex start here — Project7 v0.6.9 current execution contract
+# Codex start here — Project7 v0.6.9 V125 canonical RTC contract
 
-This file is the single active entrypoint.  Do **not** infer current Step2
-semantics from the highest historical version number in the repository.
+This file is the **single current execution entrypoint**. Do not infer the active
+method from historical version numbers, old PRs, or old runners. Read this file and
+`configs/step2_current_contract.json` before doing any Project7 work.
 
-## 1. Study identity
+## 1. Frozen research question
 
-- Project: Project7 urban-drainage real-time control methodology testbed.
-- Frozen INP: `wuhan_method_testbed_v067.inp`.
-- Authoritative truth: EPA SWMM.
-- Study positioning: idealized SWMM methodology testbed, not a field digital twin.
-- Final control objective: system-wide cumulative sewer-node overflow volume
-  (`TFV`) minimization.
-- PFV at 8 priority nodes and Global Peak are diagnostics, not current hard
-  objectives.
-- No explicit surface ponding/2-D routing is represented; TFV must be described
-  as **sewer-node overflow volume**, not street inundation volume.
+Project7 is an idealized SWMM methodology testbed, not a field digital twin.
+Authoritative truth is EPA SWMM.
 
-## 2. Frozen physical/time contract
+Every 10 minutes the Proposed controller must:
 
-- 109 controlled links = 57 pumps + 42 orifices + 10 weirs.
-- ~932 nodes, 1167 conduits, 10 storages, 89 sensors.
-- SWMM/model sample step = 300 s.
-- MPC update = 600 s.
-- Long value horizon = 360 min / 72 model steps / 36 control blocks.
-- Maximum setting change = 0.5 per 10-min update.
-- Effective warm-up = 120 min; tail = 360 min.
-- Chicago events = 5 return periods × 6 durations = 30.
-- Frozen forcing split = 18 Train / 6 Validation / 6 Final.
-- Validation and Final are not tuning data.
+1. use sparse causal observations and the frozen accepted Step1 to reconstruct the current hydraulic state;
+2. derive a causal engineering Sparse-RBC anchor from that reconstructed state;
+3. score engineering-feasible finite joint-action first moves with Step2 Value;
+4. keep the Sparse-RBC anchor by default;
+5. execute a learned override only when calibrated evidence supports lower TFV than the anchor;
+6. write the first 10-minute target command to all 109 writable pump/orifice/weir links;
+7. verify target-latch/readback semantics, then reconstruct and re-optimise at the next update.
 
-## 3. Current canonical Step2 contract
+Primary objective: whole-system cumulative sewer-node overflow volume (`TFV`) minimization.
+Priority8 `PFV` is one-sided **soft deterioration protection**, not a hard constraint.
+A PFV improvement is not allowed to buy a candidate whose predicted TFV is worse than
+the engineering anchor. Global Peak remains report-only.
 
-Read:
+Do not describe TFV as 2-D street inundation volume.
+
+## 2. Canonical code surface
+
+Read in this order:
 
 1. `configs/step2_current_contract.json`
-2. `docs/STEP2_V110_ARCHITECTURE.md`
-3. `src/rtc/step2_current.py`
+2. `src/rtc/step2_current.py`
+3. `src/rtc/step2_policy_v125.py`
+4. `src/rtc/controller_v125.py`
+5. `scripts/run_policy_v125.py`
+6. `src/rtc/step2_d4_action_support_v125.py`
+7. `scripts/plan_step2_v125_d4_action_support.py`
+8. `src/rtc/step3_calibration_v125.py`
+9. `scripts/calibrate_step3_v125_anchor_override.py`
 
-New development/production-facing code must import Step2 through
-`rtc.step2_current`.
+New production-facing code must import the current method through `rtc.step2_current`.
+V120/V121/V122/V123 runners and V8–V113 hydraulic-effect models are retained only for
+reproduction/forensics unless this document explicitly references them.
 
-### 3.1 Long-horizon Control Value — V7, supported and frozen
+## 3. Current evidence that is already frozen
 
-`rtc.step2_control_response_v70.ControlValueSurrogateV70`
+Do not spend a new optimisation cycle re-solving these points.
 
-Input:
-- current causal state,
-- causal rainfall boundary,
-- reference action,
-- candidate action,
-- previous controlled-link flow,
-- actuator physics/identity.
+- Step1 Sparse-RBC parity is strong enough for the current control path: actuator-adjacent endpoint depth NSE ~0.991 and action Spearman ~0.988 on the frozen TrainFit audit.
+- Frozen causal V70 Holdout D3 Value: rank ~0.414, pairwise ~0.652, top1 ~0.563.
+- V124 interaction-aware attention model did **not** improve rank (about 0.410), so do not start another architecture sweep.
+- Step3 first-move coverage is no longer collapsed: ~75–83 unique executable first moves and 109/109 actuator coverage in the V124 audit.
+- Development T5: Sparse-RBC anchor-only reduced TFV ~10.17%; learned-only ~7.88%; old hybrid ~8.88%; Auto-RBC reference ~22.02%.
+- The old V123 hybrid admitted learned actions relative to PASSIVE, not relative to the Sparse-RBC anchor. This is superseded by V125.
+- V125 D4 support-gap audit confirmed substantial train/deploy action mismatch around the causal Sparse-RBC anchor: 112-group median nearest-anchor normalized L1 ~0.667; selected-48 median ~0.708.
 
-Output:
-- direct signed authoritative `Delta-TFV` in m3.
+Continuous MPC remains blocked.
 
-Meaning:
-`Delta-TFV = TFV_candidate - TFV_reference`.
+## 4. V125 Step2/Step3 definition
 
-V7 does not route the objective through a tiny flooding-rate head and H72
-integration.  It is the current long-horizon 0–360 min MPC value model.
+### 4.1 Value model
 
-Do not redesign or retrain V7 merely because the Hydraulic Effect model is
-under development.
+The first V125 retraining experiment is a **data-support ablation**, not an architecture
+experiment. Keep the accepted V124/V70 architecture settings frozen for the first run:
 
-### 3.2 Short/medium-horizon Hydraulic Effect — V11, development
+- hidden dim = 96
+- attention heads = 4 when using V124
+- listwise weight = 0.30
+- seed = 42
+- same causal rainfall/normalisation/splits
 
-`rtc.step2_control_response_v110.ActuatorSetHydraulicResponseV110`
+Only the training action support may change by adding D4-FIT supervision.
 
-Hydraulic horizon is deliberately **0–120 min**, not six-hour centimetre-level
-nodewise prediction.  The 360-min anti-myopia objective remains V7 Delta-TFV.
+### 4.2 Engineering anchor
 
-Authoritative target at response time tau remains the same-prefix
-counterfactual:
+The default command is the causal Sparse-RBC first move computed from Step1 reconstructed
+state and frozen actuator topology/physics. Authoritative current SWMM node depth is never
+allowed into Proposed runtime anchor construction.
 
-`Delta x(t+tau) = x_candidate(t+tau) - x_reference(t+tau)`.
+### 4.3 Learned override
 
-This target is correct for delayed effects.  Lag is handled by ensuring that
-the prediction at tau can only see candidate/reference actions that have
-already occurred by tau.
+The old condition “candidate beats PASSIVE by the V123 false-benefit margin” is necessary
+but no longer sufficient.
 
-V11 predicts signed changes in:
-- node depth/head,
-- node flooding rate,
-- node volume/storage,
-- node total inflow/outflow,
-- 109 managed-link flows.
+V125 additionally requires a separately calibrated anchor-relative condition:
 
-It does not require flooding to occur before a hydraulic effect exists.
+`predicted_TFV(candidate) - predicted_TFV(anchor) + anchor_override_margin < 0`
 
-## 4. V11 architecture requirements
+and the combined TFV + one-sided PFV-soft objective must also improve over the anchor.
 
-The design handles four coupled RTC properties.
+Therefore PFV cannot compensate for a TFV-worse candidate relative to the anchor.
 
-### Lag
-For each retained response time, use only the causal action prefix.  A setting
-change scheduled after that response time must have exactly zero influence on
-that earlier output.
+### 4.4 Rolling execution
 
-### Nonlocality
-A changed pump/orifice/weir may affect remote upstream/downstream nodes.
-Hydraulic influence is not restricted to a fixed 1/2/4/8-hop receptive field.
-Every node/time query may attend to the changed-actuator set with static
-all-range graph-relation bias.
+- SWMM/model record step: 300 s.
+- Control update: 600 s.
+- Execute first 600-s block only.
+- Maximum target-setting change: 0.5 per update.
+- Score only already executable sequences.
+- No projection after scoring.
+- Controller returns a target for every writable actuator each decision.
+- Native SWMM RTC controls are disabled for Proposed.
+- Target-latch write/readback is authoritative for command acceptance; realised current-setting lag is a physical tracking diagnostic, not a write-failure test.
 
-### Multi-actuator combination
-The changed facilities form a variable-size set.  Use actuator self-attention
-before node/time cross-attention.  D3 is a joint nonlinear response problem.
+## 5. D4 V2 data contract — must replace the old V125 plan before SWMM
 
-Forbidden:
-`SUM(predicted D2 effects) + interaction residual`.
+The old plan at commit `ab7a3b1` proved the action-support gap but its continuation rule is
+superseded. Re-run the planner from the current main/merged V125 code before generating
+D4 truth.
 
-D2 is mechanism supervision/anchor, never a formula for D3 truth.
+D4 V2 requirements:
 
-### Rolling MPC
-Every 10 min the real system is observed/reconstructed and the MPC problem is
-solved again.  V11 therefore focuses detailed hydraulics on 0–120 min while V7
-keeps the 0–360 min value objective.  Only the first 10-min control block is
-executed before re-estimation/re-optimization.
+- Development TrainFit only; frozen 112/32 D2 split retained.
+- Select at most 48 high-gap checkpoints by deterministic rainfall-balanced geometry.
+- Freeze D4 `fit` / `audit` roles **before** any D4 outcome is generated.
+- Split unit is rainfall group, never branch/candidate.
+- With 14 selected rainfall groups and audit_fraction=0.25 the current deterministic contract should yield 10 fit / 4 audit groups.
+- D4-AUDIT is never used for training, checkpoint selection, calibration, or hyperparameter tuning.
+- Candidate families remain local/interpretable around the Sparse-RBC anchor.
+- The candidate may differ from the anchor only in the executable first 600 s.
+- After the first block, **all candidates at that checkpoint must share the exact same Sparse-RBC anchor continuation**.
+- Save the complete action sequence and its SHA256 in the frozen plan.
 
-## 5. Hydraulic Effect learning target
+This isolates the causal marginal value of the current 10-minute decision and prevents
+future-tail credit from being attributed to the first move.
 
-Each node/variable/time response is decomposed into:
+## 6. D4 truth / retraining sequence
 
-1. `active`: is the candidate-reference effect locally meaningful?
-2. `sign`: if active, is it positive or negative?
-3. `magnitude`: if active, how large is it?
+After the V2 plan passes correctness audit, one bounded authoritative SWMM labelling round
+is allowed for the exact frozen plan. Do not redesign candidates after seeing outcomes.
 
-The raw signed counterfactual delta is primary.  Physical projection of an
-absolute candidate trajectory must never clip or rewrite the raw signed delta.
+Then:
 
-### Active-effect definition
+1. build a new D4 evidence/cache source with exact SWMM cumulative TFV and Priority8 PFV;
+2. train V125 using D2/D3 + **D4-FIT only**;
+3. evaluate generic InternalHoldout D3 as a non-regression diagnostic;
+4. evaluate D4-AUDIT anchor-neighbourhood ranking, sign, regret and false-benefit errors;
+5. derive the anchor-relative one-sided TFV margin from D4-FIT only;
+6. use D4-AUDIT only once as an untouched development audit of that margin;
+7. only then run the V125 T5 closed-loop comparison.
 
-Do not use one global channel median/scale.
+If D4 support does not improve anchor-neighbourhood identification, stop adding network
+capacity. The next research hypothesis is anchor-relative Advantage Value
+`TFV(candidate)-TFV(anchor)`, not a larger Transformer/GNN.
 
-V11 freezes TrainFit-D2-only local thresholds using:
-`max(0.25 * P90(abs(Delta)), physical floor)`.
+## 7. Required V125 development metrics
 
-Physical floors:
-- depth: >= 0.01 m and >= 1% of local maximum node depth,
-- flooding: >= 1e-5 m3/s,
-- volume: >= 1e-3 m3 and, for storages, >= 0.5% capacity,
-- node inflow/outflow: >= 1e-4 m3/s,
-- managed flow: >= 1e-4 m3/s.
+Always report at least:
 
-Holdout, Validation and Final never select these thresholds.
+- generic InternalHoldout D3 rank, pairwise, sign, top1, MAE and regret;
+- D4-AUDIT candidate-vs-anchor rank/pairwise/sign;
+- best-action regret around anchor;
+- beneficial-override precision/recall;
+- false-benefit override rate among admitted overrides;
+- mean/worst true TFV advantage of admitted overrides;
+- PFV change of admitted overrides;
+- 10-min decision runtime and deadline failures;
+- target write/readback failures;
+- score==execute and continuity violations;
+- anchor / learned-override / passive fractions;
+- authoritative closed-loop TFV, Priority8 PFV and Global Peak.
 
-## 6. Time-domain supervision
+Aggregation across scientific events is event/rainfall-group balanced.
 
-Retained V11 responses:
-5, 10, 15, 20, 25, 30 min, then every 10 min through 120 min.
+## 8. Continuous MPC gate
 
-The model is direct response, not recurrent free-run.  In addition to
-active/sign/magnitude supervision, compare authoritative finite differences
-between adjacent retained response times.  This teaches response rise/decay and
-lag without recursively feeding predicted state into the next state.
+Continuous L-BFGS-B / 109-actuator differentiable search is forbidden unless the frozen
+project gate passes:
 
-## 7. Existing Step2 data
+- TFV rank >= 0.70
+- top1 >= 0.50
+- TFV gradient sign >= 0.70
+- gradient cosine >= 0.60
 
-Use the existing lineage-valid V6 counterfactual-group-preserving cache:
-- canonical D2 groups,
-- targeted D3-v2 groups,
-- same-prefix reference/candidate branches,
-- no legacy dense D3 training.
-
-Do not regenerate SWMM because the surrogate architecture changed.
-
-D2 has already shown learnable single-actuator control signal.  The historic
-finite-hop full-network Hydraulic failures do not imply that D2 is unlearnable.
-
-## 8. V11 development order
-
-Canonical runner:
-
-`scripts/run_step2_v110.py`
-
-### Stage D2
-- TrainFit D2 only.
-- 4 epochs.
-- seed 42.
-- FP32 AdamW.
-- no sweep.
-- evaluate independent TrainInternalHoldout D2.
-
-D3 remains blocked unless holdout skill-vs-zero is > 0 for:
-- depth,
-- flooding,
-- volume,
-- managed flow.
-
-### Stage D3
-Only after an accepted V11 D2 report/checkpoint:
-- targeted TrainFit D3,
-- 10 epochs,
-- D3/D2 authoritative supervision = 0.75/0.25,
-- same model and seed contract,
-- no hyperparameter sweep.
-
-D2 outputs are never summed to synthesize D3 labels.
+These are Project7 preregistered engineering/scientific thresholds, not universal
+literature thresholds. Do not lower them to enable continuous MPC.
 
 ## 9. Development boundaries
 
-Until V11 D2 and D3 development gates pass:
+Until V125 finite development evidence passes:
 
-- no Validation tuning,
-- no Final access,
-- no Formal,
-- no Policy Lock,
-- no production wiring,
-- no new SWMM,
-- no new all-link-flow data,
-- no active learning,
-- no V7 Value redesign.
+- no Validation outcome access;
+- no Final outcome access;
+- no Formal;
+- no Policy Lock;
+- no continuous MPC;
+- no tuning on D4-AUDIT;
+- no future realised rainfall online;
+- no future SWMM hydraulic truth online;
+- no return to V8–V113 hydraulic-effect architecture search;
+- no seed/hidden/head/loss sweep in the first D4 data-support experiment.
 
-Future SWMM truth is training/evaluation label only and is forbidden online.
+## 10. Scientific claim boundary
 
-## 10. Historical Step2 modules
+The Proposed controller may claim only the best action selected within the generated
+engineering-feasible finite candidates around the current state/anchor. It must not claim
+global optimality in the full continuous 109-dimensional space.
 
-V4–V10 Hydraulic branches/files are forensic provenance, not active
-implementations.  They document failed or superseded hypotheses:
-- additive D2 superposition,
-- local finite-hop propagation,
-- rate-integration value collapse,
-- post-projection signed-effect corruption,
-- state-sufficiency and history diagnostics,
-- V10 nonlocal prototype before the final dual-timescale/set formulation.
-
-Do not import those modules into new canonical code.
-
-The only active import surface is:
-`rtc.step2_current`.
-
-## 11. Final MPC scientific claim
-
-The controller may claim only:
-
-> the best control found within the generated engineering-feasible candidates /
-> frozen control manifold.
-
-Do not claim a global optimum over the full continuous 109-dimensional action
-space.
-
-All final control-effect claims remain authoritative SWMM results.
+Final performance claims must come from authoritative SWMM and untouched scientific
+Validation/Final only after the development method and policy are frozen.
