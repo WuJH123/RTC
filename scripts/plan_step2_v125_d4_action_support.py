@@ -59,13 +59,12 @@ def _train_no_control_index(path: str | Path) -> pd.DataFrame:
 
 
 def _candidate_first_moves(settings: np.ndarray, *, control_block_steps: int = 2) -> np.ndarray:
+    """Aggregate legacy 5-min frames to the executable 10-min first-move semantics."""
     values = np.asarray(settings, dtype=np.float32)
     if values.ndim != 3 or values.shape[1] < control_block_steps:
         raise ValueError("D4 cache settings must be [candidate,time,actuator]")
     first = values[:, : int(control_block_steps), :]
-    if not np.allclose(first, first[:, :1, :], atol=1.0e-6):
-        raise ValueError("D4 cache first control block is not piecewise constant")
-    return first[:, 0, :]
+    return np.mean(first, axis=1, dtype=np.float64).astype(np.float32)
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -236,6 +235,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "max_active_groups": contract.max_active_groups,
             "max_delta_per_update": contract.max_delta_per_update,
             "selection": "rainfall-group round-robin by largest normalized nearest-anchor L1 support gap",
+            "legacy_support_first_move": "mean of first two 300-s frames = executable 600-s move",
             "families": first_move_family_summary_v125(family_pairs),
             "planned_branches": len(plan_rows),
             "future_action_rule": "hold current knowledge first-move target; recompute next online decision",
