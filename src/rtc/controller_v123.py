@@ -1,8 +1,9 @@
 """V123 evidence adapter over the validated V122 execution controller.
 
 V122 remains authoritative for sparse causal observation, target-latch readback,
-continuity, and first-move execution.  This adapter only captures the V123
-TFV/PFV policy result and emits a truthful V123 runtime evidence schema.
+continuity, and first-move execution.  This adapter captures the V123 TFV/PFV policy
+result, including whether the low-sensor engineering anchor or a learned override was
+executed, without changing the scored action.
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from .controller_v122 import V122TorchMPCController
 from .step2_policy_v123 import V123_POLICY_CONTRACT
 
 
-V123_CONTROLLER_CONTRACT = "PROJECT7_V123_TFV_PRIMARY_SOFT_PFV_FINITE_RTC_CONTROLLER_V2"
+V123_CONTROLLER_CONTRACT = "PROJECT7_V123_KNOWLEDGE_ANCHORED_FINITE_RTC_CONTROLLER_V3"
 
 
 class _V123ResultCaptureProxy:
@@ -31,7 +32,7 @@ class _V123ResultCaptureProxy:
 
 
 class V123TorchMPCController(V122TorchMPCController):
-    """Reuse V122 execution semantics while emitting V123 diagnostics."""
+    """Reuse V122 execution semantics while emitting truthful V123 diagnostics."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -66,17 +67,26 @@ class V123TorchMPCController(V122TorchMPCController):
                 "selected_group_score_m3",
                 "false_benefit_margin_m3",
                 "scoring_projection_max",
+                "knowledge_anchor_first_move_delta_max",
             ):
                 if hasattr(result, name):
                     diagnostics[name] = float(getattr(result, name))
-            if hasattr(result, "raw_candidate_count"):
-                diagnostics["candidate_count"] = int(result.raw_candidate_count)
-            if hasattr(result, "first_move_group_count"):
-                diagnostics["first_move_group_count"] = int(result.first_move_group_count)
-            if hasattr(result, "tail_only_noop_candidate_count"):
-                diagnostics["tail_only_noop_candidate_count"] = int(
-                    result.tail_only_noop_candidate_count
-                )
+            for name in (
+                "raw_candidate_count",
+                "first_move_group_count",
+                "tail_only_noop_candidate_count",
+                "knowledge_anchor_candidate_index",
+            ):
+                if hasattr(result, name):
+                    key = "candidate_count" if name == "raw_candidate_count" else name
+                    diagnostics[key] = int(getattr(result, name))
+            for name in (
+                "knowledge_anchor_selected",
+                "knowledge_anchor_fallback_used",
+            ):
+                if hasattr(result, name):
+                    diagnostics[name] = bool(getattr(result, name))
+            diagnostics["knowledge_data_fusion"] = True
 
         source = str(action.source)
         if source == "MPC_V122":
