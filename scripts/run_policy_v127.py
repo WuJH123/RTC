@@ -23,6 +23,10 @@ from rtc.production_cli import (
 )
 from rtc.project7_contract import EFFECTIVE_WARMUP_MINUTES, validate_project7_runtime_config
 from rtc.runtime_controller_guard import ContinuityGuardController
+from rtc.step2_state_store_v127 import (
+    semantic_model_state_dict_sha256,
+    semantic_sensor_layout_sha256,
+)
 from rtc.step3_mpc_v127 import (
     ContinuousMPCDesignV127,
     DifferentiableRollingMPCV127,
@@ -30,7 +34,7 @@ from rtc.step3_mpc_v127 import (
     V127_STEP3_CONTRACT,
 )
 
-V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V5_CAUSAL_ASSET_BOUND"
+V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V6_SEMANTIC_ASSET_TARGET_SLEW"
 V127_EVIDENCE_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_EVIDENCE_V2_LINEAGE_BOUND_NOT_SCORE_GATED"
 V127_CAUSAL_FORECAST_CONTRACT = "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92,scenario_multiplier=1.0)"
 
@@ -61,6 +65,8 @@ def _evidence(
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     if payload.get("contract") != V127_EVIDENCE_CONTRACT or payload.get("passed") is not True:
         raise ValueError("V127 runtime requires structurally valid continuous-MPC evidence")
+    # This exact-checkpoint identity is scientifically necessary: the evidence describes
+    # the final Step2 model that supplies online gradients, not merely a compatible schema.
     if str(payload.get("step2_sha256", "")).lower() != expected_step2_sha256.lower():
         raise ValueError("V127 evidence was compiled for a different Step2 checkpoint")
     metrics = payload.get("metrics")
@@ -74,23 +80,19 @@ def _evidence(
 def _require_runtime_asset_lineage(
     checkpoint_lineage: dict,
     *,
-    step1_path: str | Path,
-    sensor_path: str | Path,
-    graph_path: str | Path,
+    step1: torch.nn.Module,
+    sensors: tuple[str, ...],
 ) -> None:
     expected = {
-        "causal_state_step1_sha256": _sha(step1_path),
-        "causal_state_sensor_sha256": _sha(sensor_path),
-        "causal_state_graph_sha256": _sha(graph_path),
+        "causal_state_step1_model_semantic_sha256": semantic_model_state_dict_sha256(step1),
+        "causal_state_sensor_layout_semantic_sha256": semantic_sensor_layout_sha256(sensors),
     }
     for key, actual in expected.items():
         trained = str(checkpoint_lineage.get(key, "")).lower()
         if not trained:
-            raise ValueError(f"V127 Step2 checkpoint lacks training-time asset lineage {key}")
+            raise ValueError(f"V127 Step2 checkpoint lacks semantic training identity {key}")
         if trained != actual.lower():
-            raise ValueError(
-                f"V127 runtime asset differs from Step2 training lineage: {key}"
-            )
+            raise ValueError(f"V127 runtime semantics differ from Step2 training: {key}")
 
 
 def main() -> None:
@@ -125,12 +127,7 @@ def main() -> None:
     checkpoint_lineage = step2_payload.get("lineage")
     if not isinstance(checkpoint_lineage, dict):
         raise ValueError("V127 Step2 checkpoint lacks data lineage")
-    _require_runtime_asset_lineage(
-        checkpoint_lineage,
-        step1_path=args.step1,
-        sensor_path=args.sensors,
-        graph_path=args.graph,
-    )
+    _require_runtime_asset_lineage(checkpoint_lineage, step1=step1, sensors=sensors)
     evidence, evidence_payload = _evidence(
         args.continuous_gate, expected_step2_sha256=step2_sha
     )
@@ -193,7 +190,12 @@ def main() -> None:
         device=device,
     )
     controller = ContinuityGuardController(
-        controller, max_delta_per_update=0.5, allow_projection=False
+        controller,
+        max_delta_per_update=0.5,
+        allow_projection=False,
+        # V127 decoder already constrains consecutive supervisory targets.  Physical
+        # current-setting lag is hydraulic state/diagnostic, not a second command anchor.
+        enforce_current_delta=False,
     )
     runtime_inp = _controls_disabled_runtime(
         source_inp=Path(args.inp),
@@ -210,7 +212,6 @@ def main() -> None:
         control_update_seconds=600,
         observation_update_seconds=300,
         record_stride_seconds=300,
-        # Report-only Global Peak is recomputed by routing-step frozen-decision replay.
         exact_global_peak=False,
     )
     metadata_path = Path(result.metadata_path)
@@ -239,6 +240,8 @@ def main() -> None:
             "global_peak_report_only": True,
             "global_peak_primary_run_is_300s_sampled": True,
             "future_realized_rainfall_used_as_model_input": False,
+            "command_slew_anchor": "previous_supervisory_target_setting",
+            "physical_current_setting_role": "hydraulic_state_and_tracking_diagnostic",
             "rainfall_forecast_runtime": {
                 "contract": V127_CAUSAL_FORECAST_CONTRACT,
                 "future_realized_rainfall_not_used": True,
@@ -250,11 +253,14 @@ def main() -> None:
             "lbfgsb_maxiter": design.lbfgsb_maxiter,
             "optimizer_deadline_seconds": design.optimizer_deadline_seconds,
             "decision_runtime_budget_seconds": controller_cfg.decision_runtime_budget_seconds,
+            # Raw file hashes are provenance only; compatibility above uses semantic identity.
             "source_inp_sha256": _sha(args.inp),
             "controller_config_sha256": _sha(args.config),
             "graph_schema_sha256": _sha(args.graph),
-            "step1_model_sha256": _sha(args.step1),
-            "sensor_layout_sha256": _sha(args.sensors),
+            "step1_model_file_sha256": _sha(args.step1),
+            "sensor_layout_file_sha256": _sha(args.sensors),
+            "step1_model_semantic_sha256": semantic_model_state_dict_sha256(step1),
+            "sensor_layout_semantic_sha256": semantic_sensor_layout_sha256(sensors),
             "project7_runtime_contract": project_contract,
             "prepared_event_clock": event_clock,
         }
