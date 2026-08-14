@@ -40,6 +40,16 @@ class FirstMoveTFVPFVResultV123:
     false_benefit_margin_m3: float
     scoring_projection_max: float
 
+    @property
+    def candidate_count(self) -> int:
+        """Compatibility name consumed by the rolling controller diagnostics."""
+        return int(self.raw_candidate_count)
+
+    @property
+    def selected_group_score_m3(self) -> float:
+        """Compatibility name for the combined score of the selected group."""
+        return float(self.objective_score_m3_equivalent)
+
 
 class FirstMoveTFVPFVPolicyV123:
     accepts_previous_requested_settings = True
