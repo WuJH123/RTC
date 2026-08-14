@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import hashlib
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
 
+from rtc.checkpoint_v127 import graph_semantic_sha256_v127
+from rtc.d5_gradient_v127 import (
+    D5GradientDesignV127,
+    broad_center_fractions_v127,
+    directional_fractions_v127,
+    symmetric_probe_v127,
+)
+from rtc.rule_baselines import StorageGeometry
 from rtc.step2_differentiable_v127 import ControlOrientedDifferentiableSurrogateV127
 from rtc.step2_state_store_v127 import CausalStateStoreV127
+from rtc.step2_train_v127 import _spearman, _truth_node_volume
 from rtc.step3_mpc_v127 import (
     ContinuousMPCDesignV127,
     Step2GradientEvidenceV127,
@@ -69,6 +79,7 @@ def test_v127_fraction_decoder_is_1308_variable_bounded_rate_feasible() -> None:
         max_setting=hi,
         design=design,
     )
+    assert design.variable_count == 1308
     assert sequence.shape == (72, 109)
     torch.testing.assert_close(sequence[0], sequence[1])
     blocks = sequence[::2]
@@ -80,20 +91,34 @@ def test_v127_fraction_decoder_is_1308_variable_bounded_rate_feasible() -> None:
     torch.testing.assert_close(blocks[12:], blocks[11:12].expand_as(blocks[12:]))
 
 
-def test_v127_continuous_gate_is_fail_closed() -> None:
-    good = Step2GradientEvidenceV127(
-        holdout_rank=0.71,
-        holdout_top1=0.51,
-        d2_gradient_sign_accuracy=0.71,
-        d2_gradient_cosine_similarity=0.61,
-        d5_gradient_sign_accuracy=0.72,
-        d5_gradient_cosine_similarity=0.62,
+def test_v127_quality_scores_are_evidence_not_arbitrary_runtime_switch() -> None:
+    # Weak-but-finite model quality remains visible evidence and does not redefine whether
+    # continuous MPC exists.  Causality and numerical validity remain hard contracts.
+    weak = Step2GradientEvidenceV127(
+        holdout_rank=0.21,
+        holdout_top1=0.10,
+        d2_gradient_sign_accuracy=0.35,
+        d2_gradient_cosine_similarity=-0.20,
+        d5_gradient_sign_accuracy=0.42,
+        d5_gradient_cosine_similarity=0.05,
         causal_step1_state_verified=True,
         causal_rainfall_verified=True,
     )
-    good.validate()
-    bad = Step2GradientEvidenceV127(
-        holdout_rank=0.69,
+    weak.validate()
+    noncausal = Step2GradientEvidenceV127(
+        holdout_rank=0.9,
+        holdout_top1=0.9,
+        d2_gradient_sign_accuracy=0.9,
+        d2_gradient_cosine_similarity=0.9,
+        d5_gradient_sign_accuracy=0.9,
+        d5_gradient_cosine_similarity=0.9,
+        causal_step1_state_verified=False,
+        causal_rainfall_verified=True,
+    )
+    with pytest.raises(ValueError, match="causal Step1"):
+        noncausal.validate()
+    nonfinite = Step2GradientEvidenceV127(
+        holdout_rank=float("nan"),
         holdout_top1=0.9,
         d2_gradient_sign_accuracy=0.9,
         d2_gradient_cosine_similarity=0.9,
@@ -102,8 +127,8 @@ def test_v127_continuous_gate_is_fail_closed() -> None:
         causal_step1_state_verified=True,
         causal_rainfall_verified=True,
     )
-    with pytest.raises(ValueError, match="rank"):
-        bad.validate()
+    with pytest.raises(ValueError, match="non-finite"):
+        nonfinite.validate()
 
 
 def test_v127_causal_state_store_content_hash_and_unique_identity() -> None:
@@ -125,3 +150,95 @@ def test_v127_causal_state_store_content_hash_and_unique_identity() -> None:
     )
     with pytest.raises(ValueError, match="content hash"):
         broken.validate()
+
+
+def test_v127_authoritative_node_volume_labels_follow_reference_first_branch_order() -> None:
+    # Original shard order is [candidate0, reference, candidate1].
+    volume = np.asarray(
+        [[10.0, 1.0], [20.0, 2.0], [30.0, 3.0]], dtype=np.float32
+    )
+    entry = SimpleNamespace(
+        reference_index=1,
+        indices=(0, 1, 2),
+        arrays={"exact_node_flood_volume_m3": volume},
+    )
+    cache = SimpleNamespace(entry=lambda _: entry)
+    ordered = _truth_node_volume(cache, "g")
+    np.testing.assert_array_equal(ordered, volume[[1, 0, 2]])
+
+
+def test_v127_spearman_uses_average_tie_ranks() -> None:
+    # Two equal predictions must receive the same rank; deterministic argsort order must
+    # not create artificial correlation.
+    assert _spearman(np.asarray([1.0, 1.0, 3.0]), np.asarray([2.0, 2.0, 4.0])) == pytest.approx(1.0)
+    assert _spearman(np.asarray([1.0, 1.0]), np.asarray([1.0, 2.0])) != _spearman(
+        np.asarray([1.0, 2.0]), np.asarray([1.0, 2.0])
+    )
+
+
+def test_v127_d5_probe_lives_in_exact_online_fraction_space() -> None:
+    design = D5GradientDesignV127(
+        max_checkpoints=1,
+        directions_per_center=8,
+    )
+    center = broad_center_fractions_v127(
+        109,
+        checkpoint_identity="rain|event|checkpoint",
+        free_control_blocks=12,
+    )
+    direction, family = directional_fractions_v127(
+        109,
+        checkpoint_identity="rain|event|checkpoint",
+        checkpoint_rank=0,
+        center_index=2,
+        direction_index=0,
+        free_control_blocks=12,
+    )
+    assert center.shape == direction.shape == (12, 109)
+    assert family == "first_move_single_actuator"
+    assert np.linalg.norm(direction) == pytest.approx(1.0, abs=5e-6)
+    probe = symmetric_probe_v127(
+        active_target=np.full(109, 0.5, dtype=np.float32),
+        min_setting=np.zeros(109, dtype=np.float32),
+        max_setting=np.ones(109, dtype=np.float32),
+        center_fractions=center,
+        direction=direction,
+        design=design,
+    )
+    assert probe is not None
+    plus = np.asarray(probe["plus_fractions"])
+    minus = np.asarray(probe["minus_fractions"])
+    np.testing.assert_allclose(0.5 * (plus + minus), center, atol=2e-6, rtol=0)
+    assert np.asarray(probe["plus_sequence"]).shape == (72, 109)
+
+
+def test_v127_graph_fingerprint_detects_same_shape_semantic_change() -> None:
+    base = SimpleNamespace(
+        node_ids=("n0", "n1"),
+        static_node_feature_names=("invert",),
+        actuator_ids=("a0",),
+        actuator_physics_feature_names=("min_setting", "max_setting"),
+        system_units="SI",
+        edge_index=np.asarray([[0, 1], [1, 0]], dtype=np.int64),
+        static_node_features=np.asarray([[0.0], [1.0]], dtype=np.float32),
+        actuator_upstream=np.asarray([0], dtype=np.int64),
+        actuator_downstream=np.asarray([1], dtype=np.int64),
+        actuator_physics=np.asarray([[0.0, 1.0]], dtype=np.float32),
+    )
+    changed = SimpleNamespace(**{**base.__dict__, "actuator_downstream": np.asarray([0], dtype=np.int64)})
+    assert graph_semantic_sha256_v127(base) != graph_semantic_sha256_v127(changed)
+
+
+def test_efd_functional_storage_uses_volume_not_depth_fraction() -> None:
+    # Area = depth, so V(d)=d^2/2. At half maximum depth the volume filling is 0.25,
+    # explicitly different from normalized depth 0.5.
+    geometry = StorageGeometry(
+        shape="FUNCTIONAL",
+        max_depth_native=2.0,
+        functional_a1=1.0,
+        functional_a2=1.0,
+        functional_a0=0.0,
+        system_units="SI",
+    )
+    assert geometry.capacity_m3 == pytest.approx(2.0)
+    assert geometry.volume_m3(1.0) / geometry.capacity_m3 == pytest.approx(0.25)
