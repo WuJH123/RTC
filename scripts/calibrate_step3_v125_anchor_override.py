@@ -1,4 +1,4 @@
-"""Calibrate the V125 candidate-vs-anchor TFV admission margin from D4-FIT only."""
+"""Calibrate V125 direct candidate-vs-anchor TFV/PFV risk from D4-FIT only."""
 from __future__ import annotations
 
 import argparse
@@ -11,16 +11,17 @@ from rtc.step3_calibration_v125 import (
     anchor_override_audit_v125,
     calibrate_anchor_override_margin_v125,
     calibration_json_v125,
+    pfv_deterioration_audit_v125,
 )
 
 REQUIRED = {
     "split_role",
     "rainfall_group",
     "plan_row_id",
-    "truth_candidate_tfv_m3",
-    "truth_anchor_tfv_m3",
-    "predicted_candidate_delta_tfv_m3",
-    "predicted_anchor_delta_tfv_m3",
+    "truth_tfv_advantage_m3",
+    "predicted_tfv_advantage_m3",
+    "truth_pfv_advantage_m3",
+    "predicted_pfv_advantage_m3",
 }
 
 
@@ -29,6 +30,7 @@ def main() -> None:
     p.add_argument("--evidence-csv", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--quantile", type=float, default=0.95)
+    p.add_argument("--pfv-soft-margin-m3", type=float, required=True)
     args = p.parse_args()
 
     frame = pd.read_csv(args.evidence_csv)
@@ -43,28 +45,33 @@ def main() -> None:
         raise ValueError("V125 D4 fit/audit rainfall groups overlap")
 
     calibration = calibrate_anchor_override_margin_v125(
-        truth_candidate_tfv_m3=fit["truth_candidate_tfv_m3"],
-        truth_anchor_tfv_m3=fit["truth_anchor_tfv_m3"],
-        predicted_candidate_delta_tfv_m3=fit["predicted_candidate_delta_tfv_m3"],
-        predicted_anchor_delta_tfv_m3=fit["predicted_anchor_delta_tfv_m3"],
+        truth_tfv_advantage_m3=fit["truth_tfv_advantage_m3"],
+        predicted_tfv_advantage_m3=fit["predicted_tfv_advantage_m3"],
+        truth_pfv_advantage_m3=fit["truth_pfv_advantage_m3"],
+        predicted_pfv_advantage_m3=fit["predicted_pfv_advantage_m3"],
         rainfall_groups=fit["rainfall_group"].astype(str),
         row_ids=fit["plan_row_id"].astype(str),
         quantile=args.quantile,
     )
-    truth_adv = audit["truth_candidate_tfv_m3"].to_numpy() - audit["truth_anchor_tfv_m3"].to_numpy()
-    pred_adv = (
-        audit["predicted_candidate_delta_tfv_m3"].to_numpy()
-        - audit["predicted_anchor_delta_tfv_m3"].to_numpy()
-    )
     payload = json.loads(calibration_json_v125(calibration))
-    payload["audit"] = anchor_override_audit_v125(
-        truth_advantage_m3=truth_adv,
-        predicted_advantage_m3=pred_adv,
-        margin_m3=calibration.margin_m3,
-    )
+    payload["audit"] = {
+        "tfv": anchor_override_audit_v125(
+            truth_advantage_m3=audit["truth_tfv_advantage_m3"],
+            predicted_advantage_m3=audit["predicted_tfv_advantage_m3"],
+            margin_m3=calibration.tfv_margin_m3,
+        ),
+        "pfv": pfv_deterioration_audit_v125(
+            truth_advantage_m3=audit["truth_pfv_advantage_m3"],
+            predicted_advantage_m3=audit["predicted_pfv_advantage_m3"],
+            error_margin_m3=calibration.pfv_error_margin_m3,
+            soft_margin_m3=float(args.pfv_soft_margin_m3),
+        ),
+    }
     payload["boundary"] = {
         "calibration_uses_fit_only": True,
         "audit_used_for_calibration": False,
+        "direct_anchor_relative_targets": True,
+        "pfv_is_soft_not_hard": True,
         "validation_accessed": False,
         "final_accessed": False,
         "formal_accessed": False,
