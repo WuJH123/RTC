@@ -11,7 +11,8 @@ import pandas as pd
 import torch
 
 from rtc.lazy_step1 import CausalStep1TrajectoryDataset
-from rtc.production_cli import _load_graph, _load_step1
+from rtc.production_cli import _load_graph
+from rtc.step1_runtime_v127 import load_frozen_step1_v127
 from rtc.step2_state_store_v127 import (
     V127_CAUSAL_STATE_CONTRACT,
     semantic_model_state_dict_sha256,
@@ -111,7 +112,7 @@ def main() -> None:
     device = torch.device(
         args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"
     )
-    step1 = _load_step1(args.step1, device)
+    step1 = load_frozen_step1_v127(args.step1, device)
     step1_semantic = semantic_model_state_dict_sha256(step1)
     sensor_semantic = semantic_sensor_layout_sha256(sensors)
     static = torch.as_tensor(graph.static_node_features, dtype=torch.float32, device=device)
@@ -173,11 +174,9 @@ def main() -> None:
         state_si=np.stack(states).astype(np.float32),
         current_setting=np.stack(settings).astype(np.float32),
         state_sha256=np.asarray(state_sha),
-        # Raw file hashes are provenance only.
         step1_sha256=np.asarray(_sha(args.step1)),
         sensor_sha256=np.asarray(_sha(args.sensors)),
         graph_sha256=np.asarray(_sha(args.graph)),
-        # Semantic identities are used for train/deploy compatibility.
         step1_model_semantic_sha256=np.asarray(step1_semantic),
         sensor_layout_semantic_sha256=np.asarray(sensor_semantic),
     )
