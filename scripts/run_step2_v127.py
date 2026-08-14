@@ -30,7 +30,7 @@ from rtc.step2_train_v127 import (
     train_objective_stage_v127,
 )
 
-V127_RUN_CONTRACT = "PROJECT7_V127_EXISTING_D2_D3_D4_DIFFERENTIABLE_TRAINING_V2_CAUSAL_INPUT"
+V127_RUN_CONTRACT = "PROJECT7_V127_EXISTING_D2_D3_D4_DIFFERENTIABLE_TRAINING_V3_CAUSAL_INPUT"
 
 
 def _sha(path: str | Path) -> str:
@@ -191,7 +191,7 @@ def main() -> None:
         "normalization": {
             "state_source": "causal Step1 TrainFit estimates",
             "rainfall_source": "causal runtime-equivalent TrainFit forecasts",
-            "future_swmm_truth_used_as_input": false if False else False
+            "future_swmm_truth_used_as_input": False,
         },
         "hydraulic_history": hydraulic_history,
         "objective_history": objective_history,
@@ -205,13 +205,14 @@ def main() -> None:
             "validation_accessed": False,
             "final_accessed": False,
             "formal_accessed": False,
-            "continuous_mpc_authorized_by_training_alone": False
-        }
+            "continuous_mpc_authorized_by_training_alone": False,
+        },
     }
-    # Keep Python booleans explicit; no NaN is permitted in evidence JSON.
-    report["normalization"]["future_swmm_truth_used_as_input"] = False
     report_path = out / "STEP2_V127_EXISTING_DATA_REPORT.json"
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     checkpoint = save_step2_v127(
         out / "step2_v127_existing_data.pt",
         model=model,
@@ -221,8 +222,11 @@ def main() -> None:
         lineage=lineage,
     )
     report["checkpoint"] = str(checkpoint.resolve())
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
-    print(json.dumps(report, indent=2, sort_keys=True))
+    report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
 
 
 if __name__ == "__main__":
