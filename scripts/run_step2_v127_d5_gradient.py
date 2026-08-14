@@ -32,7 +32,7 @@ from rtc.step2_state_store_v127 import (
 )
 from rtc.step2_train_response_v60 import V60TrainCache
 
-V127_D5_RUN_CONTRACT = "PROJECT7_V127_D5_GRADIENT_FINETUNE_AND_AUDIT_V3_FORECAST_BOUND"
+V127_D5_RUN_CONTRACT = "PROJECT7_V127_D5_GRADIENT_FINETUNE_AND_AUDIT_V4_CAUSAL_ASSET_BOUND"
 
 
 def _sha(path: str | Path) -> str:
@@ -125,8 +125,25 @@ def main() -> None:
         "d5_gradient_labels_sha256": _sha(args.d5_gradient_labels),
     }
     base_lineage = checkpoint_payload.get("lineage")
-    if isinstance(base_lineage, dict) and str(base_lineage.get("swmm_engine_version", "")).strip():
-        lineage["swmm_engine_version"] = str(base_lineage["swmm_engine_version"])
+    if not isinstance(base_lineage, dict):
+        raise ValueError("V127 base Step2 checkpoint lacks causal lineage")
+    for key in (
+        "swmm_engine_version",
+        "causal_state_step1_sha256",
+        "causal_state_sensor_sha256",
+        "causal_state_graph_sha256",
+    ):
+        value = str(base_lineage.get(key, "")).strip()
+        if not value:
+            raise ValueError(f"V127 base Step2 checkpoint lacks {key}")
+        lineage[key] = value
+    if lineage["causal_state_step1_sha256"] != str(state.step1_sha256):
+        raise ValueError("V127 D5 causal-state store Step1 differs from the base Step2 checkpoint")
+    if lineage["causal_state_sensor_sha256"] != str(state.sensor_sha256):
+        raise ValueError("V127 D5 causal-state store sensor layout differs from the base Step2 checkpoint")
+    if lineage["causal_state_graph_sha256"] != str(state.graph_sha256):
+        raise ValueError("V127 D5 causal-state store graph differs from the base Step2 checkpoint")
+
     report = {
         "contract": V127_D5_RUN_CONTRACT,
         "rtc_implementation_contract_sha256": rtc_implementation_contract_sha256(),
