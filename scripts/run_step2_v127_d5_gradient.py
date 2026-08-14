@@ -16,23 +16,17 @@ from rtc.checkpoint_v127 import (
 )
 from rtc.code_contract import rtc_implementation_contract_sha256
 from rtc.production_cli import _load_graph
-from rtc.step2_causal_rainfall_v123 import (
-    CausalForecastValueCacheV123,
-    load_causal_forecast_store_v123,
-)
+from rtc.step2_causal_rainfall_v123 import CausalForecastValueCacheV123, load_causal_forecast_store_v123
 from rtc.step2_gradient_v127 import (
     V127GradientTrainingDesign,
     build_direction_cases_v127,
     evaluate_d5_gradients_v127,
     train_d5_gradient_v127,
 )
-from rtc.step2_state_store_v127 import (
-    CausalStep1StateCacheV127,
-    load_causal_state_store_v127,
-)
+from rtc.step2_state_store_v127 import CausalStep1StateCacheV127, load_causal_state_store_v127
 from rtc.step2_train_response_v60 import V60TrainCache
 
-V127_D5_RUN_CONTRACT = "PROJECT7_V127_D5_GRADIENT_FINETUNE_AND_AUDIT_V4_CAUSAL_ASSET_BOUND"
+V127_D5_RUN_CONTRACT = "PROJECT7_V127_D5_GRADIENT_FINETUNE_AND_AUDIT_V5_SEMANTIC_CAUSAL_INPUT"
 
 
 def _sha(path: str | Path) -> str:
@@ -57,16 +51,12 @@ def main() -> None:
         args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"
     )
     graph = _load_graph(args.graph)
-    model, checkpoint_payload = load_step2_v127(
-        args.step2, graph=graph, device=device
-    )
+    model, checkpoint_payload = load_step2_v127(args.step2, graph=graph, device=device)
     normalization = input_normalization_from_v127_checkpoint(checkpoint_payload)
     base = V60TrainCache(args.base_cache_manifest)
     rain = load_causal_forecast_store_v123(args.causal_store)
     state = load_causal_state_store_v127(args.causal_state_store)
-    online = CausalStep1StateCacheV127(
-        CausalForecastValueCacheV123(base, rain), state
-    )
+    online = CausalStep1StateCacheV127(CausalForecastValueCacheV123(base, rain), state)
 
     labels = pd.read_csv(args.d5_gradient_labels)
     manifest = pd.read_csv(args.d5_execution_manifest)
@@ -129,20 +119,23 @@ def main() -> None:
         raise ValueError("V127 base Step2 checkpoint lacks causal lineage")
     for key in (
         "swmm_engine_version",
-        "causal_state_step1_sha256",
-        "causal_state_sensor_sha256",
-        "causal_state_graph_sha256",
+        "causal_state_step1_model_semantic_sha256",
+        "causal_state_sensor_layout_semantic_sha256",
     ):
         value = str(base_lineage.get(key, "")).strip()
         if not value:
             raise ValueError(f"V127 base Step2 checkpoint lacks {key}")
         lineage[key] = value
-    if lineage["causal_state_step1_sha256"] != str(state.step1_sha256):
-        raise ValueError("V127 D5 causal-state store Step1 differs from the base Step2 checkpoint")
-    if lineage["causal_state_sensor_sha256"] != str(state.sensor_sha256):
-        raise ValueError("V127 D5 causal-state store sensor layout differs from the base Step2 checkpoint")
-    if lineage["causal_state_graph_sha256"] != str(state.graph_sha256):
-        raise ValueError("V127 D5 causal-state store graph differs from the base Step2 checkpoint")
+    if (
+        lineage["causal_state_step1_model_semantic_sha256"]
+        != str(state.step1_model_semantic_sha256)
+    ):
+        raise ValueError("V127 D5 Step1 model semantics differ from the base Step2 checkpoint")
+    if (
+        lineage["causal_state_sensor_layout_semantic_sha256"]
+        != str(state.sensor_layout_semantic_sha256)
+    ):
+        raise ValueError("V127 D5 sensor layout semantics differ from the base Step2 checkpoint")
 
     report = {
         "contract": V127_D5_RUN_CONTRACT,
