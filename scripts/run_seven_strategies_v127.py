@@ -9,6 +9,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import numpy as np
+
 from rtc.replay_peak import replay_exact_global_peak
 
 try:
@@ -16,7 +18,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.run_six_baselines_v122 import BASELINES, _run_one
 
-V127_SEVEN_STRATEGY_CONTRACT = "PROJECT7_V127_SEVEN_STRATEGY_AUTHORITATIVE_SWMM_COMPARISON_V3_EXACT_PEAK"
+V127_SEVEN_STRATEGY_CONTRACT = "PROJECT7_V127_SEVEN_STRATEGY_AUTHORITATIVE_SWMM_COMPARISON_V4_EXACT_PEAK"
 
 
 def _priority_nodes(path: Path) -> set[str]:
@@ -122,8 +124,6 @@ def _run_proposed(args, root: Path) -> dict[str, object]:
         str(Path(args.step1).resolve()),
         "--step2",
         str(Path(args.step2).resolve()),
-        "--causal-store",
-        str(Path(args.causal_store).resolve()),
         "--continuous-gate",
         str(Path(args.continuous_gate).resolve()),
         "--device",
@@ -162,11 +162,16 @@ def _run_proposed(args, root: Path) -> dict[str, object]:
         for item in decisions
         if bool((item.get("diagnostics") or {}).get("optimizer_deadline_exceeded", False))
     )
-    runtimes = [
-        float((item.get("diagnostics") or {}).get("optimizer_elapsed_seconds"))
-        for item in decisions
-        if (item.get("diagnostics") or {}).get("optimizer_elapsed_seconds") is not None
-    ]
+    runtimes = np.asarray(
+        [
+            float((item.get("diagnostics") or {}).get("optimizer_elapsed_seconds"))
+            for item in decisions
+            if (item.get("diagnostics") or {}).get("optimizer_elapsed_seconds") is not None
+        ],
+        dtype=float,
+    )
+    if runtimes.size and not np.isfinite(runtimes).all():
+        raise RuntimeError("V127 decision log contains non-finite optimizer runtimes")
     return {
         "event_id": str(args.event_id),
         "strategy": "proposed_v127",
@@ -177,8 +182,9 @@ def _run_proposed(args, root: Path) -> dict[str, object]:
         "continuous_decisions": continuous,
         "rbc_safety_fallback_decisions": rbc,
         "optimizer_deadline_fallbacks": deadline,
-        "optimizer_runtime_mean_s": float(sum(runtimes) / len(runtimes)) if runtimes else 0.0,
-        "optimizer_runtime_max_s": float(max(runtimes)) if runtimes else 0.0,
+        "optimizer_runtime_mean_s": float(runtimes.mean()) if runtimes.size else 0.0,
+        "optimizer_runtime_p95_s": float(np.quantile(runtimes, 0.95)) if runtimes.size else 0.0,
+        "optimizer_runtime_max_s": float(runtimes.max()) if runtimes.size else 0.0,
         "metadata_path": str(meta_path.resolve()),
         "node_statistics_path": str(stats_path.resolve()),
         "decision_path": str(decisions_path.resolve()),
@@ -217,7 +223,6 @@ def main() -> None:
     p.add_argument("--graph", required=True)
     p.add_argument("--step1", required=True)
     p.add_argument("--step2", required=True)
-    p.add_argument("--causal-store", required=True)
     p.add_argument("--continuous-gate", required=True)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--device", default="cuda")
@@ -237,7 +242,6 @@ def main() -> None:
         Path(args.graph),
         Path(args.step1),
         Path(args.step2),
-        Path(args.causal_store),
         Path(args.continuous_gate),
     ]
     for path in required:
