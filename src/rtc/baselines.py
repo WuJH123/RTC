@@ -23,7 +23,7 @@ class BaselineDefinition:
 BASELINES = {
     "proposed": BaselineDefinition(
         "proposed",
-        "Sparse-state + differentiable TFV-first continuous MPC on the controls-disabled physical base",
+        "Sparse-state causal knowledge-anchored finite RTC with TFV-primary/PFV-soft Value scoring; continuous MPC remains evidence-gated",
         True,
         False,
         False,
@@ -73,8 +73,6 @@ BASELINES = {
     ),
 }
 
-# Formal comparison matrix. Auto-RBC and EFD are genuine dynamic rule-based comparators;
-# All-open/All-closed remain diagnostic extremes. Hold remains debug-only.
 FORMAL_FIXED_BASELINE_IDS = (
     "no_control",
     "internal_rtc",
@@ -87,8 +85,6 @@ DIAGNOSTIC_FIXED_BASELINE_IDS = ("hold",)
 SUPPORTED_FIXED_BASELINE_IDS = FORMAL_FIXED_BASELINE_IDS + DIAGNOSTIC_FIXED_BASELINE_IDS
 FIXED_BASELINE_IDS = FORMAL_FIXED_BASELINE_IDS
 
-# Compatibility aliases. The commonly used term is Auto-RBC (rule-based control); accept
-# Auto-RRC as a user-facing spelling but canonicalize all scientific evidence to auto_rbc.
 LEGACY_BASELINE_ALIASES = {
     "native_rules": "internal_rtc",
     "passive_no_rtc": "no_control",
