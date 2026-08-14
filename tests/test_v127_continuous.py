@@ -10,11 +10,12 @@ import torch
 from rtc.checkpoint_v127 import graph_semantic_sha256_v127
 from rtc.d5_gradient_v127 import (
     D5GradientDesignV127,
-    broad_center_fractions_v127,
     directional_fractions_v127,
+    local_exploration_center_fractions_v127,
     symmetric_probe_v127,
 )
 from rtc.rule_baselines import StorageGeometry
+from rtc.runtime import command_continuity
 from rtc.step2_differentiable_v127 import ControlOrientedDifferentiableSurrogateV127
 from rtc.step2_state_store_v127 import CausalStateStoreV127
 from rtc.step2_train_v127 import _spearman, _truth_node_volume
@@ -84,16 +85,36 @@ def test_v127_fraction_decoder_is_1308_variable_bounded_rate_feasible() -> None:
     torch.testing.assert_close(sequence[0], sequence[1])
     blocks = sequence[::2]
     assert bool(torch.all((blocks >= 0.0) & (blocks <= 1.0)))
-    first_delta = torch.max(torch.abs(blocks[0] - active))
-    later_delta = torch.max(torch.abs(blocks[1:] - blocks[:-1]))
-    assert float(first_delta) <= 0.500001
-    assert float(later_delta) <= 0.500001
+    assert float(torch.max(torch.abs(blocks[0] - active))) <= 0.500001
+    assert float(torch.max(torch.abs(blocks[1:] - blocks[:-1]))) <= 0.500001
     torch.testing.assert_close(blocks[12:], blocks[11:12].expand_as(blocks[12:]))
 
 
+def test_v127_target_command_slew_does_not_fail_on_physical_tracking_lag() -> None:
+    requested = np.asarray([0.8])
+    current = np.asarray([0.1])
+    previous_target = np.asarray([0.5])
+    target_only = command_continuity(
+        requested,
+        current,
+        previous_requested_settings=previous_target,
+        max_delta_per_update=0.5,
+        enforce_current_delta=False,
+    )
+    assert target_only.passed is True
+    assert target_only.max_delta_from_current == pytest.approx(0.7)
+    assert target_only.max_delta_from_previous_command == pytest.approx(0.3)
+    legacy_two_anchor = command_continuity(
+        requested,
+        current,
+        previous_requested_settings=previous_target,
+        max_delta_per_update=0.5,
+        enforce_current_delta=True,
+    )
+    assert legacy_two_anchor.passed is False
+
+
 def test_v127_quality_scores_are_evidence_not_arbitrary_runtime_switch() -> None:
-    # Weak-but-finite model quality remains visible evidence and does not redefine whether
-    # continuous MPC exists.  Causality and numerical validity remain hard contracts.
     weak = Step2GradientEvidenceV127(
         holdout_rank=0.21,
         holdout_top1=0.10,
@@ -143,6 +164,8 @@ def test_v127_causal_state_store_content_hash_and_unique_identity() -> None:
         step1_sha256="a" * 64,
         sensor_sha256="b" * 64,
         graph_sha256="c" * 64,
+        step1_model_semantic_sha256="d" * 64,
+        sensor_layout_semantic_sha256="e" * 64,
     )
     store.validate()
     broken = CausalStateStoreV127(
@@ -153,7 +176,6 @@ def test_v127_causal_state_store_content_hash_and_unique_identity() -> None:
 
 
 def test_v127_authoritative_node_volume_labels_follow_reference_first_branch_order() -> None:
-    # Original shard order is [candidate0, reference, candidate1].
     volume = np.asarray(
         [[10.0, 1.0], [20.0, 2.0], [30.0, 3.0]], dtype=np.float32
     )
@@ -168,23 +190,20 @@ def test_v127_authoritative_node_volume_labels_follow_reference_first_branch_ord
 
 
 def test_v127_spearman_uses_average_tie_ranks() -> None:
-    # Two equal predictions must receive the same rank; deterministic argsort order must
-    # not create artificial correlation.
-    assert _spearman(np.asarray([1.0, 1.0, 3.0]), np.asarray([2.0, 2.0, 4.0])) == pytest.approx(1.0)
+    assert _spearman(
+        np.asarray([1.0, 1.0, 3.0]), np.asarray([2.0, 2.0, 4.0])
+    ) == pytest.approx(1.0)
     assert _spearman(np.asarray([1.0, 1.0]), np.asarray([1.0, 2.0])) != _spearman(
         np.asarray([1.0, 2.0]), np.asarray([1.0, 2.0])
     )
 
 
-def test_v127_d5_probe_lives_in_exact_online_fraction_space() -> None:
-    design = D5GradientDesignV127(
-        max_checkpoints=1,
-        directions_per_center=8,
-    )
-    center = broad_center_fractions_v127(
-        109,
-        checkpoint_identity="rain|event|checkpoint",
-        free_control_blocks=12,
+def test_v127_d5_probe_is_local_and_lives_in_exact_online_fraction_space() -> None:
+    design = D5GradientDesignV127(max_checkpoints=1, directions_per_center=6)
+    hold = np.full((12, 109), 0.5, dtype=np.float32)
+    rbc = np.full((12, 109), 0.65, dtype=np.float32)
+    center = local_exploration_center_fractions_v127(
+        hold, rbc, checkpoint_identity="rain|event|checkpoint"
     )
     direction, family = directional_fractions_v127(
         109,
@@ -194,7 +213,9 @@ def test_v127_d5_probe_lives_in_exact_online_fraction_space() -> None:
         direction_index=0,
         free_control_blocks=12,
     )
+    assert design.planned_branches == 39  # one-checkpoint maximum: 3*(1+2*6)
     assert center.shape == direction.shape == (12, 109)
+    assert float(np.max(np.abs(center - 0.5 * (hold + rbc)))) <= 0.120001
     assert family == "first_move_single_actuator"
     assert np.linalg.norm(direction) == pytest.approx(1.0, abs=5e-6)
     probe = symmetric_probe_v127(
@@ -210,6 +231,8 @@ def test_v127_d5_probe_lives_in_exact_online_fraction_space() -> None:
     minus = np.asarray(probe["minus_fractions"])
     np.testing.assert_allclose(0.5 * (plus + minus), center, atol=2e-6, rtol=0)
     assert np.asarray(probe["plus_sequence"]).shape == (72, 109)
+    assert float(probe["physical_displacement_l2"]) > 0.0
+    assert float(probe["first_move_displacement_l2"]) > 0.0
 
 
 def test_v127_graph_fingerprint_detects_same_shape_semantic_change() -> None:
@@ -225,13 +248,13 @@ def test_v127_graph_fingerprint_detects_same_shape_semantic_change() -> None:
         actuator_downstream=np.asarray([1], dtype=np.int64),
         actuator_physics=np.asarray([[0.0, 1.0]], dtype=np.float32),
     )
-    changed = SimpleNamespace(**{**base.__dict__, "actuator_downstream": np.asarray([0], dtype=np.int64)})
+    changed = SimpleNamespace(
+        **{**base.__dict__, "actuator_downstream": np.asarray([0], dtype=np.int64)}
+    )
     assert graph_semantic_sha256_v127(base) != graph_semantic_sha256_v127(changed)
 
 
 def test_efd_functional_storage_uses_volume_not_depth_fraction() -> None:
-    # Area = depth, so V(d)=d^2/2. At half maximum depth the volume filling is 0.25,
-    # explicitly different from normalized depth 0.5.
     geometry = StorageGeometry(
         shape="FUNCTIONAL",
         max_depth_native=2.0,
