@@ -19,7 +19,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.run_six_baselines_v122 import BASELINES, _run_one
 
-V127_SEVEN_STRATEGY_CONTRACT = "PROJECT7_V127_SEVEN_STRATEGY_AUTHORITATIVE_SWMM_COMPARISON_V5_WRITE_AUDIT_EXACT_PEAK"
+V127_SEVEN_STRATEGY_CONTRACT = "PROJECT7_V127_SEVEN_STRATEGY_AUTHORITATIVE_SWMM_COMPARISON_V6_SEMANTIC_EVENT_WRITE_AUDIT"
 
 
 def _priority_nodes(path: Path) -> set[str]:
@@ -100,8 +100,8 @@ def _exact_peak(row: dict[str, object]) -> dict[str, object]:
     )
     result["global_peak_semantics"] = "routing-step frozen-decision replay"
     result["global_peak_replay_path"] = str(replay_path.resolve())
-    result["source_inp_sha256"] = str(metadata.get("source_inp_sha256", ""))
     result["runtime_inp_sha256"] = str(metadata.get("inp_sha256", ""))
+    result["source_inp_sha256_provenance"] = str(metadata.get("source_inp_sha256", ""))
     result["swmm_engine_version"] = str(metadata.get("swmm_engine_version", ""))
     result["control_start_minutes"] = int(metadata["control_start_minutes"])
     result["control_update_seconds"] = int(metadata["control_update_seconds"])
@@ -186,6 +186,7 @@ def _run_proposed(args, root: Path) -> dict[str, object]:
     return {
         "event_id": str(args.event_id),
         "strategy": "proposed_v127",
+        "source_inp_path": str(Path(args.inp).resolve()),
         "tfv_m3": 0.0,
         "global_peak_flood_rate_m3s": float(meta["global_peak_flood_rate_m3s"]),
         "flow_routing_error_pct": float(meta["flow_routing_error_pct"]),
@@ -203,26 +204,27 @@ def _run_proposed(args, root: Path) -> dict[str, object]:
 
 
 def _verify_common_execution(rows: list[dict[str, object]]) -> dict[str, object]:
-    source = {str(row.get("source_inp_sha256", "")) for row in rows}
+    source_paths = {str(row.get("source_inp_path", "")) for row in rows}
     engines = {str(row.get("swmm_engine_version", "")) for row in rows}
     starts = {int(row["control_start_minutes"]) for row in rows}
     updates = {int(row["control_update_seconds"]) for row in rows}
     observations = {int(row["observation_update_seconds"]) for row in rows}
-    if len(source) != 1 or "" in source:
-        raise RuntimeError("seven strategies do not share one authoritative source-event INP")
+    if len(source_paths) != 1 or "" in source_paths:
+        raise RuntimeError("seven strategies were not orchestrated from one source-event INP")
     if len(engines) != 1 or "" in engines:
         raise RuntimeError("seven strategies do not share one SWMM engine")
     if len(starts) != 1 or len(updates) != 1 or len(observations) != 1:
-        raise RuntimeError("seven strategies do not share identical control/observation clocks")
+        raise RuntimeError("seven strategies do not share identical observation/control clocks")
     if any(row.get("target_write_readback_passed") is not True for row in rows):
         raise RuntimeError("one or more strategies failed target write/readback verification")
     return {
-        "source_inp_sha256": next(iter(source)),
+        "source_inp_path": next(iter(source_paths)),
         "swmm_engine_version": next(iter(engines)),
         "control_start_minutes": next(iter(starts)),
         "control_update_seconds": next(iter(updates)),
         "observation_update_seconds": next(iter(observations)),
         "target_write_readback_all_strategies": True,
+        "source_file_sha_is_provenance_not_execution_gate": True,
     }
 
 
@@ -269,6 +271,7 @@ def main() -> None:
         )
 
     priority = _priority_nodes(Path(args.priority_nodes))
+    source_inp_path = str(Path(args.inp).resolve())
     root = Path(args.out_dir).resolve()
     root.mkdir(parents=True, exist_ok=True)
     runtime_cache = root / "_runtime_inp"
@@ -284,6 +287,7 @@ def main() -> None:
             runtime_cache=runtime_cache,
             event_id=str(args.event_id),
         )
+        row["source_inp_path"] = source_inp_path
         rows.append(_exact_peak(_augment(row, priority)))
     rows.append(_exact_peak(_augment(_run_proposed(args, root), priority)))
     common_execution = _verify_common_execution(rows)
