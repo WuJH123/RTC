@@ -66,6 +66,7 @@
     "the broad D3-derived TFV scale is much larger than local D4 advantages, weakening local decision gradients",
     "V125 loss remained magnitude-first while online control requires reliable candidate-vs-anchor benefit sign and ordering",
     "a single global 95% false-benefit margin became 6018.56 m3 and eliminated all learned overrides",
+    "V125 calibrated on the same D4-FIT pool used for D4 model fitting; V126 forbids in-sample uncertainty calibration",
     "historical hydraulic multi-task routes showed gradient conflict and are not restored",
     "zero learned overrides but a different TFV result from anchor-only requires a Step3/run-lineage equivalence audit"
   ],
@@ -88,10 +89,21 @@
     "legacy_d3_in_first_training": false,
     "new_swmm_required_before_first_v126_run": false
   },
+  "v126_calibration": {
+    "in_sample_d4_fit_residual_calibration_allowed": false,
+    "preferred_method": "rainfall-group cross-fitted out-of-fold evidence within the 10 D4-FIT rainfall groups",
+    "recommended_first_scheme": "5 folds, each holding out approximately 2 D4-FIT rainfall groups from the D4 fine-tune while reusing the same frozen broad D2/D3 checkpoint and V126 fine-tune recipe",
+    "final_production_model": "may fine-tune on all 10 D4-FIT rainfall groups after the recipe is frozen",
+    "tfv_false_benefit_margin": "derive only from out-of-fold TFV candidate-minus-anchor residuals",
+    "pfv_model_error_margin": "if PFV is retrained with D4 labels, derive only from an equivalent out-of-fold or separately held calibration procedure",
+    "d4_audit_used_for_calibration": false,
+    "internal_holdout_used_for_calibration": false,
+    "reason": "training residuals are not independent calibration evidence; D4-AUDIT remains the untouched action-support audit"
+  },
   "v126_step3": {
-    "runtime_policy": "corrected V125 AnchorOverridePolicyV125 until V126 Value evidence is accepted",
+    "runtime_policy": "corrected V125 AnchorOverridePolicyV125 until V126 Value evidence and out-of-fold calibration are accepted",
     "default_action": "causal Sparse-RBC anchor",
-    "learned_override": "candidate must beat anchor on TFV after fit-only uncertainty calibration; PFV remains one-sided soft protection",
+    "learned_override": "candidate must beat anchor on TFV after out-of-fold calibrated uncertainty protection; PFV remains one-sided soft protection",
     "anchor_equivalence_gate": "if learned_override_admitted is false at every decision, Proposed and anchor-only target-setting traces and authoritative TFV/PFV must match within tolerance on the same frozen run lineage",
     "global_peak_role": "REPORT_ONLY",
     "continuous_gradient_search": false
@@ -102,8 +114,9 @@
     "run V125 no-override versus Sparse-RBC anchor-only equivalence audit on the existing T5 artifacts before new training claims",
     "train V126 source-aware TFV model with no new SWMM and no hyperparameter sweep",
     "compare pre/post D4 fine-tune metrics on D4-AUDIT and InternalHoldout D3",
-    "only if local identification improves, retrain/recalibrate PFV as needed and rebuild direct anchor-relative evidence",
-    "run a fixed T5 only after calibration is frozen",
+    "only if local identification improves, implement frozen rainfall-group cross-fitted out-of-fold TFV calibration evidence; do not use final-model training residuals",
+    "only after OOF TFV calibration is accepted, retrain/recalibrate PFV with equivalent independence if PFV D4 fitting is retained",
+    "run a fixed T5 only after TFV/PFV calibration assets are frozen",
     "generate new decision-targeted D5 SWMM only if the existing-data diagnostic identifies a remaining support or value-definition gap"
   ],
   "d5_if_needed": {
@@ -141,11 +154,13 @@
     "runtime_policy": "rtc.step2_policy_v125.AnchorOverridePolicyV125",
     "runtime": "scripts/run_policy_v125.py",
     "anchor_advantage_evidence": "scripts/build_step2_v125_anchor_override_evidence.py",
-    "calibration": "scripts/calibrate_step3_v125_anchor_override.py"
+    "legacy_v125_calibration": "scripts/calibrate_step3_v125_anchor_override.py",
+    "v126_calibration_requirement": "cross-fitted OOF evidence must be implemented and reviewed before V126 T5"
   },
   "forbidden_until_development_gates_pass": [
     "training on the 1200 D2 development-validation branches",
     "training on D4-AUDIT",
+    "calibrating V126 uncertainty margins on the same D4 rows used to fit that model",
     "silently mixing legacy D3 into fitting",
     "Validation outcomes",
     "Final outcomes",
