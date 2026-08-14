@@ -87,19 +87,21 @@ def test_auto_rbc_opens_high_upstream_storage_more(tmp_path: Path) -> None:
     assert all(0.0 <= value <= 1.0 for value in action.settings.values())
 
 
-def test_efd_gives_more_discharge_to_more_filled_storage(tmp_path: Path) -> None:
+def test_efd_gives_more_discharge_to_more_volume_filled_storage(tmp_path: Path) -> None:
     path = _inp(tmp_path)
     sensors = baseline_sensor_nodes("efd", path)
     assert sensors == ("S1", "S2")
     obs = _obs(sensors, [1.8, 0.6])
     controller = fixed_baseline_controller("efd", inp_path=path)
     action = controller(obs)
-    assert action.source == "EFD_V1"
+    assert action.source == "EFD_V2"
     assert action.diagnostics is not None
     assert action.diagnostics["rule_contract"] == EFD_CONTRACT
     assert action.settings["P1"] > action.settings["P2"]
     assert action.settings["O1"] == 0.5
     assert float(action.diagnostics["filling_degree_std"]) > 0.0
+    assert int(action.diagnostics["volume_based_storage_count"]) == 2
+    assert int(action.diagnostics["depth_fallback_storage_count"]) == 0
 
 
 def test_rule_baseline_move_limit_matches_controller_limit(tmp_path: Path) -> None:
