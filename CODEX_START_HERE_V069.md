@@ -180,7 +180,7 @@ Beating No-control alone is not sufficient. Beating Auto-RBC is a later competit
 
 Do not produce more random/global candidate branches now. Existing D2/D3/D4 data must first be audited and trained with the corrected curriculum.
 
-A new D5 is authorized only after an outcome-blind support diagnosis shows where the accepted model remains uncertain. D5 selection may use TrainFit-only model disagreement, current causal Step1 state and action geometry, but not holdout outcomes. D5 must preserve common continuation and freeze FIT/AUDIT rainfall groups before SWMM outcomes.
+A new D5 is authorized only after an outcome-blind support/value-definition diagnosis shows where the accepted model remains uncertain. D5 selection may use TrainFit-only model disagreement, current causal Step1 state and action geometry, but not holdout outcomes. Its preferred control-value label is **first-move advantage under the fixed causal Sparse-RBC baseline policy**: candidate and anchor branches differ only in the first 600 s; from the next decision onward both use the same Sparse-RBC policy, recomputed every 600 s from each branch's own causal hydraulic state. Future baseline actions may therefore differ only as a physical consequence of the different first move, not because a different continuation policy was chosen. Freeze D5 FIT/AUDIT rainfall groups and the complete plan before SWMM outcomes. A fixed common open-loop tail may be retained only as an immediate-effect diagnostic, not as the preferred D5 rolling-control value target.
 
 ## 8. Continuous MPC
 
