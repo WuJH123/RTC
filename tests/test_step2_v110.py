@@ -1,100 +1,176 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import torch
+from torch import nn
 
-from rtc.step2_control_basis_v60 import build_control_basis_v60
-from rtc.step2_train_response_v60 import V60GroupBatch
-from rtc.step2_v110 import (
-    V110ActionEffectModel,
-    V110TrainingDesign,
-    action_effect_loss_v110,
-    derive_effect_scales_v110,
-    prepare_action_effect_batch_v110,
+from rtc.step2_control_response_v60 import PreparedStaticV60
+from rtc.step2_control_response_v110 import (
+    ActuatorSetHydraulicResponseV110,
+    action_prefix_features_v110,
+    build_actuator_node_relations_v110,
 )
+from rtc.step2_hydraulic_objective_v110 import derive_effect_scales_v110
+from rtc.step2_v60_contract import MultiResolutionHorizonV60
+from rtc.step2_v110_contract import HydraulicHorizonV110
 
 
-class _Prepared:
-    def __init__(self):
-        self.reference_settings = torch.zeros(1, 72, 2)
-        self.candidate_settings = torch.zeros(1, 2, 72, 2)
-        self.true_reference_states = torch.zeros(1, 1, 72, 3, 6)
-        self.true_candidate_states = torch.zeros(1, 2, 72, 3, 6)
-        self.true_reference_flows = torch.zeros(1, 1, 72, 2)
-        self.true_candidate_flows = torch.zeros(1, 2, 72, 2)
+class _DummyReference(nn.Module):
+    def __init__(self, nodes: int, actuators: int):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(()))
+        self.nodes = nodes
+        self.actuators = actuators
+        self.indices = torch.as_tensor(MultiResolutionHorizonV60().indices(), dtype=torch.long)
+
+    def forward(self, initial_state, rainfall, reference_settings, candidate_settings, prepared):
+        batch = initial_state.shape[0]
+        t = len(self.indices)
+        states = initial_state.new_zeros(batch, 1, t, self.nodes, 6)
+        states[..., 0] = 0.50
+        states[..., 1] = 10.50
+        states[..., 3] = 2.0
+        states[..., 4] = 0.20
+        states[..., 5] = 0.20
+        flows = initial_state.new_zeros(batch, 1, t, self.actuators)
+        return SimpleNamespace(
+            horizon_indices=self.indices.to(initial_state.device),
+            reference_states_physical=states,
+            reference_flows_physical=flows,
+        )
 
 
-def _prepared():
-    return _Prepared()
+def _prepared(nodes=3, actuators=2):
+    return PreparedStaticV60(
+        node_static=torch.zeros(nodes, 3),
+        actuator_physics=torch.zeros(actuators, 4),
+        actuator_upstream=torch.tensor([0, 1], dtype=torch.long),
+        actuator_downstream=torch.tensor([1, 2], dtype=torch.long),
+        invert_elevation_m=torch.tensor([10.0, 10.0, 10.0]),
+        max_depth_m=torch.tensor([1.0, 2.0, 4.0]),
+        surcharge_depth_m=torch.zeros(nodes),
+        storage_capacity_m3=torch.tensor([0.0, 0.0, 100.0]),
+        storage_mask=torch.tensor([False, False, True]),
+        actuator_feature_names=("a", "b", "c", "d"),
+    )
 
 
-def test_v110_import_and_forward_shapes():
-    model = V110ActionEffectModel(
-        state_dim=6,
+def _graph():
+    return SimpleNamespace(
+        node_ids=("n0", "n1", "n2"),
+        actuator_ids=("a0", "a1"),
+        actuator_upstream=np.asarray([0, 1], dtype=np.int64),
+        actuator_downstream=np.asarray([1, 2], dtype=np.int64),
+        edge_index=np.asarray([[0, 1, 1, 2], [1, 0, 2, 1]], dtype=np.int64),
+    )
+
+
+def _model():
+    relations = build_actuator_node_relations_v110(_graph())
+    return ActuatorSetHydraulicResponseV110(
+        reference_model=_DummyReference(3, 2),
+        state_magnitude_scale=np.ones((3, 5), dtype=np.float32),
+        flow_magnitude_scale=np.ones(2, dtype=np.float32),
+        node_static_dim=3,
+        physics_dim=4,
+        rainfall_dim=1,
         actuator_count=2,
-        coefficient_dim=4,
-        hidden_dim=16,
+        node_count=3,
+        relations=relations,
     )
-    initial = torch.zeros(3, 6)
-    coefficients = torch.zeros(3, 4)
-    state, flow = model(initial, coefficients)
-    assert state.shape == (3, 6)
-    assert flow.shape == (3, 2)
 
 
-def test_v110_loss_is_finite():
-    prediction = torch.zeros(2, 4, requires_grad=True)
-    target = torch.ones(2, 4)
-    active = torch.ones(2, 4, dtype=torch.bool)
-    loss = action_effect_loss_v110(
-        prediction,
-        target,
-        active,
-        scale=torch.ones(4),
-        design=V110TrainingDesign(),
+def _inputs():
+    initial = torch.zeros(1, 3, 6)
+    rainfall = torch.zeros(1, 72, 3, 1)
+    reference = torch.zeros(1, 72, 2)
+    previous_flow = torch.zeros(1, 2)
+    return initial, rainfall, reference, previous_flow
+
+
+def test_v110_hydraulic_horizon_is_120min_and_multiresolution():
+    horizon = HydraulicHorizonV110()
+    assert horizon.response_minutes() == (
+        5.0, 10.0, 15.0, 20.0, 25.0, 30.0,
+        40.0, 50.0, 60.0, 70.0, 80.0, 90.0,
+        100.0, 110.0, 120.0,
     )
-    assert torch.isfinite(loss)
-    loss.backward()
-    assert prediction.grad is not None
 
 
-def test_v110_prepare_batch_uses_candidate_minus_reference():
-    batch = V60GroupBatch(
-        source_kind="D2",
-        group_name="D2::x",
-        initial_state=torch.zeros(1, 3, 6),
-        rainfall=torch.zeros(1, 72, 3, 1),
-        reference_settings=torch.zeros(1, 72, 2),
-        candidate_settings=torch.ones(1, 2, 72, 2),
-        previous_actuator_flow=torch.zeros(1, 2),
-        elapsed_seconds=torch.zeros(1),
-        true_reference_states=torch.zeros(1, 1, 72, 3, 6),
-        true_candidate_states=torch.ones(1, 2, 72, 3, 6),
-        true_reference_flows=torch.zeros(1, 1, 72, 2),
-        true_candidate_flows=torch.ones(1, 2, 72, 2),
-        true_delta_tfv_m3=torch.zeros(1, 2),
+def test_action_prefix_features_do_not_see_future_actions():
+    _, _, reference, _ = _inputs()
+    candidate = reference[:, None].clone()
+    candidate[:, :, 12:, 0] = 1.0
+    indices = torch.tensor([0, 5, 11, 13], dtype=torch.long)
+    features, mask = action_prefix_features_v110(reference, candidate, indices)
+    assert not bool(mask[:, :, :3].any())
+    assert bool(mask[:, :, 3, 0].all())
+    later = candidate.clone()
+    later[:, :, 30:, 1] = 1.0
+    features_later, mask_later = action_prefix_features_v110(reference, later, indices)
+    assert torch.equal(features, features_later)
+    assert torch.equal(mask, mask_later)
+
+
+def test_v110_exact_zero_and_delayed_action_causality():
+    model = _model().eval()
+    initial, rainfall, reference, previous_flow = _inputs()
+    prepared = _prepared()
+    with torch.no_grad():
+        zero = model(initial, rainfall, reference, reference[:, None], previous_flow, prepared)
+    assert torch.equal(zero.raw_delta_states_physical, torch.zeros_like(zero.raw_delta_states_physical))
+    assert torch.equal(zero.raw_delta_flows_physical, torch.zeros_like(zero.raw_delta_flows_physical))
+    assert not any(p.requires_grad for p in model.reference_model.parameters())
+
+    candidate = reference[:, None].clone()
+    candidate[:, :, 18:, 0] = 1.0
+    with torch.no_grad():
+        delayed = model(initial, rainfall, reference, candidate, previous_flow, prepared)
+    early = delayed.horizon_indices < 18
+    assert torch.equal(
+        delayed.raw_delta_states_physical[:, :, early],
+        torch.zeros_like(delayed.raw_delta_states_physical[:, :, early]),
     )
-    prepared = prepare_action_effect_batch_v110(batch)
-    assert torch.all(prepared.state_effect == 1.0)
-    assert torch.all(prepared.flow_effect == 1.0)
+    assert torch.equal(
+        delayed.raw_delta_flows_physical[:, :, early],
+        torch.zeros_like(delayed.raw_delta_flows_physical[:, :, early]),
+    )
 
 
-class _BasisGraph:
-    actuator_ids = ("a0", "a1")
-    actuator_upstream = np.asarray([0, 1], dtype=np.int64)
-    actuator_downstream = np.asarray([1, 2], dtype=np.int64)
-    node_ids = ("n0", "n1", "n2")
+def test_v110_nonlocal_relation_has_no_hop_cutoff():
+    relations = build_actuator_node_relations_v110(_graph())
+    assert relations.finite_hop_cutoff is False
+    assert relations.pair_features.shape == (2, 3, 9)
+    assert float(relations.pair_features[0, 2, 8]) == 1.0
+    assert float(relations.pair_features[0, 2, 2]) > 0.0
 
 
-def test_v110_basis_integration_is_finite():
-    basis = build_control_basis_v60(_BasisGraph())
-    assert basis.coefficient_dimension > 0
+def test_v110_multi_actuator_joint_response_is_not_forced_to_sum_of_single_outputs():
+    torch.manual_seed(7)
+    model = _model().eval()
+    initial, rainfall, reference, previous_flow = _inputs()
+    prepared = _prepared()
+    a = reference[:, None].clone()
+    b = reference[:, None].clone()
+    ab = reference[:, None].clone()
+    a[:, :, :12, 0] = 1.0
+    b[:, :, :12, 1] = 1.0
+    ab[:, :, :12, :] = 1.0
+    with torch.no_grad():
+        out_a = model(initial, rainfall, reference, a, previous_flow, prepared)
+        out_b = model(initial, rainfall, reference, b, previous_flow, prepared)
+        out_ab = model(initial, rainfall, reference, ab, previous_flow, prepared)
+    summed = out_a.raw_delta_states_physical + out_b.raw_delta_states_physical
+    assert not torch.allclose(out_ab.raw_delta_states_physical, summed, atol=1e-7, rtol=1e-6)
 
 
 class _FakeEntry:
     def __init__(self, arrays):
         self.arrays = arrays
-        self.indices = tuple(range(len(arrays["target_states"])))
+        self.reference_index = 0
+        self.indices = (0, 1)
 
 
 class _FakeCache:
@@ -122,12 +198,8 @@ def test_historical_v110_remains_importable_but_current_surface_is_v127():
     import rtc.step2_current as current
 
     assert current.CURRENT_PROJECT7_CONTRACT == "PROJECT7_V127_CONTINUOUS_DIFFERENTIABLE_MPC_CORRECTNESS_V2"
-    assert current.CURRENT_STEP2_CONTRACT.startswith(
-        "PROJECT7_V127_CONTROL_ORIENTED_DIFFERENTIABLE_HYDRAULIC_SURROGATE"
-    )
-    assert current.CURRENT_STEP3_CONTRACT.startswith(
-        "PROJECT7_V127_109ACT_H120_LBFGSB_RECEDING_HORIZON_MPC"
-    )
+    assert current.CURRENT_STEP2_CONTRACT.startswith("PROJECT7_V127_CONTROL_ORIENTED_DIFFERENTIABLE_HYDRAULIC_SURROGATE")
+    assert current.CURRENT_STEP3_CONTRACT.startswith("PROJECT7_V127_109ACT_H120_LBFGSB_RECEDING_HORIZON_MPC")
     assert current.CONTINUOUS_MPC_ENABLED is True
     assert current.CONTINUOUS_MPC_RUNTIME_REQUIRES_GATE is True
     assert current.HYDRAULIC_MODEL_REQUIRED_ONLINE is True
