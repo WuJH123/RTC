@@ -40,15 +40,14 @@ def run_policy_main() -> None:
     strategy = canonical_baseline_id(known.strategy)
 
     if strategy == "proposed" and _is_v127_checkpoint(known.step2):
-        # The current V127 runtime needs explicit Priority8, causal-rainfall store and
-        # checkpoint-bound gradient/ranking evidence.  The historical generic guard does
-        # not own these arguments, so silently falling through would execute a different
-        # legacy policy under the name "proposed".  Keep one unambiguous V127 entrypoint.
+        # V127 needs explicit Priority8 and same-checkpoint scientific evidence.  The
+        # historical generic guard does not own those arguments, so silently falling
+        # through would execute a different legacy policy under the name "proposed".
         raise RuntimeError(
             "V127 Proposed checkpoint detected. Use scripts/run_policy_v127.py (or "
-            "scripts/run_seven_strategies_v127.py) with explicit --priority-nodes, "
-            "--causal-store and --continuous-gate. The generic production_guard cannot "
-            "route V127 without changing its scientific inputs."
+            "scripts/run_seven_strategies_v127.py) with explicit --priority-nodes and "
+            "--continuous-gate. The generic production_guard cannot route V127 without "
+            "changing its scientific inputs."
         )
 
     if strategy == "proposed" and is_v120_bundle(known.step2):
