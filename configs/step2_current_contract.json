@@ -1,96 +1,125 @@
 {
-  "contract": "PROJECT7_STEP2_V120_TFV_VALUE_ONLY_V2_EXECUTION_BOUND",
-  "research_goal": "reduce whole-system cumulative TFV under sparse-sensor real-time control",
+  "contract": "PROJECT7_V125_ANCHOR_DEFAULT_EVIDENCE_GATED_OVERRIDE_V1",
+  "research_goal": "every 10 minutes use sparse causal state to command all 109 writable pumps/orifices/weirs, minimize whole-system cumulative TFV, and apply PFV only as one-sided soft deterioration protection",
+  "authoritative_truth": "SWMM",
   "step1": {
     "role": "causal sparse-sensor reconstruction of current full hydraulic state",
-    "status": "REQUIRED",
-    "online_step2_state_source": "accepted Step1 reconstruction",
-    "promotion_must_bind_exact_step1_checkpoint": true
+    "status": "ACCEPTED_FOR_CURRENT_CONTROL_PATH",
+    "evidence": "V124 Sparse-RBC parity: actuator-adjacent endpoint NSE approximately 0.991 and action Spearman approximately 0.988",
+    "online_state_source": "accepted Step1 reconstruction only",
+    "future_SWMM_state_online": false
   },
   "step2": {
-    "version": "V120",
-    "base_model": "rtc.step2_control_response_v70.ControlValueSurrogateV70",
-    "horizon_minutes": 360,
-    "target": "direct_signed_authoritative_delta_TFV_m3",
-    "training_state_source": "authoritative SWMM checkpoint-current state",
-    "internal_value_gate_scope": "Train-only oracle-current-state screening",
-    "runtime_state_source": "accepted Step1 reconstruction from sparse sensors",
-    "state_domain_shift_explicit": true,
-    "training_rainfall_input": "checkpoint-current rainfall persisted/decayed with factor 0.92",
-    "future_realized_rainfall_as_model_input": false,
-    "hydraulic_trajectory_prediction_required": false,
-    "nodewise_action_effect_required": false,
-    "status": "CONTROL_ORIENTED_VALUE_ONLY"
+    "version": "V125",
+    "primary_target": "direct signed authoritative delta_TFV_m3",
+    "secondary_target": "direct signed Priority8 delta_PFV_m3",
+    "tfv_role": "PRIMARY",
+    "pfv_role": "ONE_SIDED_SOFT_DETERIORATION_PROTECTION",
+    "global_peak_role": "REPORT_ONLY",
+    "hydraulic_trajectory_model_required_online": false,
+    "continuous_gradient_search": false,
+    "finite_value_architecture": "V124 interaction-aware Value or frozen accepted causal V70 until V125 D4 retraining is accepted",
+    "v125_first_retrain_ablation": {
+      "change_architecture": false,
+      "hidden_dim": 96,
+      "attention_heads": 4,
+      "listwise_weight": 0.30,
+      "seed": 42,
+      "only_experimental_change": "add D4 fit action-support supervision"
+    }
+  },
+  "d4": {
+    "contract": "PROJECT7_STEP2_D4_ACTION_SUPPORT_V125_V2_COMMON_CONTINUATION",
+    "source_scope": "Development TrainFit only",
+    "max_checkpoints": 48,
+    "expected_rainfall_groups_from_current_plan": 14,
+    "fit_audit_split_unit": "rainfall_group",
+    "audit_fraction": 0.25,
+    "expected_current_split": "10 fit / 4 audit rainfall groups",
+    "split_frozen_before_SWMM_outcomes": true,
+    "counterfactual_credit": "only first executable 600-second block differs; all candidates share the exact same causal Sparse-RBC anchor continuation afterwards",
+    "action_sequence_saved_in_plan": true,
+    "audit_rows_allowed_in_training": false,
+    "validation_final_formal_allowed": false
   },
   "step3": {
-    "policy": "finite_candidate_search_on_targeted_D3_v2_control_manifold",
-    "candidate_families": [
-      "hold",
-      "single_group",
-      "same_zone",
-      "cross_zone",
-      "sparse_low_discrepancy"
-    ],
-    "joint_actions_scored_directly": true,
-    "sum_D2_effects": false,
-    "continuous_gradient_extrapolation": false,
-    "rainfall_scenario_multipliers": [1.0],
-    "scoring_operator": "single_causal_scenario_predicted_delta_TFV",
+    "policy": "anchor_default_evidence_gated_learned_override",
+    "default_action": "causal Sparse-RBC first move derived from Step1 reconstructed state",
+    "learned_candidate_source": "finite engineering-feasible first-move-rich candidate set",
+    "passive_false_benefit_gate": "retain V123 calibrated candidate-vs-passive TFV error budget",
+    "anchor_override_gate": "predicted candidate-minus-anchor TFV plus separately calibrated D4-fit one-sided error budget must be < 0",
+    "pfv_after_tfv_gate": true,
+    "pfv_can_compensate_for_worse_anchor_relative_tfv": false,
+    "objective": "TFV risk + one-sided PFV deterioration penalty + movement penalty",
     "score_only_executable_sequences": true,
-    "first_move_bound_to_current_and_target_readback": true,
-    "selection": "minimum predicted joint-action delta_TFV",
-    "fallback": "hold_current_if_no_predicted_improvement_or_runtime_guard_fails"
+    "projection_after_scoring": false,
+    "continuous_gradient_extrapolation": false,
+    "fallback": "Sparse-RBC anchor; passive only when anchor is passive or runtime safety prevents a command"
   },
-  "data": {
-    "D2_source_authoritative_branch_census": 4800,
-    "D2_source_audit_required_before_training": true,
-    "D2_source_census_is_not_IID_training_population": true,
-    "D2_training_eligibility": "frozen Train18 only",
-    "D2_train_groups_required": 144,
-    "D2_train_branches_required": 3600,
-    "targeted_D3_train_groups_required": 144,
-    "targeted_D3_train_branches_required": 3600,
-    "branches_per_counterfactual_group": 25,
-    "candidates_per_counterfactual_group": 24,
-    "scientific_split": "18 Train / 6 Development-Validation / 6 Final",
-    "internal_train_split": "14 TrainFit / 4 InternalHoldout",
-    "internal_holdout_fraction": 0.20,
-    "internal_holdout_fraction_tunable": false,
-    "validation_or_final_labels_in_step2_training": false
+  "rolling_control": {
+    "model_step_minutes": 5,
+    "control_update_minutes": 10,
+    "execute_first_block_only": true,
+    "command_every_writable_actuator_each_decision": true,
+    "writable_actuator_scope": "57 pumps + 34 orifices + 18 weirs = 109",
+    "max_setting_delta_per_update": 0.5,
+    "target_latch_readback": true,
+    "current_setting_is_tracking_diagnostic_not_write_acknowledgement": true,
+    "reconstruct_and_reoptimize_each_update": true,
+    "native_SWMM_controls_disabled_for_Proposed": true
   },
   "causality": {
     "future_SWMM_truth_online": false,
     "future_realized_rainfall_online": false,
     "causal_rainfall_forecast_only": true,
     "rainfall_decay_per_5min_step": 0.92,
-    "rainfall_history_steps_for_level": 1,
     "current_state_from_step1_online": true
   },
-  "rolling_control": {
-    "model_step_minutes": 5,
-    "control_update_minutes": 10,
-    "execute_first_block_only": true,
-    "SWMM_readback_after_write": true,
-    "reconstruct_and_reoptimize_each_update": true,
-    "max_setting_delta_per_update": 0.5
-  },
-  "promotion_and_lock": {
-    "development_closed_loop_uses_sparse_sensor_step1": true,
-    "promotion_requires_exact_step1_sha": true,
-    "promotion_requires_d2_source_audit_sha": true,
-    "policy_lock_requires_same_step1_and_d2_audit": true
-  },
   "evaluation": {
-    "primary": "authoritative_SWMM_whole_system_cumulative_TFV_m3",
+    "primary": "authoritative SWMM whole-system cumulative TFV_m3",
+    "priority_soft_diagnostic": "authoritative Priority8 cumulative PFV_m3",
     "reported_diagnostics": [
       "global_peak_flood_rate",
-      "priority_node_flooding",
       "engineering_execution",
-      "fallback_fraction"
+      "fallback_fraction",
+      "anchor_selection_fraction",
+      "learned_override_fraction",
+      "false_benefit_override_rate",
+      "decision_runtime"
     ],
-    "aggregation": "equal_weight_per_independent_rainfall_group"
+    "development_non_regression": [
+      "old generic InternalHoldout D3 ranking",
+      "D4 audit anchor-neighbourhood ranking/regret",
+      "authoritative T5 closed-loop TFV/PFV"
+    ],
+    "aggregation": "equal weight per independent rainfall group"
   },
-  "historical_hydraulic_models": {
-    "V8_to_V113": "research_diagnostics_only_not_production_gate"
-  }
+  "continuous_mpc_gate": {
+    "enabled_now": false,
+    "rank_min": 0.70,
+    "top1_min": 0.50,
+    "gradient_sign_min": 0.70,
+    "gradient_cosine_min": 0.60,
+    "thresholds_are_project_preregistered_not_literature_universal": true
+  },
+  "canonical_entrypoints": {
+    "policy": "rtc.step2_policy_v125.AnchorOverridePolicyV125",
+    "controller": "rtc.controller_v125.V125TorchMPCController",
+    "runtime": "scripts/run_policy_v125.py",
+    "d4_plan": "scripts/plan_step2_v125_d4_action_support.py",
+    "anchor_override_calibration": "scripts/calibrate_step3_v125_anchor_override.py",
+    "current_surface": "rtc.step2_current"
+  },
+  "historical_only": {
+    "V8_to_V113_hydraulic_effect_routes": true,
+    "V120_V123_policy_semantics": "reproducibility only; not canonical V125 selector",
+    "V124_attention_result": "development evidence; did not replace frozen V70 on rank"
+  },
+  "forbidden_until_development_gates_pass": [
+    "Validation outcomes",
+    "Final outcomes",
+    "Formal",
+    "Policy Lock",
+    "continuous L-BFGS-B MPC"
+  ]
 }
