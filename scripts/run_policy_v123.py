@@ -1,10 +1,15 @@
-"""Run the V123 causal TFV/PFV finite-shooting policy on one development event.
+"""Run the V123 causal TFV/PFV knowledge-anchored finite policy.
 
-This adapter deliberately reuses the guarded V120 rolling SWMM loop.  It changes
-only the loaded Value policy: the TFV and PFV checkpoints are separate, the
-rainfall input is the runtime PersistenceDecayForecast, and the V123 objective
-is applied before the first executable move is returned.  No continuous search
-or post-score projection is introduced here.
+The validated V122 execution shell is reused for clock/readback/score==execute.  V123
+adds two scientific policy semantics:
+
+1. TFV/PFV Value inputs use the same causal PersistenceDecayForecast as training.
+2. A sparse-state Auto-RBC engineering anchor is generated from Step1 reconstructed
+   actuator-adjacent depths every 10 minutes.  Learned candidates may override it when
+   the calibrated Value evidence is strong; otherwise the engineering anchor is used
+   instead of HOLD.
+
+Continuous gradient search remains disabled until the authoritative gate passes.
 """
 from __future__ import annotations
 
@@ -31,14 +36,14 @@ from rtc.step2_control_response_v60 import prepare_static_v60
 from rtc.step2_control_response_v70 import ControlValueSurrogateV70
 from rtc.step2_policy_v120 import RuntimeNormalizationV120
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
-from rtc.step2_v120_train_helpers import load_graph_v120
 from rtc.step2_causal_rainfall_v123 import (
     derive_causal_input_normalization_v123,
     load_causal_forecast_store_v123,
 )
 from rtc.step2_control_value_v123 import DualVolumeValueV123
+from rtc.step2_policy_v123 import FirstMoveTFVPFVPolicyV123, V123_POLICY_CONTRACT
+from rtc.step3_knowledge_seeds_v123 import V123_SPARSE_RBC_ANCHOR_CONTRACT
 from rtc.step3_objective_v123 import TFVPFVObjectiveV123
-from rtc.step2_policy_v123 import FirstMoveTFVPFVPolicyV123
 
 
 def _causal_normalization(
@@ -114,20 +119,30 @@ def _load_policy(
 
     objective_raw = json.loads(Path(objective_report).read_text(encoding="utf-8"))["objective"]
     calibration = json.loads(Path(calibration_report).read_text(encoding="utf-8"))["calibration"]
+    if "tfv_false_benefit_margin_m3" not in calibration:
+        raise ValueError("V123 calibration lacks TFV false-benefit margin")
+    if "pfv_false_safety_margin_m3" not in calibration:
+        raise ValueError("V123 calibration lacks PFV false-safety margin")
     objective = TFVPFVObjectiveV123(
         pfv_soft_margin_m3=float(objective_raw["pfv_soft_margin_m3"]),
         pfv_scale_m3=float(objective_raw["pfv_scale_m3"]),
         tfv_scale_m3=float(objective_raw["tfv_scale_m3"]),
         pfv_penalty_weight=float(objective_raw["pfv_penalty_weight"]),
+        pfv_model_error_margin_m3=float(calibration["pfv_false_safety_margin_m3"]),
     )
     dual = DualVolumeValueV123(tfv_model=tfv_model, pfv_model=pfv_model).to(device).eval()
+    false_benefit = float(calibration["tfv_false_benefit_margin_m3"])
+    false_safety = float(calibration["pfv_false_safety_margin_m3"])
     return FirstMoveTFVPFVPolicyV123(
         model=dual,
         basis=basis,
         prepared=prepared,
         normalization=normalization,
         objective=objective,
-        false_benefit_margin_m3=float(calibration["tfv_false_benefit_margin_m3"]),
+        false_benefit_margin_m3=false_benefit,
+        graph=graph,
+        use_sparse_rbc_anchor=True,
+        knowledge_anchor_fallback=True,
     ), {
         "fit_d2_groups": len(fit_d2),
         "causal_store_sha256": hashlib.sha256(Path(causal_store_path).read_bytes()).hexdigest(),
@@ -135,12 +150,16 @@ def _load_policy(
         "pfv_checkpoint_sha256": hashlib.sha256(Path(pfv_checkpoint).read_bytes()).hexdigest(),
         "tfv_scale_m3": tfv_scale,
         "pfv_scale_m3": pfv_scale,
-        "false_benefit_margin_m3": float(calibration["tfv_false_benefit_margin_m3"]),
+        "tfv_false_benefit_margin_m3": false_benefit,
+        "pfv_false_safety_margin_m3": false_safety,
+        "sparse_state_rbc_anchor": True,
+        "sparse_state_rbc_anchor_contract": V123_SPARSE_RBC_ANCHOR_CONTRACT,
+        "knowledge_anchor_fallback": True,
     }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="V123 causal finite-shooting development runner")
+    parser = argparse.ArgumentParser(description="V123 causal knowledge-anchored development runner")
     parser.add_argument("--inp", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--run-id", required=True)
@@ -197,7 +216,9 @@ def main() -> None:
         config=_controller_config(controller_cfg, control_block_steps=2),
         device=device,
     )
-    controller = ContinuityGuardController(controller, max_delta_per_update=0.5, allow_projection=False)
+    controller = ContinuityGuardController(
+        controller, max_delta_per_update=0.5, allow_projection=False
+    )
     source_inp = Path(args.inp)
     runtime_inp = _controls_disabled_runtime(
         source_inp=source_inp,
@@ -217,26 +238,38 @@ def main() -> None:
         exact_global_peak=bool(cfg.get("exact_global_peak", False)),
     )
     metadata = json.loads(Path(result.metadata_path).read_text(encoding="utf-8"))
-    metadata.update({
-        "v123_policy_contract": "PROJECT7_V123_FIRST_MOVE_TFV_PRIMARY_PFV_SOFT_POLICY_V2",
-        "v123_runtime_causal_rainfall": True,
-        "future_realized_rainfall_used_as_model_input": False,
-        "continuous_gradient_search": False,
-        "score_only_executable_sequences": True,
-        "first_move_bound_to_current_and_target_readback": True,
-        "v123_lineage": lineage,
-    })
-    Path(result.metadata_path).write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({
-        "strategy": "proposed_v123",
-        "metadata_path": result.metadata_path,
-        "decision_path": result.decision_path,
-        "node_statistics_path": result.node_statistics_path,
-        "decisions": result.decisions,
-        "global_peak_flood_rate_m3s": result.global_peak_flood_rate_m3s,
-        "flow_routing_error_pct": result.flow_routing_error_pct,
-        "lineage": lineage,
-    }, indent=2), flush=True)
+    metadata.update(
+        {
+            "v123_policy_contract": V123_POLICY_CONTRACT,
+            "v123_runtime_causal_rainfall": True,
+            "future_realized_rainfall_used_as_model_input": False,
+            "continuous_gradient_search": False,
+            "score_only_executable_sequences": True,
+            "first_move_bound_to_current_and_target_readback": True,
+            "knowledge_data_fusion": True,
+            "knowledge_anchor_default_when_value_uncertain": True,
+            "v123_lineage": lineage,
+        }
+    )
+    Path(result.metadata_path).write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(
+        json.dumps(
+            {
+                "strategy": "proposed_v123",
+                "metadata_path": result.metadata_path,
+                "decision_path": result.decision_path,
+                "node_statistics_path": result.node_statistics_path,
+                "decisions": result.decisions,
+                "global_peak_flood_rate_m3s": result.global_peak_flood_rate_m3s,
+                "flow_routing_error_pct": result.flow_routing_error_pct,
+                "lineage": lineage,
+            },
+            indent=2,
+        ),
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
