@@ -87,6 +87,8 @@ def test_v123_controller_relabels_and_records_dual_objective_evidence(monkeypatc
         objective_score_m3_equivalent=-3900.0,
         false_benefit_margin_m3=1000.0,
         scoring_projection_max=0.5,
+        policy_mode="hybrid",
+        policy_mode_contract="PROJECT7_V123_POLICY_MODE_HYBRID_ANCHOR_PLUS_LEARNED_V1",
     )
     controller = object.__new__(V123TorchMPCController)
     controller.mpc = SimpleNamespace(last_result=result)
@@ -98,3 +100,6 @@ def test_v123_controller_relabels_and_records_dual_objective_evidence(monkeypatc
     assert action.diagnostics["pfv_risk_m3"] == 120.0
     assert action.diagnostics["objective_score_m3_equivalent"] == -3900.0
     assert "v123_controller_contract" in action.diagnostics
+    assert action.diagnostics["v123_policy_mode"] == "hybrid"
+    assert action.diagnostics["v123_policy_mode_contract"].endswith("_V1")
+    assert action.diagnostics["knowledge_data_fusion"] is True

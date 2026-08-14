@@ -53,9 +53,21 @@ class V123TorchMPCController(V122TorchMPCController):
             diagnostics.pop(key, None)
         diagnostics["v123_controller_contract"] = V123_CONTROLLER_CONTRACT
         diagnostics["v123_policy_contract"] = V123_POLICY_CONTRACT
+        policy_mode = getattr(self.mpc, "policy_mode", None)
+        policy_mode_contract = getattr(self.mpc, "policy_mode_contract", None)
+        if policy_mode is not None:
+            diagnostics["v123_policy_mode"] = str(policy_mode)
+        if policy_mode_contract is not None:
+            diagnostics["v123_policy_mode_contract"] = str(policy_mode_contract)
 
         result = getattr(self.mpc, "last_result", None)
         if result is not None:
+            if hasattr(result, "policy_mode"):
+                diagnostics["v123_policy_mode"] = str(getattr(result, "policy_mode"))
+            if hasattr(result, "policy_mode_contract"):
+                diagnostics["v123_policy_mode_contract"] = str(
+                    getattr(result, "policy_mode_contract")
+                )
             for name in (
                 "predicted_delta_tfv_m3",
                 "predicted_delta_pfv_m3",
@@ -86,7 +98,10 @@ class V123TorchMPCController(V122TorchMPCController):
             ):
                 if hasattr(result, name):
                     diagnostics[name] = bool(getattr(result, name))
-            diagnostics["knowledge_data_fusion"] = True
+            anchor_enabled = getattr(self.mpc, "use_sparse_rbc_anchor", None)
+            if anchor_enabled is None and hasattr(result, "policy_mode"):
+                anchor_enabled = str(getattr(result, "policy_mode")) != "learned_only"
+            diagnostics["knowledge_data_fusion"] = bool(anchor_enabled)
 
         source = str(action.source)
         if source == "MPC_V122":

@@ -27,6 +27,34 @@ from .step3_knowledge_seeds_v123 import build_sparse_state_auto_rbc_anchor_v123
 from .step3_objective_v123 import TFVPFVObjectiveV123, tfv_pfv_score_v123
 
 V123_POLICY_CONTRACT = "PROJECT7_V123_KNOWLEDGE_ANCHORED_TFV_PRIMARY_PFV_SOFT_POLICY_V3"
+V123_POLICY_MODES = ("anchor_only", "learned_only", "hybrid")
+V123_POLICY_MODE_CONTRACTS = {
+    "anchor_only": "PROJECT7_V123_POLICY_MODE_SPARSE_RBC_ANCHOR_ONLY_V1",
+    "learned_only": "PROJECT7_V123_POLICY_MODE_LEARNED_ONLY_V1",
+    "hybrid": "PROJECT7_V123_POLICY_MODE_HYBRID_ANCHOR_PLUS_LEARNED_V1",
+}
+V123_CONTINUITY_NUMERICAL_MARGIN = 1.0e-6
+
+
+def safe_runtime_delta_v123(runtime_delta: float) -> float:
+    """Leave a float32-to-float64 margin before the strict runtime guard."""
+    value = float(runtime_delta)
+    if not math.isfinite(value) or value < 0.0:
+        raise ValueError("runtime delta must be finite and non-negative")
+    return max(0.0, value - V123_CONTINUITY_NUMERICAL_MARGIN)
+
+
+def anchor_base_settings_v123(
+    current_settings: torch.Tensor,
+    previous_requested_settings: torch.Tensor | None,
+) -> torch.Tensor:
+    """Use the active target latch as the command-continuity anchor when present.
+
+    Physical current settings remain the hydraulic observation.  The supervisory target
+    is the authoritative command path, so an RBC target computed from physical lag must
+    not be emitted directly if it would jump more than the frozen per-update bound.
+    """
+    return current_settings if previous_requested_settings is None else previous_requested_settings
 
 
 @dataclass(frozen=True)
@@ -52,6 +80,8 @@ class FirstMoveTFVPFVResultV123:
     knowledge_anchor_selected: bool = False
     knowledge_anchor_fallback_used: bool = False
     knowledge_anchor_first_move_delta_max: float = 0.0
+    policy_mode: str = "hybrid"
+    policy_mode_contract: str = V123_POLICY_MODE_CONTRACTS["hybrid"]
 
     def __post_init__(self) -> None:
         if self.selected_group_score_m3 is None:
@@ -60,6 +90,8 @@ class FirstMoveTFVPFVResultV123:
                 "selected_group_score_m3",
                 float(self.objective_score_m3_equivalent),
             )
+        if self.policy_mode not in V123_POLICY_MODES:
+            raise ValueError(f"unsupported V123 policy mode: {self.policy_mode}")
 
     @property
     def candidate_count(self) -> int:
@@ -86,6 +118,7 @@ class FirstMoveTFVPFVPolicyV123:
         graph=None,
         use_sparse_rbc_anchor: bool = True,
         knowledge_anchor_fallback: bool = True,
+        policy_mode: str = "hybrid",
         candidate_design: FirstMoveCandidateDesignV123 = FirstMoveCandidateDesignV123(),
         first_move_group_atol: float = 1.0e-7,
     ) -> None:
@@ -96,6 +129,12 @@ class FirstMoveTFVPFVPolicyV123:
             raise ValueError("V123 false-benefit margin must be finite and non-negative")
         if not math.isfinite(float(first_move_group_atol)) or first_move_group_atol <= 0.0:
             raise ValueError("V123 first-move grouping tolerance must be positive")
+        if policy_mode not in V123_POLICY_MODES:
+            raise ValueError(f"unsupported V123 policy mode: {policy_mode}")
+        if policy_mode == "anchor_only" and not use_sparse_rbc_anchor:
+            raise ValueError("anchor_only mode requires the sparse-state RBC anchor")
+        if policy_mode == "learned_only" and (use_sparse_rbc_anchor or knowledge_anchor_fallback):
+            raise ValueError("learned_only mode cannot enable a knowledge anchor")
         if use_sparse_rbc_anchor and graph is None:
             raise ValueError("V123 sparse-state RBC anchor requires the frozen graph")
         self.model = model
@@ -107,6 +146,8 @@ class FirstMoveTFVPFVPolicyV123:
         self.graph = graph
         self.use_sparse_rbc_anchor = bool(use_sparse_rbc_anchor)
         self.knowledge_anchor_fallback = bool(knowledge_anchor_fallback)
+        self.policy_mode = str(policy_mode)
+        self.policy_mode_contract = V123_POLICY_MODE_CONTRACTS[self.policy_mode]
         self.first_move_group_atol = float(first_move_group_atol)
         self._coefficients = candidate_coefficients_v123(basis, design=candidate_design)
 
@@ -185,6 +226,7 @@ class FirstMoveTFVPFVPolicyV123:
             runtime_delta = float(raw.max())
             if runtime_delta > frozen_delta + 1.0e-9:
                 raise ValueError("V123 runtime max delta is looser than frozen basis")
+        effective_runtime_delta = safe_runtime_delta_v123(runtime_delta)
 
         coeff = torch.as_tensor(
             self._coefficients,
@@ -200,9 +242,9 @@ class FirstMoveTFVPFVPolicyV123:
         knowledge_anchor_index = -1
         knowledge_anchor = self._knowledge_anchor(
             initial_state=initial_state,
-            current=current,
+            current=anchor_base_settings_v123(current, previous_target),
             reference_one=reference_one,
-            runtime_delta=runtime_delta,
+            runtime_delta=effective_runtime_delta,
         )
         if knowledge_anchor is not None:
             if knowledge_anchor.shape != reference_one[0].shape:
@@ -224,7 +266,7 @@ class FirstMoveTFVPFVPolicyV123:
                 dtype=candidate_one.dtype,
                 device=candidate_one.device,
             ),
-            max_delta_per_update=runtime_delta,
+            max_delta_per_update=effective_runtime_delta,
             control_block_steps=int(self.basis.horizon.control_block_steps),
         )
         if not torch.allclose(
@@ -332,7 +374,33 @@ class FirstMoveTFVPFVPolicyV123:
         ]
 
         knowledge_fallback = False
-        if eligible:
+        if self.policy_mode == "anchor_only":
+            if (
+                knowledge_anchor_index >= 0
+                and anchor_record is not None
+                and not bool(anchor_record["passive"])
+            ):
+                selected = int(knowledge_anchor_index)
+                selected_record = {
+                    "representative": selected,
+                    "score": float(score[selected].detach()),
+                    "tfv_risk": float(tfv_risk[selected].detach()),
+                    "pfv_risk": float(pfv_risk[selected].detach()),
+                    "passive": False,
+                    "contains_anchor": True,
+                }
+                valid = True
+            else:
+                selected_record = {
+                    "representative": 0,
+                    "score": 0.0,
+                    "tfv_risk": 0.0,
+                    "pfv_risk": 0.0,
+                    "passive": True,
+                    "contains_anchor": knowledge_anchor_index in passive_indices,
+                }
+                selected, valid = 0, False
+        elif eligible:
             selected_record = min(eligible, key=lambda item: float(item["score"]))
             selected = int(selected_record["representative"])
             valid = True
@@ -400,6 +468,8 @@ class FirstMoveTFVPFVPolicyV123:
             knowledge_anchor_selected=bool(selected == knowledge_anchor_index),
             knowledge_anchor_fallback_used=bool(knowledge_fallback),
             knowledge_anchor_first_move_delta_max=float(anchor_delta),
+            policy_mode=self.policy_mode,
+            policy_mode_contract=self.policy_mode_contract,
         )
 
 
@@ -407,4 +477,8 @@ __all__ = [
     "FirstMoveTFVPFVPolicyV123",
     "FirstMoveTFVPFVResultV123",
     "V123_POLICY_CONTRACT",
+    "V123_POLICY_MODES",
+    "V123_POLICY_MODE_CONTRACTS",
+    "V123_CONTINUITY_NUMERICAL_MARGIN",
+    "safe_runtime_delta_v123",
 ]

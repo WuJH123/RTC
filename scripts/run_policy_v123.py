@@ -39,7 +39,11 @@ from rtc.step2_causal_rainfall_v123 import (
     load_causal_forecast_store_v123,
 )
 from rtc.step2_control_value_v123 import DualVolumeValueV123
-from rtc.step2_policy_v123 import FirstMoveTFVPFVPolicyV123, V123_POLICY_CONTRACT
+from rtc.step2_policy_v123 import (
+    FirstMoveTFVPFVPolicyV123,
+    V123_POLICY_CONTRACT,
+    V123_POLICY_MODES,
+)
 from rtc.step3_knowledge_seeds_v123 import V123_SPARSE_RBC_ANCHOR_CONTRACT
 from rtc.step3_objective_v123 import TFVPFVObjectiveV123
 
@@ -136,8 +140,11 @@ def _load_policy(
     calibration_report: str,
     tfv_report: str,
     pfv_report: str,
+    policy_mode: str,
     device: torch.device,
 ):
+    if policy_mode not in V123_POLICY_MODES:
+        raise ValueError(f"unsupported V123 policy mode: {policy_mode}")
     cache = V60TrainCache(cache_manifest)
     store = load_causal_forecast_store_v123(causal_store_path)
     names = sorted(cache.names("D2") + cache.targeted_d3_names())
@@ -194,7 +201,8 @@ def _load_policy(
     dual = DualVolumeValueV123(tfv_model=tfv_model, pfv_model=pfv_model).to(device).eval()
     false_benefit = float(calibration["tfv_false_benefit_margin_m3"])
     false_safety = float(calibration["pfv_false_safety_margin_m3"])
-    return FirstMoveTFVPFVPolicyV123(
+    use_anchor = policy_mode != "learned_only"
+    policy = FirstMoveTFVPFVPolicyV123(
         model=dual,
         basis=basis,
         prepared=prepared,
@@ -202,9 +210,11 @@ def _load_policy(
         objective=objective,
         false_benefit_margin_m3=false_benefit,
         graph=graph,
-        use_sparse_rbc_anchor=True,
-        knowledge_anchor_fallback=True,
-    ), {
+        use_sparse_rbc_anchor=use_anchor,
+        knowledge_anchor_fallback=policy_mode in ("anchor_only", "hybrid"),
+        policy_mode=policy_mode,
+    )
+    return policy, {
         "fit_d2_groups": len(fit_d2),
         "causal_store_sha256": hashlib.sha256(Path(causal_store_path).read_bytes()).hexdigest(),
         "tfv_checkpoint_sha256": hashlib.sha256(Path(tfv_checkpoint).read_bytes()).hexdigest(),
@@ -214,9 +224,24 @@ def _load_policy(
         "pfv_scale_m3": pfv_scale,
         "tfv_false_benefit_margin_m3": false_benefit,
         "pfv_false_safety_margin_m3": false_safety,
-        "sparse_state_rbc_anchor": True,
+        "sparse_state_rbc_anchor": use_anchor,
         "sparse_state_rbc_anchor_contract": V123_SPARSE_RBC_ANCHOR_CONTRACT,
-        "knowledge_anchor_fallback": True,
+        "knowledge_anchor_fallback": policy_mode in ("anchor_only", "hybrid"),
+        "v123_policy_mode": policy_mode,
+        "v123_policy_mode_contract": policy.policy_mode_contract,
+    }
+
+
+def _policy_mode_runtime_metadata(policy_mode: str) -> dict[str, object]:
+    """Return mode-specific lineage flags without conflating learned-only runs."""
+    if policy_mode not in V123_POLICY_MODES:
+        raise ValueError(f"unsupported V123 policy mode: {policy_mode}")
+    return {
+        "v123_policy_mode": policy_mode,
+        "knowledge_data_fusion": bool(policy_mode != "learned_only"),
+        "knowledge_anchor_default_when_value_uncertain": bool(
+            policy_mode in ("anchor_only", "hybrid")
+        ),
     }
 
 
@@ -237,6 +262,7 @@ def main() -> None:
     parser.add_argument("--pfv-report", required=True)
     parser.add_argument("--objective-report", required=True)
     parser.add_argument("--calibration-report", required=True)
+    parser.add_argument("--policy-mode", choices=V123_POLICY_MODES, default="hybrid")
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
 
@@ -262,6 +288,7 @@ def main() -> None:
         calibration_report=args.calibration_report,
         tfv_report=args.tfv_report,
         pfv_report=args.pfv_report,
+        policy_mode=args.policy_mode,
         device=device,
     )
     controller_cfg = cfg["controller"]
@@ -308,8 +335,7 @@ def main() -> None:
             "continuous_gradient_search": False,
             "score_only_executable_sequences": True,
             "first_move_bound_to_current_and_target_readback": True,
-            "knowledge_data_fusion": True,
-            "knowledge_anchor_default_when_value_uncertain": True,
+            **_policy_mode_runtime_metadata(args.policy_mode),
             "v123_lineage": lineage,
         }
     )
