@@ -61,7 +61,7 @@
     "control_update_minutes": 10,
     "execute_first_block_only": true,
     "command_every_writable_actuator_each_decision": true,
-    "writable_actuator_scope": "57 pumps + 34 orifices + 18 weirs = 109",
+    "writable_actuator_scope": "109 pumps/orifices/weirs discovered from and identity-checked against the frozen INP/graph; subtype census is not duplicated in this contract",
     "max_setting_delta_per_update": 0.5,
     "target_latch_readback": true,
     "current_setting_is_tracking_diagnostic_not_write_acknowledgement": true,
