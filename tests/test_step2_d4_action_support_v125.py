@@ -4,7 +4,10 @@ import numpy as np
 
 from rtc.step2_d4_action_support_v125 import (
     D4ActionSupportContractV125,
+    action_sequence_sha256_v125,
     action_support_gap_v125,
+    common_anchor_continuation_sequence_v125,
+    deterministic_d4_rainfall_roles_v125,
     knowledge_neighbourhood_first_moves_v125,
     select_gap_balanced_checkpoints_v125,
 )
@@ -17,25 +20,40 @@ def test_knowledge_neighbourhood_is_bounded_and_contains_anchor() -> None:
     lower = np.zeros(4, dtype=np.float32)
     upper = np.ones(4, dtype=np.float32)
     contract = D4ActionSupportContractV125(max_active_groups=2)
-
     plans = knowledge_neighbourhood_first_moves_v125(
-        current,
-        anchor,
-        groups,
-        lower,
-        upper,
-        contract=contract,
+        current, anchor, groups, lower, upper, contract=contract
     )
     families = [family for family, _ in plans]
     targets = np.stack([target for _, target in plans])
-
     assert "hold" in families
     assert "anchor_scale_1.00" in families
     assert len(families) == len(set(families))
-    assert np.all(targets >= lower[None, :] - 1.0e-7)
-    assert np.all(targets <= upper[None, :] + 1.0e-7)
-    assert np.max(np.abs(targets - current[None, :])) <= 0.5 + 1.0e-7
-    np.testing.assert_allclose(targets[families.index("anchor_scale_1.00")], anchor, atol=1.0e-7)
+    assert np.all(targets >= lower[None, :] - 1e-7)
+    assert np.all(targets <= upper[None, :] + 1e-7)
+    assert np.max(np.abs(targets - current[None, :])) <= 0.5 + 1e-7
+    np.testing.assert_allclose(targets[families.index("anchor_scale_1.00")], anchor, atol=1e-7)
+
+
+def test_common_continuation_changes_only_first_executable_block() -> None:
+    anchor = np.arange(18, dtype=np.float32).reshape(6, 3) / 20.0
+    first = np.asarray([0.1, 0.2, 0.3], dtype=np.float32)
+    seq = common_anchor_continuation_sequence_v125(first, anchor, control_block_steps=2)
+    np.testing.assert_array_equal(seq[:2], np.repeat(first[None, :], 2, axis=0))
+    np.testing.assert_array_equal(seq[2:], anchor[2:])
+    assert action_sequence_sha256_v125(seq) == action_sequence_sha256_v125(seq.copy())
+
+
+def test_rainfall_split_is_outcome_blind_deterministic_and_disjoint() -> None:
+    groups = [f"r{i:02d}" for i in range(14)]
+    first = deterministic_d4_rainfall_roles_v125(groups, audit_fraction=0.25)
+    second = deterministic_d4_rainfall_roles_v125(list(reversed(groups)), audit_fraction=0.25)
+    assert first == second
+    audit = {g for g, role in first.items() if role == "audit"}
+    fit = {g for g, role in first.items() if role == "fit"}
+    assert len(audit) == 4
+    assert len(fit) == 10
+    assert not (audit & fit)
+    assert audit | fit == set(groups)
 
 
 def test_support_gap_is_zero_when_anchor_is_labelled() -> None:
@@ -43,7 +61,7 @@ def test_support_gap_is_zero_when_anchor_is_labelled() -> None:
     anchor = np.asarray([0.6, 0.1], dtype=np.float32)
     candidates = np.asarray([[0.2, 0.4], [0.6, 0.1], [0.3, 0.3]], dtype=np.float32)
     gap = action_support_gap_v125(current, anchor, candidates)
-    assert gap["nearest_anchor_l1_normalized"] <= 1.0e-7
+    assert gap["nearest_anchor_l1_normalized"] <= 1e-7
     assert gap["nearest_direction_agreement"] == 1.0
 
 
