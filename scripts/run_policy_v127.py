@@ -12,6 +12,7 @@ import torch
 from rtc.checkpoint_v127 import load_step2_v127
 from rtc.closed_loop import run_authoritative_closed_loop
 from rtc.controller_v127 import V127TorchMPCController
+from rtc.event_clock import inspect_prepared_event_clock
 from rtc.forecast import PersistenceDecayForecast
 from rtc.production_cli import (
     _controller_config,
@@ -20,6 +21,7 @@ from rtc.production_cli import (
     _load_lines,
     _load_step1,
 )
+from rtc.project7_contract import EFFECTIVE_WARMUP_MINUTES, validate_project7_runtime_config
 from rtc.runtime_controller_guard import ContinuityGuardController
 from rtc.step2_causal_rainfall_v123 import load_causal_forecast_store_v123
 from rtc.step3_mpc_v127 import (
@@ -29,8 +31,9 @@ from rtc.step3_mpc_v127 import (
     V127_STEP3_CONTRACT,
 )
 
-V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V2_CAUSAL_RAIN_BOUND"
-V127_GATE_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_EVIDENCE_GATE_V1"
+V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V3_LINEAGE_BOUND"
+V127_EVIDENCE_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_EVIDENCE_V2_LINEAGE_BOUND_NOT_SCORE_GATED"
+V127_CAUSAL_FORECAST_CONTRACT = "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92,scenario_multiplier=1.0)"
 
 
 def _sha(path: str | Path) -> str:
@@ -53,13 +56,17 @@ def _priority_indices(path: str | Path, graph, device: torch.device) -> torch.Te
     )
 
 
-def _evidence(path: str | Path) -> tuple[Step2GradientEvidenceV127, dict]:
+def _evidence(
+    path: str | Path, *, expected_step2_sha256: str
+) -> tuple[Step2GradientEvidenceV127, dict]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if payload.get("contract") != V127_GATE_CONTRACT or payload.get("passed") is not True:
-        raise ValueError("V127 runtime requires a passed continuous-MPC evidence gate")
+    if payload.get("contract") != V127_EVIDENCE_CONTRACT or payload.get("passed") is not True:
+        raise ValueError("V127 runtime requires structurally valid continuous-MPC evidence")
+    if str(payload.get("step2_sha256", "")).lower() != expected_step2_sha256.lower():
+        raise ValueError("V127 evidence was compiled for a different Step2 checkpoint")
     metrics = payload.get("metrics")
     if not isinstance(metrics, dict):
-        raise ValueError("V127 continuous gate lacks metrics")
+        raise ValueError("V127 continuous evidence lacks metrics")
     evidence = Step2GradientEvidenceV127(**metrics)
     evidence.validate()
     return evidence, payload
@@ -84,7 +91,7 @@ def main() -> None:
     p.add_argument("--decision-runtime-budget-seconds", type=float, default=540.0)
     p.add_argument("--pfv-soft-margin-m3", type=float, default=100.0)
     p.add_argument("--pfv-penalty-weight", type=float, default=1.0)
-    p.add_argument("--min-improvement-vs-rbc-m3", type=float, default=1.0)
+    p.add_argument("--min-improvement-vs-rbc-m3", type=float, default=0.0)
     args = p.parse_args()
 
     device = torch.device(
@@ -93,8 +100,11 @@ def main() -> None:
     graph = _load_graph(args.graph)
     sensors = _load_lines(args.sensors)
     step1 = _load_step1(args.step1, device)
+    step2_sha = _sha(args.step2)
     step2, step2_payload = load_step2_v127(args.step2, graph=graph, device=device)
-    evidence, gate_payload = _evidence(args.continuous_gate)
+    evidence, evidence_payload = _evidence(
+        args.continuous_gate, expected_step2_sha256=step2_sha
+    )
     priority = _priority_indices(args.priority_nodes, graph, device)
 
     causal_store = load_causal_forecast_store_v123(args.causal_store)
@@ -105,18 +115,29 @@ def main() -> None:
         raise ValueError("V127 causal rainfall store node count differs from graph")
     if causal_store.future_realized_rainfall_not_used is not True:
         raise ValueError("V127 causal rainfall store does not prove future-rain exclusion")
+    if str(causal_store.forecast_contract) != V127_CAUSAL_FORECAST_CONTRACT:
+        raise ValueError("V127 causal rainfall store differs from runtime forecast semantics")
 
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
-    if int(cfg.get("model_step_seconds", -1)) != 300 or int(
-        cfg.get("control_update_seconds", -1)
-    ) != 600:
-        raise ValueError("V127 runtime requires 300-s model observations and 600-s decisions")
+    project_contract = validate_project7_runtime_config(cfg)
+    event_clock = inspect_prepared_event_clock(args.inp)
+    if abs(float(event_clock["effective_warmup_minutes"]) - EFFECTIVE_WARMUP_MINUTES) > 1e-6:
+        raise ValueError("V127 event does not satisfy the common prepared-event clock")
     if not 0.0 < float(args.optimizer_deadline_seconds) < float(
         args.decision_runtime_budget_seconds
     ) < 600.0:
         raise ValueError(
-            "V127 requires optimizer_deadline < controller_runtime_budget < 600 s control period"
+            "V127 requires optimizer_deadline < controller_runtime_budget < 600-s control period"
         )
+
+    checkpoint_lineage = step2_payload.get("lineage")
+    if not isinstance(checkpoint_lineage, dict):
+        raise ValueError("V127 Step2 checkpoint lacks data lineage")
+    stored_forecast_contract = str(
+        checkpoint_lineage.get("causal_rainfall_forecast_contract", "")
+    )
+    if stored_forecast_contract and stored_forecast_contract != V127_CAUSAL_FORECAST_CONTRACT:
+        raise ValueError("V127 runtime rainfall forecaster differs from Step2 training")
 
     controller_cfg = _controller_config(dict(cfg["controller"]), control_block_steps=2)
     controller_cfg = replace(
@@ -170,14 +191,21 @@ def main() -> None:
         run_id=args.run_id,
         sensor_nodes=sensors,
         controller=controller,
-        control_start_minutes=60,
+        control_start_minutes=int(cfg["control_start_minutes"]),
         control_update_seconds=600,
         observation_update_seconds=300,
         record_stride_seconds=300,
-        exact_global_peak=bool(cfg.get("exact_global_peak", False)),
+        # Report-only Global Peak is recomputed by routing-step frozen-decision replay.
+        exact_global_peak=False,
     )
     metadata_path = Path(result.metadata_path)
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    trained_engine = str(checkpoint_lineage.get("swmm_engine_version", "")).strip()
+    runtime_engine = str(metadata.get("swmm_engine_version", "")).strip()
+    if trained_engine and runtime_engine != trained_engine:
+        raise RuntimeError(
+            f"V127 runtime SWMM engine {runtime_engine} differs from Step2 training engine {trained_engine}"
+        )
     metadata.update(
         {
             "strategy": "proposed_v127_continuous_differentiable_mpc",
@@ -194,22 +222,26 @@ def main() -> None:
             "tfv_primary": True,
             "priority8_pfv_soft_secondary": True,
             "global_peak_report_only": True,
+            "global_peak_primary_run_is_300s_sampled": True,
             "future_realized_rainfall_used_as_model_input": False,
             "rainfall_forecast_runtime": {
-                "algorithm": "persistence_decay_from_latest_observed_frame",
-                "decay_per_step": 0.92,
-                "history_steps_for_level": 1,
-                "scenario_multipliers": [1.0],
+                "contract": V127_CAUSAL_FORECAST_CONTRACT,
                 "causal_store_sha256": _sha(args.causal_store),
-                "causal_store_contract": causal_store.forecast_contract,
-                "causal_store_future_realized_rainfall_not_used": True,
+                "future_realized_rainfall_not_used": True,
             },
             "step2_checkpoint_contract": step2_payload.get("checkpoint_contract"),
             "step2_contract": step2_payload.get("step2_contract"),
-            "continuous_gate": gate_payload,
+            "step2_model_sha256": step2_sha,
+            "continuous_evidence": evidence_payload,
             "lbfgsb_maxiter": design.lbfgsb_maxiter,
             "optimizer_deadline_seconds": design.optimizer_deadline_seconds,
             "decision_runtime_budget_seconds": controller_cfg.decision_runtime_budget_seconds,
+            "source_inp_sha256": _sha(args.inp),
+            "controller_config_sha256": _sha(args.config),
+            "graph_schema_sha256": _sha(args.graph),
+            "step1_model_sha256": _sha(args.step1),
+            "project7_runtime_contract": project_contract,
+            "prepared_event_clock": event_clock,
         }
     )
     metadata_path.write_text(
@@ -224,7 +256,7 @@ def main() -> None:
                 "decision_path": result.decision_path,
                 "node_statistics_path": result.node_statistics_path,
                 "decisions": result.decisions,
-                "global_peak_flood_rate_m3s": result.global_peak_flood_rate_m3s,
+                "sampled_global_peak_flood_rate_m3s": result.global_peak_flood_rate_m3s,
                 "flow_routing_error_pct": result.flow_routing_error_pct,
             },
             indent=2,
