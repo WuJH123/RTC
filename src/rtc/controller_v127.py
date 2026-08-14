@@ -7,7 +7,7 @@ from .closed_loop import CausalObservation, ControllerAction
 from .controller_v122 import V122TorchMPCController
 from .step3_mpc_v127 import V127_STEP3_CONTRACT
 
-V127_CONTROLLER_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_TARGET_LATCH_CONTROLLER_V1"
+V127_CONTROLLER_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_TARGET_LATCH_CONTROLLER_V2_DEADLINE_EVIDENCE"
 
 
 class _ResultCaptureV127:
@@ -48,11 +48,16 @@ class V127TorchMPCController(V122TorchMPCController):
                 "continuous_objective_m3",
                 "continuous_tfv_risk_m3",
                 "continuous_pfv_risk_m3",
+                "continuous_optimization_tfv_m3",
+                "continuous_optimization_pfv_m3",
                 "rbc_objective_m3",
                 "rbc_tfv_risk_m3",
                 "rbc_pfv_risk_m3",
+                "rbc_optimization_tfv_m3",
+                "rbc_optimization_pfv_m3",
                 "gradient_norm",
                 "predicted_delta_tfv_m3",
+                "optimizer_elapsed_seconds",
             ):
                 if hasattr(result, name):
                     diagnostics[name] = float(getattr(result, name))
@@ -61,6 +66,9 @@ class V127TorchMPCController(V122TorchMPCController):
                     diagnostics[name] = int(getattr(result, name))
             diagnostics["continuous_optimizer_success"] = bool(
                 getattr(result, "continuous_optimizer_success", False)
+            )
+            diagnostics["continuous_optimizer_deadline_exceeded"] = bool(
+                getattr(result, "deadline_exceeded", False)
             )
             diagnostics["v127_selected_source"] = str(
                 getattr(result, "selected_source", "unknown")
