@@ -1,4 +1,4 @@
-"""Freeze a deterministic TrainFit-only D4 action-support plan; never runs SWMM."""
+"""Freeze deterministic V125 D4 first-move counterfactuals; never runs SWMM."""
 from __future__ import annotations
 
 import argparse
@@ -17,7 +17,10 @@ from rtc.step2_control_basis_v60 import basis_manifest_v60, build_control_basis_
 from rtc.step2_d4_action_support_v125 import (
     D4_ACTION_SUPPORT_CONTRACT_V125,
     D4ActionSupportContractV125,
+    action_sequence_sha256_v125,
     action_support_gap_v125,
+    common_anchor_continuation_sequence_v125,
+    deterministic_d4_rainfall_roles_v125,
     first_move_family_summary_v125,
     knowledge_neighbourhood_first_moves_v125,
     select_gap_balanced_checkpoints_v125,
@@ -59,18 +62,17 @@ def _train_no_control_index(path: str | Path) -> pd.DataFrame:
 
 
 def _candidate_first_moves(settings: np.ndarray, *, control_block_steps: int = 2) -> np.ndarray:
-    """Aggregate legacy 5-min frames to the executable 10-min first-move semantics."""
     values = np.asarray(settings, dtype=np.float32)
     if values.ndim != 3 or values.shape[1] < control_block_steps:
         raise ValueError("D4 cache settings must be [candidate,time,actuator]")
-    first = values[:, : int(control_block_steps), :]
-    return np.mean(first, axis=1, dtype=np.float64).astype(np.float32)
+    return np.mean(values[:, : int(control_block_steps), :], axis=1, dtype=np.float64).astype(np.float32)
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     contract = D4ActionSupportContractV125(
         max_checkpoints=int(args.max_checkpoints),
         max_active_groups=int(args.max_active_groups),
+        audit_fraction=float(args.audit_fraction),
     )
     contract.validate()
     graph = _load_graph(args.graph)
@@ -85,8 +87,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     train_index = _train_no_control_index(args.train_index)
     sensors = tuple(
-        line.strip()
-        for line in Path(args.sensors).read_text(encoding="utf-8").splitlines()
+        line.strip() for line in Path(args.sensors).read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     )
     dataset = CausalStep1TrajectoryDataset(
@@ -126,13 +127,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )[0].detach().cpu().numpy().astype(np.float32)
 
         reference_settings = np.asarray(entry.arrays["settings"][ref_index], dtype=np.float32)
-        anchor_sequence = build_sparse_state_auto_rbc_anchor_v123(
-            sparse_state,
-            current_setting,
-            reference_settings,
-            graph,
-            control_block_steps=2,
-            max_delta_per_update=contract.max_delta_per_update,
+        anchor_sequence = np.asarray(
+            build_sparse_state_auto_rbc_anchor_v123(
+                sparse_state,
+                current_setting,
+                reference_settings,
+                graph,
+                control_block_steps=2,
+                max_delta_per_update=contract.max_delta_per_update,
+            ),
+            dtype=np.float32,
         )
         anchor_target = np.asarray(anchor_sequence[0], dtype=np.float32)
         first_moves = _candidate_first_moves(np.asarray(entry.arrays["settings"], dtype=np.float32))
@@ -155,18 +159,30 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         payload_by_group[name] = {
             "current_setting": current_setting,
             "anchor_target": anchor_target,
+            "anchor_sequence": anchor_sequence,
         }
 
+    # Freeze D4 fit/audit roles before any D4 outcome exists.  The role is rainfall-level,
+    # not branch-level, so no event/checkpoint sibling can leak across the calibration gate.
+    rainfall_roles = deterministic_d4_rainfall_roles_v125(
+        [str(x["rainfall_group"]) for x in geometry_records],
+        audit_fraction=contract.audit_fraction,
+    )
+    for record in geometry_records:
+        record["d4_split_role"] = rainfall_roles[str(record["rainfall_group"])]
+
     selected = select_gap_balanced_checkpoints_v125(
-        geometry_records,
-        max_checkpoints=contract.max_checkpoints,
+        geometry_records, max_checkpoints=contract.max_checkpoints
     )
     plan_rows: list[dict[str, Any]] = []
     family_pairs: list[tuple[str, np.ndarray]] = []
+    block = int(basis.horizon.control_block_steps)
     for selected_rank, record in enumerate(selected):
         group = str(record["group"])
-        current = payload_by_group[group]["current_setting"]
-        anchor = payload_by_group[group]["anchor_target"]
+        payload = payload_by_group[group]
+        current = payload["current_setting"]
+        anchor = payload["anchor_target"]
+        anchor_sequence = payload["anchor_sequence"]
         plans = knowledge_neighbourhood_first_moves_v125(
             current,
             anchor,
@@ -177,23 +193,38 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
         for family, target in plans:
             family_pairs.append((family, target))
-            plan_rows.append(
-                {
-                    "contract": D4_ACTION_SUPPORT_CONTRACT_V125,
-                    "selected_rank": int(selected_rank),
-                    "group": group,
-                    "event_id": str(record["event_id"]),
-                    "rainfall_group": str(record["rainfall_group"]),
-                    "checkpoint_id": str(record["checkpoint_id"]),
-                    "elapsed_seconds": int(record["elapsed_seconds"]),
-                    "support_gap_l1_normalized": float(record["nearest_anchor_l1_normalized"]),
-                    "candidate_family": family,
-                    "first_move_target_json": json.dumps(target.astype(float).tolist(), separators=(",", ":")),
-                    "first_move_delta_json": json.dumps((target - current).astype(float).tolist(), separators=(",", ":")),
-                    "future_action_rule": "hold_first_move_target_until_next_receding_horizon_decision",
-                    "swmm_generated": False,
-                }
+            sequence = common_anchor_continuation_sequence_v125(
+                target, anchor_sequence, control_block_steps=block
             )
+            seq_sha = action_sequence_sha256_v125(sequence)
+            row_id = hashlib.sha256(
+                f"{D4_ACTION_SUPPORT_CONTRACT_V125}|{group}|{family}|{seq_sha}".encode("utf-8")
+            ).hexdigest()
+            plan_rows.append({
+                "contract": D4_ACTION_SUPPORT_CONTRACT_V125,
+                "plan_row_id": row_id,
+                "selected_rank": int(selected_rank),
+                "split_role": str(record["d4_split_role"]),
+                "group": group,
+                "event_id": str(record["event_id"]),
+                "rainfall_group": str(record["rainfall_group"]),
+                "checkpoint_id": str(record["checkpoint_id"]),
+                "elapsed_seconds": int(record["elapsed_seconds"]),
+                "support_gap_l1_normalized": float(record["nearest_anchor_l1_normalized"]),
+                "candidate_family": family,
+                "control_block_steps": block,
+                "horizon_steps": int(sequence.shape[0]),
+                "first_move_target_json": json.dumps(target.astype(float).tolist(), separators=(",", ":")),
+                "first_move_delta_json": json.dumps((target - current).astype(float).tolist(), separators=(",", ":")),
+                "anchor_first_move_target_json": json.dumps(anchor.astype(float).tolist(), separators=(",", ":")),
+                "action_sequence_sha256": seq_sha,
+                # Preserve the exact SWMM supervision sequence; this plan is a local
+                # artifact, not committed to Git, and must contain enough information to
+                # reproduce every branch without re-running Step1/RBC logic.
+                "action_sequence_json": json.dumps(sequence.astype(float).tolist(), separators=(",", ":")),
+                "future_action_rule": "candidate_first_600s_then_exact_common_sparse_rbc_anchor_continuation",
+                "swmm_generated": False,
+            })
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -205,9 +236,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     gap_values = np.asarray([float(x["nearest_anchor_l1_normalized"]) for x in geometry_records])
     selected_gap = np.asarray([float(x["nearest_anchor_l1_normalized"]) for x in selected])
+    fit_groups = sorted(group for group, role in rainfall_roles.items() if role == "fit")
+    audit_groups = sorted(group for group, role in rainfall_roles.items() if role == "audit")
     report: dict[str, Any] = {
         "contract": D4_ACTION_SUPPORT_CONTRACT_V125,
-        "verdict": "D4_PLAN_FROZEN_REVIEW_REQUIRED_BEFORE_SWMM",
+        "verdict": "D4_V2_PLAN_FROZEN_REVIEW_REQUIRED_BEFORE_SWMM",
         "boundary": {
             "new_swmm": False,
             "validation_accessed": False,
@@ -215,6 +248,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "formal_accessed": False,
             "holdout_outcomes_accessed": False,
             "selection_uses_outcome_labels": False,
+            "split_uses_outcome_labels": False,
             "continuous_mpc_unblocked": False,
         },
         "lineage": {
@@ -236,9 +270,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "max_delta_per_update": contract.max_delta_per_update,
             "selection": "rainfall-group round-robin by largest normalized nearest-anchor L1 support gap",
             "legacy_support_first_move": "mean of first two 300-s frames = executable 600-s move",
+            "counterfactual_credit": "only first executable 600-s block differs; all candidates share exact sparse-RBC anchor continuation",
             "families": first_move_family_summary_v125(family_pairs),
             "planned_branches": len(plan_rows),
-            "future_action_rule": "hold current knowledge first-move target; recompute next online decision",
+        },
+        "d4_split": {
+            "unit": "rainfall_group",
+            "audit_fraction": contract.audit_fraction,
+            "fit_rainfall_groups": fit_groups,
+            "audit_rainfall_groups": audit_groups,
+            "overlap": sorted(set(fit_groups) & set(audit_groups)),
         },
         "support_geometry": {
             "fit_d2_count": len(geometry_records),
@@ -250,28 +291,25 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "selected_events": len({str(x["event_id"]) for x in selected}),
         },
         "control_basis": basis_manifest_v60(basis),
-        "artifacts": {
-            "plan_csv": str(plan_path.resolve()),
-            "geometry_csv": str(geometry_path.resolve()),
-        },
+        "artifacts": {"plan_csv": str(plan_path.resolve()), "geometry_csv": str(geometry_path.resolve())},
     }
+    if report["d4_split"]["overlap"]:
+        raise RuntimeError("D4 V2 fit/audit rainfall groups overlap")
     report_path = out / "STEP2_V125_D4_ACTION_SUPPORT_PLAN.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     md = [
-        "# STEP2 V125 D4 action-support plan",
+        "# STEP2 V125 D4 action-support plan V2",
         "",
         "**Plan only. No SWMM branch has been generated.**",
         "",
         f"- verdict: `{report['verdict']}`",
-        f"- TrainFit D2 geometry groups: {len(geometry_records)}",
         f"- selected checkpoints: {len(selected)} / {contract.max_checkpoints}",
         f"- planned branches: {len(plan_rows)}",
-        f"- selected rainfall groups: {report['support_geometry']['selected_rainfall_groups']}",
-        f"- all support-gap median: {report['support_geometry']['all_gap_median']:.6g}",
+        f"- D4 fit/audit rainfall groups: {len(fit_groups)}/{len(audit_groups)}",
         f"- selected support-gap median: {report['support_geometry']['selected_gap_median']:.6g}",
+        "- counterfactual credit: candidate differs only in first 600 s; continuation is identical sparse-RBC anchor",
         "",
-        "Selection is causal/action-geometric only: no outcome label, Holdout outcome, Validation, Final, or Formal data is used.",
-        "The only permitted next step after human/code review is exact SWMM labelling of this frozen plan into a new TrainFit-only D4 source.",
+        "The split and selection are causal/action-geometric only and were frozen before D4 outcomes.",
     ]
     (out / "STEP2_V125_D4_ACTION_SUPPORT_PLAN.md").write_text("\n".join(md) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2, sort_keys=True))
@@ -289,6 +327,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default="cuda")
     p.add_argument("--max-checkpoints", type=int, default=48)
     p.add_argument("--max-active-groups", type=int, default=3)
+    p.add_argument("--audit-fraction", type=float, default=0.25)
     return p
 
 
