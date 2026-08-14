@@ -41,7 +41,13 @@ def _inp(tmp_path: Path) -> Path:
     return path
 
 
-def _obs(sensor_ids: tuple[str, ...], sensor_depths: list[float]) -> CausalObservation:
+def _obs(
+    sensor_ids: tuple[str, ...],
+    sensor_depths: list[float],
+    *,
+    target: tuple[float, float, float] = (0.5, 0.5, 0.5),
+    current: tuple[float, float, float] = (0.5, 0.5, 0.5),
+) -> CausalObservation:
     return CausalObservation(
         elapsed_seconds=600,
         current_time=datetime(2026, 1, 1, 0, 10),
@@ -49,8 +55,8 @@ def _obs(sensor_ids: tuple[str, ...], sensor_depths: list[float]) -> CausalObser
         sensor_depth_m=np.asarray(sensor_depths, dtype=float),
         sensor_head_m=np.asarray(sensor_depths, dtype=float),
         actuator_ids=("P1", "P2", "O1"),
-        actuator_target_setting=np.asarray([0.5, 0.5, 0.5]),
-        actuator_current_setting=np.asarray([0.5, 0.5, 0.5]),
+        actuator_target_setting=np.asarray(target, dtype=float),
+        actuator_current_setting=np.asarray(current, dtype=float),
         actuator_flow_m3s=np.zeros(3),
         rainfall_node_ids=("J1", "J2", "S1", "S2"),
         observed_rainfall_mmhr=np.zeros(4),
@@ -80,7 +86,7 @@ def test_auto_rbc_opens_high_upstream_storage_more(tmp_path: Path) -> None:
     obs = _obs(sensors, [depth_map[n] for n in sensors])
     controller = fixed_baseline_controller("auto_rbc", inp_path=path)
     action = controller(obs)
-    assert action.source == "AUTO_RBC_V1"
+    assert action.source == "AUTO_RBC_V2_TARGET_LATCH"
     assert action.diagnostics is not None
     assert action.diagnostics["rule_contract"] == AUTO_RBC_CONTRACT
     assert action.settings["P1"] > action.settings["P2"]
@@ -94,7 +100,7 @@ def test_efd_gives_more_discharge_to_more_volume_filled_storage(tmp_path: Path) 
     obs = _obs(sensors, [1.8, 0.6])
     controller = fixed_baseline_controller("efd", inp_path=path)
     action = controller(obs)
-    assert action.source == "EFD_V2"
+    assert action.source == "EFD_V3_TARGET_LATCH"
     assert action.diagnostics is not None
     assert action.diagnostics["rule_contract"] == EFD_CONTRACT
     assert action.settings["P1"] > action.settings["P2"]
@@ -104,10 +110,32 @@ def test_efd_gives_more_discharge_to_more_volume_filled_storage(tmp_path: Path) 
     assert int(action.diagnostics["depth_fallback_storage_count"]) == 0
 
 
-def test_rule_baseline_move_limit_matches_controller_limit(tmp_path: Path) -> None:
+def test_rule_baseline_preserves_uncontrolled_target_when_current_lags(tmp_path: Path) -> None:
     path = _inp(tmp_path)
     sensors = baseline_sensor_nodes("efd", path)
-    obs = _obs(sensors, [2.0, 0.0])
+    obs = _obs(
+        sensors,
+        [1.8, 0.6],
+        target=(0.7, 0.6, 0.8),
+        current=(0.2, 0.3, 0.1),
+    )
+    action = fixed_baseline_controller("efd", inp_path=path)(obs)
+    # O1 is not a storage outflow in the EFD controller; preserve the command latch rather
+    # than overwriting it with the lagged physical readback.
+    assert action.settings["O1"] == 0.8
+    assert action.diagnostics is not None
+    assert float(action.diagnostics["current_tracking_lag_max"]) == 0.7
+
+
+def test_rule_baseline_move_limit_matches_target_command_limit(tmp_path: Path) -> None:
+    path = _inp(tmp_path)
+    sensors = baseline_sensor_nodes("efd", path)
+    obs = _obs(
+        sensors,
+        [2.0, 0.0],
+        target=(0.5, 0.5, 0.5),
+        current=(0.0, 1.0, 0.0),
+    )
     controller = fixed_baseline_controller(
         "efd", inp_path=path, max_delta_per_update=0.1
     )
