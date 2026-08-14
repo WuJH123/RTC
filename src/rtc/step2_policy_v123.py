@@ -1,7 +1,14 @@
-"""V12.3 finite shooting policy: TFV primary, PFV soft, first-move rich.
+"""V12.3 finite shooting policy: TFV primary, PFV soft, knowledge-guided residual RTC.
 
-This remains intentionally finite.  Continuous coefficient optimisation is not enabled
-until the separate authoritative gradient gate passes.
+Continuous coefficient optimisation remains disabled until the separate authoritative
+gradient gate passes.  When the learned Value model cannot establish a benefit beyond
+its calibrated TFV error budget, V12.3 now falls back to a low-sensor engineering anchor
+computed from Step1 reconstructed actuator-adjacent depths instead of doing nothing.
+
+The anchor mirrors the fixed Auto-RBC hydraulic feedback mechanism but does not receive
+its true-state information budget.  It is recomputed every 10 minutes and only its first
+move is used; the scoring tail holds that target.  Learned finite candidates can still
+replace the anchor when their TFV-primary/PFV-soft score is sufficiently supported.
 """
 from __future__ import annotations
 
@@ -16,9 +23,10 @@ from .step2_control_response_v60 import PreparedStaticV60
 from .step2_control_value_v123 import DualVolumeValueV123
 from .step2_policy_v120 import RuntimeNormalizationV120, _project_executable_sequences_v120
 from .step3_candidates_v123 import FirstMoveCandidateDesignV123, candidate_coefficients_v123
+from .step3_knowledge_seeds_v123 import build_sparse_state_auto_rbc_anchor_v123
 from .step3_objective_v123 import TFVPFVObjectiveV123, tfv_pfv_score_v123
 
-V123_POLICY_CONTRACT = "PROJECT7_V123_FIRST_MOVE_TFV_PRIMARY_PFV_SOFT_POLICY_V2"
+V123_POLICY_CONTRACT = "PROJECT7_V123_KNOWLEDGE_ANCHORED_TFV_PRIMARY_PFV_SOFT_POLICY_V3"
 
 
 @dataclass(frozen=True)
@@ -40,6 +48,10 @@ class FirstMoveTFVPFVResultV123:
     false_benefit_margin_m3: float
     scoring_projection_max: float
     selected_group_score_m3: float | None = None
+    knowledge_anchor_candidate_index: int = -1
+    knowledge_anchor_selected: bool = False
+    knowledge_anchor_fallback_used: bool = False
+    knowledge_anchor_first_move_delta_max: float = 0.0
 
     def __post_init__(self) -> None:
         if self.selected_group_score_m3 is None:
@@ -71,6 +83,9 @@ class FirstMoveTFVPFVPolicyV123:
         normalization: RuntimeNormalizationV120,
         objective: TFVPFVObjectiveV123,
         false_benefit_margin_m3: float,
+        graph=None,
+        use_sparse_rbc_anchor: bool = True,
+        knowledge_anchor_fallback: bool = True,
         candidate_design: FirstMoveCandidateDesignV123 = FirstMoveCandidateDesignV123(),
         first_move_group_atol: float = 1.0e-7,
     ) -> None:
@@ -81,14 +96,43 @@ class FirstMoveTFVPFVPolicyV123:
             raise ValueError("V123 false-benefit margin must be finite and non-negative")
         if not math.isfinite(float(first_move_group_atol)) or first_move_group_atol <= 0.0:
             raise ValueError("V123 first-move grouping tolerance must be positive")
+        if use_sparse_rbc_anchor and graph is None:
+            raise ValueError("V123 sparse-state RBC anchor requires the frozen graph")
         self.model = model
         self.basis = basis
         self.prepared = prepared
         self.normalization = normalization
         self.objective = objective
         self.false_benefit_margin_m3 = float(false_benefit_margin_m3)
+        self.graph = graph
+        self.use_sparse_rbc_anchor = bool(use_sparse_rbc_anchor)
+        self.knowledge_anchor_fallback = bool(knowledge_anchor_fallback)
         self.first_move_group_atol = float(first_move_group_atol)
         self._coefficients = candidate_coefficients_v123(basis, design=candidate_design)
+
+    def _knowledge_anchor(
+        self,
+        *,
+        initial_state: torch.Tensor,
+        current: torch.Tensor,
+        reference_one: torch.Tensor,
+        runtime_delta: float,
+    ) -> torch.Tensor | None:
+        if not self.use_sparse_rbc_anchor:
+            return None
+        anchor = build_sparse_state_auto_rbc_anchor_v123(
+            initial_state.detach().cpu().numpy(),
+            current.detach().cpu().numpy(),
+            reference_one[0].detach().cpu().numpy(),
+            self.graph,
+            control_block_steps=int(self.basis.horizon.control_block_steps),
+            max_delta_per_update=float(runtime_delta),
+        )
+        return torch.as_tensor(
+            anchor,
+            dtype=reference_one.dtype,
+            device=reference_one.device,
+        )
 
     def optimize(
         self,
@@ -132,6 +176,16 @@ class FirstMoveTFVPFVPolicyV123:
         if flow0.numel() != actuator_count:
             raise ValueError("V123 previous actuator-flow count mismatch")
 
+        frozen_delta = float(self.basis.contract.max_setting_delta_per_update)
+        runtime_delta = frozen_delta
+        if max_delta_per_update is not None:
+            raw = torch.as_tensor(max_delta_per_update, dtype=torch.float32).reshape(-1)
+            if not bool(torch.isfinite(raw).all()):
+                raise ValueError("V123 runtime max delta is non-finite")
+            runtime_delta = float(raw.max())
+            if runtime_delta > frozen_delta + 1.0e-9:
+                raise ValueError("V123 runtime max delta is looser than frozen basis")
+
         coeff = torch.as_tensor(
             self._coefficients,
             dtype=fallback_settings.dtype,
@@ -143,15 +197,18 @@ class FirstMoveTFVPFVPolicyV123:
         )
         candidate_one = self.basis.decode(reference_for_candidates, coeff[None])[0]
 
-        frozen_delta = float(self.basis.contract.max_setting_delta_per_update)
-        runtime_delta = frozen_delta
-        if max_delta_per_update is not None:
-            raw = torch.as_tensor(max_delta_per_update, dtype=torch.float32).reshape(-1)
-            if not bool(torch.isfinite(raw).all()):
-                raise ValueError("V123 runtime max delta is non-finite")
-            runtime_delta = float(raw.max())
-            if runtime_delta > frozen_delta + 1.0e-9:
-                raise ValueError("V123 runtime max delta is looser than frozen basis")
+        knowledge_anchor_index = -1
+        knowledge_anchor = self._knowledge_anchor(
+            initial_state=initial_state,
+            current=current,
+            reference_one=reference_one,
+            runtime_delta=runtime_delta,
+        )
+        if knowledge_anchor is not None:
+            if knowledge_anchor.shape != reference_one[0].shape:
+                raise ValueError("V123 knowledge anchor/value horizon mismatch")
+            knowledge_anchor_index = int(candidate_one.shape[0])
+            candidate_one = torch.cat((candidate_one, knowledge_anchor[None]), dim=0)
 
         candidate_one, projection_max = _project_executable_sequences_v120(
             candidate_one,
@@ -229,42 +286,43 @@ class FirstMoveTFVPFVPolicyV123:
             )
         ]
 
-        # Projection can collapse different future tails to the same command executable
-        # now.  Rank first-move groups by robust medians, then retain the sequence whose
-        # combined score is closest to that group median as a representative path.
-        records: list[dict[str, float | int | bool]] = []
+        records: list[dict[str, object]] = []
+        anchor_record: dict[str, object] | None = None
         for indices in groups.values():
             passive = any(index in passive_indices for index in indices)
+            contains_anchor = knowledge_anchor_index in indices
             if passive:
                 representative = next(index for index in indices if index in passive_indices)
-                records.append(
-                    {
-                        "representative": representative,
-                        "score": 0.0,
-                        "tfv_risk": 0.0,
-                        "pfv_risk": 0.0,
-                        "passive": True,
-                    }
-                )
+                record: dict[str, object] = {
+                    "representative": representative,
+                    "score": 0.0,
+                    "tfv_risk": 0.0,
+                    "pfv_risk": 0.0,
+                    "passive": True,
+                    "contains_anchor": contains_anchor,
+                }
+                records.append(record)
+                if contains_anchor:
+                    anchor_record = record
                 continue
             values = score[indices]
             median_score = values.median()
             nearest = torch.argmin(torch.abs(values - median_score))
             representative = indices[int(nearest.item())]
-            records.append(
-                {
-                    "representative": representative,
-                    "score": float(median_score.detach()),
-                    "tfv_risk": float(tfv_risk[indices].median().detach()),
-                    "pfv_risk": float(pfv_risk[indices].median().detach()),
-                    "passive": False,
-                }
-            )
+            record = {
+                "representative": representative,
+                "score": float(median_score.detach()),
+                "tfv_risk": float(tfv_risk[indices].median().detach()),
+                "pfv_risk": float(pfv_risk[indices].median().detach()),
+                "passive": False,
+                "contains_anchor": contains_anchor,
+            }
+            records.append(record)
+            if contains_anchor:
+                anchor_record = record
 
-        # The TFV residual calibration is used exactly once: to establish that the TFV
-        # improvement remains beneficial after its one-sided error budget.  The combined
-        # TFV+soft-PFV objective only needs to beat PASSIVE (score < 0); applying the TFV
-        # residual margin to the combined score a second time would be double counting.
+        # Learned candidates are admitted only when TFV benefit clears the calibrated
+        # model-error budget and the combined TFV+soft-PFV objective beats PASSIVE.
         eligible = [
             item
             for item in records
@@ -272,10 +330,32 @@ class FirstMoveTFVPFVPolicyV123:
             and float(item["score"]) < 0.0
             and float(item["tfv_risk"]) < -self.false_benefit_margin_m3
         ]
+
+        knowledge_fallback = False
         if eligible:
             selected_record = min(eligible, key=lambda item: float(item["score"]))
             selected = int(selected_record["representative"])
             valid = True
+        elif (
+            self.knowledge_anchor_fallback
+            and knowledge_anchor_index >= 0
+            and anchor_record is not None
+            and not bool(anchor_record["passive"])
+        ):
+            # Fail over to the causal engineering anchor rather than HOLD.  This is a
+            # deliberate knowledge-data fusion contract: model uncertainty prevents a
+            # learned override but does not disable the mature local feedback mechanism.
+            selected = int(knowledge_anchor_index)
+            selected_record = {
+                "representative": selected,
+                "score": float(score[selected].detach()),
+                "tfv_risk": float(tfv_risk[selected].detach()),
+                "pfv_risk": float(pfv_risk[selected].detach()),
+                "passive": False,
+                "contains_anchor": True,
+            }
+            valid = True
+            knowledge_fallback = True
         else:
             selected_record = {
                 "representative": 0,
@@ -283,6 +363,7 @@ class FirstMoveTFVPFVPolicyV123:
                 "tfv_risk": 0.0,
                 "pfv_risk": 0.0,
                 "passive": True,
+                "contains_anchor": knowledge_anchor_index in passive_indices,
             }
             selected, valid = 0, False
 
@@ -292,6 +373,11 @@ class FirstMoveTFVPFVPolicyV123:
         group_score = float(selected_record["score"]) if valid else 0.0
         group_tfv_risk = float(selected_record["tfv_risk"]) if valid else 0.0
         group_pfv_risk = float(selected_record["pfv_risk"]) if valid else 0.0
+        anchor_delta = 0.0
+        if knowledge_anchor_index >= 0:
+            anchor_delta = float(
+                torch.abs(first[knowledge_anchor_index] - reference_first).max().detach()
+            )
         return FirstMoveTFVPFVResultV123(
             settings=candidate_one[selected].detach(),
             candidate_valid=valid,
@@ -310,6 +396,10 @@ class FirstMoveTFVPFVPolicyV123:
             selected_group_score_m3=group_score,
             false_benefit_margin_m3=float(self.false_benefit_margin_m3),
             scoring_projection_max=float(projection_max),
+            knowledge_anchor_candidate_index=int(knowledge_anchor_index),
+            knowledge_anchor_selected=bool(selected == knowledge_anchor_index),
+            knowledge_anchor_fallback_used=bool(knowledge_fallback),
+            knowledge_anchor_first_move_delta_max=float(anchor_delta),
         )
 
 
