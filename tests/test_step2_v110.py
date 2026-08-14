@@ -129,10 +129,14 @@ def test_v110_exact_zero_and_delayed_action_causality():
     with torch.no_grad():
         delayed = model(initial, rainfall, reference, candidate, previous_flow, prepared)
     early = delayed.horizon_indices < 18
-    assert torch.equal(delayed.raw_delta_states_physical[:, :, early],
-                       torch.zeros_like(delayed.raw_delta_states_physical[:, :, early]))
-    assert torch.equal(delayed.raw_delta_flows_physical[:, :, early],
-                       torch.zeros_like(delayed.raw_delta_flows_physical[:, :, early]))
+    assert torch.equal(
+        delayed.raw_delta_states_physical[:, :, early],
+        torch.zeros_like(delayed.raw_delta_states_physical[:, :, early]),
+    )
+    assert torch.equal(
+        delayed.raw_delta_flows_physical[:, :, early],
+        torch.zeros_like(delayed.raw_delta_flows_physical[:, :, early]),
+    )
 
 
 def test_v110_nonlocal_relation_has_no_hop_cutoff():
@@ -190,13 +194,16 @@ def test_v110_active_thresholds_are_local_and_physically_floored():
     assert depth_threshold[2] > depth_threshold[0]
 
 
-def test_historical_v110_remains_importable_but_current_development_contract_is_v126():
+def test_historical_v110_remains_importable_but_current_surface_is_v127():
     import rtc.step2_current as current
 
-    assert current.CURRENT_STEP2_CONTRACT == "PROJECT7_V126_SOURCE_AWARE_ANCHOR_ADVANTAGE_CURRICULUM_V1"
-    assert current.CURRENT_RUNTIME_POLICY_CONTRACT == "PROJECT7_V125_ANCHOR_DEFAULT_EVIDENCE_GATED_OVERRIDE_V2_DIRECT_ADVANTAGE"
-    assert current.CONTINUOUS_MPC_ENABLED is False
-    assert current.HYDRAULIC_MODEL_REQUIRED_ONLINE is False
-    assert current.CURRENT_POLICY_CLASS.__name__ == "AnchorOverridePolicyV125"
-    source = current.__file__
-    assert "step2_current" in source
+    assert current.CURRENT_PROJECT7_CONTRACT == "PROJECT7_V127_CONTINUOUS_DIFFERENTIABLE_MPC_RESTORATION_V1"
+    assert current.CURRENT_STEP2_CONTRACT.startswith("PROJECT7_V127_CONTROL_ORIENTED_DIFFERENTIABLE_HYDRAULIC_SURROGATE")
+    assert current.CURRENT_STEP3_CONTRACT.startswith("PROJECT7_V127_109ACT_H120_LBFGSB_RECEDING_HORIZON_MPC")
+    assert current.CONTINUOUS_MPC_ENABLED is True
+    assert current.CONTINUOUS_MPC_RUNTIME_REQUIRES_GATE is True
+    assert current.HYDRAULIC_MODEL_REQUIRED_ONLINE is True
+    assert current.RBC_IS_VALUE_REFERENCE is False
+    assert current.RBC_IS_ACTION_SPACE_CEILING is False
+    assert current.CURRENT_POLICY_CLASS.__name__ == "DifferentiableRollingMPCV127"
+    assert "step2_current" in current.__file__

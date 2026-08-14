@@ -1,173 +1,190 @@
 {
-  "contract": "PROJECT7_V126_SOURCE_AWARE_ADVANTAGE_DEVELOPMENT_V1",
-  "research_goal": "every 10 minutes use sparse causal state to command all 109 writable pumps/orifices/weirs, minimize authoritative whole-system cumulative TFV, and protect Priority8 PFV only through one-sided soft deterioration protection",
+  "contract": "PROJECT7_V127_CONTINUOUS_DIFFERENTIABLE_MPC_RESTORATION_V1",
+  "research_goal": "every 10 minutes reconstruct current hydraulic state from sparse causal sensing, use a differentiable action-conditioned hydraulic surrogate to optimize a continuous H120 target sequence for all 109 writable pumps/orifices/weirs over an H360 prediction horizon, minimize whole-system cumulative TFV, protect Priority8 PFV only as a soft secondary objective, and execute the first 10-minute target in authoritative SWMM",
   "authoritative_truth": "SWMM",
-  "current_diagnosis": {
-    "v125_verdict": "V125_STEP2_LOCAL_IDENTIFICATION_BLOCKED",
-    "v125_internal_holdout_d3_rank": 0.4131,
-    "v125_d4_fit_rank": 0.5020,
-    "v125_d4_audit_rank": 0.4793,
-    "v125_tfv_false_benefit_margin_m3": 6018.56,
-    "v125_pfv_model_error_margin_m3": 175.66,
-    "v125_t5_learned_overrides": "0/60",
-    "v125_t5_tfv_reduction_vs_no_control_pct": 9.274,
-    "sparse_rbc_anchor_only_tfv_reduction_vs_no_control_pct": 10.167,
-    "auto_rbc_tfv_reduction_vs_no_control_pct": 22.022,
-    "interpretation": "D4 was used but generic mixed-source training did not identify local anchor-relative action value reliably; zero-override Proposed versus anchor-only non-equivalence must also be audited before attributing all T5 difference to Step2"
+  "method_identity": {
+    "step1": "sparse causal state reconstruction",
+    "step2": "control-oriented differentiable hydraulic world surrogate",
+    "step3": "bounded continuous 109-actuator L-BFGS-B receding-horizon MPC",
+    "rbc_role": "warm start, safety fallback, engineering comparator",
+    "rbc_is_value_reference": false,
+    "rbc_is_action_space_ceiling": false,
+    "tfv_role": "PRIMARY_OBJECTIVE",
+    "priority8_pfv_role": "ONE_SIDED_SOFT_SECONDARY",
+    "global_peak_role": "REPORT_ONLY"
   },
-  "data_population": {
-    "d2_authoritative_source": {
-      "branches": 4800,
-      "groups": 192,
-      "frozen_train_eligible_branches": 3600,
-      "frozen_train_eligible_groups": 144,
+  "time_contract": {
+    "observation_and_model_step_seconds": 300,
+    "control_update_seconds": 600,
+    "prediction_horizon_minutes": 360,
+    "prediction_horizon_steps": 72,
+    "free_control_horizon_minutes": 120,
+    "free_control_blocks": 12,
+    "execute_minutes": 10
+  },
+  "action_contract": {
+    "actuators": 109,
+    "all_writable_actuators_eligible": true,
+    "continuous_variables": 1308,
+    "variable_definition": "12 future 10-minute target fractions x 109 actuators",
+    "per_actuator_bounds": "frozen graph min_setting/max_setting",
+    "max_target_delta_per_10min": 0.5,
+    "terminal_tail": "hold last free H120 target to H360",
+    "optimizer": "multi-start scipy L-BFGS-B with PyTorch autograd",
+    "warm_starts": ["HOLD", "Sparse-RBC", "shifted previous V127 solution"],
+    "fallback": "Sparse-RBC when optimization fails, misses evidence/deadline, or cannot predict TFV improvement"
+  },
+  "v125_evidence_to_preserve_as_history": {
+    "verdict": "V125_STEP2_LOCAL_IDENTIFICATION_BLOCKED",
+    "d4_branches": 390,
+    "internal_holdout_d3_rank": 0.4131,
+    "d4_audit_rank": 0.4793,
+    "tfv_false_benefit_margin_m3": 6018.56,
+    "t5_learned_overrides": "0/60",
+    "v125_tfv_reduction_vs_no_control_pct": 9.274,
+    "sparse_rbc_tfv_reduction_vs_no_control_pct": 10.167,
+    "auto_rbc_tfv_reduction_vs_no_control_pct": 22.022,
+    "interpretation": "anchor-centric Value was diagnostically useful but is not the final Project7 method"
+  },
+  "retained_v126_correctness": [
+    "D2/D3/D4 lineage and rainfall-group split discipline",
+    "branch/group/unique-state census",
+    "causal rainfall only online",
+    "V125 evidence candidate/reference identity fix",
+    "float32 exact target identity protection",
+    "target-latch write/readback authority",
+    "current-setting tracking diagnostics",
+    "continuity and score==execute evidence",
+    "independent calibration principle",
+    "six fixed baselines remain external comparators",
+    "Validation/Final/Formal/Policy Lock untouched during development"
+  ],
+  "revoked_anchor_centric_contracts": [
+    "Sparse-RBC as Step2 Value reference",
+    "candidate-minus-anchor scalar Value as final Step2 target",
+    "anchor-neighbourhood finite candidate search as final Step3",
+    "Sparse-RBC as default Proposed action when continuous MPC is healthy",
+    "D4 anchor advantage as primary final training task",
+    "V126 anchor-policy-continuation D5 as preferred new-data definition"
+  ],
+  "data_roles": {
+    "D2": {
+      "source_branches": 4800,
+      "source_groups": 192,
+      "train_eligible_branches": 3600,
+      "train_eligible_groups": 144,
       "development_validation_branches": 1200,
       "development_validation_groups": 48,
-      "development_validation_allowed_in_training": false,
-      "important_note": "4800 is a source census, not 4800 independent train groups"
+      "v127_role": "single-actuator hydraulic sensitivity and local Jacobian support"
     },
-    "canonical_targeted_d3": {
+    "targeted_D3": {
       "branches": 3600,
       "groups": 144,
-      "branches_per_group": 25,
-      "reference_plus_candidates": "1+24"
+      "trainfit_groups": 112,
+      "internal_holdout_groups": 32,
+      "v127_role": "joint multi-actuator nonlinear response and generalization"
     },
-    "legacy_d3": {
-      "status": "not canonical and not automatically train-eligible",
-      "expected_from_local_history": "approximately 1318 historical branches; actual local cache must be censused",
-      "required_action": "audit reference semantics, causal lineage, rainfall overlap and action support before auxiliary use",
-      "allowed_in_v126_first_training": false
+    "legacy_D3": {
+      "historical_expected_branches": "approximately 1318",
+      "automatic_training": false,
+      "v127_role": "optional auxiliary hydraulic pretraining only after lineage/overlap audit"
     },
-    "d4_v2": {
-      "authoritative_branches": 390,
-      "checkpoints": 48,
+    "D4": {
+      "branches": 390,
       "fit_branches": 269,
       "fit_groups": 33,
-      "fit_rainfall_groups": 10,
       "audit_branches": 121,
       "audit_groups": 15,
-      "audit_rainfall_groups": 4,
-      "audit_allowed_in_training": false,
-      "reference": "causal Sparse-RBC anchor",
-      "counterfactual_credit": "only first executable 600-second block differs; exact common anchor continuation afterwards"
+      "v127_role": "local physical-response support and untouched local ranking diagnostic; not final anchor-advantage objective"
     },
-    "canonical_trainfit": {
-      "d2_groups": 112,
-      "targeted_d3_groups": 112,
-      "internal_holdout_d2_groups": 32,
-      "internal_holdout_targeted_d3_groups": 32,
-      "d4_fit_groups": 33,
-      "d4_audit_groups": 15
+    "D5": {
+      "design": "symmetric central finite differences in continuous spatiotemporal control directions",
+      "checkpoints": 48,
+      "centers_per_checkpoint": 3,
+      "directions_per_center": 4,
+      "planned_branches": 1296,
+      "gradient_directions": 576,
+      "centers": ["HOLD", "Sparse-RBC warm start", "broad continuous manifold"],
+      "fit_audit_split": "rainfall-group, frozen before outcomes",
+      "audit_used_for_training": false,
+      "symmetry": "reduce epsilon or reject if engineering decoder breaks plus/minus symmetry"
     }
   },
-  "why_v125_underperformed": [
-    "D4-FIT was appended to the generic D3 stage instead of being an isolated final decision task",
-    "D2, targeted D3 and D4 have materially different action/reference distributions",
-    "the broad D3-derived TFV scale is much larger than local D4 advantages, weakening local decision gradients",
-    "V125 loss remained magnitude-first while online control requires reliable candidate-vs-anchor benefit sign and ordering",
-    "a single global 95% false-benefit margin became 6018.56 m3 and eliminated all learned overrides",
-    "V125 calibrated on the same D4-FIT pool used for D4 model fitting; V126 forbids in-sample uncertainty calibration",
-    "historical hydraulic multi-task routes showed gradient conflict and are not restored",
-    "zero learned overrides but a different TFV result from anchor-only requires a Step3/run-lineage equivalence audit"
+  "input_contract": {
+    "training_initial_state": "frozen causal Step1 reconstruction, not SWMM checkpoint truth",
+    "training_rainfall": "causal runtime-equivalent forecast, not realized future rainfall",
+    "future_swmm_states": "supervision only",
+    "future_swmm_flows": "supervision only",
+    "exact_node_flood_volume": "supervision/evaluation only"
+  },
+  "step2_training": {
+    "stage_A": "source-balanced teacher-forced hydraulic transition and actuator-flow learning from D2 + targeted D3 + D4-FIT",
+    "stage_B": "H360 end-to-end flood-objective rollout training with exact node flooding, TFV ranking and sparse hydraulic anchors",
+    "stage_C_after_D5": "D5-FIT second-order directional-gradient supervision",
+    "hard_tfv": "physical clamp-based surrogate reporting/evaluation",
+    "smooth_tfv": "softplus positive proxy used for differentiable action optimization to avoid clamp gradient dead zones",
+    "D4_AUDIT_training": false,
+    "D5_AUDIT_training": false,
+    "InternalHoldout_training": false,
+    "D2_development_validation_training": false
+  },
+  "continuous_gate": {
+    "internal_holdout_d3_rank_min": 0.70,
+    "internal_holdout_d3_top1_min": 0.50,
+    "internal_holdout_d2_gradient_sign_min": 0.70,
+    "internal_holdout_d2_gradient_cosine_min": 0.60,
+    "d5_audit_gradient_sign_min": 0.70,
+    "d5_audit_gradient_cosine_min": 0.60,
+    "causal_step1_state_required": true,
+    "causal_rainfall_required": true,
+    "thresholds_are_project_preregistered_not_literature_universal": true,
+    "runtime_fail_closed": true
+  },
+  "runtime_evidence": {
+    "all_109_targets_written_each_decision": true,
+    "target_latch_readback_required": true,
+    "continuity_violation_allowed": false,
+    "post_score_projection_allowed": false,
+    "score_equals_execute_required": true,
+    "decision_period_seconds": 600,
+    "continuous_solver_default_deadline_seconds": 540
+  },
+  "seven_strategies": [
+    "Proposed V127 continuous differentiable MPC",
+    "No-control",
+    "Internal RTC",
+    "Auto-RBC",
+    "EFD",
+    "All-open",
+    "All-closed"
   ],
-  "v126_step2": {
-    "architecture": "unchanged V124 interaction-aware action backbone for the first recovery experiment",
-    "seed": 42,
-    "stage_A_B": "broad causal D2 then targeted-D3 training with frozen V124 objective",
-    "stage_C": "D4-FIT-only direct anchor-advantage fine-tuning",
-    "d4_local_loss": [
-      "physical advantage error",
-      "pairwise magnitude",
-      "pairwise ordering sign",
-      "candidate-is-beneficial sign around zero",
-      "listwise candidate ordering",
-      "true-best action margin"
-    ],
-    "d4_local_tfv_scale": "D4-FIT P75 absolute candidate-minus-anchor TFV with 100 m3 floor",
-    "d4_audit_in_training": false,
-    "internal_holdout_in_training": false,
-    "legacy_d3_in_first_training": false,
-    "new_swmm_required_before_first_v126_run": false
-  },
-  "v126_calibration": {
-    "in_sample_d4_fit_residual_calibration_allowed": false,
-    "preferred_method": "rainfall-group cross-fitted out-of-fold evidence within the 10 D4-FIT rainfall groups",
-    "recommended_first_scheme": "5 folds, each holding out approximately 2 D4-FIT rainfall groups from the D4 fine-tune while reusing the same frozen broad D2/D3 checkpoint and V126 fine-tune recipe",
-    "final_production_model": "may fine-tune on all 10 D4-FIT rainfall groups after the recipe is frozen",
-    "tfv_false_benefit_margin": "derive only from out-of-fold TFV candidate-minus-anchor residuals",
-    "pfv_model_error_margin": "if PFV is retrained with D4 labels, derive only from an equivalent out-of-fold or separately held calibration procedure",
-    "d4_audit_used_for_calibration": false,
-    "internal_holdout_used_for_calibration": false,
-    "reason": "training residuals are not independent calibration evidence; D4-AUDIT remains the untouched action-support audit"
-  },
-  "v126_step3": {
-    "runtime_policy": "corrected V125 AnchorOverridePolicyV125 until V126 Value evidence and out-of-fold calibration are accepted",
-    "default_action": "causal Sparse-RBC anchor",
-    "learned_override": "candidate must beat anchor on TFV after out-of-fold calibrated uncertainty protection; PFV remains one-sided soft protection",
-    "anchor_equivalence_gate": "if learned_override_admitted is false at every decision, Proposed and anchor-only target-setting traces and authoritative TFV/PFV must match within tolerance on the same frozen run lineage",
-    "global_peak_role": "REPORT_ONLY",
-    "continuous_gradient_search": false
-  },
-  "first_execution_order": [
-    "merge remote correctness fixes found in the local V125 run",
-    "run Step2 V126 data-usage census, including optional legacy-D3 cache and verified D2 source audit",
-    "run V125 no-override versus Sparse-RBC anchor-only equivalence audit on the existing T5 artifacts before new training claims",
-    "train V126 source-aware TFV model with no new SWMM and no hyperparameter sweep",
-    "compare pre/post D4 fine-tune metrics on D4-AUDIT and InternalHoldout D3",
-    "only if local identification improves, implement frozen rainfall-group cross-fitted out-of-fold TFV calibration evidence; do not use final-model training residuals",
-    "only after OOF TFV calibration is accepted, retrain/recalibrate PFV with equivalent independence if PFV D4 fitting is retained",
-    "run a fixed T5 only after TFV/PFV calibration assets are frozen",
-    "generate new decision-targeted D5 SWMM only if the existing-data diagnostic identifies a remaining support or value-definition gap"
-  ],
-  "d5_if_needed": {
-    "authorized_now": false,
-    "design_principle": "outcome-blind active support around online decisions, not random/global expansion",
-    "selection_inputs_allowed": [
-      "current causal Step1 state",
-      "existing action geometry",
-      "model ensemble disagreement from TrainFit-only models",
-      "hydraulic regime strata derived without holdout outcomes"
-    ],
-    "preferred_new_support": "states/candidate directions where online anchor neighbourhood is uncertain, especially near high-TFV decision periods",
-    "primary_value_definition": "candidate first 600 s versus anchor first 600 s, followed from t+600 s by the same causal Sparse-RBC baseline policy recomputed every 600 s from each branch state; label is cumulative TFV(candidate-first baseline-policy-rollout) minus cumulative TFV(anchor-first baseline-policy-rollout)",
-    "why_policy_continuation": "this estimates the incremental value of the present action under the actual rolling baseline policy; future realized baseline actions may differ only because the first move changed state, not because a different future policy was chosen",
-    "optional_common_open_loop_tail": "retain only as an immediate-effect diagnostic if needed; it is not the preferred D5 control-value label",
-    "candidate_first_move_only": true,
-    "no_learned_policy_in_continuation": true,
-    "split_before_outcomes_required": true,
-    "new_swmm_requires_frozen_plan": true
-  },
-  "continuous_mpc_gate": {
-    "enabled_now": false,
-    "rank_min": 0.70,
-    "top1_min": 0.50,
-    "gradient_sign_min": 0.70,
-    "gradient_cosine_min": 0.60,
-    "thresholds_are_project_preregistered_not_literature_universal": true
-  },
   "canonical_entrypoints": {
     "current_surface": "rtc.step2_current",
-    "data_inventory": "scripts/audit_step2_v126_data_inventory.py",
-    "tfv_training": "scripts/run_step2_v126_value.py",
-    "curriculum": "rtc.step2_curriculum_v126",
-    "anchor_equivalence": "scripts/audit_v126_anchor_equivalence.py",
-    "runtime_policy": "rtc.step2_policy_v125.AnchorOverridePolicyV125",
-    "runtime": "scripts/run_policy_v125.py",
-    "anchor_advantage_evidence": "scripts/build_step2_v125_anchor_override_evidence.py",
-    "legacy_v125_calibration": "scripts/calibrate_step3_v125_anchor_override.py",
-    "v126_calibration_requirement": "cross-fitted OOF evidence must be implemented and reviewed before V126 T5"
+    "restoration_audit": "docs/PROJECT7_V127_V126_RESTORATION_AUDIT.md",
+    "causal_state_store": "scripts/build_step2_v127_causal_state_store.py",
+    "existing_data_training": "scripts/run_step2_v127.py",
+    "d5_plan": "scripts/plan_d5_gradient_v127.py",
+    "d5_execution_manifest": "scripts/build_d5_execution_manifest_v127.py",
+    "d5_swmm_runner": "rtc-run-d3-batch",
+    "d5_labels": "scripts/build_d5_gradient_labels_v127.py",
+    "d5_gradient_training": "scripts/run_step2_v127_d5_gradient.py",
+    "ranking_audit": "scripts/audit_step2_v127_ranking.py",
+    "d2_gradient_audit": "scripts/audit_step2_v127_d2_gradients.py",
+    "continuous_gate": "scripts/build_v127_continuous_gate.py",
+    "runtime": "scripts/run_policy_v127.py",
+    "seven_strategy_comparison": "scripts/run_seven_strategies_v127.py"
   },
-  "forbidden_until_development_gates_pass": [
-    "training on the 1200 D2 development-validation branches",
-    "training on D4-AUDIT",
-    "calibrating V126 uncertainty margins on the same D4 rows used to fit that model",
-    "silently mixing legacy D3 into fitting",
+  "forbidden_during_development": [
+    "training on 1200 D2 development-validation branches",
+    "training on InternalHoldout",
+    "training on D4-AUDIT or D5-AUDIT",
+    "future realized rainfall online",
+    "future SWMM state online",
+    "using RBC as Proposed action-space ceiling",
+    "lowering continuous-gradient gates after seeing T5",
     "Validation outcomes",
     "Final outcomes",
     "Formal",
-    "Policy Lock",
-    "continuous L-BFGS-B MPC",
-    "new random/global D4-like SWMM expansion",
-    "return to V8-V113 full-hydraulic joint-loss route"
+    "Policy Lock"
   ]
 }
