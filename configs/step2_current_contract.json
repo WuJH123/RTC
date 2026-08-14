@@ -43,6 +43,7 @@
     "execution_adapter": "strict H72 paired-5min to 36x10min conversion; paired targets must be exactly equal",
     "authoritative_runner": "rtc-run-d3-batch / rtc.d3_runner_guard:main",
     "census_only_required_before_swmm": true,
+    "fit_and_audit_caches_separate": true,
     "audit_rows_allowed_in_training": false,
     "validation_final_formal_allowed": false
   },
@@ -113,6 +114,9 @@
     "d4_plan": "scripts/plan_step2_v125_d4_action_support.py",
     "d4_execution_manifest": "scripts/build_step2_v125_d4_execution_manifest.py",
     "d4_swmm": "rtc-run-d3-batch",
+    "d4_cache": "scripts/build_step2_v125_d4_cache.py",
+    "tfv_training": "scripts/run_step2_v125_value.py",
+    "pfv_training": "scripts/run_step2_v125_pfv.py",
     "anchor_override_calibration": "scripts/calibrate_step3_v125_anchor_override.py",
     "current_surface": "rtc.step2_current"
   },
