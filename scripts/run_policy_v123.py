@@ -13,7 +13,6 @@ import hashlib
 import json
 from pathlib import Path
 
-import numpy as np
 import torch
 
 from rtc.closed_loop import run_authoritative_closed_loop
@@ -33,35 +32,27 @@ from rtc.step2_control_response_v70 import ControlValueSurrogateV70
 from rtc.step2_policy_v120 import RuntimeNormalizationV120
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
 from rtc.step2_v120_train_helpers import load_graph_v120
-from rtc.step2_causal_rainfall_v123 import load_causal_forecast_store_v123
+from rtc.step2_causal_rainfall_v123 import (
+    derive_causal_input_normalization_v123,
+    load_causal_forecast_store_v123,
+)
 from rtc.step2_control_value_v123 import DualVolumeValueV123
 from rtc.step3_objective_v123 import TFVPFVObjectiveV123
 from rtc.step2_policy_v123 import FirstMoveTFVPFVPolicyV123
 
 
-def _stats(values: list[np.ndarray], channels: int) -> tuple[np.ndarray, np.ndarray]:
-    flat = [np.asarray(v, dtype=np.float64).reshape(-1, channels) for v in values]
-    data = np.concatenate(flat, axis=0)
-    mean = data.mean(axis=0)
-    std = np.maximum(data.std(axis=0), 1.0e-6)
-    return mean.astype(np.float32), std.astype(np.float32)
-
-
-def _causal_normalization(cache: V60TrainCache, store, fit_names: list[str]) -> RuntimeNormalizationV120:
-    index = store.index()
-    states = [
-        cache.entry(name).arrays["initial_state"][cache.entry(name).reference_index]
-        for name in fit_names
-    ]
-    flows = [
-        cache.entry(name).arrays["previous_actuator_flow"][cache.entry(name).reference_index]
-        for name in fit_names
-    ]
-    rainfall = [store.forecast_mmhr[index[name]] for name in fit_names]
-    sm, ss = _stats(states, int(states[0].shape[-1]))
-    rm, rs = _stats(rainfall, int(rainfall[0].shape[-1]))
-    fm, fs = _stats(flows, int(flows[0].shape[-1]))
-    result = RuntimeNormalizationV120(sm, ss, rm, rs, fm, fs)
+def _causal_normalization(
+    cache: V60TrainCache, store, fit_names: list[str]
+) -> RuntimeNormalizationV120:
+    norm = derive_causal_input_normalization_v123(cache, store, fit_names)
+    result = RuntimeNormalizationV120(
+        norm.state_mean,
+        norm.state_std,
+        norm.rainfall_mean,
+        norm.rainfall_std,
+        norm.flow_mean,
+        norm.flow_std,
+    )
     result.validate()
     return result
 
@@ -227,7 +218,7 @@ def main() -> None:
     )
     metadata = json.loads(Path(result.metadata_path).read_text(encoding="utf-8"))
     metadata.update({
-        "v123_policy_contract": "PROJECT7_V123_FIRST_MOVE_TFV_PRIMARY_PFV_SOFT_POLICY_V1",
+        "v123_policy_contract": "PROJECT7_V123_FIRST_MOVE_TFV_PRIMARY_PFV_SOFT_POLICY_V2",
         "v123_runtime_causal_rainfall": True,
         "future_realized_rainfall_used_as_model_input": False,
         "continuous_gradient_search": False,

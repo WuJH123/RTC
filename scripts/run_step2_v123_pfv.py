@@ -11,7 +11,11 @@ import numpy as np
 import torch
 
 from rtc.code_contract import rtc_implementation_contract_sha256
-from rtc.step2_causal_rainfall_v123 import CausalForecastValueCacheV123, load_causal_forecast_store_v123
+from rtc.step2_causal_rainfall_v123 import (
+    CausalForecastValueCacheV123,
+    derive_causal_input_normalization_v123,
+    load_causal_forecast_store_v123,
+)
 from rtc.step2_control_basis_v60 import build_control_basis_v60
 from rtc.step2_control_response_v60 import prepare_static_v60
 from rtc.step2_control_response_v70 import ControlValueSurrogateV70
@@ -21,7 +25,7 @@ from rtc.step2_priority_value_v123 import (
     V123_PFV_LABEL_CONTRACT,
     group_pfv_labels_v123,
 )
-from rtc.step2_train_response_v60 import V60TrainCache, derive_input_normalization_v60, deterministic_rainfall_split_v60
+from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
 from rtc.step2_train_response_v70 import derive_target_scales_v70, evaluate_value_v70
 from rtc.step2_v120_train_helpers import load_graph_v120
 from rtc.step2_v70_contract import DirectValueLossContractV70
@@ -78,7 +82,9 @@ def main() -> None:
     graph = load_graph_v120(args.graph)
     basis = build_control_basis_v60(graph)
     prepared = prepare_static_v60(graph, args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
-    normalization = derive_input_normalization_v60(base, fit)
+    # P0 hardening: rainfall normalization is derived solely from causal
+    # TrainFit forecasts; state/flow remain TrainFit current-state statistics.
+    normalization = derive_causal_input_normalization_v123(base, store, fit)
     base_scales = derive_target_scales_v70(base, fit)
     pfv_values = [group_pfv_labels_v123(base.entry(name), priority_nodes).delta_pfv_m3 for name in fit]
     pfv_scale = derive_priority_target_scale_v123(pfv_values, minimum_m3=100.0)

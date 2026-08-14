@@ -11,7 +11,11 @@ import numpy as np
 import torch
 
 from rtc.code_contract import rtc_implementation_contract_sha256
-from rtc.step2_causal_rainfall_v123 import CausalForecastValueCacheV123, load_causal_forecast_store_v123
+from rtc.step2_causal_rainfall_v123 import (
+    CausalForecastValueCacheV123,
+    derive_causal_input_normalization_v123,
+    load_causal_forecast_store_v123,
+)
 from rtc.step2_control_basis_v60 import build_control_basis_v60
 from rtc.step2_control_response_v60 import prepare_static_v60
 from rtc.step2_control_response_v70 import ControlValueSurrogateV70
@@ -25,37 +29,6 @@ from rtc.step2_train_response_v70 import derive_target_scales_v70, evaluate_valu
 from rtc.step2_optimization_v70 import train_value_event_balanced_v70
 from rtc.step2_v120_train_helpers import load_graph_v120
 from rtc.step2_v70_contract import DirectValueLossContractV70
-
-
-def _stats(values: list[np.ndarray], channels: int) -> tuple[np.ndarray, np.ndarray]:
-    total = np.zeros(channels, dtype=np.float64)
-    square = np.zeros(channels, dtype=np.float64)
-    count = 0
-    for value in values:
-        x = np.asarray(value, dtype=np.float64).reshape(-1, channels)
-        total += x.sum(axis=0)
-        square += np.square(x).sum(axis=0)
-        count += x.shape[0]
-    if count <= 0:
-        raise ValueError("V123 causal normalization has no values")
-    mean = total / count
-    std = np.sqrt(np.maximum(square / count - mean * mean, 1e-12))
-    return mean.astype(np.float32), std.astype(np.float32)
-
-
-def derive_store_normalization(
-    base: V60TrainCache, store, fit_names: list[str]
-) -> InputNormalizationV60:
-    if not fit_names:
-        raise ValueError("V123 causal normalization requires fit groups")
-    state = [base.entry(name).arrays["initial_state"][base.entry(name).reference_index] for name in fit_names]
-    flow = [base.entry(name).arrays["previous_actuator_flow"][base.entry(name).reference_index] for name in fit_names]
-    index = store.index()
-    rainfall = [store.forecast_mmhr[index[name]] for name in fit_names]
-    sm, ss = _stats(state, int(state[0].shape[-1]))
-    rm, rs = _stats(rainfall, int(rainfall[0].shape[-1]))
-    fm, fs = _stats(flow, int(flow[0].shape[-1]))
-    return InputNormalizationV60(sm, ss, rm, rs, fm, fs)
 
 
 def _pre_rain_diagnostic(model, cache, names, normalization, prepared, device, store) -> dict[str, float | int]:
@@ -151,7 +124,9 @@ def main() -> None:
     prepared_cpu = prepare_static_v60(graph, "cpu")
     scales = derive_target_scales_v70(base, fit)
     norm_oracle = derive_input_normalization_v60(base, fit)
-    norm_causal = derive_store_normalization(base, store, fit)
+    # P0 hardening: rainfall normalization must be computed from the causal
+    # forecast store, never from realised future rainfall in the base cache.
+    norm_causal = derive_causal_input_normalization_v123(base, store, fit)
     device = args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"
     prepared = prepare_static_v60(graph, device)
     arm_a = _train_arm(

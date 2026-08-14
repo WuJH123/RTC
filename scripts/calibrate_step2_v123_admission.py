@@ -9,7 +9,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from rtc.step2_causal_rainfall_v123 import CausalForecastValueCacheV123, load_causal_forecast_store_v123
+from rtc.step2_causal_rainfall_v123 import (
+    CausalForecastValueCacheV123,
+    derive_causal_input_normalization_v123,
+    load_causal_forecast_store_v123,
+)
 from rtc.step2_control_basis_v60 import build_control_basis_v60
 from rtc.step2_control_response_v60 import prepare_static_v60
 from rtc.step2_control_response_v70 import ControlValueSurrogateV70
@@ -20,21 +24,6 @@ from rtc.step2_v120_train_helpers import load_graph_v120
 from rtc.step3_calibration_v123 import fit_one_sided_value_calibration_v123
 
 
-def _stats(values: list[np.ndarray], channels: int) -> tuple[np.ndarray, np.ndarray]:
-    flat = [np.asarray(v, dtype=np.float64).reshape(-1, channels) for v in values]
-    x = np.concatenate(flat, axis=0)
-    return x.mean(axis=0).astype(np.float32), np.maximum(x.std(axis=0), 1e-6).astype(np.float32)
-
-
-def _causal_norm(base: V60TrainCache, store, fit: list[str]) -> InputNormalizationV60:
-    idx = store.index()
-    states = [base.entry(n).arrays["initial_state"][base.entry(n).reference_index] for n in fit]
-    flows = [base.entry(n).arrays["previous_actuator_flow"][base.entry(n).reference_index] for n in fit]
-    rains = [store.forecast_mmhr[idx[n]] for n in fit]
-    sm, ss = _stats(states, states[0].shape[-1]); rm, rs = _stats(rains, rains[0].shape[-1]); fm, fs = _stats(flows, flows[0].shape[-1])
-    return InputNormalizationV60(sm, ss, rm, rs, fm, fs)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="V123 TrainFit admission calibration")
     parser.add_argument("--graph", required=True); parser.add_argument("--cache-manifest", required=True); parser.add_argument("--causal-store", required=True); parser.add_argument("--tfv-checkpoint", required=True); parser.add_argument("--pfv-checkpoint", required=True); parser.add_argument("--priority-nodes", required=True); parser.add_argument("--out", required=True); parser.add_argument("--device", default="cuda")
@@ -42,7 +31,7 @@ def main() -> None:
     base = V60TrainCache(args.cache_manifest); store = load_causal_forecast_store_v123(args.causal_store); causal = CausalForecastValueCacheV123(base, store)
     priority = tuple(x.strip() for x in Path(args.priority_nodes).read_text(encoding="utf-8").splitlines() if x.strip() and not x.startswith("#")); pfv_cache = PriorityValueCacheV123(causal, priority)
     names = sorted(base.names("D2") + base.targeted_d3_names()); fit, _ = deterministic_rainfall_split_v60(base, names=names, holdout_fraction=0.20)
-    graph = load_graph_v120(args.graph); basis = build_control_basis_v60(graph); device = args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"; prepared = prepare_static_v60(graph, device); norm = _causal_norm(base, store, fit); base_scales = derive_target_scales_v70(base, fit)
+    graph = load_graph_v120(args.graph); basis = build_control_basis_v60(graph); device = args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"; prepared = prepare_static_v60(graph, device); norm = derive_causal_input_normalization_v123(base, store, fit); base_scales = derive_target_scales_v70(base, fit)
     tfv_scale = float(json.loads(Path(args.tfv_checkpoint).with_name("STEP2_V123_TFV_CAUSAL_ABLATION.json").read_text(encoding="utf-8"))["target_scales"]["direct_tfv_scale_m3"]) if Path(args.tfv_checkpoint).with_name("STEP2_V123_TFV_CAUSAL_ABLATION.json").exists() else float(base_scales.direct_tfv_scale_m3)
     pfv_scale = float(json.loads(Path(args.pfv_checkpoint).with_name("STEP2_V123_PFV_VALUE_REPORT.json").read_text(encoding="utf-8"))["target_scale_pfv_m3"]) if Path(args.pfv_checkpoint).with_name("STEP2_V123_PFV_VALUE_REPORT.json").exists() else 100.0
     first = base.entry(fit[0]).arrays
