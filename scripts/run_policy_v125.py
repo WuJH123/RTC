@@ -1,13 +1,14 @@
-"""Run the V125 10-minute rolling sparse-state anchor/learned-override RTC policy.
+"""Run the V125 10-minute rolling direct anchor-relative RTC policy.
 
-V125 is finite-only.  It reuses the validated V123 causal Value/runtime assets but changes
-the decision semantics: Sparse-RBC is the default action and a learned candidate can
-replace it only if candidate-vs-anchor TFV improvement clears a separately calibrated
-D4-FIT one-sided error budget.  PFV remains a one-sided soft penalty after that gate.
+Sparse-RBC is the online reference and default. Learned local candidates are scored
+*directly* as candidate-minus-anchor TFV/PFV using the same common-continuation semantics
+as D4. A learned first move is admitted only when TFV improvement clears the D4-FIT
+one-sided error budget and the TFV-primary/PFV-soft objective improves.
 """
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -24,71 +25,43 @@ from rtc.production_cli import (
     _load_step1,
 )
 from rtc.runtime_controller_guard import ContinuityGuardController
-from rtc.step2_policy_v123 import FirstMoveTFVPFVPolicyV123
 from rtc.step2_policy_v125 import (
     AnchorOverridePolicyV125,
     V125_OVERRIDE_CALIBRATION_CONTRACT,
     V125_POLICY_CONTRACT,
 )
 
-# Keep one frozen V123 asset loader so V125 cannot silently fork model/normalisation
-# lineage.  Direct script execution places ``scripts/`` on sys.path, while pytest/import
-# from repository root may resolve the namespace package form instead.
-try:  # pragma: no cover - branch depends only on invocation style
+# Reuse the frozen V123/V124 model/objective/normalisation loader so V125 cannot silently
+# fork checkpoint or causal-normalisation lineage.
+try:  # pragma: no cover - invocation-style dependent
     from run_policy_v123 import _load_policy
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.run_policy_v123 import _load_policy
 
 
-def _load_override_margin(path: str | Path) -> tuple[float, dict]:
+def _load_override_calibration(path: str | Path) -> tuple[float, float, dict]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     calibration = payload.get("calibration", {})
     if calibration.get("contract") != V125_OVERRIDE_CALIBRATION_CONTRACT:
-        raise ValueError("V125 runtime requires the anchor-relative D4 calibration contract")
-    margin = float(calibration.get("anchor_override_margin_m3", float("nan")))
-    if not (margin >= 0.0 and margin < float("inf")):
-        raise ValueError("V125 anchor override margin is invalid")
+        raise ValueError("V125 runtime requires the direct anchor-relative calibration contract")
+    tfv_margin = float(calibration.get("anchor_override_margin_m3", float("nan")))
+    pfv_margin = float(
+        calibration.get("pfv_anchor_relative_model_error_margin_m3", float("nan"))
+    )
+    if not (0.0 <= tfv_margin < float("inf")) or not (0.0 <= pfv_margin < float("inf")):
+        raise ValueError("V125 anchor-relative TFV/PFV calibration margins are invalid")
     boundary = payload.get("boundary", {})
     if boundary and not bool(boundary.get("calibration_uses_fit_only", False)):
-        raise ValueError("V125 runtime rejects calibration not restricted to D4 fit")
+        raise ValueError("V125 runtime rejects calibration not restricted to D4 FIT")
     if boundary and bool(boundary.get("audit_used_for_calibration", True)):
-        raise ValueError("V125 runtime rejects D4 audit leakage into calibration")
-    return margin, payload
-
-
-def _v125_policy(base: FirstMoveTFVPFVPolicyV123, *, margin_m3: float) -> AnchorOverridePolicyV125:
-    common = dict(
-        model=base.model,
-        basis=base.basis,
-        prepared=base.prepared,
-        normalization=base.normalization,
-        objective=base.objective,
-        false_benefit_margin_m3=base.false_benefit_margin_m3,
-    )
-    anchor = FirstMoveTFVPFVPolicyV123(
-        **common,
-        graph=base.graph,
-        use_sparse_rbc_anchor=True,
-        knowledge_anchor_fallback=True,
-        policy_mode="anchor_only",
-    )
-    learned = FirstMoveTFVPFVPolicyV123(
-        **common,
-        graph=None,
-        use_sparse_rbc_anchor=False,
-        knowledge_anchor_fallback=False,
-        policy_mode="learned_only",
-    )
-    return AnchorOverridePolicyV125(
-        anchor_policy=anchor,
-        learned_policy=learned,
-        anchor_override_margin_m3=float(margin_m3),
-        require_objective_improvement=True,
-    )
+        raise ValueError("V125 runtime rejects D4 AUDIT leakage into calibration")
+    if boundary and not bool(boundary.get("direct_anchor_relative_targets", False)):
+        raise ValueError("V125 runtime rejects non-anchor-relative calibration targets")
+    return tfv_margin, pfv_margin, payload
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Project7 V125 finite anchor-default rolling RTC")
+    p = argparse.ArgumentParser(description="Project7 V125 direct anchor-relative rolling RTC")
     p.add_argument("--inp", required=True)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--run-id", required=True)
@@ -103,8 +76,8 @@ def main() -> None:
     p.add_argument("--tfv-report", required=True)
     p.add_argument("--pfv-report", required=True)
     p.add_argument("--objective-report", required=True)
-    p.add_argument("--calibration-report", required=True, help="V123 passive/PFV calibration")
-    p.add_argument("--anchor-override-calibration", required=True, help="V125 D4-FIT calibration")
+    p.add_argument("--calibration-report", required=True, help="frozen V123 objective/lineage calibration")
+    p.add_argument("--anchor-override-calibration", required=True, help="V125 D4-FIT direct TFV/PFV calibration")
     p.add_argument("--device", default="cuda")
     args = p.parse_args()
 
@@ -134,8 +107,25 @@ def main() -> None:
         policy_mode="hybrid",
         device=device,
     )
-    override_margin, override_calibration = _load_override_margin(args.anchor_override_calibration)
-    policy = _v125_policy(base, margin_m3=override_margin)
+    tfv_margin, pfv_error_margin, override_calibration = _load_override_calibration(
+        args.anchor_override_calibration
+    )
+    local_objective = replace(
+        base.objective,
+        pfv_model_error_margin_m3=float(pfv_error_margin),
+    )
+    local_objective.validate()
+    policy = AnchorOverridePolicyV125(
+        model=base.model,
+        basis=base.basis,
+        prepared=base.prepared,
+        normalization=base.normalization,
+        objective=local_objective,
+        anchor_override_margin_m3=float(tfv_margin),
+        graph=base.graph,
+        max_active_groups=3,
+        local_fraction=0.25,
+    )
 
     controller_cfg = cfg["controller"]
     controller = V125TorchMPCController(
@@ -151,7 +141,9 @@ def main() -> None:
         config=_controller_config(controller_cfg, control_block_steps=2),
         device=device,
     )
-    controller = ContinuityGuardController(controller, max_delta_per_update=0.5, allow_projection=False)
+    controller = ContinuityGuardController(
+        controller, max_delta_per_update=0.5, allow_projection=False
+    )
     runtime_inp = _controls_disabled_runtime(
         source_inp=Path(args.inp),
         cache_dir=Path(args.out_dir) / "_runtime_inp",
@@ -172,25 +164,30 @@ def main() -> None:
     metadata_path = Path(result.metadata_path)
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata.update({
-        "strategy": "proposed_v125_anchor_override",
+        "strategy": "proposed_v125_direct_anchor_advantage",
         "v125_policy_contract": V125_POLICY_CONTRACT,
         "control_update_seconds": 600,
         "all_writable_actuators_commanded_each_decision": True,
         "tfv_primary": True,
         "pfv_one_sided_soft_protection": True,
         "pfv_can_buy_worse_anchor_relative_tfv": False,
+        "anchor_is_value_reference": True,
         "anchor_default": True,
+        "candidate_tail_equals_anchor_tail": True,
         "learned_override_requires_anchor_relative_error_budget": True,
         "continuous_gradient_search": False,
         "future_realized_rainfall_used_as_model_input": False,
         "v123_asset_lineage": lineage,
         "v125_anchor_override_calibration": override_calibration,
     })
-    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(json.dumps({
-        "strategy": "proposed_v125_anchor_override",
+        "strategy": "proposed_v125_direct_anchor_advantage",
         "policy_contract": V125_POLICY_CONTRACT,
-        "anchor_override_margin_m3": override_margin,
+        "anchor_override_margin_m3": tfv_margin,
+        "pfv_anchor_relative_model_error_margin_m3": pfv_error_margin,
         "metadata_path": result.metadata_path,
         "decision_path": result.decision_path,
         "node_statistics_path": result.node_statistics_path,
