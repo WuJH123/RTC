@@ -1,14 +1,12 @@
 """Isolated D4 cache/index adapters for the V125 data-support ablation.
 
-D4 never enters the historical V60 role guard.  It is compiled as its own source kind
-(`D4`) with the causal Sparse-RBC anchor as the explicit reference row.  Fit and audit
-are materialised as separate caches.  A composite read-only view lets the unchanged
-V124 trainer consume base D2/D3 plus D4-FIT without altering old cache semantics.
+D4 never enters the historical V60 role guard. It is compiled as its own source kind
+(`D4`) with the causal Sparse-RBC anchor as explicit reference. FIT and AUDIT are
+materialised as separate caches. A composite read-only view lets the unchanged V124
+trainer consume base D2/D3 plus D4-FIT without altering old cache semantics.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
@@ -127,28 +125,35 @@ def build_d4_run_index_v125(
 
 
 class D4CausalForecastValueCacheV125:
-    """Use the frozen V123 causal forecast at the same event/checkpoint for D4 rows."""
+    """Reuse the frozen V123 causal forecast at the same event/checkpoint for D4."""
 
     def __init__(self, base: V60TrainCache, store: CausalForecastStoreV123) -> None:
         store.validate()
         self.base = base
         self.store = store
-        lookup: dict[tuple[str, str, str], list[int]] = {}
-        for i, (event, rain, checkpoint) in enumerate(
-            zip(store.event_ids, store.rainfall_groups, store.checkpoint_ids, strict=True)
+        # V123 store intentionally does not carry rainfall_group as a separate field.
+        # D2 and D3 may both bind the same event/checkpoint, so require all matching
+        # causal forecasts to be exactly identical before reusing one for D4.
+        lookup: dict[tuple[str, str], list[int]] = {}
+        for i, (event, checkpoint) in enumerate(
+            zip(store.event_ids, store.checkpoint_ids, strict=True)
         ):
-            lookup.setdefault((str(event), str(rain), str(checkpoint)), []).append(i)
+            lookup.setdefault((str(event), str(checkpoint)), []).append(i)
         self._index: dict[str, int] = {}
         for name in base.names(D4_SOURCE_KIND):
             entry = base.entry(name)
-            key = (str(entry.event_id), str(entry.rainfall_group), str(entry.checkpoint_id))
+            key = (str(entry.event_id), str(entry.checkpoint_id))
             matches = lookup.get(key, [])
             if not matches:
                 raise ValueError(f"{name}: no frozen causal rainfall forecast at D4 checkpoint")
             first = np.asarray(store.forecast_mmhr[matches[0]], dtype=np.float32)
             for other in matches[1:]:
-                if not np.array_equal(first, np.asarray(store.forecast_mmhr[other], dtype=np.float32)):
-                    raise ValueError(f"{name}: base causal store disagrees within event/checkpoint")
+                if not np.array_equal(
+                    first, np.asarray(store.forecast_mmhr[other], dtype=np.float32)
+                ):
+                    raise ValueError(
+                        f"{name}: base causal store disagrees within event/checkpoint"
+                    )
             self._index[name] = int(matches[0])
 
     @property
@@ -209,6 +214,10 @@ class CompositeValueCacheV125:
                 owner[name] = cache
         self._owner = owner
 
+    @property
+    def manifest_path(self) -> str:
+        return "COMPOSITE_V125_READ_ONLY"
+
     def names(self, source: str | None = None) -> list[str]:
         names = sorted(self._owner)
         if source is None:
@@ -219,7 +228,12 @@ class CompositeValueCacheV125:
     def entry(self, name: str):
         return self._owner[name].entry(name)
 
-    def batch(self, name: str, normalization: InputNormalizationV60, device: torch.device | str):
+    def batch(
+        self,
+        name: str,
+        normalization: InputNormalizationV60,
+        device: torch.device | str,
+    ):
         return self._owner[name].batch(name, normalization, device)
 
 
