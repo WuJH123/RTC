@@ -33,6 +33,8 @@ Two V125 correctness bugs were discovered during the local run and are now part 
 1. anchor-advantage evidence must exclude the D4 reference row;
 2. tiny float32 executable-projection drift must not destroy the exact candidate==anchor zero reference.
 
+V125 also used the same D4-FIT pool for model fitting and residual-margin calibration. V126 does **not** treat this as independent calibration evidence.
+
 ## 3. Critical interpretation: data count is not independent supervision
 
 The current data populations have different scientific roles.
@@ -109,7 +111,7 @@ Read in this order:
 8. `src/rtc/controller_v125.py`
 9. `scripts/run_policy_v125.py`
 10. `scripts/build_step2_v125_anchor_override_evidence.py` — corrected non-reference evidence
-11. `scripts/calibrate_step3_v125_anchor_override.py`
+11. `scripts/calibrate_step3_v125_anchor_override.py` — historical V125 utility only; do not use final-model in-sample residuals as V126 calibration
 
 Historical V125 D4 generation/cache code remains authoritative for the already-generated D4 data, but **do not generate new D4/D5 SWMM in the first V126 run**.
 
@@ -125,11 +127,12 @@ Run `scripts/audit_step2_v126_data_inventory.py` before training.
 
 The report must distinguish:
 
-- branch count versus independent group count;
+- branch count versus independent group count versus unique `(rainfall_group,event,checkpoint)` hydraulic states;
 - D2 source 4,800 versus frozen train-eligible 3,600;
 - canonical targeted D3 3,600;
-- actual legacy D3 count from its local cache if supplied;
-- D4 FIT/AUDIT physical separation;
+- D2/D3 state overlap;
+- actual legacy D3 count/state overlap from its local cache if supplied;
+- D4 FIT/AUDIT physical separation and D4 overlap with base TrainFit states;
 - TrainFit versus InternalHoldout rainfall groups.
 
 No model training occurs in this gate.
@@ -155,20 +158,19 @@ Report metrics **before and after D4 fine-tuning** for:
 
 This separates local decision identification from generic state/rainfall generalization.
 
-### Gate E — evidence and calibration
+### Gate E — out-of-fold evidence and calibration
 
-Only if D4-AUDIT materially improves without catastrophic InternalHoldout regression:
+Only if D4-AUDIT materially improves without catastrophic InternalHoldout regression, design and freeze **rainfall-group cross-fitted out-of-fold (OOF) evidence** before any T5 run.
 
-- rebuild direct anchor-relative TFV/PFV evidence;
-- calibrate from FIT only;
-- inspect the new false-benefit margin;
-- keep D4-AUDIT read-only.
+The preferred first scheme is 5 folds over the 10 existing D4-FIT rainfall groups. For each fold, start from the same frozen broad D2/D3 checkpoint and the same V126 D4 fine-tune recipe, exclude that fold's D4 labels from fine-tuning, and predict only the held-out fold. Concatenate the OOF predictions across folds and derive the TFV false-benefit margin from those OOF residuals. The final production TFV model may then use all 10 D4-FIT rainfall groups with the already frozen recipe.
 
-A smaller margin is useful only if AUDIT false-benefit precision also improves; never lower the margin manually to force overrides.
+Do **not** estimate a V126 uncertainty margin from the same D4 rows used to fit the evaluated model. D4-AUDIT and InternalHoldout remain excluded from calibration. If PFV is retrained with D4 labels, its model-error margin must use an equivalent OOF or separately held calibration procedure.
+
+A smaller margin is useful only if untouched D4-AUDIT false-benefit precision also improves; never lower the margin manually to force overrides.
 
 ### Gate F — fixed T5
 
-Only after Gate E assets are frozen, run one fixed T5 Proposed evaluation. Compare against exactly the frozen no-control, Internal RTC, Auto-RBC, EFD, All-open, All-closed and Sparse-RBC anchor-only evidence.
+Only after Gate E TFV/PFV calibration assets are frozen, run one fixed T5 Proposed evaluation. Compare against exactly the frozen no-control, Internal RTC, Auto-RBC, EFD, All-open, All-closed and Sparse-RBC anchor-only evidence.
 
 The immediate scientific success question is:
 
@@ -199,6 +201,8 @@ Until development gates pass, do not access or tune on:
 
 - the 1,200 D2 development-validation branches;
 - D4-AUDIT training labels;
+- D4-AUDIT for calibration;
+- final-model in-sample D4 residuals for uncertainty calibration;
 - Validation outcomes;
 - Final outcomes;
 - Formal;
