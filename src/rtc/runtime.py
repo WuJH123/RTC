@@ -36,17 +36,18 @@ def command_continuity(
     *,
     previous_requested_settings: np.ndarray | None,
     max_delta_per_update: np.ndarray | float | None,
+    enforce_current_delta: bool = True,
     tolerance: float = 1e-9,
 ) -> CommandContinuityResult:
-    """Audit one supervisory command against physical and command-history continuity.
+    """Audit one supervisory command while separating command slew from tracking lag.
 
-    ``current_settings`` represents the actual SWMM readback at the decision epoch.
-    ``previous_requested_settings`` represents the previously issued supervisory target.
-    A new command must stay within the frozen per-update movement bound of both anchors.
-    The second check prevents a rolling optimizer from abruptly undoing the previous target
-    merely because the physical device is still moving toward it.
+    ``previous_requested_settings`` is the supervisory target latch and is the natural
+    anchor for a per-command slew/rate contract. ``current_settings`` is the realised SWMM
+    device state; for pumps/regulators it can legitimately lag the target.  Historical
+    callers retain ``enforce_current_delta=True``.  V127 and fair rule baselines set it to
+    ``False`` so physical tracking lag is reported but does not create an artificial second
+    command constraint.
     """
-
     requested = np.asarray(requested, dtype=float).reshape(-1)
     current = np.asarray(current_settings, dtype=float).reshape(-1)
     if requested.shape != current.shape:
@@ -60,15 +61,15 @@ def command_continuity(
         if previous.shape != current.shape or not np.isfinite(previous).all():
             raise ValueError("previous requested settings are invalid")
 
+    current_error = np.abs(requested - current)
+    previous_error = (
+        np.zeros_like(current_error) if previous is None else np.abs(requested - previous)
+    )
     if max_delta_per_update is None:
         return CommandContinuityResult(
             passed=True,
-            max_delta_from_current=float(np.abs(requested - current).max(initial=0.0)),
-            max_delta_from_previous_command=(
-                0.0
-                if previous is None
-                else float(np.abs(requested - previous).max(initial=0.0))
-            ),
+            max_delta_from_current=float(current_error.max(initial=0.0)),
+            max_delta_from_previous_command=float(previous_error.max(initial=0.0)),
             failed_current_indices=(),
             failed_previous_indices=(),
         )
@@ -76,11 +77,11 @@ def command_continuity(
     delta = np.broadcast_to(np.asarray(max_delta_per_update, dtype=float), current.shape)
     if np.any(delta < 0) or not np.isfinite(delta).all():
         raise ValueError("max_delta_per_update must be finite and non-negative")
-    current_error = np.abs(requested - current)
-    previous_error = (
-        np.zeros_like(current_error) if previous is None else np.abs(requested - previous)
+    failed_current = (
+        np.flatnonzero(current_error > delta + tolerance)
+        if enforce_current_delta
+        else np.asarray([], dtype=int)
     )
-    failed_current = np.flatnonzero(current_error > delta + tolerance)
     failed_previous = (
         np.asarray([], dtype=int)
         if previous is None
@@ -105,9 +106,9 @@ def choose_first_move(
     min_settings: np.ndarray | float = 0.0,
     max_settings: np.ndarray | float = 1.0,
     max_delta_per_update: np.ndarray | float | None = None,
+    enforce_current_delta: bool = True,
 ) -> ExecutableDecision:
-    """Fail closed and project the first MPC move to a continuous executable command."""
-
+    """Choose/project the first move under the requested command-continuity semantics."""
     candidate = np.asarray(optimized_sequence, dtype=float)
     fallback = np.asarray(fallback_first_move, dtype=float).reshape(-1)
     current = np.asarray(current_settings, dtype=float).reshape(-1)
@@ -135,17 +136,17 @@ def choose_first_move(
     requested = np.clip(requested, lo, hi)
     if max_delta_per_update is not None:
         delta = np.broadcast_to(np.asarray(max_delta_per_update, dtype=float), current.shape)
-        if np.any(delta < 0):
-            raise ValueError("max_delta_per_update must be non-negative")
-        lower = np.maximum(lo, current - delta)
-        upper = np.minimum(hi, current + delta)
+        if np.any(delta < 0) or not np.isfinite(delta).all():
+            raise ValueError("max_delta_per_update must be finite and non-negative")
+        lower, upper = lo.copy(), hi.copy()
+        if enforce_current_delta:
+            lower = np.maximum(lower, current - delta)
+            upper = np.minimum(upper, current + delta)
         if previous is not None:
             lower = np.maximum(lower, previous - delta)
             upper = np.minimum(upper, previous + delta)
         if np.any(lower > upper + 1e-12):
-            raise ValueError(
-                "current readback and previous command leave no feasible continuous setting interval"
-            )
+            raise ValueError("command anchors leave no feasible continuous setting interval")
         requested = np.minimum(np.maximum(requested, lower), upper)
     projected = not np.allclose(before, requested, rtol=0.0, atol=1e-12)
     continuity = command_continuity(
@@ -153,6 +154,7 @@ def choose_first_move(
         current,
         previous_requested_settings=previous,
         max_delta_per_update=max_delta_per_update,
+        enforce_current_delta=enforce_current_delta,
     )
     if not continuity.passed:
         raise RuntimeError("first-move continuity projection failed")
@@ -172,13 +174,12 @@ def verify_setting_readback(
     target_tolerance: float = 1e-6,
     current_tolerance: float = 0.05,
 ) -> ReadbackResult:
-    """Verify the write path separately from actuator hydraulic response.
+    """Verify target-write acceptance and report realised device tracking separately.
 
-    Target-setting mismatch indicates the command was not accepted. Current-setting
-    mismatch can legitimately lag for a modulated device, so its tolerance is wider and
-    should be frozen from Phase-0 readback experiments.
+    The returned historical ``passed`` field retains both tolerances for compatibility.
+    V127 runtime uses exact target-latch readback as write authority and treats current
+    setting error as hydraulic tracking diagnostics, not as proof that the command failed.
     """
-
     req = np.asarray(requested, dtype=float).reshape(-1)
     target = np.asarray(target_setting, dtype=float).reshape(-1)
     current = np.asarray(current_setting, dtype=float).reshape(-1)
