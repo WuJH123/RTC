@@ -30,7 +30,7 @@ from rtc.step2_train_v127 import (
     train_objective_stage_v127,
 )
 
-V127_RUN_CONTRACT = "PROJECT7_V127_EXISTING_D2_D3_D4_DIFFERENTIABLE_TRAINING_V3_CAUSAL_INPUT"
+V127_RUN_CONTRACT = "PROJECT7_V127_EXISTING_D2_D3_D4_DIFFERENTIABLE_TRAINING_V4_ENGINE_FORECAST_BOUND"
 
 
 def _sha(path: str | Path) -> str:
@@ -51,6 +51,18 @@ def _finite_metrics(name: str, metrics: dict[str, float]) -> None:
         raise RuntimeError(f"{name}: V127 evaluation produced non-finite metrics {bad}")
 
 
+def _cache_time_engine(path: str | Path) -> tuple[int, int, str]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    step = int(payload.get("model_step_seconds", -1))
+    horizon = int(payload.get("horizon_steps", -1))
+    engine = str(payload.get("swmm_engine_version", "")).strip()
+    if step != 300 or horizon != 72 or not engine:
+        raise ValueError(
+            f"V127 cache {path} does not satisfy 300-s/H72/frozen-engine lineage"
+        )
+    return step, horizon, engine
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--graph", required=True)
@@ -69,11 +81,28 @@ def main() -> None:
     graph = _load_graph(args.graph)
     if len(graph.actuator_ids) != 109:
         raise ValueError("V127 requires exactly 109 frozen writable actuators")
+
+    cache_contracts = {
+        "D2_D3": _cache_time_engine(args.cache_manifest),
+        "D4_FIT": _cache_time_engine(args.d4_fit_cache),
+        "D4_AUDIT": _cache_time_engine(args.d4_audit_cache),
+    }
+    engines = {value[2] for value in cache_contracts.values()}
+    if len(engines) != 1:
+        raise ValueError(f"V127 D2/D3/D4 caches mix SWMM engines: {cache_contracts}")
+    swmm_engine = next(iter(engines))
+
     base = V60TrainCache(args.cache_manifest)
     d4_fit_raw = V60TrainCache(args.d4_fit_cache)
     d4_audit_raw = V60TrainCache(args.d4_audit_cache)
     rain_store = load_causal_forecast_store_v123(args.causal_store)
     state_store = load_causal_state_store_v127(args.causal_state_store)
+    rain_store.validate()
+    state_store.validate()
+    if rain_store.forecast_mmhr.shape[1] != 72:
+        raise ValueError("V127 causal rainfall store must provide H72 forecasts")
+    if rain_store.forecast_mmhr.shape[2] != len(graph.node_ids):
+        raise ValueError("V127 causal rainfall store node count differs from graph")
 
     fit, holdout = deterministic_rainfall_split_v60(
         base,
@@ -175,7 +204,9 @@ def main() -> None:
         "d4_fit_cache_sha256": _sha(args.d4_fit_cache),
         "d4_audit_cache_sha256": _sha(args.d4_audit_cache),
         "causal_rainfall_sha256": _sha(args.causal_store),
+        "causal_rainfall_forecast_contract": str(rain_store.forecast_contract),
         "causal_state_store_sha256": _sha(args.causal_state_store),
+        "swmm_engine_version": swmm_engine,
     }
     report = {
         "contract": V127_RUN_CONTRACT,
@@ -188,9 +219,16 @@ def main() -> None:
             "D4_FIT": "local physical-response support, not anchor-Value target",
             "D4_AUDIT": "read-only local response/ranking audit",
         },
+        "time_engine_contract": {
+            "model_step_seconds": 300,
+            "horizon_steps": 72,
+            "swmm_engine_version": swmm_engine,
+            "cache_contracts": cache_contracts,
+        },
         "normalization": {
             "state_source": "causal Step1 TrainFit estimates",
             "rainfall_source": "causal runtime-equivalent TrainFit forecasts",
+            "rainfall_forecast_contract": str(rain_store.forecast_contract),
             "future_swmm_truth_used_as_input": False,
         },
         "hydraulic_history": hydraulic_history,
@@ -205,7 +243,6 @@ def main() -> None:
             "validation_accessed": False,
             "final_accessed": False,
             "formal_accessed": False,
-            "continuous_mpc_authorized_by_training_alone": False,
         },
     }
     report_path = out / "STEP2_V127_EXISTING_DATA_REPORT.json"
@@ -222,6 +259,7 @@ def main() -> None:
         lineage=lineage,
     )
     report["checkpoint"] = str(checkpoint.resolve())
+    report["checkpoint_sha256"] = _sha(checkpoint)
     report_path.write_text(
         json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
