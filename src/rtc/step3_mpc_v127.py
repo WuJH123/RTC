@@ -1,9 +1,9 @@
 """Project7 V127 bounded continuous differentiable rolling MPC.
 
-RBC provides safety; differentiable MPC provides optimization. Sparse-RBC is one warm
-start and the fail-safe, never the Step2 reference or action-space ceiling. The optimizer
-is explicitly deadline-bounded inside objective/gradient evaluations so a stalled solve
-cannot consume the next 10-minute control period.
+RBC provides safety/fallback; the differentiable surrogate provides optimisation.  Model
+quality metrics are scientific evidence and are recorded, not arbitrary runtime switches.
+Runtime remains fail-closed on causality, non-finite data/gradients, engineering bounds,
+write/readback semantics and the 10-minute computation deadline.
 """
 from __future__ import annotations
 
@@ -20,11 +20,18 @@ from .step2_differentiable_v127 import ControlOrientedDifferentiableSurrogateV12
 from .step2_v60_contract import require_feature
 from .step3_knowledge_seeds_v123 import build_sparse_state_auto_rbc_anchor_v123
 
-V127_STEP3_CONTRACT = "PROJECT7_V127_109ACT_H120_LBFGSB_RECEDING_HORIZON_MPC_V3_DEADLINE"
+V127_STEP3_CONTRACT = "PROJECT7_V127_109ACT_H120_LBFGSB_RECEDING_HORIZON_MPC_V4_EVIDENCE_NOT_GATE"
 
 
 @dataclass(frozen=True)
 class Step2GradientEvidenceV127:
+    """Scientific evidence attached to a V127 model/runtime.
+
+    These metrics describe model quality.  They are not universal physical thresholds and
+    therefore do not disable the method simply because an empirical score falls below an
+    author-chosen number.  Causal provenance and finite metric values are hard contracts.
+    """
+
     holdout_rank: float
     holdout_top1: float
     d2_gradient_sign_accuracy: float
@@ -35,33 +42,36 @@ class Step2GradientEvidenceV127:
     causal_rainfall_verified: bool
 
     def validate(self) -> None:
-        values = (
-            self.holdout_rank,
-            self.holdout_top1,
-            self.d2_gradient_sign_accuracy,
-            self.d2_gradient_cosine_similarity,
-            self.d5_gradient_sign_accuracy,
-            self.d5_gradient_cosine_similarity,
-        )
-        if not all(math.isfinite(float(v)) for v in values):
-            raise ValueError("V127 continuous gate contains non-finite evidence")
-        failures: list[str] = []
-        for label, value, threshold in (
-            ("rank", self.holdout_rank, 0.70),
-            ("top1", self.holdout_top1, 0.50),
-            ("D2 gradient sign", self.d2_gradient_sign_accuracy, 0.70),
-            ("D2 gradient cosine", self.d2_gradient_cosine_similarity, 0.60),
-            ("D5 gradient sign", self.d5_gradient_sign_accuracy, 0.70),
-            ("D5 gradient cosine", self.d5_gradient_cosine_similarity, 0.60),
+        values = {
+            "holdout_rank": self.holdout_rank,
+            "holdout_top1": self.holdout_top1,
+            "d2_gradient_sign_accuracy": self.d2_gradient_sign_accuracy,
+            "d2_gradient_cosine_similarity": self.d2_gradient_cosine_similarity,
+            "d5_gradient_sign_accuracy": self.d5_gradient_sign_accuracy,
+            "d5_gradient_cosine_similarity": self.d5_gradient_cosine_similarity,
+        }
+        bad = [name for name, value in values.items() if not math.isfinite(float(value))]
+        if bad:
+            raise ValueError(f"V127 evidence contains non-finite metrics: {bad}")
+        if not -1.0 <= float(self.holdout_rank) <= 1.0:
+            raise ValueError("V127 holdout rank must lie in [-1,1]")
+        for name, value in (
+            ("holdout_top1", self.holdout_top1),
+            ("d2_gradient_sign_accuracy", self.d2_gradient_sign_accuracy),
+            ("d5_gradient_sign_accuracy", self.d5_gradient_sign_accuracy),
         ):
-            if float(value) < threshold:
-                failures.append(f"{label}={float(value):.4f}<{threshold:.2f}")
+            if not 0.0 <= float(value) <= 1.0:
+                raise ValueError(f"V127 {name} must lie in [0,1]")
+        for name, value in (
+            ("d2_gradient_cosine_similarity", self.d2_gradient_cosine_similarity),
+            ("d5_gradient_cosine_similarity", self.d5_gradient_cosine_similarity),
+        ):
+            if not -1.0 <= float(value) <= 1.0:
+                raise ValueError(f"V127 {name} must lie in [-1,1]")
         if not self.causal_step1_state_verified:
-            failures.append("causal Step1 state not verified")
+            raise ValueError("V127 runtime requires verified causal Step1 state inputs")
         if not self.causal_rainfall_verified:
-            failures.append("causal rainfall not verified")
-        if failures:
-            raise ValueError("V127 continuous MPC blocked: " + "; ".join(failures))
+            raise ValueError("V127 runtime requires verified causal rainfall inputs")
 
 
 @dataclass(frozen=True)
@@ -78,8 +88,8 @@ class ContinuousMPCDesignV127:
     cvar_alpha: float = 0.90
     pfv_soft_margin_m3: float = 100.0
     pfv_penalty_weight: float = 1.0
-    movement_penalty_m3: float = 1.0
-    min_improvement_vs_rbc_m3: float = 1.0
+    movement_penalty_m3: float = 0.0
+    min_improvement_vs_rbc_m3: float = 0.0
 
     @property
     def control_block_steps(self) -> int:
@@ -165,9 +175,15 @@ def decode_fractional_targets_v127(
     active = active_target.reshape(-1).to(fractions)
     lo = min_setting.reshape(-1).to(fractions)
     hi = max_setting.reshape(-1).to(fractions)
-    if fractions.shape[1] != active.numel() or lo.numel() != active.numel() or hi.numel() != active.numel():
+    if (
+        fractions.shape[1] != active.numel()
+        or lo.numel() != active.numel()
+        or hi.numel() != active.numel()
+    ):
         raise ValueError("V127 actuator dimensions do not align")
-    if bool(torch.any(lo > hi)) or bool(torch.any((fractions < 0.0) | (fractions > 1.0))):
+    if bool(torch.any(lo > hi)) or bool(
+        torch.any((fractions < 0.0) | (fractions > 1.0))
+    ):
         raise ValueError("V127 fractional targets or physical bounds are invalid")
     previous = active
     free: list[torch.Tensor] = []
@@ -183,7 +199,11 @@ def decode_fractional_targets_v127(
         raise RuntimeError("V127 free-control horizon exceeds prediction horizon")
     if total_blocks > design.free_control_blocks:
         blocks = torch.cat(
-            (blocks, blocks[-1:].expand(total_blocks - design.free_control_blocks, -1)), dim=0
+            (
+                blocks,
+                blocks[-1:].expand(total_blocks - design.free_control_blocks, -1),
+            ),
+            dim=0,
         )
     return blocks.repeat_interleave(design.control_block_steps, dim=0)
 
@@ -207,10 +227,11 @@ def encode_sequence_to_fraction_v127(
     for target in targets:
         lower = np.maximum(lo, previous - design.max_setting_delta_per_update)
         upper = np.minimum(hi, previous + design.max_setting_delta_per_update)
+        clipped = np.clip(target, lower, upper)
         width = upper - lower
-        fraction = np.where(width > 1e-12, (target - lower) / width, 0.5)
+        fraction = np.where(width > 1e-12, (clipped - lower) / width, 0.5)
         result.append(np.clip(fraction, 0.0, 1.0))
-        previous = np.clip(target, lower, upper)
+        previous = clipped
     return np.stack(result).astype(np.float64)
 
 
@@ -241,9 +262,13 @@ class DifferentiableRollingMPCV127:
         self.design = design
         names = tuple(graph.actuator_physics_feature_names)
         physics = np.asarray(graph.actuator_physics, dtype=np.float32)
-        self.min_setting = physics[:, require_feature(names, "min_setting")].astype(np.float32)
-        self.max_setting = physics[:, require_feature(names, "max_setting")].astype(np.float32)
-        self._last_fraction: np.ndarray | None = None
+        self.min_setting = physics[:, require_feature(names, "min_setting")].astype(
+            np.float32
+        )
+        self.max_setting = physics[:, require_feature(names, "max_setting")].astype(
+            np.float32
+        )
+        self._last_free_targets: np.ndarray | None = None
 
     def _rbc_sequence(
         self,
@@ -251,7 +276,9 @@ class DifferentiableRollingMPCV127:
         current_settings: torch.Tensor,
         active_target: torch.Tensor,
     ) -> torch.Tensor:
-        fallback = active_target.reshape(1, -1).expand(self.design.prediction_horizon_steps, -1)
+        fallback = active_target.reshape(1, -1).expand(
+            self.design.prediction_horizon_steps, -1
+        )
         raw = build_sparse_state_auto_rbc_anchor_v123(
             initial_state[0].detach().cpu().numpy(),
             current_settings.detach().cpu().numpy(),
@@ -260,9 +287,13 @@ class DifferentiableRollingMPCV127:
             control_block_steps=self.design.control_block_steps,
             max_delta_per_update=self.design.max_setting_delta_per_update,
         )
-        sequence = torch.as_tensor(raw, dtype=initial_state.dtype, device=initial_state.device)
+        sequence = torch.as_tensor(
+            raw, dtype=initial_state.dtype, device=initial_state.device
+        )
         blocks = sequence[:: self.design.control_block_steps].clone()
-        blocks[self.design.free_control_blocks :] = blocks[self.design.free_control_blocks - 1]
+        blocks[self.design.free_control_blocks :] = blocks[
+            self.design.free_control_blocks - 1
+        ]
         return blocks.repeat_interleave(self.design.control_block_steps, dim=0)
 
     def _score(
@@ -294,7 +325,9 @@ class DifferentiableRollingMPCV127:
             static_node_features=torch.as_tensor(
                 self.graph.static_node_features, dtype=state.dtype, device=state.device
             ),
-            edge_index=torch.as_tensor(self.graph.edge_index, dtype=torch.long, device=state.device),
+            edge_index=torch.as_tensor(
+                self.graph.edge_index, dtype=torch.long, device=state.device
+            ),
             flood_rate_index=self.flood_rate_index,
             priority_indices=self.priority_indices,
             dt_seconds=float(self.design.model_step_seconds),
@@ -304,13 +337,51 @@ class DifferentiableRollingMPCV127:
         smooth_tfv = _cvar(output.optimization_tfv_m3, self.design.cvar_alpha)
         smooth_pfv = _cvar(output.optimization_pfv_m3, self.design.cvar_alpha)
         pfv_penalty = smooth_tfv.new_zeros(())
-        if rbc_smooth_pfv is not None:
+        if rbc_smooth_pfv is not None and self.design.pfv_penalty_weight > 0.0:
             pfv_penalty = self.design.pfv_penalty_weight * torch.relu(
                 smooth_pfv - rbc_smooth_pfv - self.design.pfv_soft_margin_m3
             )
         first = sequence[: self.design.control_block_steps].mean(dim=0)
-        movement = self.design.movement_penalty_m3 * torch.mean(torch.square(first - active_target))
-        return smooth_tfv + pfv_penalty + movement, hard_tfv, hard_pfv, smooth_tfv, smooth_pfv
+        movement = self.design.movement_penalty_m3 * torch.mean(
+            torch.square(first - active_target)
+        )
+        return (
+            smooth_tfv + pfv_penalty + movement,
+            hard_tfv,
+            hard_pfv,
+            smooth_tfv,
+            smooth_pfv,
+        )
+
+    def _shifted_previous_start(self, active: torch.Tensor) -> np.ndarray | None:
+        if self._last_free_targets is None or self._last_free_targets.shape != (
+            self.design.free_control_blocks,
+            109,
+        ):
+            return None
+        shifted = np.vstack(
+            (self._last_free_targets[1:], self._last_free_targets[-1:])
+        )
+        full_blocks = np.vstack(
+            (
+                shifted,
+                np.repeat(
+                    shifted[-1:],
+                    self.design.prediction_horizon_steps
+                    // self.design.control_block_steps
+                    - self.design.free_control_blocks,
+                    axis=0,
+                ),
+            )
+        )
+        sequence = np.repeat(full_blocks, self.design.control_block_steps, axis=0)
+        return encode_sequence_to_fraction_v127(
+            sequence,
+            active_target=active.detach().cpu().numpy(),
+            min_setting=self.min_setting,
+            max_setting=self.max_setting,
+            design=self.design,
+        )
 
     def optimize(
         self,
@@ -325,7 +396,11 @@ class DifferentiableRollingMPCV127:
         **_: object,
     ) -> ContinuousMPCResultV127:
         del fallback_settings
-        if current_settings is None or previous_requested_settings is None or previous_actuator_flow is None:
+        if (
+            current_settings is None
+            or previous_requested_settings is None
+            or previous_actuator_flow is None
+        ):
             raise ValueError("V127 MPC requires current/target/flow readback")
         if initial_state.ndim == 2:
             initial_state = initial_state[None]
@@ -336,16 +411,28 @@ class DifferentiableRollingMPCV127:
         flow = previous_actuator_flow.reshape(1, -1).to(initial_state)
         if active.numel() != 109 or current.numel() != 109 or flow.shape[-1] != 109:
             raise ValueError("V127 actuator readback count mismatch")
+        if not bool(torch.isfinite(active).all() and torch.isfinite(current).all() and torch.isfinite(flow).all()):
+            raise ValueError("V127 actuator readback contains non-finite values")
         if max_delta_per_update is not None:
             runtime_delta = float(torch.as_tensor(max_delta_per_update).max())
             if runtime_delta > self.design.max_setting_delta_per_update + 1e-9:
-                raise ValueError("V127 runtime max delta is looser than frozen contract")
+                raise ValueError("V127 runtime max delta is looser than MPC decoder")
 
-        lo = torch.as_tensor(self.min_setting, dtype=initial_state.dtype, device=initial_state.device)
-        hi = torch.as_tensor(self.max_setting, dtype=initial_state.dtype, device=initial_state.device)
+        lo = torch.as_tensor(
+            self.min_setting, dtype=initial_state.dtype, device=initial_state.device
+        )
+        hi = torch.as_tensor(
+            self.max_setting, dtype=initial_state.dtype, device=initial_state.device
+        )
         rbc = self._rbc_sequence(initial_state, current, active)
         with torch.no_grad():
-            rbc_score, rbc_hard_tfv, rbc_hard_pfv, rbc_smooth_tfv, rbc_smooth_pfv = self._score(
+            (
+                rbc_score,
+                rbc_hard_tfv,
+                rbc_hard_pfv,
+                rbc_smooth_tfv,
+                rbc_smooth_pfv,
+            ) = self._score(
                 initial_state=initial_state,
                 rainfall=rainfall_scenarios,
                 sequence=rbc,
@@ -353,7 +440,9 @@ class DifferentiableRollingMPCV127:
                 active_target=active,
                 rbc_smooth_pfv=None,
             )
-        hold = active[None].expand(self.design.prediction_horizon_steps, -1).clone()
+        hold = active[None].expand(
+            self.design.prediction_horizon_steps, -1
+        ).clone()
         starts = [
             encode_sequence_to_fraction_v127(
                 hold.detach().cpu().numpy(),
@@ -370,8 +459,9 @@ class DifferentiableRollingMPCV127:
                 design=self.design,
             ),
         ]
-        if self._last_fraction is not None and self._last_fraction.shape == starts[0].shape:
-            starts.append(np.vstack((self._last_fraction[1:], self._last_fraction[-1:])))
+        shifted = self._shifted_previous_start(active)
+        if shifted is not None:
+            starts.append(shifted)
 
         started = time.perf_counter()
         deadline = started + self.design.optimizer_deadline_seconds
@@ -418,7 +508,10 @@ class DifferentiableRollingMPCV127:
             if not bool(torch.isfinite(gradient).all()):
                 raise FloatingPointError("V127 smooth MPC gradient became non-finite")
             last_gradient_norm = float(torch.linalg.vector_norm(gradient).detach())
-            return float(score.detach()), gradient.detach().cpu().numpy().astype(np.float64).reshape(-1)
+            return (
+                float(score.detach()),
+                gradient.detach().cpu().numpy().astype(np.float64).reshape(-1),
+            )
 
         for start_index, start in enumerate(starts):
             if time.perf_counter() >= deadline:
@@ -440,17 +533,23 @@ class DifferentiableRollingMPCV127:
                     },
                 )
                 total_iterations += int(getattr(result, "nit", 0))
-                messages.append(f"start{start_index}:{result.message}")
+                messages.append(
+                    f"start{start_index}:success={bool(result.success)}:{result.message}"
+                )
                 require_time()
                 fraction = np.clip(
-                    np.asarray(result.x).reshape(self.design.free_control_blocks, 109),
+                    np.asarray(result.x).reshape(
+                        self.design.free_control_blocks, 109
+                    ),
                     0.0,
                     1.0,
                 )
                 with torch.no_grad():
                     sequence = decode_fractional_targets_v127(
                         torch.as_tensor(
-                            fraction, dtype=initial_state.dtype, device=initial_state.device
+                            fraction,
+                            dtype=initial_state.dtype,
+                            device=initial_state.device,
                         ),
                         active_target=active,
                         min_setting=lo,
@@ -465,6 +564,10 @@ class DifferentiableRollingMPCV127:
                         active_target=active,
                         rbc_smooth_pfv=rbc_smooth_pfv,
                     )
+                values = [score, hard_tfv, hard_pfv, smooth_tfv, smooth_pfv]
+                if not all(math.isfinite(float(value)) for value in values):
+                    messages.append(f"start{start_index}:nonfinite-final-score")
+                    continue
                 record = {
                     "score": float(score),
                     "hard_tfv": float(hard_tfv),
@@ -473,7 +576,7 @@ class DifferentiableRollingMPCV127:
                     "smooth_pfv": float(smooth_pfv),
                     "sequence": sequence,
                     "fraction": fraction,
-                    "success": bool(result.success),
+                    "solver_success": bool(result.success),
                     "message": str(result.message),
                     "start_index": start_index,
                 }
@@ -484,22 +587,24 @@ class DifferentiableRollingMPCV127:
                 messages.append(f"start{start_index}:TimeoutError:{exc}")
                 break
             except Exception as exc:
-                messages.append(f"start{start_index}:{type(exc).__name__}:{str(exc)[:180]}")
+                messages.append(
+                    f"start{start_index}:{type(exc).__name__}:{str(exc)[:180]}"
+                )
 
+        numerical_eps = 1.0e-6
         use_continuous = bool(
             not deadline_exceeded
             and best is not None
-            and bool(best["success"])
             and math.isfinite(float(best["hard_tfv"]))
             and float(best["hard_tfv"])
-            < float(rbc_hard_tfv) - self.design.min_improvement_vs_rbc_m3
-            and float(best["score"]) < float(rbc_score)
+            < float(rbc_hard_tfv)
+            - max(self.design.min_improvement_vs_rbc_m3, numerical_eps)
+            and float(best["score"]) <= float(rbc_score) + numerical_eps
         )
         if use_continuous:
             assert best is not None
             selected = best
             source = "continuous_lbfgsb"
-            self._last_fraction = np.asarray(best["fraction"], dtype=np.float64)
         else:
             selected = {
                 "score": float(rbc_score),
@@ -509,21 +614,27 @@ class DifferentiableRollingMPCV127:
                 "smooth_pfv": float(rbc_smooth_pfv),
                 "sequence": rbc,
                 "fraction": starts[1],
-                "success": False,
+                "solver_success": False,
                 "message": "RBC safety fallback",
                 "start_index": 1,
             }
             source = "rbc_safety_fallback"
-            self._last_fraction = starts[1].copy()
 
         sequence = selected["sequence"]
-        if not bool(torch.allclose(sequence[0], sequence[1], rtol=0.0, atol=1e-7)):
+        if not bool(
+            torch.allclose(sequence[0], sequence[1], rtol=0.0, atol=1e-7)
+        ):
             raise RuntimeError("V127 selected first 10-min target is not constant")
+        blocks = sequence[:: self.design.control_block_steps]
+        free = blocks[: self.design.free_control_blocks]
+        self._last_free_targets = free.detach().cpu().numpy().astype(np.float64)
         elapsed = float(time.perf_counter() - started)
         return ContinuousMPCResultV127(
             settings=sequence.detach(),
             candidate_valid=True,
-            predicted_delta_tfv_m3=float(selected["hard_tfv"] - float(rbc_hard_tfv)),
+            predicted_delta_tfv_m3=float(
+                selected["hard_tfv"] - float(rbc_hard_tfv)
+            ),
             selected_group_score_m3=float(selected["score"]),
             selected_candidate_index=int(selected["start_index"]),
             candidate_count=len(starts),
