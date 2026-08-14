@@ -1,4 +1,4 @@
-"""Run Project7 V127 Proposed plus the six frozen authoritative SWMM baselines."""
+"""Run Project7 V127 Proposed plus six authoritative SWMM baselines on one event."""
 from __future__ import annotations
 
 import argparse
@@ -9,12 +9,14 @@ from pathlib import Path
 import subprocess
 import sys
 
+from rtc.replay_peak import replay_exact_global_peak
+
 try:
     from run_six_baselines_v122 import BASELINES, _run_one
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.run_six_baselines_v122 import BASELINES, _run_one
 
-V127_SEVEN_STRATEGY_CONTRACT = "PROJECT7_V127_SEVEN_STRATEGY_AUTHORITATIVE_SWMM_COMPARISON_V2_CAUSAL_RAIN"
+V127_SEVEN_STRATEGY_CONTRACT = "PROJECT7_V127_SEVEN_STRATEGY_AUTHORITATIVE_SWMM_COMPARISON_V3_EXACT_PEAK"
 
 
 def _priority_nodes(path: Path) -> set[str]:
@@ -56,6 +58,41 @@ def _augment(row: dict[str, object], priority: set[str]) -> dict[str, object]:
     result = dict(row)
     result["tfv_m3"] = tfv
     result["priority8_pfv_m3"] = pfv
+    return result
+
+
+def _exact_peak(row: dict[str, object]) -> dict[str, object]:
+    result = dict(row)
+    metadata_path = Path(str(result["metadata_path"]))
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    runtime_inp = Path(str(metadata["inp_path"]))
+    decision_name = str(metadata.get("decision_file", ""))
+    decision_path = metadata_path.parent / decision_name if decision_name else None
+    if decision_path is not None and not decision_path.is_file():
+        raise RuntimeError(f"missing frozen decision log for exact peak replay: {decision_path}")
+    replay_path = metadata_path.with_suffix(".routing_step_peak.json")
+    replay = replay_exact_global_peak(
+        inp_path=runtime_inp,
+        decision_log_path=decision_path,
+        output_path=replay_path,
+        source_main_metadata_path=metadata_path,
+    )
+    if str(replay.get("swmm_engine_version", "")) != str(metadata.get("swmm_engine_version", "")):
+        raise RuntimeError("exact-peak replay SWMM engine differs from authoritative main run")
+    result["sampled_300s_global_peak_flood_rate_m3s"] = float(
+        result.get("global_peak_flood_rate_m3s", 0.0)
+    )
+    result["global_peak_flood_rate_m3s"] = float(
+        replay["routing_step_global_peak_flood_rate_m3s"]
+    )
+    result["global_peak_semantics"] = "routing-step frozen-decision replay"
+    result["global_peak_replay_path"] = str(replay_path.resolve())
+    result["source_inp_sha256"] = str(metadata.get("source_inp_sha256", ""))
+    result["runtime_inp_sha256"] = str(metadata.get("inp_sha256", ""))
+    result["swmm_engine_version"] = str(metadata.get("swmm_engine_version", ""))
+    result["control_start_minutes"] = int(metadata["control_start_minutes"])
+    result["control_update_seconds"] = int(metadata["control_update_seconds"])
+    result["observation_update_seconds"] = int(metadata["observation_update_seconds"])
     return result
 
 
@@ -115,14 +152,21 @@ def _run_proposed(args, root: Path) -> dict[str, object]:
         if line.strip()
     ]
     continuous = sum(
-        1 for row in decisions if str(row.get("source")) == "MPC_V127_CONTINUOUS"
+        1 for item in decisions if str(item.get("source")) == "MPC_V127_CONTINUOUS"
     )
-    rbc = sum(1 for row in decisions if str(row.get("source")) == "RBC_SAFETY_V127")
+    rbc = sum(
+        1 for item in decisions if str(item.get("source")) == "RBC_SAFETY_V127"
+    )
     deadline = sum(
         1
-        for row in decisions
-        if bool((row.get("diagnostics") or {}).get("continuous_optimizer_deadline_exceeded", False))
+        for item in decisions
+        if bool((item.get("diagnostics") or {}).get("optimizer_deadline_exceeded", False))
     )
+    runtimes = [
+        float((item.get("diagnostics") or {}).get("optimizer_elapsed_seconds"))
+        for item in decisions
+        if (item.get("diagnostics") or {}).get("optimizer_elapsed_seconds") is not None
+    ]
     return {
         "event_id": str(args.event_id),
         "strategy": "proposed_v127",
@@ -133,9 +177,32 @@ def _run_proposed(args, root: Path) -> dict[str, object]:
         "continuous_decisions": continuous,
         "rbc_safety_fallback_decisions": rbc,
         "optimizer_deadline_fallbacks": deadline,
+        "optimizer_runtime_mean_s": float(sum(runtimes) / len(runtimes)) if runtimes else 0.0,
+        "optimizer_runtime_max_s": float(max(runtimes)) if runtimes else 0.0,
         "metadata_path": str(meta_path.resolve()),
         "node_statistics_path": str(stats_path.resolve()),
         "decision_path": str(decisions_path.resolve()),
+    }
+
+
+def _verify_common_execution(rows: list[dict[str, object]]) -> dict[str, object]:
+    source = {str(row.get("source_inp_sha256", "")) for row in rows}
+    engines = {str(row.get("swmm_engine_version", "")) for row in rows}
+    starts = {int(row["control_start_minutes"]) for row in rows}
+    updates = {int(row["control_update_seconds"]) for row in rows}
+    observations = {int(row["observation_update_seconds"]) for row in rows}
+    if len(source) != 1 or "" in source:
+        raise RuntimeError("seven strategies do not share one authoritative source-event INP")
+    if len(engines) != 1 or "" in engines:
+        raise RuntimeError("seven strategies do not share one SWMM engine")
+    if len(starts) != 1 or len(updates) != 1 or len(observations) != 1:
+        raise RuntimeError("seven strategies do not share identical control/observation clocks")
+    return {
+        "source_inp_sha256": next(iter(source)),
+        "swmm_engine_version": next(iter(engines)),
+        "control_start_minutes": next(iter(starts)),
+        "control_update_seconds": next(iter(updates)),
+        "observation_update_seconds": next(iter(observations)),
     }
 
 
@@ -179,7 +246,9 @@ def main() -> None:
     if not 0.0 < float(args.optimizer_deadline_seconds) < float(
         args.decision_runtime_budget_seconds
     ) < 600.0:
-        raise ValueError("V127 seven-strategy runtime deadlines must satisfy optimizer < controller < 600 s")
+        raise ValueError(
+            "V127 seven-strategy deadlines must satisfy optimizer < controller < 600 s"
+        )
 
     priority = _priority_nodes(Path(args.priority_nodes))
     root = Path(args.out_dir).resolve()
@@ -197,8 +266,9 @@ def main() -> None:
             runtime_cache=runtime_cache,
             event_id=str(args.event_id),
         )
-        rows.append(_augment(row, priority))
-    rows.append(_augment(_run_proposed(args, root), priority))
+        rows.append(_exact_peak(_augment(row, priority)))
+    rows.append(_exact_peak(_augment(_run_proposed(args, root), priority)))
+    common_execution = _verify_common_execution(rows)
 
     no_control = next(row for row in rows if row["strategy"] == "no_control")
     nc_tfv = float(no_control["tfv_m3"])
@@ -226,6 +296,8 @@ def main() -> None:
         "tfv_primary": True,
         "priority8_pfv_soft_secondary": True,
         "global_peak_report_only": True,
+        "global_peak_semantics": "routing-step frozen-decision replay for every strategy",
+        "common_execution": common_execution,
         "rows": rows,
         "comparison_csv": str(csv_path.resolve()),
     }
