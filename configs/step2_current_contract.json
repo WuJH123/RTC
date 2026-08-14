@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_V125_ANCHOR_DEFAULT_EVIDENCE_GATED_OVERRIDE_V1",
+  "contract": "PROJECT7_V125_ANCHOR_DEFAULT_EVIDENCE_GATED_OVERRIDE_V2_DIRECT_ADVANTAGE",
   "research_goal": "every 10 minutes use sparse causal state to command all 109 writable pumps/orifices/weirs, minimize whole-system cumulative TFV, and apply PFV only as one-sided soft deterioration protection",
   "authoritative_truth": "SWMM",
   "step1": {
@@ -11,21 +11,21 @@
   },
   "step2": {
     "version": "V125",
-    "primary_target": "direct signed authoritative delta_TFV_m3",
-    "secondary_target": "direct signed Priority8 delta_PFV_m3",
+    "production_target": "direct signed candidate-minus-causal-Sparse-RBC-anchor TFV/PFV advantage",
+    "base_auxiliary_targets": "historical D2/D3 candidate-minus-reference supervision retained only as auxiliary generalization support",
     "tfv_role": "PRIMARY",
     "pfv_role": "ONE_SIDED_SOFT_DETERIORATION_PROTECTION",
     "global_peak_role": "REPORT_ONLY",
     "hydraulic_trajectory_model_required_online": false,
     "continuous_gradient_search": false,
-    "finite_value_architecture": "V124 interaction-aware Value or frozen accepted causal V70 until V125 D4 retraining is accepted",
+    "finite_value_architecture": "V124 interaction-aware TFV Value plus V70 PFV Value for the first D4 data-support ablation",
     "v125_first_retrain_ablation": {
       "change_architecture": false,
       "hidden_dim": 96,
       "attention_heads": 4,
       "listwise_weight": 0.30,
       "seed": 42,
-      "only_experimental_change": "add D4 fit action-support supervision"
+      "only_experimental_change": "add D4-FIT anchor-relative action-support supervision"
     }
   },
   "d4": {
@@ -38,6 +38,7 @@
     "audit_fraction": 0.25,
     "expected_current_split": "10 fit / 4 audit rainfall groups",
     "split_frozen_before_SWMM_outcomes": true,
+    "reference": "causal Sparse-RBC anchor",
     "counterfactual_credit": "only first executable 600-second block differs; all candidates share the exact same causal Sparse-RBC anchor continuation afterwards",
     "action_sequence_saved_in_plan": true,
     "execution_adapter": "strict H72 paired-5min to 36x10min conversion; paired targets must be exactly equal",
@@ -48,18 +49,21 @@
     "validation_final_formal_allowed": false
   },
   "step3": {
-    "policy": "anchor_default_evidence_gated_learned_override",
+    "policy": "direct_anchor_relative_value_with_anchor_default",
+    "value_reference": "causal Sparse-RBC anchor",
     "default_action": "causal Sparse-RBC first move derived from Step1 reconstructed state",
-    "learned_candidate_source": "finite engineering-feasible first-move-rich candidate set",
-    "passive_false_benefit_gate": "retain V123 calibrated candidate-vs-passive TFV error budget",
-    "anchor_override_gate": "predicted candidate-minus-anchor TFV plus separately calibrated D4-fit one-sided error budget must be < 0",
+    "learned_candidate_source": "same 7-10 local D4 first-move families around the current anchor",
+    "learned_candidate_tail": "exact common Sparse-RBC anchor continuation",
+    "anchor_override_gate": "direct predicted candidate-minus-anchor TFV plus separately calibrated D4-FIT one-sided error budget must be < 0",
+    "pfv_error_margin": "recalibrated from D4-FIT after PFV model retraining",
     "pfv_after_tfv_gate": true,
     "pfv_can_compensate_for_worse_anchor_relative_tfv": false,
-    "objective": "TFV risk + one-sided PFV deterioration penalty + movement penalty",
+    "objective": "anchor-relative TFV risk + one-sided anchor-relative PFV deterioration penalty + movement-from-anchor penalty",
     "score_only_executable_sequences": true,
     "projection_after_scoring": false,
+    "fail_if_pre_scoring_projection_changes_generated_candidate": true,
     "continuous_gradient_extrapolation": false,
-    "fallback": "Sparse-RBC anchor; passive only when anchor is passive or runtime safety prevents a command"
+    "fallback": "Sparse-RBC anchor; passive only when the anchor itself is passive or runtime safety prevents a command"
   },
   "rolling_control": {
     "model_step_minutes": 5,
@@ -80,6 +84,13 @@
     "rainfall_decay_per_5min_step": 0.92,
     "current_state_from_step1_online": true
   },
+  "calibration": {
+    "contract": "PROJECT7_V125_ANCHOR_RELATIVE_TFV_FALSE_BENEFIT_V2",
+    "fit_only": true,
+    "tfv": "one-sided false-benefit margin on direct candidate-minus-anchor TFV residual",
+    "pfv": "one-sided under-predicted-deterioration margin on direct candidate-minus-anchor PFV residual",
+    "audit_used_for_calibration": false
+  },
   "evaluation": {
     "primary": "authoritative SWMM whole-system cumulative TFV_m3",
     "priority_soft_diagnostic": "authoritative Priority8 cumulative PFV_m3",
@@ -90,11 +101,12 @@
       "anchor_selection_fraction",
       "learned_override_fraction",
       "false_benefit_override_rate",
+      "PFV false-soft-safe rate",
       "decision_runtime"
     ],
     "development_non_regression": [
-      "old generic InternalHoldout D3 ranking",
-      "D4 audit anchor-neighbourhood ranking/regret",
+      "base generic InternalHoldout D3 ranking",
+      "D4-AUDIT anchor-neighbourhood ranking/regret",
       "authoritative T5 closed-loop TFV/PFV"
     ],
     "aggregation": "equal weight per independent rainfall group"
@@ -117,13 +129,14 @@
     "d4_cache": "scripts/build_step2_v125_d4_cache.py",
     "tfv_training": "scripts/run_step2_v125_value.py",
     "pfv_training": "scripts/run_step2_v125_pfv.py",
+    "anchor_advantage_evidence": "scripts/build_step2_v125_anchor_override_evidence.py",
     "anchor_override_calibration": "scripts/calibrate_step3_v125_anchor_override.py",
     "current_surface": "rtc.step2_current"
   },
   "historical_only": {
     "V8_to_V113_hydraulic_effect_routes": true,
     "V120_V123_policy_semantics": "reproducibility only; not canonical V125 selector",
-    "V124_attention_result": "development evidence; did not replace frozen V70 on rank"
+    "V124_attention_result": "development evidence; did not replace frozen V70 on old passive-relative rank before D4"
   },
   "forbidden_until_development_gates_pass": [
     "Validation outcomes",
