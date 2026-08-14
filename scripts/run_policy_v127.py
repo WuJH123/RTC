@@ -13,6 +13,7 @@ from rtc.checkpoint_v127 import load_step2_v127
 from rtc.closed_loop import run_authoritative_closed_loop
 from rtc.controller_v127 import V127TorchMPCController
 from rtc.event_clock import inspect_prepared_event_clock
+from rtc.execution_audit_v127 import audit_target_write_readback_v127
 from rtc.forecast import PersistenceDecayForecast
 from rtc.production_cli import (
     _controller_config,
@@ -34,7 +35,7 @@ from rtc.step3_mpc_v127 import (
     V127_STEP3_CONTRACT,
 )
 
-V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V6_SEMANTIC_ASSET_TARGET_SLEW"
+V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V7_TARGET_WRITE_AUDITED"
 V127_EVIDENCE_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_EVIDENCE_V2_LINEAGE_BOUND_NOT_SCORE_GATED"
 V127_CAUSAL_FORECAST_CONTRACT = "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92,scenario_multiplier=1.0)"
 
@@ -65,8 +66,6 @@ def _evidence(
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     if payload.get("contract") != V127_EVIDENCE_CONTRACT or payload.get("passed") is not True:
         raise ValueError("V127 runtime requires structurally valid continuous-MPC evidence")
-    # This exact-checkpoint identity is scientifically necessary: the evidence describes
-    # the final Step2 model that supplies online gradients, not merely a compatible schema.
     if str(payload.get("step2_sha256", "")).lower() != expected_step2_sha256.lower():
         raise ValueError("V127 evidence was compiled for a different Step2 checkpoint")
     metrics = payload.get("metrics")
@@ -193,8 +192,6 @@ def main() -> None:
         controller,
         max_delta_per_update=0.5,
         allow_projection=False,
-        # V127 decoder already constrains consecutive supervisory targets.  Physical
-        # current-setting lag is hydraulic state/diagnostic, not a second command anchor.
         enforce_current_delta=False,
     )
     runtime_inp = _controls_disabled_runtime(
@@ -214,6 +211,13 @@ def main() -> None:
         record_stride_seconds=300,
         exact_global_peak=False,
     )
+    write_audit = audit_target_write_readback_v127(metadata_path=result.metadata_path)
+    if write_audit.get("passed") is not True:
+        raise RuntimeError(
+            "V127 authoritative run failed same-epoch target write/readback audit: "
+            + json.dumps(write_audit, sort_keys=True)
+        )
+
     metadata_path = Path(result.metadata_path)
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     trained_engine = str(checkpoint_lineage.get("swmm_engine_version", "")).strip()
@@ -242,6 +246,7 @@ def main() -> None:
             "future_realized_rainfall_used_as_model_input": False,
             "command_slew_anchor": "previous_supervisory_target_setting",
             "physical_current_setting_role": "hydraulic_state_and_tracking_diagnostic",
+            "target_write_readback_audit": write_audit,
             "rainfall_forecast_runtime": {
                 "contract": V127_CAUSAL_FORECAST_CONTRACT,
                 "future_realized_rainfall_not_used": True,
@@ -253,7 +258,6 @@ def main() -> None:
             "lbfgsb_maxiter": design.lbfgsb_maxiter,
             "optimizer_deadline_seconds": design.optimizer_deadline_seconds,
             "decision_runtime_budget_seconds": controller_cfg.decision_runtime_budget_seconds,
-            # Raw file hashes are provenance only; compatibility above uses semantic identity.
             "source_inp_sha256": _sha(args.inp),
             "controller_config_sha256": _sha(args.config),
             "graph_schema_sha256": _sha(args.graph),
@@ -277,6 +281,7 @@ def main() -> None:
                 "decision_path": result.decision_path,
                 "node_statistics_path": result.node_statistics_path,
                 "decisions": result.decisions,
+                "target_write_readback_passed": True,
                 "sampled_global_peak_flood_rate_m3s": result.global_peak_flood_rate_m3s,
                 "flow_routing_error_pct": result.flow_routing_error_pct,
             },
