@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
 
@@ -12,8 +13,15 @@ from rtc.checkpoint_v127 import load_step2_v127
 from rtc.closed_loop import run_authoritative_closed_loop
 from rtc.controller_v127 import V127TorchMPCController
 from rtc.forecast import PersistenceDecayForecast
-from rtc.production_cli import _controller_config, _controls_disabled_runtime, _load_graph, _load_lines, _load_step1
+from rtc.production_cli import (
+    _controller_config,
+    _controls_disabled_runtime,
+    _load_graph,
+    _load_lines,
+    _load_step1,
+)
 from rtc.runtime_controller_guard import ContinuityGuardController
+from rtc.step2_causal_rainfall_v123 import load_causal_forecast_store_v123
 from rtc.step3_mpc_v127 import (
     ContinuousMPCDesignV127,
     DifferentiableRollingMPCV127,
@@ -21,13 +29,18 @@ from rtc.step3_mpc_v127 import (
     V127_STEP3_CONTRACT,
 )
 
-V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V1"
+V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V2_CAUSAL_RAIN_BOUND"
 V127_GATE_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_EVIDENCE_GATE_V1"
+
+
+def _sha(path: str | Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def _priority_indices(path: str | Path, graph, device: torch.device) -> torch.Tensor:
     nodes = tuple(
-        line.strip() for line in Path(path).read_text(encoding="utf-8").splitlines()
+        line.strip()
+        for line in Path(path).read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     )
     if len(nodes) != 8 or len(set(nodes)) != 8:
@@ -35,7 +48,9 @@ def _priority_indices(path: str | Path, graph, device: torch.device) -> torch.Te
     missing = sorted(set(nodes) - set(graph.node_ids))
     if missing:
         raise ValueError(f"V127 Priority8 nodes absent from graph: {missing}")
-    return torch.as_tensor([graph.node_ids.index(node) for node in nodes], dtype=torch.long, device=device)
+    return torch.as_tensor(
+        [graph.node_ids.index(node) for node in nodes], dtype=torch.long, device=device
+    )
 
 
 def _evidence(path: str | Path) -> tuple[Step2GradientEvidenceV127, dict]:
@@ -61,25 +76,48 @@ def main() -> None:
     p.add_argument("--graph", required=True)
     p.add_argument("--step1", required=True)
     p.add_argument("--step2", required=True)
+    p.add_argument("--causal-store", required=True)
     p.add_argument("--continuous-gate", required=True)
     p.add_argument("--device", default="cuda")
     p.add_argument("--lbfgsb-maxiter", type=int, default=30)
+    p.add_argument("--optimizer-deadline-seconds", type=float, default=480.0)
     p.add_argument("--decision-runtime-budget-seconds", type=float, default=540.0)
     p.add_argument("--pfv-soft-margin-m3", type=float, default=100.0)
     p.add_argument("--pfv-penalty-weight", type=float, default=1.0)
     p.add_argument("--min-improvement-vs-rbc-m3", type=float, default=1.0)
     args = p.parse_args()
 
-    device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
+    device = torch.device(
+        args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"
+    )
     graph = _load_graph(args.graph)
     sensors = _load_lines(args.sensors)
     step1 = _load_step1(args.step1, device)
     step2, step2_payload = load_step2_v127(args.step2, graph=graph, device=device)
     evidence, gate_payload = _evidence(args.continuous_gate)
     priority = _priority_indices(args.priority_nodes, graph, device)
+
+    causal_store = load_causal_forecast_store_v123(args.causal_store)
+    causal_store.validate()
+    if causal_store.forecast_mmhr.shape[1] != 72:
+        raise ValueError("V127 causal rainfall store horizon differs from H72 runtime")
+    if causal_store.forecast_mmhr.shape[2] != len(graph.node_ids):
+        raise ValueError("V127 causal rainfall store node count differs from graph")
+    if causal_store.future_realized_rainfall_not_used is not True:
+        raise ValueError("V127 causal rainfall store does not prove future-rain exclusion")
+
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
-    if int(cfg.get("model_step_seconds", -1)) != 300 or int(cfg.get("control_update_seconds", -1)) != 600:
+    if int(cfg.get("model_step_seconds", -1)) != 300 or int(
+        cfg.get("control_update_seconds", -1)
+    ) != 600:
         raise ValueError("V127 runtime requires 300-s model observations and 600-s decisions")
+    if not 0.0 < float(args.optimizer_deadline_seconds) < float(
+        args.decision_runtime_budget_seconds
+    ) < 600.0:
+        raise ValueError(
+            "V127 requires optimizer_deadline < controller_runtime_budget < 600 s control period"
+        )
+
     controller_cfg = _controller_config(dict(cfg["controller"]), control_block_steps=2)
     controller_cfg = replace(
         controller_cfg,
@@ -92,6 +130,7 @@ def main() -> None:
     controller_cfg.validate()
     design = ContinuousMPCDesignV127(
         lbfgsb_maxiter=int(args.lbfgsb_maxiter),
+        optimizer_deadline_seconds=float(args.optimizer_deadline_seconds),
         pfv_soft_margin_m3=float(args.pfv_soft_margin_m3),
         pfv_penalty_weight=float(args.pfv_penalty_weight),
         min_improvement_vs_rbc_m3=float(args.min_improvement_vs_rbc_m3),
@@ -139,39 +178,59 @@ def main() -> None:
     )
     metadata_path = Path(result.metadata_path)
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    metadata.update({
-        "strategy": "proposed_v127_continuous_differentiable_mpc",
-        "v127_runtime_contract": V127_RUNTIME_CONTRACT,
-        "v127_step3_contract": V127_STEP3_CONTRACT,
-        "continuous_gradient_search": True,
-        "free_control_horizon_minutes": 120,
-        "prediction_horizon_minutes": 360,
-        "continuous_variable_count": 12 * 109,
-        "all_writable_actuators_eligible": True,
-        "rbc_role": "warm_start_and_safety_fallback_only",
-        "rbc_is_value_reference": False,
-        "rbc_is_action_space_ceiling": False,
-        "tfv_primary": True,
-        "priority8_pfv_soft_secondary": True,
-        "global_peak_report_only": True,
-        "future_realized_rainfall_used_as_model_input": False,
-        "step2_checkpoint_contract": step2_payload.get("checkpoint_contract"),
-        "step2_contract": step2_payload.get("step2_contract"),
-        "continuous_gate": gate_payload,
-        "lbfgsb_maxiter": design.lbfgsb_maxiter,
-        "decision_runtime_budget_seconds": controller_cfg.decision_runtime_budget_seconds,
-    })
-    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({
-        "strategy": metadata["strategy"],
-        "runtime_contract": V127_RUNTIME_CONTRACT,
-        "metadata_path": result.metadata_path,
-        "decision_path": result.decision_path,
-        "node_statistics_path": result.node_statistics_path,
-        "decisions": result.decisions,
-        "global_peak_flood_rate_m3s": result.global_peak_flood_rate_m3s,
-        "flow_routing_error_pct": result.flow_routing_error_pct,
-    }, indent=2), flush=True)
+    metadata.update(
+        {
+            "strategy": "proposed_v127_continuous_differentiable_mpc",
+            "v127_runtime_contract": V127_RUNTIME_CONTRACT,
+            "v127_step3_contract": V127_STEP3_CONTRACT,
+            "continuous_gradient_search": True,
+            "free_control_horizon_minutes": 120,
+            "prediction_horizon_minutes": 360,
+            "continuous_variable_count": design.variable_count,
+            "all_writable_actuators_eligible": True,
+            "rbc_role": "warm_start_and_safety_fallback_only",
+            "rbc_is_value_reference": False,
+            "rbc_is_action_space_ceiling": False,
+            "tfv_primary": True,
+            "priority8_pfv_soft_secondary": True,
+            "global_peak_report_only": True,
+            "future_realized_rainfall_used_as_model_input": False,
+            "rainfall_forecast_runtime": {
+                "algorithm": "persistence_decay_from_latest_observed_frame",
+                "decay_per_step": 0.92,
+                "history_steps_for_level": 1,
+                "scenario_multipliers": [1.0],
+                "causal_store_sha256": _sha(args.causal_store),
+                "causal_store_contract": causal_store.forecast_contract,
+                "causal_store_future_realized_rainfall_not_used": True,
+            },
+            "step2_checkpoint_contract": step2_payload.get("checkpoint_contract"),
+            "step2_contract": step2_payload.get("step2_contract"),
+            "continuous_gate": gate_payload,
+            "lbfgsb_maxiter": design.lbfgsb_maxiter,
+            "optimizer_deadline_seconds": design.optimizer_deadline_seconds,
+            "decision_runtime_budget_seconds": controller_cfg.decision_runtime_budget_seconds,
+        }
+    )
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(
+        json.dumps(
+            {
+                "strategy": metadata["strategy"],
+                "runtime_contract": V127_RUNTIME_CONTRACT,
+                "metadata_path": result.metadata_path,
+                "decision_path": result.decision_path,
+                "node_statistics_path": result.node_statistics_path,
+                "decisions": result.decisions,
+                "global_peak_flood_rate_m3s": result.global_peak_flood_rate_m3s,
+                "flow_routing_error_pct": result.flow_routing_error_pct,
+            },
+            indent=2,
+        ),
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
