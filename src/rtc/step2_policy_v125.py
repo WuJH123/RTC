@@ -30,6 +30,7 @@ from .step3_objective_v125 import tfv_pfv_score_v125
 
 V125_POLICY_CONTRACT = "PROJECT7_V125_ANCHOR_DEFAULT_EVIDENCE_GATED_OVERRIDE_V2_DIRECT_ADVANTAGE"
 V125_OVERRIDE_CALIBRATION_CONTRACT = "PROJECT7_V125_ANCHOR_RELATIVE_TFV_FALSE_BENEFIT_V2"
+NUMERICAL_PROJECTION_ATOL_V125 = 1.0e-6
 
 
 @dataclass(frozen=True)
@@ -241,6 +242,17 @@ class AnchorOverridePolicyV125:
         candidate_one = torch.as_tensor(
             np.stack(sequences), dtype=anchor.dtype, device=anchor.device
         )
+
+        # Identify the anchor before projection. Near physical bounds, float32 round-off in
+        # the generic projection can move an already-executable anchor by a few ulps. That
+        # must never destroy the structural candidate==reference exact-zero Value identity.
+        pre_distance = torch.amax(torch.abs(candidate_one - anchor[None]), dim=(1, 2))
+        anchor_index = int(torch.argmin(pre_distance).item())
+        if float(pre_distance[anchor_index]) > NUMERICAL_PROJECTION_ATOL_V125:
+            raise RuntimeError("V125 candidate family lacks the Sparse-RBC anchor reference")
+        if int((pre_distance <= 1.0e-7).sum().item()) > 1:
+            raise RuntimeError("V125 candidate family contains duplicate anchor references")
+
         candidate_one, projection_max = _project_executable_sequences_v120(
             candidate_one,
             current_settings=current,
@@ -254,22 +266,23 @@ class AnchorOverridePolicyV125:
             max_delta_per_update=effective_delta,
             control_block_steps=block,
         )
-        if float(projection_max) > 1.0e-7:
+        if float(projection_max) > NUMERICAL_PROJECTION_ATOL_V125:
             raise RuntimeError(
-                "V125 local candidate generator produced a non-executable action "
+                "V125 local candidate generator produced a materially non-executable action "
                 f"(projection={projection_max})"
             )
-        anchor_matches = torch.all(
-            torch.isclose(candidate_one, anchor[None], rtol=0.0, atol=1.0e-7),
-            dim=(1, 2),
+        anchor_projection_drift = float(
+            torch.max(torch.abs(candidate_one[anchor_index] - anchor)).detach()
         )
-        if int(anchor_matches.sum().item()) != 1:
-            if torch.allclose(candidate_one[0], anchor, rtol=0.0, atol=1.0e-7):
-                anchor_index = 0
-            else:
-                raise RuntimeError("V125 candidate family lacks a unique exact anchor reference")
-        else:
-            anchor_index = int(torch.nonzero(anchor_matches, as_tuple=False)[0, 0].item())
+        if anchor_projection_drift > NUMERICAL_PROJECTION_ATOL_V125:
+            raise RuntimeError(
+                "V125 executable projection materially changed the Sparse-RBC anchor "
+                f"({anchor_projection_drift})"
+            )
+        # Restore bitwise identity after tolerance-qualified projection. This changes no
+        # engineering command beyond float32 round-off and guarantees exact-zero scoring.
+        candidate_one = candidate_one.clone()
+        candidate_one[anchor_index] = anchor
 
         scenarios = int(rainfall_scenarios.shape[0])
         state = initial_state[None].expand(scenarios, -1, -1)
@@ -406,6 +419,7 @@ class AnchorOverridePolicyV125:
 __all__ = [
     "AnchorOverridePolicyV125",
     "AnchorOverrideResultV125",
+    "NUMERICAL_PROJECTION_ATOL_V125",
     "V125_OVERRIDE_CALIBRATION_CONTRACT",
     "V125_POLICY_CONTRACT",
 ]

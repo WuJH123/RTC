@@ -1,6 +1,6 @@
 """Build V125 D4 FIT/AUDIT direct candidate-minus-anchor TFV/PFV evidence.
 
-No SWMM is run here.  The script reads the physically separate D4 caches and the accepted
+No SWMM is run here. The script reads the physically separate D4 caches and the accepted
 V125 TFV/PFV checkpoints, reproduces the causal online Value inputs, and writes one row
 per non-reference D4 candidate for one-sided calibration/audit.
 """
@@ -26,7 +26,7 @@ try:  # pragma: no cover - invocation style
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.run_policy_v123 import _load_policy
 
-EVIDENCE_CONTRACT = "PROJECT7_V125_DIRECT_ANCHOR_ADVANTAGE_EVIDENCE_V1"
+EVIDENCE_CONTRACT = "PROJECT7_V125_DIRECT_ANCHOR_ADVANTAGE_EVIDENCE_V2_REFERENCE_EXCLUDED"
 
 
 def _sha(path: str | Path) -> str:
@@ -41,6 +41,15 @@ def _priority_nodes(path: str | Path) -> tuple[str, ...]:
     if len(values) != 8 or len(set(values)) != 8:
         raise ValueError("V125 evidence requires the frozen unique Priority8 node list")
     return values
+
+
+def _candidate_indices(entry) -> list[int]:
+    """Return exactly the non-reference rows represented by V60GroupBatch candidates."""
+    ref = int(entry.reference_index)
+    indices = [int(i) for i in entry.indices if int(i) != ref]
+    if ref not in entry.indices or not indices:
+        raise RuntimeError("V125 D4 evidence group has invalid reference/candidate identity")
+    return indices
 
 
 def _rows_for_cache(
@@ -72,7 +81,7 @@ def _rows_for_cache(
         if not (pred_tfv.shape == pred_pfv.shape == truth_tfv.shape == truth_pfv.shape):
             raise RuntimeError(f"{name}: V125 evidence target shape drift")
         entry = base.entry(name)
-        candidate_indices = list(entry.indices)
+        candidate_indices = _candidate_indices(entry)
         if len(candidate_indices) != len(pred_tfv):
             raise RuntimeError(f"{name}: V125 cache candidate identity drift")
         shas = np.asarray(entry.arrays["action_or_sequence_sha256"])[candidate_indices]
@@ -165,6 +174,7 @@ def main() -> None:
         "audit_rainfall_groups": sorted(audit_rain),
         "rainfall_overlap": sorted(fit_rain & audit_rain),
         "reference_semantics": "direct candidate-minus-causal-Sparse-RBC-anchor",
+        "reference_rows_exported": False,
         "base_cache_sha256": _sha(args.base_cache_manifest),
         "d4_fit_cache_sha256": _sha(args.d4_fit_cache),
         "d4_audit_cache_sha256": _sha(args.d4_audit_cache),

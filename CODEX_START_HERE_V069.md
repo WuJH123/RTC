@@ -1,247 +1,218 @@
-# Codex start here — Project7 v0.6.9 V125 canonical RTC contract
+# Codex start here — Project7 v0.6.9 V126 development contract
 
-This file is the **single current execution entrypoint**. Do not infer the active method from historical version numbers, old PRs, old runners, or old branch names. Read this file and `configs/step2_current_contract.json` before doing any Project7 work.
+This is the **single current Project7 entrypoint**. Read this file and `configs/step2_current_contract.json` before running any command. Do not infer the active method from old PR numbers, branch names, V120/V123/V125 prompts, or historical Hydraulic V8–V113 code.
 
 ## 1. Frozen research question
 
-Project7 is an idealized SWMM methodology testbed, not a field digital twin. Authoritative truth is EPA SWMM.
+Project7 is an idealized EPA-SWMM methodology testbed, not a field digital twin.
 
-Every 10 minutes the Proposed controller must:
+Every 10 minutes Proposed must use sparse causal sensing to reconstruct current hydraulic state, command all 109 writable pumps/orifices/weirs, and minimize authoritative whole-system cumulative sewer-node flooding volume (`TFV`). Frozen Priority8 `PFV` is one-sided **soft deterioration protection** only. PFV improvement cannot buy worse TFV. Global Peak is report-only.
 
-1. use sparse causal observations and the frozen accepted Step1 to reconstruct the current hydraulic state;
-2. derive a causal engineering Sparse-RBC anchor from that reconstructed state;
-3. use that anchor as the **online Value reference**;
-4. score a small, engineering-feasible local first-move neighbourhood with direct candidate-minus-anchor TFV/PFV Value;
-5. keep the Sparse-RBC anchor by default;
-6. execute a learned override only when calibrated evidence supports lower TFV than the anchor and the one-sided PFV-soft objective also improves;
-7. write the first 10-minute target command to all 109 writable pump/orifice/weir links;
-8. verify target-latch/readback semantics, then reconstruct and re-optimise at the next update.
+No future SWMM hydraulic truth or future realized rainfall is available online.
 
-Primary objective: whole-system cumulative sewer-node overflow volume (`TFV`) minimization. Priority8 `PFV` is one-sided **soft deterioration protection**, not a hard constraint. PFV improvement is never allowed to buy a candidate whose predicted TFV is worse than the engineering anchor. Global Peak remains report-only.
+## 2. What V125 proved
 
-Do not describe TFV as 2-D street inundation volume.
+The completed V125 D4→T5 development run is diagnostic evidence, not a successful control result:
 
-## 2. Canonical code surface
+- D4 V2 authoritative execution: **390 branches**, 48 checkpoints, 14 rainfall groups. Do not call this 392 unless a new local census proves otherwise.
+- D4 FIT: 269 branches / 33 groups / 10 rainfall groups.
+- D4 AUDIT: 121 branches / 15 groups / 4 rainfall groups.
+- TFV Value: InternalHoldout D3 rank ≈ **0.4131**.
+- D4-FIT anchor-neighbourhood rank ≈ **0.5020**.
+- D4-AUDIT anchor-neighbourhood rank ≈ **0.4793**.
+- FIT-only TFV false-benefit margin ≈ **6018.56 m3**.
+- FIT-only PFV model-error margin ≈ **175.66 m3**.
+- T5 learned overrides: **0/60**.
+- T5 Proposed TFV reduction vs No-control ≈ **9.274%**.
+- T5 Sparse-RBC anchor-only reduction ≈ **10.167%**.
+- T5 Auto-RBC reference reduction ≈ **22.022%**.
+- Continuous MPC remains blocked.
+
+Two V125 correctness bugs were discovered during the local run and are now part of the remote V126 branch:
+
+1. anchor-advantage evidence must exclude the D4 reference row;
+2. tiny float32 executable-projection drift must not destroy the exact candidate==anchor zero reference.
+
+V125 also used the same D4-FIT pool for model fitting and residual-margin calibration. V126 does **not** treat this as independent calibration evidence.
+
+## 3. Critical interpretation: data count is not independent supervision
+
+The current data populations have different scientific roles.
+
+### D2
+
+Authoritative source census:
+
+- 4,800 branches / 192 groups.
+- only 3,600 branches / 144 groups are frozen train-eligible;
+- the other 1,200 branches / 48 groups are development-validation and **must not train**.
+
+Therefore “use all 4,800 D2 branches for training” is leakage, not fuller training.
+
+The canonical 80/20 TrainFit split currently gives:
+
+- D2 TrainFit: 112 groups;
+- D2 InternalHoldout: 32 groups.
+
+Historical audit also showed D2 mainly contains single-actuator, temporally low-rank perturbations. It is useful for broad actuator sensitivity but insufficient for coordinated 10-minute control by itself.
+
+### targeted D3
+
+Canonical targeted D3:
+
+- 3,600 branches / 144 groups;
+- 1 reference + 24 candidates per group;
+- TrainFit 112 groups;
+- InternalHoldout 32 groups.
+
+It remains broad coordinated-action supervision and generic state/rainfall generalization evidence.
+
+### legacy D3
+
+Local project history reports roughly 1,318 older D3 branches. They are **not automatically train-eligible**. Before any use, run the V126 data census against the actual legacy cache and verify reference semantics, causal lineage, rainfall overlap, action geometry and duplicate identities.
+
+The first V126 training run does **not** use legacy D3. If it is later admitted, it may be used only as auxiliary broad representation support, never by silently merging it into D4 decision labels.
+
+### D4
+
+D4 is direct candidate-minus-causal-Sparse-RBC-anchor supervision. It is the most decision-relevant data, but V125 appended D4-FIT into the generic D3 stage. That mixed reference/action distributions and used the broad D3 scale/loss for a much smaller local advantage problem.
+
+V126 fixes training semantics instead of generating another random D4 batch.
+
+## 4. V126 scientific hypothesis
+
+**The dominant current blocker is not raw branch count. It is source/target mismatch and weak local decision supervision.**
+
+First V126 experiment keeps the V124 interaction-aware network, seed 42 and broad causal inputs fixed. It changes only the curriculum:
+
+1. **Broad representation stage:** D2 then targeted D3 using the established V124 objective.
+2. **Decision fine-tune stage:** D4-FIT only, with a local anchor-advantage scale and a loss built around:
+   - physical candidate-minus-anchor TFV error;
+   - pairwise magnitude;
+   - pairwise ordering sign;
+   - beneficial-vs-harmful sign around zero;
+   - listwise ordering;
+   - true-best candidate margin.
+3. D4-AUDIT and InternalHoldout stay read-only.
+
+Do not re-introduce the historical full-hydraulic V8–V113 joint-loss route. Earlier Project7 gradient audits showed trajectory/state auxiliary gradients can conflict with direct TFV/ranking.
+
+## 5. Canonical code surface
 
 Read in this order:
 
 1. `configs/step2_current_contract.json`
 2. `src/rtc/step2_current.py`
-3. `src/rtc/step2_policy_v125.py`
-4. `src/rtc/controller_v125.py`
-5. `scripts/run_policy_v125.py`
-6. `src/rtc/step2_d4_action_support_v125.py`
-7. `scripts/plan_step2_v125_d4_action_support.py`
-8. `scripts/build_step2_v125_d4_execution_manifest.py`
-9. `src/rtc/d3_runner_guard.py` through CLI `rtc-run-d3-batch`
-10. `src/rtc/step2_d4_cache_v125.py`
-11. `scripts/build_step2_v125_d4_cache.py`
-12. `scripts/run_step2_v125_value.py`
-13. `scripts/run_step2_v125_pfv.py`
-14. `scripts/build_step2_v125_anchor_override_evidence.py`
-15. `src/rtc/step3_calibration_v125.py`
-16. `scripts/calibrate_step3_v125_anchor_override.py`
+3. `scripts/audit_step2_v126_data_inventory.py`
+4. `src/rtc/step2_curriculum_v126.py`
+5. `scripts/run_step2_v126_value.py`
+6. `scripts/audit_v126_anchor_equivalence.py`
+7. `src/rtc/step2_policy_v125.py` — corrected runtime selector, retained until V126 Value is accepted
+8. `src/rtc/controller_v125.py`
+9. `scripts/run_policy_v125.py`
+10. `scripts/build_step2_v125_anchor_override_evidence.py` — corrected non-reference evidence
+11. `scripts/calibrate_step3_v125_anchor_override.py` — historical V125 utility only; do not use final-model in-sample residuals as V126 calibration
 
-New production-facing code must import the current method through `rtc.step2_current`. V120/V121/V122/V123 runners and V8–V113 hydraulic-effect models are retained only for reproduction/forensics unless this document explicitly references them.
+Historical V125 D4 generation/cache code remains authoritative for the already-generated D4 data, but **do not generate new D4/D5 SWMM in the first V126 run**.
 
-## 3. Current evidence already frozen
+## 6. Mandatory execution order
 
-Do not spend another optimisation cycle re-solving these points.
+### Gate A — Git and tests
 
-- Step1 Sparse-RBC parity is strong enough for the current control path: actuator-adjacent endpoint depth NSE ~0.991 and action Spearman ~0.988 on the frozen TrainFit audit.
-- Frozen causal V70 Holdout D3 Value: rank ~0.414, pairwise ~0.652, top1 ~0.563.
-- V124 interaction-aware attention model did **not** improve old passive-relative rank (~0.410), so do not start another architecture sweep.
-- The old generic Step3 candidate generator no longer has first-move collapse (~75–83 unique executable first moves, 109/109 actuators), but that broad support is intentionally **not** the V125 online search domain because it is outside the new D4 local supervision.
-- Development T5: Sparse-RBC anchor-only reduced TFV ~10.17%; learned-only ~7.88%; old hybrid ~8.88%; Auto-RBC reference ~22.02%.
-- The old V123 hybrid admitted learned actions relative to PASSIVE, not directly relative to Sparse-RBC. This is superseded by V125.
-- V125 D4 support-gap audit confirmed substantial train/deploy action mismatch around the causal Sparse-RBC anchor: 112-group median nearest-anchor normalized L1 ~0.667; selected-48 median ~0.708.
+Start only from the merged V126 `main` SHA supplied in the supervising prompt. Working tree must be clean. Run full `pytest -q`, `py_compile` for V126 entrypoints and `git diff --check`.
 
-Continuous MPC remains blocked.
+### Gate B — data usage census
 
-## 4. V125 Step2/Step3 definition
+Run `scripts/audit_step2_v126_data_inventory.py` before training.
 
-### 4.1 Production Value target
+The report must distinguish:
 
-The production decision quantity is now direct anchor-relative advantage:
+- branch count versus independent group count versus unique `(rainfall_group,event,checkpoint)` hydraulic states;
+- D2 source 4,800 versus frozen train-eligible 3,600;
+- canonical targeted D3 3,600;
+- D2/D3 state overlap;
+- actual legacy D3 count/state overlap from its local cache if supplied;
+- D4 FIT/AUDIT physical separation and D4 overlap with base TrainFit states;
+- TrainFit versus InternalHoldout rainfall groups.
 
-`DeltaTFV_anchor = TFV(candidate) - TFV(Sparse-RBC anchor)`
+No model training occurs in this gate.
 
-`DeltaPFV_anchor = PFV(candidate) - PFV(Sparse-RBC anchor)`
+### Gate C — anchor equivalence
 
-The online model receives the Sparse-RBC sequence as `reference_settings`; therefore anchor==reference must produce exact-zero TFV/PFV by architecture. Do not compute two passive-relative predictions and subtract them at runtime.
+Before blaming Step2 for the T5 gap, run `scripts/audit_v126_anchor_equivalence.py` on the existing Sparse-RBC anchor-only and corrected V125 no-override T5 artifacts.
 
-Historical D2/D3 candidate-minus-reference groups remain auxiliary generalization supervision. D4-FIT provides the decision-relevant anchor-relative supervision.
+If all Proposed decisions report `learned_override_admitted=false`, then elapsed decision times, all 109 target settings, authoritative TFV and Priority8 PFV must match the anchor-only run within tolerance.
 
-### 4.2 First V125 retraining is a data-support ablation
+If this fails: verdict is `V126_STEP3_ANCHOR_EQUIVALENCE_BLOCKED`. Do not train V126 until the run-lineage/runtime mismatch is understood.
 
-Do not change architecture in the first D4 run:
+### Gate D — V126 TFV curriculum
 
-- TFV V124 hidden dim = 96;
-- attention heads = 4;
-- listwise weight = 0.30;
-- seed = 42;
-- PFV V70 architecture unchanged;
-- same causal rainfall semantics;
-- base TrainFit normalization and target scales remain frozen.
+If Gate C passes, run `scripts/run_step2_v126_value.py` with the frozen graph, canonical D2/D3 cache, existing D4 FIT/AUDIT caches and causal rainfall store.
 
-Only D4-FIT action support may change.
+No seed/hidden/head/loss/epoch sweep in the first run.
 
-### 4.3 Engineering anchor and local candidates
+Report metrics **before and after D4 fine-tuning** for:
 
-The default command is the causal Sparse-RBC first move computed from Step1 reconstructed state and frozen actuator topology/physics. Authoritative current SWMM node depth is never allowed into Proposed runtime anchor construction.
+- D4-AUDIT rank, pairwise, sign, top1, regret, MAE;
+- InternalHoldout D3 rank, pairwise, sign, top1, regret, MAE.
 
-The V125 online search domain is deliberately the same small local family used by D4:
+This separates local decision identification from generic state/rainfall generalization.
 
-- HOLD-first-move / anchor continuation;
-- anchor scale 0.50;
-- anchor scale 0.75;
-- exact anchor 1.00;
-- +/-25% perturbation of up to three strongest active hydraulic/control groups.
+### Gate E — out-of-fold evidence and calibration
 
-After clipping/dedup this is typically 7–10 first moves per decision. This is not a claim of global optimum; it is a decision-support domain with observed SWMM supervision.
+Only if D4-AUDIT materially improves without catastrophic InternalHoldout regression, design and freeze **rainfall-group cross-fitted out-of-fold (OOF) evidence** before any T5 run.
 
-Every non-anchor candidate may differ only during the executable first 600 s. All later 5-min steps are the exact same Sparse-RBC anchor continuation. Runtime candidate generation must fail closed if engineering projection changes a generated candidate before scoring.
+The preferred first scheme is 5 folds over the 10 existing D4-FIT rainfall groups. For each fold, start from the same frozen broad D2/D3 checkpoint and the same V126 D4 fine-tune recipe, exclude that fold's D4 labels from fine-tuning, and predict only the held-out fold. Concatenate the OOF predictions across folds and derive the TFV false-benefit margin from those OOF residuals. The final production TFV model may then use all 10 D4-FIT rainfall groups with the already frozen recipe.
 
-### 4.4 Learned override
+Do **not** estimate a V126 uncertainty margin from the same D4 rows used to fit the evaluated model. D4-AUDIT and InternalHoldout remain excluded from calibration. If PFV is retrained with D4 labels, its model-error margin must use an equivalent OOF or separately held calibration procedure.
 
-A learned candidate is eligible only if both are true:
+A smaller margin is useful only if untouched D4-AUDIT false-benefit precision also improves; never lower the margin manually to force overrides.
 
-`predicted_DeltaTFV_anchor + calibrated_TFV_false_benefit_margin < 0`
+### Gate F — fixed T5
 
-and
+Only after Gate E TFV/PFV calibration assets are frozen, run one fixed T5 Proposed evaluation. Compare against exactly the frozen no-control, Internal RTC, Auto-RBC, EFD, All-open, All-closed and Sparse-RBC anchor-only evidence.
 
-`anchor-relative TFV + one-sided PFV-soft objective < 0`.
+The immediate scientific success question is:
 
-The PFV model-error margin is also recalibrated on D4-FIT after PFV retraining. PFV improvement cannot compensate for TFV failure.
+> Does learned control add **positive incremental TFV value over the Sparse-RBC anchor** without material Priority8 PFV deterioration?
 
-### 4.5 Rolling execution
+Beating No-control alone is not sufficient. Beating Auto-RBC is a later competitiveness target, not permission to tune on T5.
 
-- SWMM/model record step: 300 s.
-- Control update: 600 s.
-- Execute first 600-s block only.
-- Maximum target-setting change: 0.5 per update.
-- Score only already executable sequences.
-- No projection after scoring.
-- Controller returns a target for every writable actuator each decision.
-- Native SWMM RTC controls are disabled for Proposed.
-- Target-latch write/readback is authoritative for command acceptance; realised current-setting lag is a physical tracking diagnostic, not a write-failure test.
+## 7. When new SWMM is justified
 
-## 5. D4 V2 data contract — old `ab7a3b1` plan is superseded
+Do not produce more random/global candidate branches now. Existing D2/D3/D4 data must first be audited and trained with the corrected curriculum.
 
-The old V125 plan proved the action-support gap but its continuation rule is superseded. Re-run the planner from current `main` before any D4 truth generation.
+A new D5 is authorized only after an outcome-blind support/value-definition diagnosis shows where the accepted model remains uncertain. D5 selection may use TrainFit-only model disagreement, current causal Step1 state and action geometry, but not holdout outcomes. Its preferred control-value label is **first-move advantage under the fixed causal Sparse-RBC baseline policy**: candidate and anchor branches differ only in the first 600 s; from the next decision onward both use the same Sparse-RBC policy, recomputed every 600 s from each branch's own causal hydraulic state. Future baseline actions may therefore differ only as a physical consequence of the different first move, not because a different continuation policy was chosen. Freeze D5 FIT/AUDIT rainfall groups and the complete plan before SWMM outcomes. A fixed common open-loop tail may be retained only as an immediate-effect diagnostic, not as the preferred D5 rolling-control value target.
 
-D4 V2 requirements:
+## 8. Continuous MPC
 
-- Development TrainFit only; frozen 112/32 D2 split retained.
-- Select at most 48 high-gap checkpoints by deterministic rainfall-balanced geometry.
-- Freeze D4 `fit` / `audit` roles **before** any D4 outcome is generated.
-- Split unit is rainfall group, never branch/candidate.
-- With the current 14 selected rainfall groups and `audit_fraction=0.25`, expect 10 fit / 4 audit groups.
-- D4-AUDIT is never used for training, checkpoint selection, calibration, normalization, scale derivation, or hyperparameter tuning.
-- Reference is the causal Sparse-RBC anchor.
-- Candidate may differ from the anchor only in the executable first 600 s.
-- After the first block, all candidates at that checkpoint share the exact same Sparse-RBC anchor continuation.
-- Save complete H72 scoring sequence and SHA256.
+Still disabled. Do not run L-BFGS-B unless the frozen Project7 gate passes:
 
-This isolates the causal marginal value of the current 10-minute decision and prevents future-tail credit from being attributed to the first move.
+- rank >= 0.70;
+- top1 >= 0.50;
+- TFV gradient sign >= 0.70;
+- gradient cosine >= 0.60.
 
-## 6. Authoritative D4 execution contract
+These are Project7 preregistered engineering/scientific gates, not universal literature thresholds.
 
-Do not hand-write another PySWMM runner. Use the existing guarded path:
+## 9. Forbidden
 
-`scripts/build_step2_v125_d4_execution_manifest.py` -> `rtc-run-d3-batch`.
+Until development gates pass, do not access or tune on:
 
-The execution adapter converts H72 x 5-min scoring sequences to 36 x 10-min control blocks. Every pair of 5-min targets must be exactly equal; otherwise fail closed. The execution manifest must contain one exact `anchor_scale_1.00` reference per checkpoint, 109-actuator complete target dictionaries, common continuation, rate feasibility and frozen event/checkpoint lineage.
-
-Before SWMM, always run `rtc-run-d3-batch ... --census-only`. The census must show zero endpoint-invalid requests. Only then may the exact same frozen manifest be executed without `--census-only`. Reuse existing simulation assets where identity matches; never redesign candidates after outcomes are observed.
-
-## 7. D4 cache and first retraining
-
-Build physically separate caches from the same authoritative D4 run summary:
-
-- `scripts/build_step2_v125_d4_cache.py --split-role fit`
-- `scripts/build_step2_v125_d4_cache.py --split-role audit`
-
-D4 uses `source_kind=D4`; the explicit reference is Sparse-RBC, not historical `D3_HOLD_REFERENCE`. Do not weaken or reinterpret old V60/D3 guards.
-
-Then run:
-
-- TFV: `scripts/run_step2_v125_value.py`
-- PFV: `scripts/run_step2_v125_pfv.py`
-
-The TFV first experiment keeps V124 hidden=96, heads=4, listwise=0.30, seed=42 and base normalization/scale unchanged. D4-FIT is the only new action-support supervision. PFV similarly retains its base architecture and base TrainFit scale.
-
-**D4-AUDIT is an action-support holdout around states/rainfall groups already present in base TrainFit data. It is not independent state/rainfall validation.** Generic base InternalHoldout D3 remains the independent rainfall/state generalization diagnostic.
-
-## 8. Direct anchor-relative calibration
-
-After accepted TFV/PFV D4 training:
-
-1. run `scripts/build_step2_v125_anchor_override_evidence.py` to write direct candidate-minus-anchor TFV/PFV truth/prediction rows for physically separate D4 FIT/AUDIT caches;
-2. run `scripts/calibrate_step3_v125_anchor_override.py`.
-
-D4-FIT alone estimates:
-
-- one-sided TFV false-benefit margin;
-- one-sided PFV under-predicted-deterioration model-error margin.
-
-D4-AUDIT is used only once to report TFV false-benefit rate, beneficial-override precision/recall and PFV false-soft-safe rate. No D4-AUDIT outcome may change architecture, loss, seed, candidate design, split, calibration quantile or margins.
-
-## 9. V125 closed-loop T5
-
-Only after D4 data, training and calibration are frozen may `scripts/run_policy_v125.py` be executed on the existing development/debug T5 event.
-
-Report:
-
-- authoritative SWMM whole-system TFV;
-- Priority8 PFV;
-- Global Peak (diagnostic only);
-- anchor / learned-override / passive fractions;
-- selected candidate families;
-- beneficial/false-benefit override statistics;
-- PFV false-soft-safe statistics;
-- 10-min decision runtime mean/p95/max and missed deadlines;
-- target-latch/write failures;
-- continuity violations;
-- score==execute violations.
-
-The primary development question is whether V125 improves on Sparse-RBC anchor-only TFV (~10.17%), not merely whether it beats passive. Auto-RBC (~22.02% on the frozen development T5 evidence) is an external comparator, not a Proposed candidate ceiling.
-
-## 10. Decision tree
-
-- If D4-AUDIT local identification improves and authoritative V125 T5 beats anchor-only without unacceptable PFV deterioration, freeze finite V125 for the next scientific stage.
-- If D4-AUDIT local identification is good but T5 does not beat anchor, stop changing Step2 architecture and diagnose Step3/runtime/objective/decision-deadline behaviour.
-- If D4-AUDIT local identification remains poor, stop architecture sweeps and classify the remaining blocker before any new SWMM: state/history sufficiency, local data support density, rainfall forecast information, or objective noise. Any second D4/active-learning round must be bounded and preregistered before outcomes.
-
-## 11. Continuous MPC gate
-
-Continuous L-BFGS-B / 109-actuator differentiable search is forbidden unless the frozen Project7 gate passes:
-
-- TFV rank >= 0.70
-- top1 >= 0.50
-- TFV gradient sign >= 0.70
-- gradient cosine >= 0.60
-
-These are Project7 preregistered engineering/scientific thresholds, not universal literature thresholds. Do not lower them to enable continuous MPC.
-
-## 12. Development boundaries
-
-Until V125 finite development evidence passes:
-
-- no Validation outcome access;
-- no Final outcome access;
-- no Formal;
-- no Policy Lock;
-- no continuous MPC;
-- no tuning on D4-AUDIT;
-- no future realised rainfall online;
-- no future SWMM hydraulic truth online;
-- no return to V8–V113 hydraulic-effect architecture search;
-- no seed/hidden/head/loss sweep in the first D4 data-support experiment;
-- no Global Peak objective/constraint.
-
-## 13. Scientific claim boundary
-
-The Proposed controller may claim only the best action selected within the generated engineering-feasible local candidate set around the current Sparse-RBC anchor. It must not claim global optimality in the full continuous 109-dimensional space.
-
-Final performance claims must come from authoritative SWMM and untouched scientific Validation/Final only after the development method and policy are frozen.
+- the 1,200 D2 development-validation branches;
+- D4-AUDIT training labels;
+- D4-AUDIT for calibration;
+- final-model in-sample D4 residuals for uncertainty calibration;
+- Validation outcomes;
+- Final outcomes;
+- Formal;
+- Policy Lock;
+- future realized rainfall online;
+- future SWMM state online;
+- continuous MPC;
+- Global Peak as objective/gate;
+- legacy D3 by silent concatenation;
+- a new full-hydraulic joint-loss architecture;
+- new random/global SWMM expansion.
+
+When a gate fails, stop at that scientific layer and report the failure class rather than changing multiple variables at once.

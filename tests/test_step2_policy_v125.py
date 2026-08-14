@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
+import rtc.step2_policy_v125 as policy_module
 from rtc.step2_policy_v125 import AnchorOverridePolicyV125
 from rtc.step3_objective_v123 import TFVPFVObjectiveV123
 
@@ -137,3 +138,22 @@ def test_runtime_candidate_family_matches_d4_local_support() -> None:
         "anchor_group_2_minus25",
         "anchor_group_2_plus25",
     }
+
+
+def test_float_projection_drift_cannot_destroy_exact_anchor(monkeypatch) -> None:
+    original = policy_module._project_executable_sequences_v120
+
+    def tiny_drift(values, **kwargs):
+        projected, maximum = original(values, **kwargs)
+        projected = projected.clone()
+        # Mimic the observed boundary-case float32 ulp perturbation of the exact anchor.
+        distances = torch.amax(torch.abs(projected - 0.6), dim=(1, 2))
+        slot = int(torch.argmin(distances).item())
+        projected[slot, 0, 0] += torch.finfo(projected.dtype).eps
+        return projected, max(float(maximum), float(torch.finfo(projected.dtype).eps))
+
+    monkeypatch.setattr(policy_module, "_project_executable_sequences_v120", tiny_drift)
+    result = _policy(margin=1000.0).optimize(**_inputs())
+    assert result.selected_source == "anchor_default"
+    assert result.knowledge_anchor_selected
+    torch.testing.assert_close(result.settings, torch.full((6, 3), 0.6), rtol=0.0, atol=0.0)
