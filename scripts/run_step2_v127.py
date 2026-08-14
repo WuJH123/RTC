@@ -30,7 +30,7 @@ from rtc.step2_train_v127 import (
     train_objective_stage_v127,
 )
 
-V127_RUN_CONTRACT = "PROJECT7_V127_EXISTING_D2_D3_D4_DIFFERENTIABLE_TRAINING_V4_ENGINE_FORECAST_BOUND"
+V127_RUN_CONTRACT = "PROJECT7_V127_EXISTING_D2_D3_D4_DIFFERENTIABLE_TRAINING_V5_CAUSAL_ASSET_BOUND"
 
 
 def _sha(path: str | Path) -> str:
@@ -103,6 +103,8 @@ def main() -> None:
         raise ValueError("V127 causal rainfall store must provide H72 forecasts")
     if rain_store.forecast_mmhr.shape[2] != len(graph.node_ids):
         raise ValueError("V127 causal rainfall store node count differs from graph")
+    if state_store.graph_sha256 != _sha(args.graph):
+        raise ValueError("V127 causal Step1-state store was built from a different graph file")
 
     fit, holdout = deterministic_rainfall_split_v60(
         base,
@@ -206,6 +208,9 @@ def main() -> None:
         "causal_rainfall_sha256": _sha(args.causal_store),
         "causal_rainfall_forecast_contract": str(rain_store.forecast_contract),
         "causal_state_store_sha256": _sha(args.causal_state_store),
+        "causal_state_step1_sha256": str(state_store.step1_sha256),
+        "causal_state_sensor_sha256": str(state_store.sensor_sha256),
+        "causal_state_graph_sha256": str(state_store.graph_sha256),
         "swmm_engine_version": swmm_engine,
     }
     report = {
