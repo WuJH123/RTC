@@ -190,10 +190,12 @@ def test_v110_active_thresholds_are_local_and_physically_floored():
     assert depth_threshold[2] > depth_threshold[0]
 
 
-def test_current_contract_is_v7_value_plus_v11_hydraulic_only():
+def test_historical_v110_remains_importable_but_current_contract_is_v125():
     import rtc.step2_current as current
 
-    assert current.VALUE_MODEL_VERSION == "V7"
-    assert current.HYDRAULIC_MODEL_VERSION == "V11"
+    assert current.CURRENT_STEP2_CONTRACT == "PROJECT7_V125_ANCHOR_DEFAULT_EVIDENCE_GATED_OVERRIDE_V2_DIRECT_ADVANTAGE"
+    assert current.CONTINUOUS_MPC_ENABLED is False
+    assert current.HYDRAULIC_MODEL_REQUIRED_ONLINE is False
+    assert current.CURRENT_POLICY_CLASS.__name__ == "AnchorOverridePolicyV125"
     source = current.__file__
     assert "step2_current" in source

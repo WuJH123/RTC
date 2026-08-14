@@ -58,8 +58,40 @@ Controller = Callable[[CausalObservation], ControllerAction | Mapping[str, float
 RainfallObserver = Callable[[datetime, tuple[str, ...]], np.ndarray]
 
 
+def _observation_time(sim: object, elapsed_seconds: int) -> datetime:
+    """Use the declared start timestamp before PySWMM starts iterating."""
+
+    if int(elapsed_seconds) == 0:
+        return getattr(sim, "start_time")
+    return getattr(sim, "current_time")
+
+
 def _normalize_action(action: ControllerAction | Mapping[str, float]) -> ControllerAction:
     return action if isinstance(action, ControllerAction) else ControllerAction(settings=action)
+
+
+def _reassert_target_latch(link_obj: object, held_settings: Mapping[str, float] | None) -> float:
+    """Re-apply the Python supervisory target before a causal observation.
+
+    SWMM can internally update a pump's target setting during a routing step even
+    when native controls are disabled.  The Python controller's target is a
+    supervisory latch, so the previously issued values must be written again
+    before the next observation is read.  Return the largest pre-write
+    discrepancy as explicit diagnostic evidence; this is not a projection of a
+    newly scored command.
+    """
+
+    if held_settings is None:
+        return 0.0
+    before = np.asarray(
+        [float(link_obj[aid].target_setting) for aid in held_settings], dtype=float
+    )
+    for aid, value in held_settings.items():
+        link_obj[aid].target_setting = float(value)
+    after = np.asarray(
+        [float(link_obj[aid].target_setting) for aid in held_settings], dtype=float
+    )
+    return float(np.abs(after - before).max(initial=0.0))
 
 
 def run_authoritative_closed_loop(
@@ -176,10 +208,16 @@ def run_authoritative_closed_loop(
                 raise ValueError("rainfall_observer must return finite non-negative scalar/node vector")
             return rain.astype(np.float32)
 
-        def build_observation(elapsed: int, rain: np.ndarray) -> CausalObservation:
+        def build_observation(
+            elapsed: int, rain: np.ndarray, *, current_time: datetime | None = None
+        ) -> CausalObservation:
             return CausalObservation(
                 elapsed_seconds=elapsed,
-                current_time=sim.current_time,
+                current_time=(
+                    _observation_time(sim, elapsed)
+                    if current_time is None
+                    else current_time
+                ),
                 sensor_ids=tuple(sensor_nodes),
                 sensor_depth_m=length_to_m(
                     np.array([sensor_obj[n].depth for n in sensor_nodes], dtype=float), system_units
@@ -223,13 +261,19 @@ def run_authoritative_closed_loop(
         # t=0 belongs to the causal information set. No supervisory command has yet been sent.
         rain_zero = observed_rainfall()
         if controller is not None and hasattr(controller, "observe"):
-            controller.observe(build_observation(0, rain_zero))  # type: ignore[attr-defined]
+            controller.observe(  # type: ignore[attr-defined]
+                build_observation(0, rain_zero, current_time=sim.start_time)
+            )
         append_record(0, rain_zero, "INITIAL", "NATIVE")
         initial_total_flooding = sum(max(0.0, float(obj.flooding)) for obj in node_obj.values())
         global_peak_m3s = float(flow_rate_to_m3s(initial_total_flooding, flow_units))
 
         for _ in sim:
             elapsed = int((sim.current_time - sim.start_time).total_seconds())
+            # Reassert the prior supervisory target before reading the next
+            # decision observation.  This prevents SWMM's internal pump-state
+            # update from being mistaken for a failed Python target write.
+            target_latch_reasserted_max = _reassert_target_latch(link_obj, held_settings)
             total_flooding_native = sum(max(0.0, float(obj.flooding)) for obj in node_obj.values())
             global_peak_m3s = max(
                 global_peak_m3s, float(flow_rate_to_m3s(total_flooding_native, flow_units))
@@ -281,7 +325,13 @@ def run_authoritative_closed_loop(
                             "datetime": sim.current_time.isoformat(),
                             "source": action.source,
                             "settings": held_settings,
-                            "diagnostics": dict(action.diagnostics or {}),
+                            "diagnostics": {
+                                **dict(action.diagnostics or {}),
+                                "target_latch_reasserted_max": target_latch_reasserted_max,
+                                "target_latch_reasserted": bool(
+                                    target_latch_reasserted_max > 1e-9
+                                ),
+                            },
                         },
                         sort_keys=True,
                     ) + "\n"

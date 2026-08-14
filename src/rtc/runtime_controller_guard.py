@@ -89,7 +89,10 @@ class ContinuityGuardController:
         raw_projection = float(np.abs(decision.requested - raw).max(initial=0.0))
         if raw_projection > 1e-9 and not self.allow_projection:
             raise RuntimeError(
-                "Proposed emitted a command that violates the frozen temporal-continuity contract"
+                "Proposed emitted a command that violates the frozen temporal-continuity contract: "
+                f"projection={raw_projection:.12g}, "
+                f"current_delta={np.abs(raw - current).max(initial=0.0):.12g}, "
+                f"target_delta={np.abs(raw - active_target).max(initial=0.0):.12g}"
             )
         continuity = command_continuity(
             decision.requested,
