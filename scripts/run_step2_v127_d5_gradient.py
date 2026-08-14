@@ -32,7 +32,7 @@ from rtc.step2_state_store_v127 import (
 )
 from rtc.step2_train_response_v60 import V60TrainCache
 
-V127_D5_RUN_CONTRACT = "PROJECT7_V127_D5_GRADIENT_FINETUNE_AND_AUDIT_V2_CHECKPOINT_BOUND"
+V127_D5_RUN_CONTRACT = "PROJECT7_V127_D5_GRADIENT_FINETUNE_AND_AUDIT_V3_FORECAST_BOUND"
 
 
 def _sha(path: str | Path) -> str:
@@ -119,10 +119,14 @@ def main() -> None:
         "graph_sha256": _sha(args.graph),
         "base_cache_sha256": _sha(args.base_cache_manifest),
         "causal_rainfall_sha256": _sha(args.causal_store),
+        "causal_rainfall_forecast_contract": str(rain.forecast_contract),
         "causal_state_store_sha256": _sha(args.causal_state_store),
         "d5_execution_manifest_sha256": _sha(args.d5_execution_manifest),
         "d5_gradient_labels_sha256": _sha(args.d5_gradient_labels),
     }
+    base_lineage = checkpoint_payload.get("lineage")
+    if isinstance(base_lineage, dict) and str(base_lineage.get("swmm_engine_version", "")).strip():
+        lineage["swmm_engine_version"] = str(base_lineage["swmm_engine_version"])
     report = {
         "contract": V127_D5_RUN_CONTRACT,
         "rtc_implementation_contract_sha256": rtc_implementation_contract_sha256(),
@@ -131,6 +135,7 @@ def main() -> None:
         "fit_rainfall_groups": sorted(fit_rain),
         "audit_rainfall_groups": sorted(audit_rain),
         "rainfall_overlap": sorted(fit_rain & audit_rain),
+        "causal_rainfall_forecast_contract": str(rain.forecast_contract),
         "audit_before": before,
         "training_history": history,
         "audit_after": after,
@@ -143,7 +148,6 @@ def main() -> None:
             "formal_accessed": False,
         },
     }
-    report_path = out / "STEP2_V127_D5_GRADIENT_REPORT.json"
     checkpoint = save_step2_v127(
         out / "step2_v127_d5_gradient.pt",
         model=model,
@@ -154,6 +158,7 @@ def main() -> None:
     )
     report["checkpoint"] = str(checkpoint.resolve())
     report["final_step2_sha256"] = _sha(checkpoint)
+    report_path = out / "STEP2_V127_D5_GRADIENT_REPORT.json"
     report_path.write_text(
         json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
