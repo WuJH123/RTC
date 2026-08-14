@@ -11,6 +11,7 @@ import sys
 
 import numpy as np
 
+from rtc.execution_audit_v127 import audit_target_write_readback_v127
 from rtc.replay_peak import replay_exact_global_peak
 
 try:
@@ -18,7 +19,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.run_six_baselines_v122 import BASELINES, _run_one
 
-V127_SEVEN_STRATEGY_CONTRACT = "PROJECT7_V127_SEVEN_STRATEGY_AUTHORITATIVE_SWMM_COMPARISON_V4_EXACT_PEAK"
+V127_SEVEN_STRATEGY_CONTRACT = "PROJECT7_V127_SEVEN_STRATEGY_AUTHORITATIVE_SWMM_COMPARISON_V5_WRITE_AUDIT_EXACT_PEAK"
 
 
 def _priority_nodes(path: Path) -> set[str]:
@@ -67,6 +68,12 @@ def _exact_peak(row: dict[str, object]) -> dict[str, object]:
     result = dict(row)
     metadata_path = Path(str(result["metadata_path"]))
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    write_audit = audit_target_write_readback_v127(metadata_path=metadata_path)
+    if write_audit.get("passed") is not True:
+        raise RuntimeError(
+            f"{result.get('strategy')}: target write/readback audit failed: "
+            + json.dumps(write_audit, sort_keys=True)
+        )
     runtime_inp = Path(str(metadata["inp_path"]))
     decision_name = str(metadata.get("decision_file", ""))
     decision_path = metadata_path.parent / decision_name if decision_name else None
@@ -81,6 +88,10 @@ def _exact_peak(row: dict[str, object]) -> dict[str, object]:
     )
     if str(replay.get("swmm_engine_version", "")) != str(metadata.get("swmm_engine_version", "")):
         raise RuntimeError("exact-peak replay SWMM engine differs from authoritative main run")
+    result["target_write_readback_passed"] = True
+    result["target_write_readback_max_error"] = float(
+        write_audit["max_target_write_readback_error"]
+    )
     result["sampled_300s_global_peak_flood_rate_m3s"] = float(
         result.get("global_peak_flood_rate_m3s", 0.0)
     )
@@ -203,12 +214,15 @@ def _verify_common_execution(rows: list[dict[str, object]]) -> dict[str, object]
         raise RuntimeError("seven strategies do not share one SWMM engine")
     if len(starts) != 1 or len(updates) != 1 or len(observations) != 1:
         raise RuntimeError("seven strategies do not share identical control/observation clocks")
+    if any(row.get("target_write_readback_passed") is not True for row in rows):
+        raise RuntimeError("one or more strategies failed target write/readback verification")
     return {
         "source_inp_sha256": next(iter(source)),
         "swmm_engine_version": next(iter(engines)),
         "control_start_minutes": next(iter(starts)),
         "control_update_seconds": next(iter(updates)),
         "observation_update_seconds": next(iter(observations)),
+        "target_write_readback_all_strategies": True,
     }
 
 
@@ -301,6 +315,7 @@ def main() -> None:
         "priority8_pfv_soft_secondary": True,
         "global_peak_report_only": True,
         "global_peak_semantics": "routing-step frozen-decision replay for every strategy",
+        "target_write_readback_all_strategies": True,
         "common_execution": common_execution,
         "rows": rows,
         "comparison_csv": str(csv_path.resolve()),
