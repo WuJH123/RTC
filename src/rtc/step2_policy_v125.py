@@ -30,6 +30,7 @@ from .step3_objective_v125 import tfv_pfv_score_v125
 
 V125_POLICY_CONTRACT = "PROJECT7_V125_ANCHOR_DEFAULT_EVIDENCE_GATED_OVERRIDE_V2_DIRECT_ADVANTAGE"
 V125_OVERRIDE_CALIBRATION_CONTRACT = "PROJECT7_V125_ANCHOR_RELATIVE_TFV_FALSE_BENEFIT_V2"
+NUMERICAL_PROJECTION_ATOL_V125 = 1.0e-6
 
 
 @dataclass(frozen=True)
@@ -247,7 +248,7 @@ class AnchorOverridePolicyV125:
         # must never destroy the structural candidate==reference exact-zero Value identity.
         pre_distance = torch.amax(torch.abs(candidate_one - anchor[None]), dim=(1, 2))
         anchor_index = int(torch.argmin(pre_distance).item())
-        if float(pre_distance[anchor_index]) > 1.0e-6:
+        if float(pre_distance[anchor_index]) > NUMERICAL_PROJECTION_ATOL_V125:
             raise RuntimeError("V125 candidate family lacks the Sparse-RBC anchor reference")
         if int((pre_distance <= 1.0e-7).sum().item()) > 1:
             raise RuntimeError("V125 candidate family contains duplicate anchor references")
@@ -265,15 +266,15 @@ class AnchorOverridePolicyV125:
             max_delta_per_update=effective_delta,
             control_block_steps=block,
         )
-        if float(projection_max) > 1.0e-7:
+        if float(projection_max) > NUMERICAL_PROJECTION_ATOL_V125:
             raise RuntimeError(
-                "V125 local candidate generator produced a non-executable action "
+                "V125 local candidate generator produced a materially non-executable action "
                 f"(projection={projection_max})"
             )
         anchor_projection_drift = float(
             torch.max(torch.abs(candidate_one[anchor_index] - anchor)).detach()
         )
-        if anchor_projection_drift > 1.0e-6:
+        if anchor_projection_drift > NUMERICAL_PROJECTION_ATOL_V125:
             raise RuntimeError(
                 "V125 executable projection materially changed the Sparse-RBC anchor "
                 f"({anchor_projection_drift})"
@@ -418,6 +419,7 @@ class AnchorOverridePolicyV125:
 __all__ = [
     "AnchorOverridePolicyV125",
     "AnchorOverrideResultV125",
+    "NUMERICAL_PROJECTION_ATOL_V125",
     "V125_OVERRIDE_CALIBRATION_CONTRACT",
     "V125_POLICY_CONTRACT",
 ]
