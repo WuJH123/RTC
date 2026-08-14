@@ -1,27 +1,35 @@
-"""V12.5 production selector: engineering anchor by default, learned override by evidence.
+"""V12.5 anchor-relative finite RTC policy.
 
-The V12.3 finite policies are retained unchanged for historical reproducibility.  V12.5
-runs the same causal state, Value models, engineering projection and finite candidate
-family twice over the *same* observation: one sparse-RBC anchor arm and one learned arm.
-The learned arm may replace the anchor only when its TFV risk is better than the anchor
-by a separately calibrated anchor-relative false-benefit margin.  PFV remains a
-one-sided soft deterioration penalty *after* that TFV-primary admission gate, so PFV
-improvement can never buy a TFV-worse override.
-
-Continuous gradient search is intentionally outside this contract.
+The Sparse-RBC engineering action is the online Value *reference*, not merely a fallback.
+Each learned candidate differs only in the executable first 10-minute block and then
+shares the exact anchor continuation.  Step2 therefore predicts the decision quantity
+used by Step3 directly: candidate-minus-anchor TFV/PFV.  The anchor is exact-zero by
+construction and remains the default unless a learned override clears the separately
+calibrated one-sided TFV error budget and the TFV-primary/PFV-soft objective improves.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Any
 
+import numpy as np
 import torch
 
-from .step2_policy_v123 import FirstMoveTFVPFVPolicyV123, FirstMoveTFVPFVResultV123
+from .step2_control_basis_v60 import ControlBasisV60
+from .step2_control_response_v60 import PreparedStaticV60
+from .step2_control_value_v123 import DualVolumeValueV123
+from .step2_d4_action_support_v125 import (
+    D4ActionSupportContractV125,
+    common_anchor_continuation_sequence_v125,
+    knowledge_neighbourhood_first_moves_v125,
+)
+from .step2_policy_v120 import RuntimeNormalizationV120, _project_executable_sequences_v120
+from .step2_policy_v123 import anchor_base_settings_v123, safe_runtime_delta_v123
+from .step3_knowledge_seeds_v123 import build_sparse_state_auto_rbc_anchor_v123
+from .step3_objective_v123 import TFVPFVObjectiveV123, tfv_pfv_score_v123
 
-V125_POLICY_CONTRACT = "PROJECT7_V125_ANCHOR_DEFAULT_EVIDENCE_GATED_OVERRIDE_V1"
-V125_OVERRIDE_CALIBRATION_CONTRACT = "PROJECT7_V125_ANCHOR_RELATIVE_TFV_FALSE_BENEFIT_V1"
+V125_POLICY_CONTRACT = "PROJECT7_V125_ANCHOR_DEFAULT_EVIDENCE_GATED_OVERRIDE_V2_DIRECT_ADVANTAGE"
+V125_OVERRIDE_CALIBRATION_CONTRACT = "PROJECT7_V125_ANCHOR_RELATIVE_TFV_FALSE_BENEFIT_V2"
 
 
 @dataclass(frozen=True)
@@ -57,6 +65,7 @@ class AnchorOverrideResultV125:
     anchor_override_margin_m3: float
     learned_override_admitted: bool
     selected_source: str
+    selected_candidate_family: str
     policy_mode: str = "anchor_override"
     policy_mode_contract: str = V125_POLICY_CONTRACT
 
@@ -69,36 +78,8 @@ class AnchorOverrideResultV125:
         return "MPC_V125"
 
 
-def _finite_nonnegative(value: float, *, name: str) -> float:
-    value = float(value)
-    if not math.isfinite(value) or value < 0.0:
-        raise ValueError(f"{name} must be finite and non-negative")
-    return value
-
-
-def _selected_payload(result: FirstMoveTFVPFVResultV123) -> dict[str, Any]:
-    return {
-        "settings": result.settings,
-        "selected_candidate_index": int(result.selected_candidate_index),
-        "predicted_delta_tfv_m3": float(result.predicted_delta_tfv_m3),
-        "predicted_delta_pfv_m3": float(result.predicted_delta_pfv_m3),
-        "tfv_risk_m3": float(result.tfv_risk_m3),
-        "pfv_risk_m3": float(result.pfv_risk_m3),
-        "pfv_soft_excess_m3": float(result.pfv_soft_excess_m3),
-        "pfv_penalty_m3_equivalent": float(result.pfv_penalty_m3_equivalent),
-        "objective_score_m3_equivalent": float(result.objective_score_m3_equivalent),
-        "selected_group_score_m3": float(result.selected_group_score_m3),
-        "scoring_projection_max": float(result.scoring_projection_max),
-    }
-
-
 class AnchorOverridePolicyV125:
-    """Fail-safe finite RTC selector with an engineering-anchor default.
-
-    ``anchor_policy`` must be V123 ``anchor_only`` and ``learned_policy`` must be V123
-    ``learned_only``.  They should share the same frozen model/basis/normalisation objects.
-    The policy never projects after scoring and never performs continuous optimisation.
-    """
+    """Causal first-move finite shooting around a Sparse-RBC reference action."""
 
     accepts_previous_requested_settings = True
     policy_mode = "anchor_override"
@@ -109,129 +90,322 @@ class AnchorOverridePolicyV125:
     def __init__(
         self,
         *,
-        anchor_policy: FirstMoveTFVPFVPolicyV123,
-        learned_policy: FirstMoveTFVPFVPolicyV123,
+        model: DualVolumeValueV123,
+        basis: ControlBasisV60,
+        prepared: PreparedStaticV60,
+        normalization: RuntimeNormalizationV120,
+        objective: TFVPFVObjectiveV123,
         anchor_override_margin_m3: float,
-        require_objective_improvement: bool = True,
+        graph,
+        max_active_groups: int = 3,
+        local_fraction: float = 0.25,
+        first_move_group_atol: float = 1.0e-7,
     ) -> None:
-        if anchor_policy.policy_mode != "anchor_only":
-            raise ValueError("V125 anchor_policy must use V123 anchor_only mode")
-        if learned_policy.policy_mode != "learned_only":
-            raise ValueError("V125 learned_policy must use V123 learned_only mode")
-        # Scientific equivalence: both arms must use the exact same learned Value,
-        # basis, normalisation and TFV/PFV objective; only the candidate prior differs.
-        for name in ("model", "basis", "prepared", "normalization", "objective"):
-            if getattr(anchor_policy, name) is not getattr(learned_policy, name):
-                raise ValueError(f"V125 child policies must share {name}")
-        if abs(anchor_policy.false_benefit_margin_m3 - learned_policy.false_benefit_margin_m3) > 1e-12:
-            raise ValueError("V125 child policies must share the passive false-benefit margin")
-        self.anchor_policy = anchor_policy
-        self.learned_policy = learned_policy
-        self.anchor_override_margin_m3 = _finite_nonnegative(
-            anchor_override_margin_m3, name="V125 anchor override margin"
+        basis.validate()
+        normalization.validate()
+        objective.validate()
+        margin = float(anchor_override_margin_m3)
+        if not math.isfinite(margin) or margin < 0.0:
+            raise ValueError("V125 anchor override margin must be finite and non-negative")
+        if graph is None:
+            raise ValueError("V125 requires the frozen graph for causal Sparse-RBC anchor")
+        if max_active_groups <= 0 or not 0.0 < float(local_fraction) <= 0.5:
+            raise ValueError("V125 local candidate design is invalid")
+        if not math.isfinite(float(first_move_group_atol)) or first_move_group_atol <= 0.0:
+            raise ValueError("V125 first-move grouping tolerance must be positive")
+        self.model = model
+        self.basis = basis
+        self.prepared = prepared
+        self.normalization = normalization
+        self.objective = objective
+        self.anchor_override_margin_m3 = margin
+        # compatibility field consumed by the validated rolling controller diagnostics
+        self.false_benefit_margin_m3 = margin
+        self.graph = graph
+        self.max_active_groups = int(max_active_groups)
+        self.local_fraction = float(local_fraction)
+        self.first_move_group_atol = float(first_move_group_atol)
+
+    def _anchor(
+        self,
+        *,
+        initial_state: torch.Tensor,
+        command_base: torch.Tensor,
+        fallback_settings: torch.Tensor,
+        runtime_delta: float,
+    ) -> torch.Tensor:
+        anchor = build_sparse_state_auto_rbc_anchor_v123(
+            initial_state.detach().cpu().numpy(),
+            command_base.detach().cpu().numpy(),
+            fallback_settings[0].detach().cpu().numpy(),
+            self.graph,
+            control_block_steps=int(self.basis.horizon.control_block_steps),
+            max_delta_per_update=float(runtime_delta),
         )
-        self.require_objective_improvement = bool(require_objective_improvement)
-        # Compatibility attributes consumed by the rolling controller/runtime metadata.
-        self.model = learned_policy.model
-        self.basis = learned_policy.basis
-        self.prepared = learned_policy.prepared
-        self.normalization = learned_policy.normalization
-        self.objective = learned_policy.objective
-        self.false_benefit_margin_m3 = learned_policy.false_benefit_margin_m3
-        self.graph = anchor_policy.graph
-
-    def optimize(self, *args: Any, **kwargs: Any) -> AnchorOverrideResultV125:
-        anchor = self.anchor_policy.optimize(*args, **kwargs)
-        learned = self.learned_policy.optimize(*args, **kwargs)
-
-        if anchor.settings.shape != learned.settings.shape:
-            raise RuntimeError("V125 anchor/learned horizon shape mismatch")
-        anchor_valid = bool(anchor.candidate_valid)
-        learned_valid = bool(learned.candidate_valid)
-
-        anchor_tfv = float(anchor.tfv_risk_m3) if anchor_valid else 0.0
-        anchor_pfv = float(anchor.pfv_risk_m3) if anchor_valid else 0.0
-        anchor_score = float(anchor.objective_score_m3_equivalent) if anchor_valid else 0.0
-        learned_tfv = float(learned.tfv_risk_m3) if learned_valid else 0.0
-        learned_pfv = float(learned.pfv_risk_m3) if learned_valid else 0.0
-        learned_score = float(learned.objective_score_m3_equivalent) if learned_valid else 0.0
-        relative_tfv = learned_tfv - anchor_tfv
-
-        # Primary scientific gate: the learned candidate must improve TFV relative to
-        # the engineering anchor by more than the separately calibrated model-error
-        # budget.  PFV is never allowed to compensate for failure of this gate.
-        relative_tfv_supported = bool(
-            learned_valid
-            and relative_tfv < -float(self.anchor_override_margin_m3)
+        return torch.as_tensor(
+            anchor,
+            dtype=fallback_settings.dtype,
+            device=fallback_settings.device,
         )
-        objective_supported = bool(
-            (not self.require_objective_improvement)
-            or (learned_valid and learned_score < anchor_score)
-        )
-        override = bool(relative_tfv_supported and objective_supported)
 
-        if override:
-            selected = learned
-            selected_source = "learned_override"
-            payload = _selected_payload(learned)
-            candidate_valid = True
-        elif anchor_valid:
-            selected = anchor
-            selected_source = "anchor_default"
-            payload = _selected_payload(anchor)
-            candidate_valid = True
-        else:
-            # If the causal sparse-RBC anchor is exactly passive, a learned action may
-            # still be used only when it already cleared V123's passive benefit gate.
-            if learned_valid:
-                selected = learned
-                selected_source = "learned_from_passive_anchor"
-                payload = _selected_payload(learned)
-                candidate_valid = True
+    def optimize(
+        self,
+        initial_state: torch.Tensor,
+        rainfall_scenarios: torch.Tensor,
+        fallback_settings: torch.Tensor,
+        *,
+        current_settings: torch.Tensor | None = None,
+        previous_requested_settings: torch.Tensor | None = None,
+        previous_actuator_flow: torch.Tensor | None = None,
+        max_delta_per_update: float | torch.Tensor | None = None,
+        **_controller_compatibility: object,
+    ) -> AnchorOverrideResultV125:
+        if initial_state.ndim == 3 and initial_state.shape[0] == 1:
+            initial_state = initial_state[0]
+        if initial_state.ndim != 2 or rainfall_scenarios.ndim != 4:
+            raise ValueError("V125 policy received incompatible state/rainfall shape")
+        if fallback_settings.ndim != 3 or fallback_settings.shape[0] != 1:
+            raise ValueError("V125 fallback settings must be [1,H,A]")
+        if fallback_settings.shape[1] != self.basis.horizon.horizon_steps:
+            raise ValueError("V125 fallback/value horizons differ")
+        if current_settings is None:
+            raise ValueError("V125 policy requires current-setting readback")
+
+        actuator_count = self.basis.grouping.actuator_count
+        current = current_settings.reshape(-1)
+        previous_target = (
+            None if previous_requested_settings is None
+            else previous_requested_settings.reshape(-1)
+        )
+        if current.numel() != actuator_count or (
+            previous_target is not None and previous_target.numel() != actuator_count
+        ):
+            raise ValueError("V125 actuator readback count mismatch")
+        if previous_actuator_flow is None:
+            previous_actuator_flow = torch.zeros(
+                actuator_count, dtype=initial_state.dtype, device=initial_state.device
+            )
+        flow0 = previous_actuator_flow.reshape(-1)
+        if flow0.numel() != actuator_count:
+            raise ValueError("V125 previous actuator-flow count mismatch")
+
+        frozen_delta = float(self.basis.contract.max_setting_delta_per_update)
+        runtime_delta = frozen_delta
+        if max_delta_per_update is not None:
+            raw = torch.as_tensor(max_delta_per_update, dtype=torch.float32).reshape(-1)
+            if not bool(torch.isfinite(raw).all()):
+                raise ValueError("V125 runtime max delta is non-finite")
+            runtime_delta = float(raw.max())
+            if runtime_delta > frozen_delta + 1.0e-9:
+                raise ValueError("V125 runtime max delta is looser than frozen basis")
+        effective_delta = safe_runtime_delta_v123(runtime_delta)
+        if effective_delta <= 0.0:
+            raise ValueError("V125 runtime delta leaves no executable control range")
+
+        command_base = anchor_base_settings_v123(current, previous_target)
+        anchor = self._anchor(
+            initial_state=initial_state,
+            command_base=command_base,
+            fallback_settings=fallback_settings,
+            runtime_delta=effective_delta,
+        )
+        if anchor.shape != fallback_settings[0].shape:
+            raise ValueError("V125 Sparse-RBC anchor/value horizon mismatch")
+        block = int(self.basis.horizon.control_block_steps)
+        anchor_np = anchor.detach().cpu().numpy().astype(np.float32)
+        anchor_target = anchor_np[:block].mean(axis=0).astype(np.float32)
+        contract = D4ActionSupportContractV125(
+            max_checkpoints=1,
+            local_fraction=self.local_fraction,
+            max_active_groups=self.max_active_groups,
+            max_delta_per_update=effective_delta,
+        )
+        plans = knowledge_neighbourhood_first_moves_v125(
+            command_base.detach().cpu().numpy(),
+            anchor_target,
+            self.basis.grouping.group_id_by_actuator,
+            self.basis.min_setting,
+            self.basis.max_setting,
+            contract=contract,
+        )
+        sequences: list[np.ndarray] = []
+        families: list[str] = []
+        for family, target in plans:
+            sequences.append(
+                common_anchor_continuation_sequence_v125(
+                    target, anchor_np, control_block_steps=block
+                )
+            )
+            families.append(str(family))
+        if not sequences:
+            raise RuntimeError("V125 local candidate generator returned no actions")
+        candidate_one = torch.as_tensor(
+            np.stack(sequences), dtype=anchor.dtype, device=anchor.device
+        )
+        candidate_one, projection_max = _project_executable_sequences_v120(
+            candidate_one,
+            current_settings=current,
+            previous_requested_settings=previous_target,
+            min_settings=torch.as_tensor(
+                self.basis.min_setting, dtype=anchor.dtype, device=anchor.device
+            ),
+            max_settings=torch.as_tensor(
+                self.basis.max_setting, dtype=anchor.dtype, device=anchor.device
+            ),
+            max_delta_per_update=effective_delta,
+            control_block_steps=block,
+        )
+        # D4 training and online candidate support must be identical. If runtime
+        # projection changes a generated target, fail closed rather than scoring OOD.
+        if float(projection_max) > 1.0e-7:
+            raise RuntimeError(
+                f"V125 local candidate generator produced non-executable action (projection={projection_max})"
+            )
+        anchor_matches = torch.all(
+            torch.isclose(candidate_one, anchor[None], rtol=0.0, atol=1.0e-7),
+            dim=(1, 2),
+        )
+        if int(anchor_matches.sum().item()) != 1:
+            # When the RBC target is exactly the command base, HOLD and anchor deduplicate.
+            # In that special case the first plan is the exact anchor reference.
+            if torch.allclose(candidate_one[0], anchor, rtol=0.0, atol=1.0e-7):
+                anchor_index = 0
             else:
-                selected = anchor
-                selected_source = "passive"
-                payload = _selected_payload(anchor)
-                candidate_valid = False
+                raise RuntimeError("V125 candidate family lacks a unique exact anchor reference")
+        else:
+            anchor_index = int(torch.nonzero(anchor_matches, as_tuple=False)[0, 0].item())
 
+        scenarios = int(rainfall_scenarios.shape[0])
+        state = initial_state[None].expand(scenarios, -1, -1)
+        reference = anchor[None].expand(scenarios, -1, -1)
+        candidate = candidate_one[None].expand(scenarios, -1, -1, -1)
+        flow = flow0[None].expand(scenarios, -1)
+        output = self.model(
+            self.normalization.state(state),
+            self.normalization.rainfall(rainfall_scenarios),
+            reference,
+            candidate,
+            self.normalization.flow(flow),
+            self.prepared,
+        )
+        expected = (scenarios, candidate_one.shape[0])
+        if output.delta_tfv_m3.shape != expected or output.delta_pfv_m3.shape != expected:
+            raise RuntimeError("V125 Value output shape drift")
+        first = candidate_one[:, :block].mean(dim=1)
+        anchor_first = anchor[:block].mean(dim=0)
+        movement = torch.mean(torch.abs(first - anchor_first[None]), dim=1)
+        scored = tfv_pfv_score_v123(
+            output.delta_tfv_m3,
+            output.delta_pfv_m3,
+            movement=movement,
+            contract=self.objective,
+        )
+        score = scored["score_m3_equivalent"]
+        tfv_risk = scored["tfv_risk_m3"]
+        pfv_risk = scored["pfv_risk_m3"]
+        if (
+            abs(float(tfv_risk[anchor_index].detach())) > 1.0e-5
+            or abs(float(pfv_risk[anchor_index].detach())) > 1.0e-5
+        ):
+            raise RuntimeError("V125 anchor reference lost exact-zero TFV/PFV value")
+
+        rounded = torch.round(first / self.first_move_group_atol) * self.first_move_group_atol
+        grouped: dict[bytes, list[int]] = {}
+        for i, row in enumerate(rounded.detach().cpu().numpy()):
+            grouped.setdefault(row.astype("float64").tobytes(), []).append(i)
+        records: list[dict[str, object]] = []
+        anchor_record: dict[str, object] | None = None
+        for indices in grouped.values():
+            contains_anchor = anchor_index in indices
+            values = score[indices]
+            median_score = values.median()
+            nearest = torch.argmin(torch.abs(values - median_score))
+            representative = indices[int(nearest.item())]
+            record: dict[str, object] = {
+                "representative": representative,
+                "score": float(median_score.detach()),
+                "tfv_risk": float(tfv_risk[indices].median().detach()),
+                "pfv_risk": float(pfv_risk[indices].median().detach()),
+                "contains_anchor": contains_anchor,
+            }
+            records.append(record)
+            if contains_anchor:
+                anchor_record = record
+        if anchor_record is None:
+            raise RuntimeError("V125 exact anchor first-move group disappeared")
+
+        learned_records = [r for r in records if not bool(r["contains_anchor"])]
+        best_learned = (
+            min(learned_records, key=lambda r: float(r["score"]))
+            if learned_records else None
+        )
+        eligible = [
+            r for r in learned_records
+            if float(r["score"]) < 0.0
+            and float(r["tfv_risk"]) < -float(self.anchor_override_margin_m3)
+        ]
+        if eligible:
+            selected_record = min(eligible, key=lambda r: float(r["score"]))
+            selected = int(selected_record["representative"])
+            override = True
+            selected_source = "learned_override"
+        else:
+            selected_record = anchor_record
+            selected = anchor_index
+            override = False
+            selected_source = "anchor_default"
+
+        active_anchor = not torch.allclose(
+            anchor_first, command_base, rtol=0.0, atol=1.0e-7
+        )
+        candidate_valid = bool(override or active_anchor)
+        if not candidate_valid:
+            selected_source = "passive_anchor"
+        best = best_learned or anchor_record
+
+        def scalar(name: str, index: int) -> float:
+            return float(scored[name][index].detach())
+
+        selected_score = float(selected_record["score"])
+        selected_tfv = float(selected_record["tfv_risk"])
+        selected_pfv = float(selected_record["pfv_risk"])
+        best_index = int(best["representative"])
+        anchor_delta = float(torch.abs(anchor_first - command_base).max().detach())
         return AnchorOverrideResultV125(
-            settings=payload["settings"].detach(),
-            candidate_valid=bool(candidate_valid),
-            selected_candidate_index=int(payload["selected_candidate_index"]),
-            raw_candidate_count=int(anchor.raw_candidate_count),
-            first_move_group_count=int(anchor.first_move_group_count),
-            tail_only_noop_candidate_count=int(anchor.tail_only_noop_candidate_count),
-            scenario_count=int(anchor.scenario_count),
-            predicted_delta_tfv_m3=float(payload["predicted_delta_tfv_m3"]),
-            predicted_delta_pfv_m3=float(payload["predicted_delta_pfv_m3"]),
-            tfv_risk_m3=float(payload["tfv_risk_m3"]),
-            pfv_risk_m3=float(payload["pfv_risk_m3"]),
-            pfv_soft_excess_m3=float(payload["pfv_soft_excess_m3"]),
-            pfv_penalty_m3_equivalent=float(payload["pfv_penalty_m3_equivalent"]),
-            objective_score_m3_equivalent=float(payload["objective_score_m3_equivalent"]),
-            selected_group_score_m3=float(payload["selected_group_score_m3"]),
-            false_benefit_margin_m3=float(self.false_benefit_margin_m3),
-            scoring_projection_max=max(
-                float(anchor.scoring_projection_max), float(learned.scoring_projection_max)
+            settings=candidate_one[selected].detach(),
+            candidate_valid=candidate_valid,
+            selected_candidate_index=selected,
+            raw_candidate_count=int(candidate_one.shape[0]),
+            first_move_group_count=int(len(grouped)),
+            tail_only_noop_candidate_count=max(
+                int(sum(anchor_index in x for x in grouped.values())) - 1, 0
             ),
-            knowledge_anchor_candidate_index=int(anchor.knowledge_anchor_candidate_index),
-            knowledge_anchor_selected=bool(selected_source == "anchor_default"),
-            knowledge_anchor_fallback_used=bool(
-                selected_source == "anchor_default" and learned_valid is False
-            ),
-            knowledge_anchor_first_move_delta_max=float(
-                anchor.knowledge_anchor_first_move_delta_max
-            ),
-            anchor_tfv_risk_m3=anchor_tfv,
-            anchor_pfv_risk_m3=anchor_pfv,
-            anchor_objective_score_m3=anchor_score,
-            learned_tfv_risk_m3=learned_tfv,
-            learned_pfv_risk_m3=learned_pfv,
-            learned_objective_score_m3=learned_score,
-            predicted_override_advantage_tfv_m3=float(relative_tfv),
+            scenario_count=scenarios,
+            predicted_delta_tfv_m3=scalar("delta_tfv_mean_m3", selected),
+            predicted_delta_pfv_m3=scalar("delta_pfv_mean_m3", selected),
+            tfv_risk_m3=selected_tfv,
+            pfv_risk_m3=selected_pfv,
+            pfv_soft_excess_m3=scalar("pfv_soft_excess_m3", selected),
+            pfv_penalty_m3_equivalent=scalar("pfv_penalty_m3_equivalent", selected),
+            objective_score_m3_equivalent=selected_score,
+            selected_group_score_m3=selected_score,
+            false_benefit_margin_m3=float(self.anchor_override_margin_m3),
+            scoring_projection_max=float(projection_max),
+            knowledge_anchor_candidate_index=anchor_index,
+            knowledge_anchor_selected=bool(selected == anchor_index),
+            knowledge_anchor_fallback_used=bool(not override and active_anchor),
+            knowledge_anchor_first_move_delta_max=anchor_delta,
+            anchor_tfv_risk_m3=0.0,
+            anchor_pfv_risk_m3=0.0,
+            anchor_objective_score_m3=0.0,
+            learned_tfv_risk_m3=float(best["tfv_risk"]),
+            learned_pfv_risk_m3=float(best["pfv_risk"]),
+            learned_objective_score_m3=float(best["score"]),
+            predicted_override_advantage_tfv_m3=float(best["tfv_risk"]),
             anchor_override_margin_m3=float(self.anchor_override_margin_m3),
-            learned_override_admitted=bool(override),
+            learned_override_admitted=override,
             selected_source=selected_source,
+            selected_candidate_family=families[selected],
         )
 
 
