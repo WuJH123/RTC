@@ -1,7 +1,7 @@
 """V125 anchor-relative TFV/PFV scoring.
 
 Unlike V123 passive-relative scoring, the direct Sparse-RBC reference has known exact
-zero counterfactual difference.  The calibrated PFV model-error margin therefore applies
+zero counterfactual difference. The calibrated PFV model-error margin therefore applies
 only to candidates whose executable first move differs from the anchor; applying it to
 the anchor itself would destroy the reference identity and could penalise the default.
 """
@@ -25,6 +25,10 @@ def tfv_pfv_score_v125(
         raise ValueError("V125 TFV/PFV scenario tensors must have identical shape")
     if delta_tfv_scenarios_m3.ndim != 2:
         raise ValueError("V125 TFV/PFV scenario tensors must be [scenario,candidate]")
+    if not bool(torch.isfinite(delta_tfv_scenarios_m3).all()) or not bool(
+        torch.isfinite(delta_pfv_scenarios_m3).all()
+    ):
+        raise ValueError("V125 objective received non-finite TFV/PFV predictions")
     movement = torch.as_tensor(
         movement_from_anchor,
         dtype=delta_tfv_scenarios_m3.dtype,
@@ -37,10 +41,20 @@ def tfv_pfv_score_v125(
 
     tfv_mean = delta_tfv_scenarios_m3.mean(dim=0)
     pfv_mean = delta_pfv_scenarios_m3.mean(dim=0)
-    tfv_std = delta_tfv_scenarios_m3.std(dim=0, unbiased=False)
-    pfv_std = delta_pfv_scenarios_m3.std(dim=0, unbiased=False)
-    tfv_risk = tfv_mean + float(contract.risk_weight) * tfv_std
-    pfv_risk_without_error = pfv_mean + float(contract.risk_weight) * pfv_std
+    tfv_std = (
+        torch.zeros_like(tfv_mean)
+        if delta_tfv_scenarios_m3.shape[0] == 1
+        else delta_tfv_scenarios_m3.std(dim=0, unbiased=False)
+    )
+    pfv_std = (
+        torch.zeros_like(pfv_mean)
+        if delta_pfv_scenarios_m3.shape[0] == 1
+        else delta_pfv_scenarios_m3.std(dim=0, unbiased=False)
+    )
+    tfv_risk = tfv_mean + float(contract.tfv_uncertainty_weight) * tfv_std
+    pfv_risk_without_error = (
+        pfv_mean + float(contract.pfv_uncertainty_weight) * pfv_std
+    )
     changed = (movement > float(anchor_atol)).to(dtype=pfv_mean.dtype)
     pfv_error = changed * float(contract.pfv_model_error_margin_m3)
     pfv_risk = pfv_risk_without_error + pfv_error
