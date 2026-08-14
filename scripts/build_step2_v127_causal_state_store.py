@@ -1,8 +1,4 @@
-"""Build the V127 causal Step1-state store; no SWMM and no future truth are used.
-
-The store covers every canonical D2/targeted-D3/D4 event/checkpoint needed by V127 using
-only development/train no-control causal sensor histories and the frozen Step1 model.
-"""
+"""Build the V127 causal Step1-state store; no SWMM and no future truth are used."""
 from __future__ import annotations
 
 import argparse
@@ -16,7 +12,11 @@ import torch
 
 from rtc.lazy_step1 import CausalStep1TrajectoryDataset
 from rtc.production_cli import _load_graph, _load_step1
-from rtc.step2_state_store_v127 import V127_CAUSAL_STATE_CONTRACT
+from rtc.step2_state_store_v127 import (
+    V127_CAUSAL_STATE_CONTRACT,
+    semantic_model_state_dict_sha256,
+    semantic_sensor_layout_sha256,
+)
 from rtc.step2_train_response_v60 import V60TrainCache
 
 
@@ -77,11 +77,14 @@ def main() -> None:
 
     graph = _load_graph(args.graph)
     sensors = tuple(
-        line.strip() for line in Path(args.sensors).read_text(encoding="utf-8").splitlines()
+        line.strip()
+        for line in Path(args.sensors).read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     )
     if not sensors or not set(sensors).issubset(graph.node_ids):
         raise ValueError("V127 sensor layout is empty or incompatible with graph")
+    if len(set(sensors)) != len(sensors):
+        raise ValueError("V127 sensor layout contains duplicate node IDs")
     frame = _train_no_control(args.train_index)
     dataset = CausalStep1TrajectoryDataset(
         frame,
@@ -105,13 +108,19 @@ def main() -> None:
     if args.d4_audit_cache:
         paths.append(args.d4_audit_cache)
     entries = _needed_entries(paths)
-    device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
+    device = torch.device(
+        args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"
+    )
     step1 = _load_step1(args.step1, device)
+    step1_semantic = semantic_model_state_dict_sha256(step1)
+    sensor_semantic = semantic_sensor_layout_sha256(sensors)
     static = torch.as_tensor(graph.static_node_features, dtype=torch.float32, device=device)
     edges = torch.as_tensor(graph.edge_index, dtype=torch.long, device=device)
 
     records: list[tuple[str, str, int, np.ndarray, np.ndarray, str]] = []
-    for entry in sorted(entries, key=lambda e: (str(e.rainfall_group), str(e.event_id), str(e.checkpoint_id))):
+    for entry in sorted(
+        entries, key=lambda e: (str(e.rainfall_group), str(e.event_id), str(e.checkpoint_id))
+    ):
         ref_index = int(entry.reference_index)
         elapsed = int(np.asarray(entry.arrays["elapsed_seconds"][ref_index]).reshape(-1)[0])
         sample_index = sample_map.get((str(entry.event_id), str(entry.rainfall_group), elapsed))
@@ -124,13 +133,19 @@ def main() -> None:
         current = np.asarray(compact["setting"][sample_ref.end_index], dtype=np.float32)
         observed, mask, context, _ = dataset[sample_index]
         with torch.no_grad():
-            estimate = step1(
-                observed[None].to(device),
-                mask[None].to(device),
-                static,
-                edges,
-                context[None].to(device),
-            )[0].detach().cpu().numpy().astype(np.float32)
+            estimate = (
+                step1(
+                    observed[None].to(device),
+                    mask[None].to(device),
+                    static,
+                    edges,
+                    context[None].to(device),
+                )[0]
+                .detach()
+                .cpu()
+                .numpy()
+                .astype(np.float32)
+            )
         if estimate.shape != np.asarray(entry.arrays["initial_state"][ref_index]).shape:
             raise ValueError("V127 Step1 estimate/state-label schema mismatch")
         if current.shape != (len(graph.actuator_ids),):
@@ -158,9 +173,13 @@ def main() -> None:
         state_si=np.stack(states).astype(np.float32),
         current_setting=np.stack(settings).astype(np.float32),
         state_sha256=np.asarray(state_sha),
+        # Raw file hashes are provenance only.
         step1_sha256=np.asarray(_sha(args.step1)),
         sensor_sha256=np.asarray(_sha(args.sensors)),
         graph_sha256=np.asarray(_sha(args.graph)),
+        # Semantic identities are used for train/deploy compatibility.
+        step1_model_semantic_sha256=np.asarray(step1_semantic),
+        sensor_layout_semantic_sha256=np.asarray(sensor_semantic),
     )
     report = {
         "contract": V127_CAUSAL_STATE_CONTRACT,
@@ -169,16 +188,24 @@ def main() -> None:
         "unique_checkpoints": len(set(zip(event_ids, checkpoint_ids, strict=True))),
         "state_shape": list(np.stack(states).shape),
         "actuator_count": len(graph.actuator_ids),
-        "step1_sha256": _sha(args.step1),
-        "sensor_sha256": _sha(args.sensors),
-        "graph_sha256": _sha(args.graph),
+        "provenance_file_sha256": {
+            "step1": _sha(args.step1),
+            "sensors": _sha(args.sensors),
+            "graph": _sha(args.graph),
+        },
+        "semantic_identity": {
+            "step1_model_state_dict_sha256": step1_semantic,
+            "ordered_sensor_layout_sha256": sensor_semantic,
+        },
         "future_swmm_truth_used_as_input": False,
         "new_swmm": False,
         "validation_accessed": False,
         "final_accessed": False,
         "formal_accessed": False,
     }
-    out.with_suffix(".json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    out.with_suffix(".json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(json.dumps(report, indent=2, sort_keys=True))
 
 
