@@ -9,10 +9,10 @@ from .closed_loop import CausalObservation, ControllerAction
 from .inp import ActuatorCatalog, discover_actuators
 from .units import length_to_m, volume_to_m3
 
-AUTO_RBC_SOURCE = "AUTO_RBC_V1"
-AUTO_RBC_CONTRACT = "AUTO_RBC_TOPOLOGY_NORMALIZED_DEPTH_V1"
-EFD_SOURCE = "EFD_V2"
-EFD_CONTRACT = "STORAGE_EQUAL_FILLING_DEGREE_VOLUME_ACTIVATION_V2"
+AUTO_RBC_SOURCE = "AUTO_RBC_V2_TARGET_LATCH"
+AUTO_RBC_CONTRACT = "AUTO_RBC_TOPOLOGY_NORMALIZED_DEPTH_TARGET_COMMAND_V2"
+EFD_SOURCE = "EFD_V3_TARGET_LATCH"
+EFD_CONTRACT = "STORAGE_EQUAL_FILLING_DEGREE_VOLUME_TARGET_COMMAND_V3"
 
 
 @dataclass(frozen=True)
@@ -219,15 +219,19 @@ def rule_baseline_sensor_nodes(
 
 
 def _limit_move(
-    current: np.ndarray, target: np.ndarray, max_delta: float | None
+    command_anchor: np.ndarray, target: np.ndarray, max_delta: float | None
 ) -> np.ndarray:
+    """Limit consecutive supervisory commands, not physical device tracking lag."""
+    anchor = np.asarray(command_anchor, dtype=float).reshape(-1)
     target = np.clip(np.asarray(target, dtype=float), 0.0, 1.0)
+    if target.shape != anchor.shape:
+        raise ValueError("rule target/command-anchor shapes differ")
     if max_delta is None:
         return target
     delta = float(max_delta)
     if delta < 0:
         raise ValueError("max setting delta must be non-negative")
-    return np.clip(target, current - delta, current + delta).clip(0.0, 1.0)
+    return np.clip(target, anchor - delta, anchor + delta).clip(0.0, 1.0)
 
 
 class AutoRBCController:
@@ -263,38 +267,29 @@ class AutoRBCController:
         if tuple(obs.actuator_ids) != self.network.catalog.ids:
             raise ValueError("Auto-RBC actuator ordering differs from the INP catalog")
         sensor_depth = dict(
-            zip(
-                obs.sensor_ids,
-                np.asarray(obs.sensor_depth_m, dtype=float),
-                strict=True,
-            )
+            zip(obs.sensor_ids, np.asarray(obs.sensor_depth_m, dtype=float), strict=True)
         )
         current = np.asarray(obs.actuator_current_setting, dtype=float).reshape(-1)
-        target = current.copy()
+        active_target = np.asarray(obs.actuator_target_setting, dtype=float).reshape(-1)
+        if active_target.shape != current.shape:
+            raise ValueError("Auto-RBC target/current readback shapes differ")
+        # Untouched actuators preserve the supervisory latch; they are not reset to a lagged
+        # physical current setting at every 10-minute decision.
+        target = active_target.copy()
         upstream_fill: list[float] = []
         downstream_fill: list[float] = []
         for i, actuator in enumerate(self.network.catalog.actuators):
             up_cap = self.network.node_max_depth_m.get(actuator.upstream_node)
             if up_cap is None or actuator.upstream_node not in sensor_depth:
                 continue
-            up = float(
-                np.clip(sensor_depth[actuator.upstream_node] / up_cap, 0.0, 1.5)
-            )
+            up = float(np.clip(sensor_depth[actuator.upstream_node] / up_cap, 0.0, 1.5))
             down_cap = self.network.node_max_depth_m.get(actuator.downstream_node)
             if down_cap is not None and actuator.downstream_node in sensor_depth:
-                down = float(
-                    np.clip(
-                        sensor_depth[actuator.downstream_node] / down_cap, 0.0, 1.5
-                    )
-                )
+                down = float(np.clip(sensor_depth[actuator.downstream_node] / down_cap, 0.0, 1.5))
             else:
                 down = 0.0
             open_drive = float(
-                np.clip(
-                    (up - self.low_fill) / (self.high_fill - self.low_fill),
-                    0.0,
-                    1.0,
-                )
+                np.clip((up - self.low_fill) / (self.high_fill - self.low_fill), 0.0, 1.0)
             )
             downstream_penalty = float(
                 np.clip(
@@ -305,22 +300,20 @@ class AutoRBCController:
                 )
             )
             raw = open_drive * (1.0 - downstream_penalty)
-            target[i] = current[i] + self.response * (raw - current[i])
+            target[i] = active_target[i] + self.response * (raw - active_target[i])
             upstream_fill.append(up)
             downstream_fill.append(down)
-        target = _limit_move(current, target, self.max_delta_per_update)
+        target = _limit_move(active_target, target, self.max_delta_per_update)
         return ControllerAction(
             settings=dict(zip(obs.actuator_ids, target, strict=True)),
             source=AUTO_RBC_SOURCE,
             diagnostics={
                 "rule_contract": AUTO_RBC_CONTRACT,
                 "observed_rule_nodes": len(self.sensor_nodes),
-                "mean_upstream_fill": float(np.mean(upstream_fill))
-                if upstream_fill
-                else 0.0,
-                "max_downstream_fill": float(np.max(downstream_fill))
-                if downstream_fill
-                else 0.0,
+                "mean_upstream_fill": float(np.mean(upstream_fill)) if upstream_fill else 0.0,
+                "max_downstream_fill": float(np.max(downstream_fill)) if downstream_fill else 0.0,
+                "command_anchor": "actuator_target_setting",
+                "current_tracking_lag_max": float(np.abs(current-active_target).max(initial=0.0)),
             },
         )
 
@@ -328,11 +321,10 @@ class AutoRBCController:
 class EFDController:
     """Storage-volume Equal Filling Degree baseline.
 
-    Filling degree is current static storage volume divided by the storage volume at its
-    maximum design depth.  Current volume is reconstructed causally from the monitored
-    storage depth and the exact FUNCTIONAL/TABULAR storage geometry in the INP.  Only
-    storage units with writable outgoing actuators are controlled; other actuators hold
-    their current readback setting.
+    Filling degree is current static storage volume divided by storage capacity. Current
+    volume is reconstructed causally from monitored storage depth and FUNCTIONAL/TABULAR
+    SWMM geometry. Only storage units with writable outgoing actuators are controlled;
+    other actuators preserve their current supervisory target latch.
     """
 
     def __init__(
@@ -366,11 +358,7 @@ class EFDController:
         if tuple(obs.actuator_ids) != self.network.catalog.ids:
             raise ValueError("EFD actuator ordering differs from the INP catalog")
         depth = dict(
-            zip(
-                obs.sensor_ids,
-                np.asarray(obs.sensor_depth_m, dtype=float),
-                strict=True,
-            )
+            zip(obs.sensor_ids, np.asarray(obs.sensor_depth_m, dtype=float), strict=True)
         )
         fill: dict[str, float] = {}
         depth_fallback_count = 0
@@ -380,8 +368,8 @@ class EFDController:
             if geometry is not None and capacity > 1.0e-9:
                 filling = geometry.volume_m3(depth[node]) / capacity
             else:
-                # Transparent compatibility fallback for malformed/unsupported legacy
-                # storage geometry; the diagnostics make this visible in evidence.
+                # Retain a transparent fallback for malformed legacy INP geometry rather
+                # than silently crashing a development comparison; evidence reports it.
                 capacity_depth = self.network.node_max_depth_m[node]
                 filling = depth[node] / capacity_depth
                 depth_fallback_count += 1
@@ -389,7 +377,10 @@ class EFDController:
         values = np.asarray(list(fill.values()), dtype=float)
         mean_fill = float(values.mean())
         current = np.asarray(obs.actuator_current_setting, dtype=float).reshape(-1)
-        target = current.copy()
+        active_target = np.asarray(obs.actuator_target_setting, dtype=float).reshape(-1)
+        if active_target.shape != current.shape:
+            raise ValueError("EFD target/current readback shapes differ")
+        target = active_target.copy()
         for storage, actuator_indices in self.outgoing.items():
             filling = fill[storage]
             raw = float(
@@ -400,8 +391,8 @@ class EFDController:
                 )
             )
             for i in actuator_indices:
-                target[i] = current[i] + self.response * (raw - current[i])
-        target = _limit_move(current, target, self.max_delta_per_update)
+                target[i] = active_target[i] + self.response * (raw - active_target[i])
+        target = _limit_move(active_target, target, self.max_delta_per_update)
         return ControllerAction(
             settings=dict(zip(obs.actuator_ids, target, strict=True)),
             source=EFD_SOURCE,
@@ -410,8 +401,9 @@ class EFDController:
                 "controlled_storages": len(self.sensor_nodes),
                 "mean_filling_degree": mean_fill,
                 "filling_degree_std": float(values.std()),
-                "volume_based_storage_count": len(self.sensor_nodes)
-                - depth_fallback_count,
+                "volume_based_storage_count": len(self.sensor_nodes) - depth_fallback_count,
                 "depth_fallback_storage_count": depth_fallback_count,
+                "command_anchor": "actuator_target_setting",
+                "current_tracking_lag_max": float(np.abs(current-active_target).max(initial=0.0)),
             },
         )
