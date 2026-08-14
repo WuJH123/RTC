@@ -1,11 +1,10 @@
 """V12.5 anchor-relative finite RTC policy.
 
-The Sparse-RBC engineering action is the online Value *reference*, not merely a fallback.
-Each learned candidate differs only in the executable first 10-minute block and then
-shares the exact anchor continuation.  Step2 therefore predicts the decision quantity
-used by Step3 directly: candidate-minus-anchor TFV/PFV.  The anchor is exact-zero by
-construction and remains the default unless a learned override clears the separately
-calibrated one-sided TFV error budget and the TFV-primary/PFV-soft objective improves.
+The Sparse-RBC engineering action is the online Value reference. Each learned candidate
+differs only in the executable first 10-minute block and then shares the exact anchor
+continuation. Step2 predicts candidate-minus-anchor TFV/PFV directly. The anchor remains
+exact zero even when PFV model uncertainty is nonzero; that uncertainty is applied only
+to candidates that actually deviate from the anchor.
 """
 from __future__ import annotations
 
@@ -26,7 +25,8 @@ from .step2_d4_action_support_v125 import (
 from .step2_policy_v120 import RuntimeNormalizationV120, _project_executable_sequences_v120
 from .step2_policy_v123 import anchor_base_settings_v123, safe_runtime_delta_v123
 from .step3_knowledge_seeds_v123 import build_sparse_state_auto_rbc_anchor_v123
-from .step3_objective_v123 import TFVPFVObjectiveV123, tfv_pfv_score_v123
+from .step3_objective_v123 import TFVPFVObjectiveV123
+from .step3_objective_v125 import tfv_pfv_score_v125
 
 V125_POLICY_CONTRACT = "PROJECT7_V125_ANCHOR_DEFAULT_EVIDENCE_GATED_OVERRIDE_V2_DIRECT_ADVANTAGE"
 V125_OVERRIDE_CALIBRATION_CONTRACT = "PROJECT7_V125_ANCHOR_RELATIVE_TFV_FALSE_BENEFIT_V2"
@@ -119,7 +119,6 @@ class AnchorOverridePolicyV125:
         self.normalization = normalization
         self.objective = objective
         self.anchor_override_margin_m3 = margin
-        # compatibility field consumed by the validated rolling controller diagnostics
         self.false_benefit_margin_m3 = margin
         self.graph = graph
         self.max_active_groups = int(max_active_groups)
@@ -255,19 +254,16 @@ class AnchorOverridePolicyV125:
             max_delta_per_update=effective_delta,
             control_block_steps=block,
         )
-        # D4 training and online candidate support must be identical. If runtime
-        # projection changes a generated target, fail closed rather than scoring OOD.
         if float(projection_max) > 1.0e-7:
             raise RuntimeError(
-                f"V125 local candidate generator produced non-executable action (projection={projection_max})"
+                "V125 local candidate generator produced a non-executable action "
+                f"(projection={projection_max})"
             )
         anchor_matches = torch.all(
             torch.isclose(candidate_one, anchor[None], rtol=0.0, atol=1.0e-7),
             dim=(1, 2),
         )
         if int(anchor_matches.sum().item()) != 1:
-            # When the RBC target is exactly the command base, HOLD and anchor deduplicate.
-            # In that special case the first plan is the exact anchor reference.
             if torch.allclose(candidate_one[0], anchor, rtol=0.0, atol=1.0e-7):
                 anchor_index = 0
             else:
@@ -294,10 +290,10 @@ class AnchorOverridePolicyV125:
         first = candidate_one[:, :block].mean(dim=1)
         anchor_first = anchor[:block].mean(dim=0)
         movement = torch.mean(torch.abs(first - anchor_first[None]), dim=1)
-        scored = tfv_pfv_score_v123(
+        scored = tfv_pfv_score_v125(
             output.delta_tfv_m3,
             output.delta_pfv_m3,
-            movement=movement,
+            movement_from_anchor=movement,
             contract=self.objective,
         )
         score = scored["score_m3_equivalent"]
@@ -306,8 +302,9 @@ class AnchorOverridePolicyV125:
         if (
             abs(float(tfv_risk[anchor_index].detach())) > 1.0e-5
             or abs(float(pfv_risk[anchor_index].detach())) > 1.0e-5
+            or abs(float(score[anchor_index].detach())) > 1.0e-5
         ):
-            raise RuntimeError("V125 anchor reference lost exact-zero TFV/PFV value")
+            raise RuntimeError("V125 anchor reference lost exact-zero TFV/PFV/objective value")
 
         rounded = torch.round(first / self.first_move_group_atol) * self.first_move_group_atol
         grouped: dict[bytes, list[int]] = {}
@@ -369,7 +366,6 @@ class AnchorOverridePolicyV125:
         selected_score = float(selected_record["score"])
         selected_tfv = float(selected_record["tfv_risk"])
         selected_pfv = float(selected_record["pfv_risk"])
-        best_index = int(best["representative"])
         anchor_delta = float(torch.abs(anchor_first - command_base).max().detach())
         return AnchorOverrideResultV125(
             settings=candidate_one[selected].detach(),
@@ -377,9 +373,7 @@ class AnchorOverridePolicyV125:
             selected_candidate_index=selected,
             raw_candidate_count=int(candidate_one.shape[0]),
             first_move_group_count=int(len(grouped)),
-            tail_only_noop_candidate_count=max(
-                int(sum(anchor_index in x for x in grouped.values())) - 1, 0
-            ),
+            tail_only_noop_candidate_count=0,
             scenario_count=scenarios,
             predicted_delta_tfv_m3=scalar("delta_tfv_mean_m3", selected),
             predicted_delta_pfv_m3=scalar("delta_pfv_mean_m3", selected),
