@@ -40,9 +40,6 @@ def run_policy_main() -> None:
     strategy = canonical_baseline_id(known.strategy)
 
     if strategy == "proposed" and _is_v127_checkpoint(known.step2):
-        # V127 needs explicit Priority8 and same-checkpoint scientific evidence.  The
-        # historical generic guard does not own those arguments, so silently falling
-        # through would execute a different legacy policy under the name "proposed".
         raise RuntimeError(
             "V127 Proposed checkpoint detected. Use scripts/run_policy_v127.py (or "
             "scripts/run_seven_strategies_v127.py) with explicit --priority-nodes and "
@@ -57,7 +54,12 @@ def run_policy_main() -> None:
 
         run_policy_v120_bound_main()
         return
-    if strategy not in {"auto_rbc", "efd"}:
+
+    # No-control and Internal RTC keep their dedicated historical physical semantics.
+    # Every Python comparator uses this one common command-latch execution path so rule
+    # baselines and diagnostic extremes share the same 10-min target slew semantics.
+    python_comparators = {"auto_rbc", "efd", "all_open", "all_closed"}
+    if strategy not in python_comparators:
         legacy_run_policy_main()
         return
 
@@ -78,7 +80,7 @@ def run_policy_main() -> None:
         controller_cfg = {}
     raw_delta = controller_cfg.get("max_setting_delta_per_update")
     if raw_delta is None:
-        raise ValueError("Formal rule baselines require max_setting_delta_per_update")
+        raise ValueError("Python baseline comparison requires max_setting_delta_per_update")
     max_delta = float(raw_delta)
 
     source_inp = Path(known.inp)
@@ -97,7 +99,10 @@ def run_policy_main() -> None:
         strategy, inp_path=source_inp, max_delta_per_update=max_delta
     )
     controller = ContinuityGuardController(
-        raw_controller, max_delta_per_update=max_delta, allow_projection=True
+        raw_controller,
+        max_delta_per_update=max_delta,
+        allow_projection=True,
+        enforce_current_delta=False,
     )
     result = run_authoritative_closed_loop(
         inp_path=runtime_inp,
@@ -119,6 +124,8 @@ def run_policy_main() -> None:
                 "runtime_inp": str(runtime_inp.resolve()),
                 "native_controls_enabled": False,
                 "rule_sensor_nodes": list(sensors),
+                "command_slew_anchor": "previous_supervisory_target_setting",
+                "physical_current_setting_role": "tracking_diagnostic",
                 "metadata_path": result.metadata_path,
                 "node_statistics_path": result.node_statistics_path,
                 "decisions": result.decisions,
