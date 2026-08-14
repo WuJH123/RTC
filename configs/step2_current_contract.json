@@ -30,6 +30,7 @@
   },
   "d4": {
     "contract": "PROJECT7_STEP2_D4_ACTION_SUPPORT_V125_V2_COMMON_CONTINUATION",
+    "execution_manifest_contract": "PROJECT7_V125_D4_GUARDED_SWMM_EXECUTION_MANIFEST_V1",
     "source_scope": "Development TrainFit only",
     "max_checkpoints": 48,
     "expected_rainfall_groups_from_current_plan": 14,
@@ -39,6 +40,9 @@
     "split_frozen_before_SWMM_outcomes": true,
     "counterfactual_credit": "only first executable 600-second block differs; all candidates share the exact same causal Sparse-RBC anchor continuation afterwards",
     "action_sequence_saved_in_plan": true,
+    "execution_adapter": "strict H72 paired-5min to 36x10min conversion; paired targets must be exactly equal",
+    "authoritative_runner": "rtc-run-d3-batch / rtc.d3_runner_guard:main",
+    "census_only_required_before_swmm": true,
     "audit_rows_allowed_in_training": false,
     "validation_final_formal_allowed": false
   },
@@ -107,6 +111,8 @@
     "controller": "rtc.controller_v125.V125TorchMPCController",
     "runtime": "scripts/run_policy_v125.py",
     "d4_plan": "scripts/plan_step2_v125_d4_action_support.py",
+    "d4_execution_manifest": "scripts/build_step2_v125_d4_execution_manifest.py",
+    "d4_swmm": "rtc-run-d3-batch",
     "anchor_override_calibration": "scripts/calibrate_step3_v125_anchor_override.py",
     "current_surface": "rtc.step2_current"
   },
