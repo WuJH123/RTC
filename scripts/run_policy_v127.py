@@ -31,7 +31,7 @@ from rtc.step3_mpc_v127 import (
     V127_STEP3_CONTRACT,
 )
 
-V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V3_LINEAGE_BOUND"
+V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V4_CAUSAL_ASSET_BOUND"
 V127_EVIDENCE_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_EVIDENCE_V2_LINEAGE_BOUND_NOT_SCORE_GATED"
 V127_CAUSAL_FORECAST_CONTRACT = "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92,scenario_multiplier=1.0)"
 
@@ -72,6 +72,28 @@ def _evidence(
     return evidence, payload
 
 
+def _require_runtime_asset_lineage(
+    checkpoint_lineage: dict,
+    *,
+    step1_path: str | Path,
+    sensor_path: str | Path,
+    graph_path: str | Path,
+) -> None:
+    expected = {
+        "causal_state_step1_sha256": _sha(step1_path),
+        "causal_state_sensor_sha256": _sha(sensor_path),
+        "causal_state_graph_sha256": _sha(graph_path),
+    }
+    for key, actual in expected.items():
+        trained = str(checkpoint_lineage.get(key, "")).lower()
+        if not trained:
+            raise ValueError(f"V127 Step2 checkpoint lacks training-time asset lineage {key}")
+        if trained != actual.lower():
+            raise ValueError(
+                f"V127 runtime asset differs from Step2 training lineage: {key}"
+            )
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--inp", required=True)
@@ -102,6 +124,15 @@ def main() -> None:
     step1 = _load_step1(args.step1, device)
     step2_sha = _sha(args.step2)
     step2, step2_payload = load_step2_v127(args.step2, graph=graph, device=device)
+    checkpoint_lineage = step2_payload.get("lineage")
+    if not isinstance(checkpoint_lineage, dict):
+        raise ValueError("V127 Step2 checkpoint lacks data lineage")
+    _require_runtime_asset_lineage(
+        checkpoint_lineage,
+        step1_path=args.step1,
+        sensor_path=args.sensors,
+        graph_path=args.graph,
+    )
     evidence, evidence_payload = _evidence(
         args.continuous_gate, expected_step2_sha256=step2_sha
     )
@@ -117,6 +148,9 @@ def main() -> None:
         raise ValueError("V127 causal rainfall store does not prove future-rain exclusion")
     if str(causal_store.forecast_contract) != V127_CAUSAL_FORECAST_CONTRACT:
         raise ValueError("V127 causal rainfall store differs from runtime forecast semantics")
+    trained_rain_sha = str(checkpoint_lineage.get("causal_rainfall_sha256", "")).lower()
+    if not trained_rain_sha or trained_rain_sha != _sha(args.causal_store).lower():
+        raise ValueError("V127 runtime causal rainfall store differs from Step2 training")
 
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
     project_contract = validate_project7_runtime_config(cfg)
@@ -130,13 +164,10 @@ def main() -> None:
             "V127 requires optimizer_deadline < controller_runtime_budget < 600-s control period"
         )
 
-    checkpoint_lineage = step2_payload.get("lineage")
-    if not isinstance(checkpoint_lineage, dict):
-        raise ValueError("V127 Step2 checkpoint lacks data lineage")
     stored_forecast_contract = str(
         checkpoint_lineage.get("causal_rainfall_forecast_contract", "")
     )
-    if stored_forecast_contract and stored_forecast_contract != V127_CAUSAL_FORECAST_CONTRACT:
+    if stored_forecast_contract != V127_CAUSAL_FORECAST_CONTRACT:
         raise ValueError("V127 runtime rainfall forecaster differs from Step2 training")
 
     controller_cfg = _controller_config(dict(cfg["controller"]), control_block_steps=2)
@@ -202,7 +233,7 @@ def main() -> None:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     trained_engine = str(checkpoint_lineage.get("swmm_engine_version", "")).strip()
     runtime_engine = str(metadata.get("swmm_engine_version", "")).strip()
-    if trained_engine and runtime_engine != trained_engine:
+    if not trained_engine or runtime_engine != trained_engine:
         raise RuntimeError(
             f"V127 runtime SWMM engine {runtime_engine} differs from Step2 training engine {trained_engine}"
         )
@@ -240,6 +271,7 @@ def main() -> None:
             "controller_config_sha256": _sha(args.config),
             "graph_schema_sha256": _sha(args.graph),
             "step1_model_sha256": _sha(args.step1),
+            "sensor_layout_sha256": _sha(args.sensors),
             "project7_runtime_contract": project_contract,
             "prepared_event_clock": event_clock,
         }
