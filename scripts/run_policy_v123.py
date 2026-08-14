@@ -1,13 +1,10 @@
 """Run the V123 causal TFV/PFV knowledge-anchored finite policy.
 
-The validated V122 execution shell is reused for clock/readback/score==execute.  V123
-adds two scientific policy semantics:
-
-1. TFV/PFV Value inputs use the same causal PersistenceDecayForecast as training.
-2. A sparse-state Auto-RBC engineering anchor is generated from Step1 reconstructed
-   actuator-adjacent depths every 10 minutes.  Learned candidates may override it when
-   the calibrated Value evidence is strong; otherwise the engineering anchor is used
-   instead of HOLD.
+The validated V122 execution shell is reused for clock/readback/score==execute. V123
+uses a sparse-state Auto-RBC engineering anchor when learned Value evidence is not
+strong enough to justify an override. TFV Value may be the frozen causal V70 model or
+the interaction-aware V124 development model after external acceptance; PFV remains a
+separate soft diagnostic/value model.
 
 Continuous gradient search remains disabled until the authoritative gate passes.
 """
@@ -34,6 +31,7 @@ from rtc.runtime_controller_guard import ContinuityGuardController
 from rtc.step2_control_basis_v60 import build_control_basis_v60
 from rtc.step2_control_response_v60 import prepare_static_v60
 from rtc.step2_control_response_v70 import ControlValueSurrogateV70
+from rtc.step2_control_value_v124 import ControlValueSurrogateV124, V124_VALUE_CONTRACT
 from rtc.step2_policy_v120 import RuntimeNormalizationV120
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
 from rtc.step2_causal_rainfall_v123 import (
@@ -62,6 +60,71 @@ def _causal_normalization(
     return result
 
 
+def _tfv_scale_from_report(payload: dict) -> float:
+    if "target_scales" in payload:
+        return float(payload["target_scales"]["direct_tfv_scale_m3"])
+    if "target_scale_tfv_m3" in payload:
+        return float(payload["target_scale_tfv_m3"])
+    raise ValueError("V123 runtime TFV report lacks direct TFV target scale")
+
+
+def _v70_model(*, first, prepared, graph, basis, scale: float) -> ControlValueSurrogateV70:
+    return ControlValueSurrogateV70(
+        state_dim=int(first["initial_state"].shape[-1]),
+        rainfall_dim=int(first["rainfall"].shape[-1]),
+        physics_dim=int(prepared.actuator_physics.shape[1]),
+        actuator_count=len(graph.actuator_ids),
+        temporal_basis=basis.temporal_basis,
+        control_block_steps=basis.horizon.control_block_steps,
+        tfv_scale_m3=scale,
+        hidden_dim=96,
+        actuator_embedding_dim=16,
+    )
+
+
+def _load_tfv_model(
+    *,
+    checkpoint_path: str,
+    first,
+    prepared,
+    graph,
+    basis,
+    scale: float,
+    device: torch.device,
+):
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if payload.get("contract") == V124_VALUE_CONTRACT:
+        model = ControlValueSurrogateV124(
+            state_dim=int(first["initial_state"].shape[-1]),
+            rainfall_dim=int(first["rainfall"].shape[-1]),
+            physics_dim=int(prepared.actuator_physics.shape[1]),
+            actuator_count=len(graph.actuator_ids),
+            temporal_basis=basis.temporal_basis,
+            control_block_steps=basis.horizon.control_block_steps,
+            tfv_scale_m3=scale,
+            hidden_dim=int(payload.get("hidden_dim", 96)),
+            actuator_embedding_dim=16,
+            attention_heads=int(payload.get("attention_heads", 4)),
+        )
+        architecture = "V124_INTERACTION_AWARE"
+    elif payload.get("arm") == "B_CAUSAL":
+        model = _v70_model(
+            first=first,
+            prepared=prepared,
+            graph=graph,
+            basis=basis,
+            scale=scale,
+        )
+        architecture = "V70_CAUSAL"
+    else:
+        raise ValueError("V123 runtime TFV checkpoint is not an accepted causal V70/V124 artifact")
+    model.load_state_dict(payload["state_dict"], strict=True)
+    model.to(device).float().eval()
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+    return model, architecture
+
+
 def _load_policy(
     *,
     graph,
@@ -88,33 +151,31 @@ def _load_policy(
     first = cache.entry(fit_d2[0]).arrays
     tfv_report_raw = json.loads(Path(tfv_report).read_text(encoding="utf-8"))
     pfv_report_raw = json.loads(Path(pfv_report).read_text(encoding="utf-8"))
-    tfv_scale = float(tfv_report_raw["target_scales"]["direct_tfv_scale_m3"])
+    tfv_scale = _tfv_scale_from_report(tfv_report_raw)
     pfv_scale = float(pfv_report_raw["target_scale_pfv_m3"])
 
-    def model(scale: float) -> ControlValueSurrogateV70:
-        return ControlValueSurrogateV70(
-            state_dim=int(first["initial_state"].shape[-1]),
-            rainfall_dim=int(first["rainfall"].shape[-1]),
-            physics_dim=int(prepared.actuator_physics.shape[1]),
-            actuator_count=len(graph.actuator_ids),
-            temporal_basis=basis.temporal_basis,
-            control_block_steps=basis.horizon.control_block_steps,
-            tfv_scale_m3=scale,
-            hidden_dim=96,
-            actuator_embedding_dim=16,
-        )
-
-    tfv_model = model(tfv_scale)
-    pfv_model = model(pfv_scale)
-    tfv_payload = torch.load(tfv_checkpoint, map_location="cpu", weights_only=False)
+    tfv_model, tfv_architecture = _load_tfv_model(
+        checkpoint_path=tfv_checkpoint,
+        first=first,
+        prepared=prepared,
+        graph=graph,
+        basis=basis,
+        scale=tfv_scale,
+        device=device,
+    )
     pfv_payload = torch.load(pfv_checkpoint, map_location="cpu", weights_only=False)
-    if tfv_payload.get("arm") != "B_CAUSAL" or pfv_payload.get("target") != "PFV":
-        raise ValueError("V123 runtime checkpoints have unexpected arm/target lineage")
-    tfv_model.load_state_dict(tfv_payload["state_dict"], strict=True)
+    if pfv_payload.get("target") != "PFV":
+        raise ValueError("V123 runtime PFV checkpoint has unexpected target lineage")
+    pfv_model = _v70_model(
+        first=first,
+        prepared=prepared,
+        graph=graph,
+        basis=basis,
+        scale=pfv_scale,
+    )
     pfv_model.load_state_dict(pfv_payload["state_dict"], strict=True)
-    tfv_model.to(device).float().eval()
     pfv_model.to(device).float().eval()
-    for parameter in list(tfv_model.parameters()) + list(pfv_model.parameters()):
+    for parameter in pfv_model.parameters():
         parameter.requires_grad_(False)
 
     objective_raw = json.loads(Path(objective_report).read_text(encoding="utf-8"))["objective"]
@@ -148,6 +209,7 @@ def _load_policy(
         "causal_store_sha256": hashlib.sha256(Path(causal_store_path).read_bytes()).hexdigest(),
         "tfv_checkpoint_sha256": hashlib.sha256(Path(tfv_checkpoint).read_bytes()).hexdigest(),
         "pfv_checkpoint_sha256": hashlib.sha256(Path(pfv_checkpoint).read_bytes()).hexdigest(),
+        "tfv_architecture": tfv_architecture,
         "tfv_scale_m3": tfv_scale,
         "pfv_scale_m3": pfv_scale,
         "tfv_false_benefit_margin_m3": false_benefit,
