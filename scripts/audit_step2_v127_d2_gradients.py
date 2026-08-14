@@ -1,8 +1,9 @@
-"""Audit V127 autograd against exact InternalHoldout D2 SWMM finite differences.
+"""Audit V127 smooth-objective autograd against InternalHoldout D2 SWMM finite differences.
 
-The authoritative D2 branches provide constant-setting perturbations.  Predictions use
-causal Step1 state and causal rainfall at the same checkpoint, matching online Step2
-inputs.  No InternalHoldout row is used for model fitting or calibration.
+The authoritative D2 branches provide constant-setting perturbations. Predictions use
+causal Step1 state and causal rainfall at the same checkpoint. The learned derivative is
+taken through the same smooth positive TFV proxy used by online MPC, while the target is
+the physical SWMM hard-TFV finite difference. No InternalHoldout row is used for fitting.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from rtc.step2_causal_rainfall_v123 import CausalForecastValueCacheV123, load_ca
 from rtc.step2_state_store_v127 import CausalStep1StateCacheV127, load_causal_state_store_v127
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
 
-V127_D2_GRADIENT_AUDIT_CONTRACT = "PROJECT7_V127_INTERNAL_HOLDOUT_D2_CAUSAL_GRADIENT_AUDIT_V1"
+V127_D2_GRADIENT_AUDIT_CONTRACT = "PROJECT7_V127_INTERNAL_HOLDOUT_D2_CAUSAL_GRADIENT_AUDIT_V2_SMOOTH_OBJECTIVE"
 
 
 def _physical(batch, normalization, device):
@@ -41,7 +42,6 @@ def _predicted_constant_gradient(
     device = initial.device
     scalar = torch.tensor(float(base_setting), dtype=initial.dtype, device=device, requires_grad=True)
     settings = torch.as_tensor(base_sequence, dtype=initial.dtype, device=device).clone()
-    # D2 semantics: one actuator setting is held at the probed scalar over the horizon.
     mask = torch.zeros_like(settings)
     mask[:, int(actuator_index)] = 1.0
     settings = settings * (1.0 - mask) + scalar * mask
@@ -59,7 +59,7 @@ def _predicted_constant_gradient(
         priority_indices=None,
         dt_seconds=300.0,
     )
-    gradient = torch.autograd.grad(output.tfv_m3.sum(), scalar)[0]
+    gradient = torch.autograd.grad(output.optimization_tfv_m3.sum(), scalar)[0]
     return float(gradient.detach())
 
 
@@ -83,7 +83,7 @@ def main() -> None:
     rain = load_causal_forecast_store_v123(args.causal_store)
     state = load_causal_state_store_v127(args.causal_state_store)
     online = CausalStep1StateCacheV127(CausalForecastValueCacheV123(base, rain), state)
-    fit, holdout = deterministic_rainfall_split_v60(
+    _, holdout = deterministic_rainfall_split_v60(
         base, names=sorted(base.names("D2") + base.targeted_d3_names()), holdout_fraction=0.20
     )
     hold_d2 = [name for name in holdout if name.startswith("D2::")]
@@ -117,10 +117,7 @@ def main() -> None:
             center = idx[np.isclose(requested[idx], b, rtol=0.0, atol=1e-10)]
             below = idx[requested[idx] < b - 1e-10]
             above = idx[requested[idx] > b + 1e-10]
-            if center.size:
-                mid = int(center[0])
-            else:
-                mid = int(entry.reference_index)
+            mid = int(center[0]) if center.size else int(entry.reference_index)
             if below.size and above.size:
                 lo = int(below[np.argmax(requested[below])])
                 hi = int(above[np.argmin(requested[above])])
@@ -174,15 +171,13 @@ def main() -> None:
         sign = float(np.mean(np.sign(pred[mask]) == np.sign(truth[mask]))) if mask.any() else float("nan")
         denom = float(np.linalg.norm(truth) * np.linalg.norm(pred))
         cosine = float(np.dot(truth, pred) / denom) if denom > 1e-12 else float("nan")
-        group_metrics.append({
-            "sign": sign,
-            "cosine": cosine,
-            "mae": float(np.mean(np.abs(pred - truth))),
-        })
+        group_metrics.append({"sign": sign, "cosine": cosine, "mae": float(np.mean(np.abs(pred - truth)))})
+
     def mean(key: str) -> float:
         values = np.asarray([row[key] for row in group_metrics], dtype=float)
         values = values[np.isfinite(values)]
         return float(values.mean()) if values.size else float("nan")
+
     metrics = {
         "contract": V127_D2_GRADIENT_AUDIT_CONTRACT,
         "gradient_cases": len(detail),
@@ -190,6 +185,8 @@ def main() -> None:
         "tfv_gradient_sign_accuracy": mean("sign"),
         "tfv_gradient_cosine_similarity": mean("cosine"),
         "tfv_gradient_mae": mean("mae"),
+        "predicted_gradient_semantics": "smooth V127 optimization TFV autograd",
+        "truth_gradient_semantics": "authoritative SWMM hard-TFV finite difference",
         "split": "InternalHoldout D2 only",
         "causal_step1_state": True,
         "causal_rainfall": True,
