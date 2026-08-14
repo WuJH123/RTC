@@ -1,11 +1,3 @@
-"""Training/evaluation for the Project7 V127 differentiable hydraulic surrogate.
-
-The branch order is an explicit contract: reference first, followed by candidates in the
-same order as :class:`V60GroupBatch`.  Authoritative SWMM cumulative node flood volumes
-are aligned to that order before any objective loss or evaluation metric is computed.
-The flood-objective stage supervises the smooth volume proxy used by online autograd,
-while hard clamp-based TFV remains the physical surrogate report/evaluation quantity.
-"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,31 +11,31 @@ import torch.nn.functional as F
 
 from .step2_train_response_v60 import InputNormalizationV60
 
-V127_TRAINING_CONTRACT = "PROJECT7_V127_HYDRAULIC_THEN_DIFFERENTIABLE_FLOOD_OBJECTIVE_V3_LABEL_ALIGNED"
+V127_TRAINING_CONTRACT = "PROJECT7_V127_HYDRAULIC_THEN_DIFFERENTIABLE_COUNTERFACTUAL_FLOOD_OBJECTIVE_V4_LABEL_ALIGNED"
 
 
 @dataclass(frozen=True)
 class V127TrainingDesign:
-    seed: int = 42
     hydraulic_epochs: int = 3
-    objective_epochs: int = 4
-    learning_rate: float = 3.0e-4
+    objective_epochs: int = 3
+    learning_rate: float = 2.0e-4
     objective_learning_rate: float = 1.0e-4
     weight_decay: float = 1.0e-5
     grad_clip: float = 5.0
-    teacher_stride: int = 3
-    rollout_pair_size: int = 2
+    teacher_stride: int = 4
     depth_weight: float = 2.0
-    flood_rate_weight: float = 4.0
+    flood_rate_weight: float = 3.0
     flow_weight: float = 1.0
     node_flood_weight: float = 1.0
     tfv_weight: float = 1.0
-    rollout_state_weight: float = 0.20
-    pairwise_weight: float = 0.50
+    rollout_state_weight: float = 0.5
+    pairwise_weight: float = 0.25
+    rollout_pair_size: int = 2
+    seed: int = 42
 
     def validate(self) -> None:
-        if self.seed != 42 or self.hydraulic_epochs <= 0 or self.objective_epochs <= 0:
-            raise ValueError("V127 first training recipe is frozen at seed 42 with positive epochs")
+        if self.hydraulic_epochs <= 0 or self.objective_epochs <= 0:
+            raise ValueError("V127 training epochs must be positive")
         if self.teacher_stride <= 0 or self.rollout_pair_size != 2:
             raise ValueError("V127 teacher stride/rollout pair contract invalid")
         for value in (
@@ -61,8 +53,8 @@ class V127TrainingDesign:
         ):
             if not math.isfinite(float(value)) or float(value) < 0:
                 raise ValueError("V127 training design contains invalid values")
-        if self.learning_rate <= 0 or self.objective_learning_rate <= 0 or self.grad_clip <= 0:
-            raise ValueError("V127 learning rates/grad clip must be positive")
+        if self.seed < 0:
+            raise ValueError("V127 training seed must be non-negative")
 
 
 def _stable_seed(text: str, base: int) -> int:
@@ -143,14 +135,14 @@ def configure_model_normalization_v127(
     static = np.asarray(graph.static_node_features, dtype=np.float32)
     physics = np.asarray(graph.actuator_physics, dtype=np.float32)
     model.set_normalization(
-        state_mean=torch.as_tensor(normalization.state_mean),
-        state_std=torch.as_tensor(normalization.state_std),
-        rain_mean=torch.as_tensor(normalization.rainfall_mean),
-        rain_std=torch.as_tensor(normalization.rainfall_std),
-        static_mean=torch.as_tensor(static.mean(axis=0)),
-        static_std=torch.as_tensor(static.std(axis=0).clip(min=1e-6)),
-        physics_mean=torch.as_tensor(physics.mean(axis=0)),
-        physics_std=torch.as_tensor(physics.std(axis=0).clip(min=1e-6)),
+        state_mean=torch.as_tensor(normalization.state_mean, dtype=torch.float32),
+        state_std=torch.as_tensor(normalization.state_std, dtype=torch.float32),
+        rain_mean=torch.as_tensor(normalization.rainfall_mean, dtype=torch.float32),
+        rain_std=torch.as_tensor(normalization.rainfall_std, dtype=torch.float32),
+        static_mean=torch.as_tensor(static.mean(axis=0), dtype=torch.float32),
+        static_std=torch.as_tensor(static.std(axis=0).clip(min=1e-6), dtype=torch.float32),
+        physics_mean=torch.as_tensor(physics.mean(axis=0), dtype=torch.float32),
+        physics_std=torch.as_tensor(physics.std(axis=0).clip(min=1e-6), dtype=torch.float32),
         flow_std=torch.as_tensor(
             [float(np.mean(normalization.flow_std))], dtype=torch.float32
         ),
@@ -188,13 +180,14 @@ def derive_residual_scales_v127(
                 fprev = np.concatenate((f0[None], flows[:-1]), axis=0)
                 flow_samples.append(np.abs(flows - fprev))
     if not state_samples or not flow_samples:
-        raise ValueError("V127 residual-scale sources are empty")
-    state, flow = np.concatenate(state_samples), np.concatenate(flow_samples)
-    if not np.isfinite(state).all() or not np.isfinite(flow).all():
-        raise ValueError("V127 residual-scale source contains non-finite values")
+        raise ValueError("V127 cannot derive residual scales from empty data")
     return (
-        np.maximum(np.quantile(state, 0.995, axis=0).astype(np.float32), 1e-4),
-        np.maximum(np.quantile(flow, 0.995, axis=0).astype(np.float32), 1e-4),
+        np.quantile(np.concatenate(state_samples, axis=0), 0.995, axis=0)
+        .clip(min=1.0e-5)
+        .astype(np.float32),
+        np.quantile(np.concatenate(flow_samples, axis=0), 0.995, axis=0)
+        .clip(min=1.0e-5)
+        .astype(np.float32),
     )
 
 
@@ -364,6 +357,15 @@ def train_objective_stage_v127(
     flood_rate_index: int,
     design: V127TrainingDesign = V127TrainingDesign(),
 ) -> list[dict[str, float | int | str]]:
+    """Train H360 physical magnitude plus differentiable counterfactual action effects.
+
+    The smooth Softplus flood proxy has a common positive zero-rate offset.  That offset is
+    harmless for action ranking/gradients because every branch in a counterfactual group
+    has the same node/time grid, but it must not be fitted as an absolute SWMM volume.  We
+    therefore fit hard physical TFV to absolute SWMM truth and fit the smooth proxy only to
+    branch-to-branch node-volume/TFV differences.  This preserves useful action gradients
+    without creating an artificial absolute flood-volume target.
+    """
     design.validate()
     static = _static(graph, device)
     model.train().to(device)
@@ -416,34 +418,44 @@ def train_objective_stage_v127(
                 dt_seconds=300.0,
             )
             target_volume = truth_volume.index_select(0, index)
-            volume_scale = torch.quantile(
-                target_volume.detach().reshape(-1), 0.75
-            ).clamp_min(100.0)
-            # The smooth proxy is exactly what online MPC differentiates.  Training it
-            # directly against authoritative SWMM cumulative node volumes avoids the hard
-            # clamp's zero-gradient dead zone while retaining hard TFV for evaluation.
-            node_loss = F.smooth_l1_loss(
-                torch.log1p(
-                    output.optimization_node_flood_volume_m3 / volume_scale
-                ),
-                torch.log1p(target_volume / volume_scale),
-                beta=0.25,
-            )
             true_tfv = target_volume.sum(-1)
             tfv_scale = torch.quantile(true_tfv.detach(), 0.75).clamp_min(100.0)
-            tfv_loss = F.smooth_l1_loss(
-                (output.optimization_tfv_m3 - true_tfv) / tfv_scale,
+            # Absolute magnitude is evaluated in the physical hard-clamp operator.
+            hard_tfv_loss = F.smooth_l1_loss(
+                (output.tfv_m3 - true_tfv) / tfv_scale,
                 torch.zeros_like(true_tfv),
                 beta=0.5,
             )
-            true_diff = (true_tfv[0] - true_tfv[1]).detach() / tfv_scale
-            smooth_diff = (
+            # The differentiable proxy is trained on counterfactual effects only; its
+            # Softplus zero-rate offset cancels exactly on the common node/time grid.
+            true_node_delta = target_volume[0] - target_volume[1]
+            smooth_node_delta = (
+                output.optimization_node_flood_volume_m3[0]
+                - output.optimization_node_flood_volume_m3[1]
+            )
+            node_delta_scale = torch.quantile(
+                torch.abs(true_node_delta.detach()), 0.75
+            ).clamp_min(25.0)
+            node_effect_loss = F.smooth_l1_loss(
+                smooth_node_delta / node_delta_scale,
+                true_node_delta / node_delta_scale,
+                beta=0.5,
+            )
+            true_tfv_delta = (true_tfv[0] - true_tfv[1]).detach()
+            smooth_tfv_delta = (
                 output.optimization_tfv_m3[0] - output.optimization_tfv_m3[1]
-            ) / tfv_scale
-            if abs(float(true_diff)) > 1e-9:
-                pair_loss = F.softplus(-torch.sign(true_diff) * smooth_diff)
+            )
+            tfv_effect_loss = F.smooth_l1_loss(
+                smooth_tfv_delta / tfv_scale,
+                true_tfv_delta / tfv_scale,
+                beta=0.5,
+            )
+            if abs(float(true_tfv_delta)) > 1e-9:
+                pair_loss = F.softplus(
+                    -torch.sign(true_tfv_delta) * smooth_tfv_delta / tfv_scale
+                )
             else:
-                pair_loss = smooth_diff.new_zeros(())
+                pair_loss = smooth_tfv_delta.new_zeros(())
             retained = torch.as_tensor(
                 [5, 11, 23, 35, 47, 71], dtype=torch.long, device=device
             )
@@ -457,8 +469,8 @@ def train_objective_stage_v127(
                 beta=0.5,
             )
             loss = (
-                design.node_flood_weight * node_loss
-                + design.tfv_weight * tfv_loss
+                design.node_flood_weight * node_effect_loss
+                + design.tfv_weight * (hard_tfv_loss + tfv_effect_loss)
                 + design.pairwise_weight * pair_loss
                 + design.rollout_state_weight * state_loss
             )
@@ -469,7 +481,7 @@ def train_objective_stage_v127(
             optimizer.step()
             records.append(float(loss.detach()))
         row: dict[str, float | int | str] = {
-            "stage": "h360_differentiable_flood_objective",
+            "stage": "h360_physical_magnitude_plus_differentiable_action_effect",
             "epoch": epoch,
             "loss": float(np.mean(records)) if records else float("nan"),
         }
