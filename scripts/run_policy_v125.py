@@ -31,9 +31,13 @@ from rtc.step2_policy_v125 import (
     V125_POLICY_CONTRACT,
 )
 
-# run_policy_v123.py is deliberately retained as the frozen asset loader so V125 does not
-# create another subtly different model/normalisation lineage.
-from run_policy_v123 import _load_policy
+# Keep one frozen V123 asset loader so V125 cannot silently fork model/normalisation
+# lineage.  Direct script execution places ``scripts/`` on sys.path, while pytest/import
+# from repository root may resolve the namespace package form instead.
+try:  # pragma: no cover - branch depends only on invocation style
+    from run_policy_v123 import _load_policy
+except ModuleNotFoundError:  # pragma: no cover
+    from scripts.run_policy_v123 import _load_policy
 
 
 def _load_override_margin(path: str | Path) -> tuple[float, dict]:
