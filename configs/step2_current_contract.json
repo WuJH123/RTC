@@ -104,11 +104,11 @@
     "compare pre/post D4 fine-tune metrics on D4-AUDIT and InternalHoldout D3",
     "only if local identification improves, retrain/recalibrate PFV as needed and rebuild direct anchor-relative evidence",
     "run a fixed T5 only after calibration is frozen",
-    "generate new decision-targeted D5 SWMM only if the existing-data diagnostic identifies a remaining support gap"
+    "generate new decision-targeted D5 SWMM only if the existing-data diagnostic identifies a remaining support or value-definition gap"
   ],
   "d5_if_needed": {
     "authorized_now": false,
-    "design_principle": "outcome-blind active support, not random/global expansion",
+    "design_principle": "outcome-blind active support around online decisions, not random/global expansion",
     "selection_inputs_allowed": [
       "current causal Step1 state",
       "existing action geometry",
@@ -116,8 +116,13 @@
       "hydraulic regime strata derived without holdout outcomes"
     ],
     "preferred_new_support": "states/candidate directions where online anchor neighbourhood is uncertain, especially near high-TFV decision periods",
-    "common_continuation_required": true,
-    "split_before_outcomes_required": true
+    "primary_value_definition": "candidate first 600 s versus anchor first 600 s, followed from t+600 s by the same causal Sparse-RBC baseline policy recomputed every 600 s from each branch state; label is cumulative TFV(candidate-first baseline-policy-rollout) minus cumulative TFV(anchor-first baseline-policy-rollout)",
+    "why_policy_continuation": "this estimates the incremental value of the present action under the actual rolling baseline policy; future realized baseline actions may differ only because the first move changed state, not because a different future policy was chosen",
+    "optional_common_open_loop_tail": "retain only as an immediate-effect diagnostic if needed; it is not the preferred D5 control-value label",
+    "candidate_first_move_only": true,
+    "no_learned_policy_in_continuation": true,
+    "split_before_outcomes_required": true,
+    "new_swmm_requires_frozen_plan": true
   },
   "continuous_mpc_gate": {
     "enabled_now": false,
