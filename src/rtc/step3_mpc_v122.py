@@ -151,6 +151,10 @@ def passive_target_sequence_v122(
     target = active_target_setting.reshape(-1)
     if horizon_steps <= 0 or not bool(torch.isfinite(target).all()):
         raise ValueError("invalid passive target sequence input")
+    if bool(torch.any((target < 0.0) | (target > 1.0))):
+        raise ValueError("passive target sequence is outside [0,1]")
+    # Keep this torch-native to preserve device/dtype and avoid an unnecessary host
+    # round-trip in the optimizer; the numpy helper is the audit/reference contract.
     return target[None, :].expand(int(horizon_steps), -1).clone()
 
 

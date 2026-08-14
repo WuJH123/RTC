@@ -14,19 +14,34 @@ import torch
 
 from .closed_loop import CausalObservation, ControllerAction
 from .controller import TorchMPCController
+from .step2_passive_reference_v122 import passive_target_latch_v122
 from .step3_mpc_v122 import V122_STEP3_CONTRACT
 
 V122_CONTROLLER_CONTRACT = "PROJECT7_V122_TARGET_LATCH_SCORE_EQUALS_EXECUTE_CONTROLLER_V1"
 V122_READBACK_CONTRACT = "PROJECT7_V122_TARGET_WRITE_EXACT_CURRENT_TRACKING_DIAGNOSTIC_V1"
 
 
+def planned_sequence_max_step_delta_v122(
+    active_target: np.ndarray, settings: np.ndarray
+) -> float:
+    """Measure the full executable target path, including its active latch anchor."""
+
+    active = np.asarray(active_target, dtype=float).reshape(-1)
+    sequence = np.asarray(settings, dtype=float)
+    if sequence.ndim != 2 or sequence.shape[1] != active.size:
+        raise ValueError("V122 planned sequence shape mismatch")
+    if not np.isfinite(active).all() or not np.isfinite(sequence).all():
+        raise ValueError("V122 planned sequence contains non-finite values")
+    path = np.vstack((active[None, :], sequence))
+    return float(np.abs(np.diff(path, axis=0)).max(initial=0.0))
+
+
 def hold_active_target_v122(
     observation: CausalObservation, horizon_steps: int
 ) -> np.ndarray:
-    target = np.asarray(observation.actuator_target_setting, dtype=float).reshape(-1)
-    if not target.size or not np.isfinite(target).all() or np.any((target < 0.0) | (target > 1.0)):
-        raise ValueError("V122 active target readback is invalid")
-    return np.repeat(target[None, :], int(horizon_steps), axis=0)
+    return passive_target_latch_v122(
+        observation.actuator_target_setting, int(horizon_steps)
+    )
 
 
 class V122TorchMPCController(TorchMPCController):
@@ -255,6 +270,9 @@ class V122TorchMPCController(TorchMPCController):
 
             self.last_requested = requested.copy()
             target_change = np.abs(requested - active_target)
+            planned_sequence_max_step_delta = planned_sequence_max_step_delta_v122(
+                active_target, settings
+            )
             diagnostics: dict[str, float | int | bool | str] = {
                 "v122_controller_contract": V122_CONTROLLER_CONTRACT,
                 "v122_step3_contract": V122_STEP3_CONTRACT,
@@ -283,6 +301,7 @@ class V122TorchMPCController(TorchMPCController):
                 ),
                 "target_change_max": float(target_change.max(initial=0.0)),
                 "target_change_l1": float(target_change.sum()),
+                "planned_sequence_max_step_delta": planned_sequence_max_step_delta,
                 "current_tracking_lag_max": float(
                     np.abs(current - active_target).max(initial=0.0)
                 ),
@@ -310,4 +329,5 @@ __all__ = [
     "V122_READBACK_CONTRACT",
     "V122TorchMPCController",
     "hold_active_target_v122",
+    "planned_sequence_max_step_delta_v122",
 ]

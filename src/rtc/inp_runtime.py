@@ -44,9 +44,9 @@ def section_has_payload(path: str | Path, section_name: str) -> bool:
 
 
 def assert_native_controls_disabled(path: str | Path) -> None:
-    if section_has_payload(path, "CONTROLS"):
+    if section_has_payload(path, "CONTROLS") or section_has_payload(path, "RULES"):
         raise ValueError(
-            "Python-controlled/D1/D2/D3 runs require an INP with native [CONTROLS] disabled. "
+            "Python-controlled/D1/D2/D3 runs require an INP with native [CONTROLS]/[RULES] disabled. "
             "Use build_runtime_inp(..., native_controls=False). Internal-RTC is evaluated "
             "separately with event forcing plus the frozen native-controls template."
         )
@@ -171,8 +171,8 @@ def build_runtime_inp(
     """Create a policy-isolated runtime INP without changing event forcing/hydraulics.
 
     The event ``source`` is always authoritative for rainfall, DWF, initial conditions, dates,
-    storage and hydraulic geometry. ``native_controls=False`` removes only executable lines
-    inside ``[CONTROLS]``. For ``native_controls=True`` an optional frozen network template may
+    storage and hydraulic geometry. ``native_controls=False`` removes executable lines inside
+    ``[CONTROLS]`` and ``[RULES]``. For ``native_controls=True`` an optional frozen network template may
     supply the native ``[CONTROLS]`` body while every non-control section continues to come from
     the event source. This is the required construction when event INPs intentionally carry the
     forcing/DWF but not the native rule set.
@@ -212,6 +212,15 @@ def build_runtime_inp(
         if stripped.startswith("[") and stripped.endswith("]"):
             section = stripped[1:-1].strip().upper()
             output.append(core + newline)
+            continue
+
+        if section in {"CONTROLS", "RULES"} and not native_controls:
+            # SWMM [RULES] are executable native control logic too. Leaving them in a
+            # Python-controlled runtime silently overwrites target_setting at later
+            # hydraulic times (especially pump on/off rules), creating false readback
+            # failures and non-causal baseline behavior.
+            if not core.split(";", 1)[0].strip():
+                output.append(core + newline)
             continue
 
         if section == "CONTROLS" and (not native_controls or template_body is not None):
