@@ -1,8 +1,8 @@
 """Audit what Project7 Step2 data exist, what are actually trained, and what must remain held out.
 
-The report distinguishes branches from independent counterfactual groups. It is outcome-
-read-only except for loading cache metadata required to count group membership; it does
-not train a model or launch SWMM.
+The report distinguishes branch rows, counterfactual groups and unique hydraulic state
+keys. It is outcome-read-only except for loading cache metadata required to count group
+membership; it does not train a model or launch SWMM.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from rtc.step2_v120_data_contract import (
     verify_d2_source_audit,
 )
 
-CONTRACT = "PROJECT7_V126_STEP2_DATA_USAGE_CENSUS_V1"
+CONTRACT = "PROJECT7_V126_STEP2_DATA_USAGE_CENSUS_V2_STATE_SUPPORT"
 
 
 def _branch_count(cache: V60TrainCache, names: list[str]) -> int:
@@ -32,6 +32,32 @@ def _branch_count(cache: V60TrainCache, names: list[str]) -> int:
 
 def _rain(cache: V60TrainCache, names: list[str]) -> set[str]:
     return {str(cache.entry(name).rainfall_group) for name in names}
+
+
+def _state_keys(cache: V60TrainCache, names: list[str]) -> set[str]:
+    """Counterfactual state identity independent of source-kind and action branch."""
+    return {
+        "::".join(
+            (
+                str(cache.entry(name).rainfall_group),
+                str(cache.entry(name).event_id),
+                str(cache.entry(name).checkpoint_id),
+            )
+        )
+        for name in names
+    }
+
+
+def _support_summary(cache: V60TrainCache, names: list[str]) -> dict[str, object]:
+    states = _state_keys(cache, names)
+    branches = _branch_count(cache, names)
+    return {
+        "groups": len(names),
+        "branches": branches,
+        "unique_state_keys": len(states),
+        "branches_per_unique_state": (float(branches) / len(states) if states else 0.0),
+        "rainfall_groups": sorted(_rain(cache, names)),
+    }
 
 
 def main() -> None:
@@ -76,12 +102,10 @@ def main() -> None:
             args.d2_source_audit, split_contract_path=args.split_contract
         )
 
-    legacy_payload = {
+    legacy_payload: dict[str, object] = {
         "provided": False,
         "status": "NOT_IN_CANONICAL_TRAINING",
-        "groups": len(legacy_in_base),
-        "branches": _branch_count(base, legacy_in_base),
-        "rainfall_groups": sorted(_rain(base, legacy_in_base)),
+        **_support_summary(base, legacy_in_base),
     }
     if args.legacy_cache_manifest:
         legacy = V60TrainCache(args.legacy_cache_manifest)
@@ -89,26 +113,40 @@ def main() -> None:
         # If a historical cache uses roles now recognised as targeted, still report all D3
         # rows but never silently promote them into V126 fitting.
         all_legacy_d3 = legacy.names("D3")
+        legacy_states = _state_keys(legacy, all_legacy_d3)
+        train_states = _state_keys(base, fit)
+        holdout_states = _state_keys(base, holdout)
         legacy_payload = {
             "provided": True,
             "status": "LINEAGE_AUDIT_REQUIRED_BEFORE_AUXILIARY_PRETRAINING",
-            "all_d3_groups": len(all_legacy_d3),
-            "all_d3_branches": _branch_count(legacy, all_legacy_d3),
+            "all_d3": _support_summary(legacy, all_legacy_d3),
             "explicit_legacy_groups": len(legacy_names),
             "explicit_legacy_branches": _branch_count(legacy, legacy_names),
-            "rainfall_groups": sorted(_rain(legacy, all_legacy_d3)),
-            "overlap_with_canonical_trainfit_rainfall": sorted(
+            "state_overlap_with_canonical_trainfit": len(legacy_states & train_states),
+            "state_overlap_with_canonical_internal_holdout": len(legacy_states & holdout_states),
+            "rainfall_overlap_with_canonical_trainfit": sorted(
                 _rain(legacy, all_legacy_d3) & _rain(base, fit)
             ),
-            "overlap_with_canonical_internal_holdout_rainfall": sorted(
+            "rainfall_overlap_with_canonical_internal_holdout": sorted(
                 _rain(legacy, all_legacy_d3) & _rain(base, holdout)
             ),
             "used_for_v126_training": False,
         }
 
+    fit_d2_states = _state_keys(base, fit_d2)
+    fit_d3_states = _state_keys(base, fit_d3)
+    hold_d2_states = _state_keys(base, hold_d2)
+    hold_d3_states = _state_keys(base, hold_d3)
+    d4_fit_states = _state_keys(d4_fit, fit_d4)
+    d4_audit_states = _state_keys(d4_audit, audit_d4)
+    train_unique_states = fit_d2_states | fit_d3_states | d4_fit_states
+
     payload = {
         "contract": CONTRACT,
-        "important_unit_note": "branch count is not independent-group count",
+        "important_unit_note": (
+            "branch rows are not independent hydraulic states; state support is counted by "
+            "rainfall_group::event_id::checkpoint_id"
+        ),
         "d2_source_population": {
             "authoritative_source_branches": SOURCE_D2_BRANCHES,
             "authoritative_source_groups": SOURCE_D2_GROUPS,
@@ -120,32 +158,34 @@ def main() -> None:
             "development_validation_allowed_in_training": False,
         },
         "canonical_base_cache": {
-            "d2_groups": len(d2),
-            "d2_branches": _branch_count(base, d2),
-            "targeted_d3_groups": len(targeted_d3),
-            "targeted_d3_branches": _branch_count(base, targeted_d3),
+            "d2": _support_summary(base, d2),
+            "targeted_d3": _support_summary(base, targeted_d3),
             "expected_targeted_d3_branches": TARGETED_D3_BRANCHES,
+            "d2_d3_unique_state_overlap": len(_state_keys(base, d2) & _state_keys(base, targeted_d3)),
             "legacy_d3_groups_in_canonical_cache": len(legacy_in_base),
             "legacy_d3_branches_in_canonical_cache": _branch_count(base, legacy_in_base),
         },
         "actual_training_eligibility": {
-            "trainfit_d2_groups": len(fit_d2),
-            "trainfit_d2_branches": _branch_count(base, fit_d2),
-            "trainfit_targeted_d3_groups": len(fit_d3),
-            "trainfit_targeted_d3_branches": _branch_count(base, fit_d3),
-            "internal_holdout_d2_groups": len(hold_d2),
-            "internal_holdout_d2_branches": _branch_count(base, hold_d2),
-            "internal_holdout_targeted_d3_groups": len(hold_d3),
-            "internal_holdout_targeted_d3_branches": _branch_count(base, hold_d3),
+            "trainfit_d2": _support_summary(base, fit_d2),
+            "trainfit_targeted_d3": _support_summary(base, fit_d3),
+            "trainfit_d2_d3_state_overlap": len(fit_d2_states & fit_d3_states),
+            "d4_fit": _support_summary(d4_fit, fit_d4),
+            "d4_fit_state_overlap_with_base_trainfit": len(d4_fit_states & (fit_d2_states | fit_d3_states)),
+            "total_branch_rows_used_by_v126_if_all_fit_sources_train": (
+                _branch_count(base, fit_d2)
+                + _branch_count(base, fit_d3)
+                + _branch_count(d4_fit, fit_d4)
+            ),
+            "total_unique_hydraulic_state_keys_across_fit_sources": len(train_unique_states),
+            "internal_holdout_d2": _support_summary(base, hold_d2),
+            "internal_holdout_targeted_d3": _support_summary(base, hold_d3),
+            "internal_holdout_d2_d3_state_overlap": len(hold_d2_states & hold_d3_states),
             "internal_holdout_allowed_in_training": False,
         },
         "d4": {
-            "fit_groups": len(fit_d4),
-            "fit_branches": _branch_count(d4_fit, fit_d4),
-            "fit_rainfall_groups": sorted(_rain(d4_fit, fit_d4)),
-            "audit_groups": len(audit_d4),
-            "audit_branches": _branch_count(d4_audit, audit_d4),
-            "audit_rainfall_groups": sorted(_rain(d4_audit, audit_d4)),
+            "fit": _support_summary(d4_fit, fit_d4),
+            "audit": _support_summary(d4_audit, audit_d4),
+            "fit_audit_state_overlap": len(d4_fit_states & d4_audit_states),
             "audit_allowed_in_training": False,
         },
         "legacy_d3": legacy_payload,
@@ -173,10 +213,11 @@ def main() -> None:
                 f"D2 frozen train-eligible: {TRAIN_D2_BRANCHES} branches / {D2_GROUPS} groups; "
                 f"the remaining {SOURCE_D2_BRANCHES-TRAIN_D2_BRANCHES} branches are development-validation and must not train.",
                 f"Canonical targeted D3: {_branch_count(base, targeted_d3)} branches / {len(targeted_d3)} groups.",
-                f"Actual TrainFit: D2 {_branch_count(base, fit_d2)} branches / {len(fit_d2)} groups; "
-                f"D3 {_branch_count(base, fit_d3)} branches / {len(fit_d3)} groups.",
-                f"D4 FIT: {_branch_count(d4_fit, fit_d4)} branches / {len(fit_d4)} groups; "
-                f"D4 AUDIT: {_branch_count(d4_audit, audit_d4)} branches / {len(audit_d4)} groups.",
+                f"Actual TrainFit branch rows: D2 {_branch_count(base, fit_d2)}; D3 {_branch_count(base, fit_d3)}; D4 {_branch_count(d4_fit, fit_d4)}.",
+                f"TrainFit D2/D3 shared hydraulic states: {len(fit_d2_states & fit_d3_states)}.",
+                f"D4-FIT states already present in base TrainFit: {len(d4_fit_states & (fit_d2_states | fit_d3_states))} / {len(d4_fit_states)}.",
+                f"Total nominal fit branch rows: {payload['actual_training_eligibility']['total_branch_rows_used_by_v126_if_all_fit_sources_train']}; unique hydraulic state keys: {len(train_unique_states)}.",
+                f"D4 AUDIT: {_branch_count(d4_audit, audit_d4)} branches / {len(audit_d4)} groups / {len(d4_audit_states)} state keys.",
                 f"Legacy D3 status: {legacy_payload['status']}.",
                 "",
                 "Branch counts must not be interpreted as independent training states. Holdout/AUDIT rows remain excluded.",
