@@ -1,137 +1,42 @@
 {
-  "contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V6_STRICT_ENVELOPE_GUARDED_RUNTIME",
-  "status": "DEVELOPMENT_ONLY_NOT_PRODUCTION_NOT_POLICY_LOCKED",
-  "base": {
-    "canonical_main_sha_at_branch": "390ab19f59bebf20e62d4a7f49e7e579192bd021",
-    "inherits_time_and_research_goal_from": "PROJECT7_V127_CONTINUOUS_DIFFERENTIABLE_MPC_CORRECTNESS_V2",
-    "research_goal_changed": false,
-    "authoritative_truth_changed": false,
-    "time_contract_changed": false,
-    "model_architecture_changed": true,
-    "data_split_changed": false,
-    "v127_checkpoint_compatible": false
+  "contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V7_EXACT_PAIRWISE_STRICT_RUNTIME",
+  "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
+  "time": {"model_step_s": 300, "control_step_s": 600, "horizon_steps": 72, "horizon_min": 360, "free_blocks": 12, "free_min": 120, "execute_min": 10},
+  "objective": {"primary": "TFV", "priority8_pfv": "ONE_SIDED_SOFT_SECONDARY", "global_peak": "REPORT_ONLY"},
+  "step2": {
+    "contract": "PROJECT7_V128_TYPED_PHYSICS_AWARE_ACTUATOR_MESSAGE_SURROGATE_V1",
+    "stage_a": "src/rtc/step2_train_v128_hydraulic.py",
+    "stage_b": "src/rtc/step2_train_v128_exact.py",
+    "pair_threshold_m3": 1.0,
+    "pairwise_gradient": "TWO_PASS_SAME_PARAMETER_SNAPSHOT_EXACT_FIRST_ORDER"
   },
-  "time_contract": {
-    "model_and_observation_step_seconds": 300,
-    "control_update_seconds": 600,
-    "prediction_horizon_steps": 72,
-    "prediction_horizon_minutes": 360,
-    "free_control_blocks": 12,
-    "free_control_minutes": 120,
-    "execute_first_minutes": 10
+  "checkpoint": {
+    "contract": "PROJECT7_V128_STEP2_CHECKPOINT_V4_MODEL_AND_EXACT_TRAINING_SOURCE_STRICT",
+    "model_source_must_match": true,
+    "training_source_must_match": true,
+    "ranking_d2_d5_same_step2_sha": true
   },
-  "scientific_change": {
-    "purpose": "improve decision-relevant action-effect identification and gradients for continuous MPC without changing authoritative SWMM truth",
-    "v127_training_pair_threshold": "max(1 m3, 0.001 * abs(reference TFV))",
-    "v128_training_pair_threshold": "1 m3 absolute floor",
-    "informative_pair_reference_fraction": 0.0,
-    "informative_pair_absolute_m3": 1.0,
-    "action_context_v127": "per-node outgoing/incoming raw setting sums",
-    "action_context_v128": "typed physics-aware actuator-to-node messages using endpoint state, setting, previous/predicted managed flow, responsiveness, actuator physics/type and identity",
-    "stage_a_action_path": "same typed actuator-message transition as online rollout",
-    "candidate_pair_supervision_v127": "candidate-candidate ranking only inside small GPU microbatches",
-    "candidate_pair_supervision_v128": "full within-group candidate ordering via detached same-parameter-snapshot cross-microbatch memory",
-    "why": "large-event magnitude and microbatch partitioning must not suppress operational action ordering, and physically different actuator combinations must not alias merely because their raw setting sums match"
-  },
-  "checkpoint_contract": {
-    "step2_contract": "PROJECT7_V128_TYPED_PHYSICS_AWARE_ACTUATOR_MESSAGE_SURROGATE_V1",
-    "checkpoint_contract": "PROJECT7_V128_STEP2_CHECKPOINT_V3_MODEL_AND_TRAINING_SOURCE_STRICT",
-    "loader": "rtc.checkpoint_v128.load_step2_v128",
-    "model_source_semantic_sha_must_match_current_code": true,
-    "training_source_sha_recorded": true,
-    "v127_loader_must_reject_v128": true,
-    "v128_loader_must_reject_v127": true,
-    "ranking_d2_d5_same_final_step2_sha_required": true
-  },
-  "engineering_execution": {
+  "engineering": {
     "contract": "PROJECT7_V128_PER_ACTUATOR_ENGINEERING_ENVELOPE_V2_SOURCE_SEMANTICS_STRICT",
-    "bounds_and_rate_enter_decoder_before_scoring": true,
-    "post_score_projection_allowed": false,
-    "score_equals_execute_required": true,
-    "historical_default_source": "IDEALIZED_DEFAULT_0P5_PER_10MIN",
-    "historical_default_source_must_match_graph_bounds_and_exact_0p5_rate": true,
-    "historical_default_is_field_engineering_claim": false,
-    "custom_per_actuator_envelope_supported_by_decoder": true,
-    "custom_envelope_authoritative_runtime_requires_matching_D5": true,
-    "current_frozen_D5_decoder_space": "idealized [graph min,max] + 0.5 target delta per 10 min"
+    "decoder_before_scoring": true,
+    "post_score_projection": false,
+    "score_equals_execute": true,
+    "default": "IDEALIZED_DEFAULT_0P5_PER_10MIN",
+    "default_is_field_claim": false,
+    "custom_envelope_requires_matching_d5": true
   },
-  "hardware_execution": {
-    "target_gpu": "NVIDIA RTX 4060 8 GB",
-    "target_ram_gb": 16,
-    "swmm_workers": 16,
-    "swmm_threads_per_process": 1,
-    "pytorch_float32_matmul_precision_default": "high",
-    "strict_comparison_precision": "highest",
-    "amp_enabled": false,
-    "activation_checkpointing_enabled": false,
-    "cuda_allocator_recommendation": "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
-    "step2_cpu_group_streaming": true,
-    "step2_gpu_microbatch": true,
-    "step3_immutable_graph_tensor_cache_used_by_runtime": true,
-    "runtime_acceptance_contract": "PROJECT7_V128_AUTHORITATIVE_600S_RUNTIME_ACCEPTANCE_V3_FAIL_CLOSED_EVIDENCE",
-    "measured_runtime_acceptance": "every complete continuity-guarded supervisory decision callback must be <600 s and score==execute plus continuity must be explicitly true"
-  },
-  "rainfall_runtime": {
-    "causal_forecast": "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92)",
-    "default_scenario_multipliers": [1.0],
-    "future_realized_rainfall_used": false,
-    "robust_mpc_claim_allowed_with_default": false,
-    "interpretation": "default V128 remains deterministic causal forecast MPC; multi-scenario robust claims require separately frozen forecast and matching gradient evidence"
-  },
+  "rainfall": {"forecast": "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92)", "scenario_multipliers": [1.0], "future_truth_online": false, "robust_claim": false},
+  "hardware": {"gpu": "RTX 4060 8GB", "ram_gb": 16, "swmm_workers_max": 16, "swmm_threads_per_process": 1, "matmul_default": "high", "matmul_check": "highest", "amp": false, "activation_checkpointing": false},
   "entrypoints": {
-    "execution_registry": "configs/project7_execution_registry.json",
+    "training": "scripts/run_step2_current.py",
+    "runtime": "scripts/run_policy_current.py",
+    "seven_strategy": "scripts/run_seven_strategies_current.py",
     "preflight": "rtc-v128-preflight",
-    "step2_training": "scripts/run_step2_v128_control_4060.py",
-    "step2_model": "src/rtc/step2_differentiable_v128.py",
-    "step2_stage_a": "src/rtc/step2_train_v128_hydraulic.py",
-    "step2_training_objective": "src/rtc/step2_train_v128.py",
-    "step2_checkpoint": "src/rtc/checkpoint_v128.py",
-    "training_profile": "src/rtc/v128_control_profile.py",
-    "ranking_horizon_audit": "scripts/audit_step2_v128_fast.py",
-    "d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
-    "d5_gradient_fit_audit": "scripts/run_step2_v128_d5_gradient_fast.py",
-    "continuous_evidence": "scripts/build_v128_continuous_evidence.py",
-    "step3": "src/rtc/step3_mpc_v128.py",
-    "step3_runtime_cache": "src/rtc/step3_runtime_v128.py",
-    "controller": "src/rtc/controller_v128.py",
-    "runtime": "scripts/run_policy_v128.py",
-    "runtime_acceptance": "src/rtc/runtime_evidence_v128.py",
-    "seven_strategy_development": "scripts/run_seven_strategies_v128.py",
-    "tests": [
-      "tests/test_current_step2_routing.py",
-      "tests/test_v128_control_profile.py",
-      "tests/test_v128_typed_surrogate.py",
-      "tests/test_v128_engineering.py",
-      "tests/test_v128_mpc_runtime.py"
-    ]
+    "ranking": "scripts/audit_step2_v128_fast.py",
+    "d2": "scripts/audit_step2_v128_d2_gradients_fast.py",
+    "d5": "scripts/run_step2_v128_d5_gradient_fast.py",
+    "evidence": "scripts/build_v128_continuous_evidence.py"
   },
-  "required_comparison": {
-    "same_seed_and_data_splits": true,
-    "architecture_ablation_required": true,
-    "ranking_deadband_ablation_required": true,
-    "compare_matmul_high_vs_highest": true,
-    "metrics": [
-      "InternalHoldout D2/D3 hard TFV rank/pairwise/top1/selected regret",
-      "D2 and D5-AUDIT TFV gradient sign/cosine/MAE",
-      "H30-H360 hydraulic and TFV delta errors",
-      "authoritative development TFV/PFV across seven strategies",
-      "continuous vs RBC decision counts",
-      "guarded decision runtime p50/p95/max and deadline/fallback counts",
-      "target write/readback and score==execute"
-    ],
-    "promotion_rule": "do not replace V127 production identity unless the exact final V128 checkpoint improves control-identification evidence without material hydraulic regression and also improves or preserves authoritative closed-loop SWMM performance while measured guarded decision max remains below 600 s"
-  },
-  "boundaries": {
-    "validation_access": false,
-    "final_access": false,
-    "formal_access": false,
-    "policy_lock_access": false,
-    "new_swmm_required_for_step2_base_training": false,
-    "d5_audit_used_for_training": false,
-    "future_realized_rainfall_online": false,
-    "future_swmm_state_online": false,
-    "runtime_may_load_v127_checkpoint_as_v128": false,
-    "runtime_may_load_v128_checkpoint_as_v127": false,
-    "historical_run_step2_v127_py_may_be_called_current": false
-  }
+  "boundaries": {"validation": false, "final": false, "formal": false, "policy_lock": false, "future_swmm_state_online": false, "future_realized_rainfall_online": false},
+  "runtime_acceptance": {"decision_period_s": 600, "every_guarded_callback_lt_s": 600, "score_equals_execute_required": true, "target_readback_required": true}
 }
