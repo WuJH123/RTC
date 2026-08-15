@@ -70,9 +70,6 @@ def test_v128_equal_scalar_setting_sum_does_not_alias_typed_actions() -> None:
     predicted = torch.tensor([[0.1, 0.2]])
     response = torch.tensor([[0.6, 0.7]])
 
-    # Both actions have the same raw setting sum at n0/n1. The V127 two-scalar direct
-    # context would therefore be identical. V128 must preserve which physical device
-    # received which target.
     first = model._typed_action_context(
         state=state,
         setting=torch.tensor([[0.8, 0.2]]),
@@ -156,5 +153,5 @@ def test_v128_checkpoint_round_trip_and_contract_isolation(tmp_path) -> None:
         },
         fake,
     )
-    with pytest.raises(ValueError, match="not a V128"):
+    with pytest.raises(ValueError, match="not a current V128"):
         load_step2_v128(fake, graph=graph, device="cpu")
