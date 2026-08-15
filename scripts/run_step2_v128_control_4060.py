@@ -1,16 +1,9 @@
 """Train the V128 typed actuator-message Step2 on the canonical streaming pipeline.
 
-The large memory-safe data/training loop remains single-sourced in
-``run_step2_v127_control_streaming.py``.  V128 substitutes only explicit versioned hooks:
-
-* typed/physics-aware actuator-to-node message architecture;
-* full within-group candidate ranking across GPU microbatches;
-* contract-strict V128 checkpoint saver;
-* 1 m3 absolute action-ranking floor (no event-size proportional deadband);
-* RTX-4060 FP32 matmul execution profile.
-
-The wrapper also redirects output names so a V128 checkpoint/report can never be mistaken
-for V127.  No SWMM labels, causal splits, horizons or authoritative truth are changed.
+The large memory-safe data/split loop remains single-sourced in
+``run_step2_v127_control_streaming.py``. V128 substitutes every component whose semantics
+change: typed architecture, typed Stage-A teacher forcing, full within-group ranking,
+strict checkpoint identity and the RTX-4060 execution profile.
 """
 from __future__ import annotations
 
@@ -28,6 +21,10 @@ from rtc.step2_train_v128 import (
     V128_OBJECTIVE_TRAINING_CONTRACT,
     train_objective_stage_streaming_v128,
 )
+from rtc.step2_train_v128_hydraulic import (
+    V128_HYDRAULIC_TRAINING_CONTRACT,
+    train_hydraulic_stage_streaming_v128,
+)
 from rtc.v128_control_profile import (
     V128_CONTROL_PROFILE_CONTRACT,
     build_v128_control_training_design,
@@ -35,7 +32,7 @@ from rtc.v128_control_profile import (
 )
 
 V128_STREAMING_RUN_CONTRACT = (
-    "PROJECT7_V128_TYPED_ACTUATOR_FULL_RANKING_4060_STREAMING_V3"
+    "PROJECT7_V128_TYPED_ACTUATOR_FULL_RANKING_4060_STREAMING_V4_STAGEA_ALIGNED"
 )
 V128_REPORT_FILENAME = "STEP2_V128_CONTROL_BASE_REPORT.json"
 V128_CHECKPOINT_FILENAME = "step2_v128_control_base.pt"
@@ -64,11 +61,9 @@ def main() -> None:
     runner = _load_v127_runner()
     out_dir = _cli_out_dir()
 
-    # Keep one canonical implementation of group streaming, causal split discipline,
-    # hydraulic teacher forcing and truncated rollout. V128 substitutes only the model,
-    # the decision-ranking objective and strict artifact contracts.
     runner.V127ControlTrainingDesign = build_v128_control_training_design
     runner.build_v127_model_from_graph = build_v128_model_from_graph
+    runner.train_hydraulic_stage_streaming_v127 = train_hydraulic_stage_streaming_v128
     runner.train_objective_stage_streaming_v127 = train_objective_stage_streaming_v128
     runner.V127_STREAMING_RUN_CONTRACT = V128_STREAMING_RUN_CONTRACT
 
@@ -86,7 +81,9 @@ def main() -> None:
             {
                 "v128_control_profile_contract": V128_CONTROL_PROFILE_CONTRACT,
                 "v128_step2_contract": V128_STEP2_CONTRACT,
+                "v128_hydraulic_training_contract": V128_HYDRAULIC_TRAINING_CONTRACT,
                 "v128_objective_training_contract": V128_OBJECTIVE_TRAINING_CONTRACT,
+                "typed_action_context_used_in_teacher_forcing": True,
                 "typed_physics_aware_actuator_messages": True,
                 "cross_microbatch_candidate_ranking": True,
                 "float32_matmul_precision": execution_profile[
