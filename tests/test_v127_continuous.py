@@ -283,3 +283,17 @@ def test_v127_residual_scale_preparation_is_bounded_and_finite() -> None:
     assert state.shape == (2,)
     assert flow.shape == (2,)
     assert np.isfinite(state).all() and np.isfinite(flow).all()
+
+
+def test_v127_denormalize_aligns_single_reference_axis() -> None:
+    from rtc.step2_train_v127 import _denormalize_group
+    batch = SimpleNamespace(
+        initial_state=torch.zeros(1, 3, 2), rainfall=torch.zeros(1, 4, 3, 1),
+        previous_actuator_flow=torch.zeros(1, 2), flow_mean=np.zeros(2), flow_std=np.ones(2),
+        true_reference_states=torch.zeros(1, 4, 3, 2), true_candidate_states=torch.zeros(1, 2, 4, 3, 2),
+        true_reference_flows=torch.zeros(1, 4, 2), true_candidate_flows=torch.zeros(1, 2, 4, 2),
+        reference_settings=torch.zeros(1, 4, 2), candidate_settings=torch.zeros(1, 2, 4, 2),
+    )
+    norm = SimpleNamespace(state_std=np.ones(2), state_mean=np.zeros(2), rainfall_std=np.ones(1), rainfall_mean=np.zeros(1), flow_std=np.ones(2), flow_mean=np.zeros(2))
+    out = _denormalize_group(batch, norm)
+    assert out["states"].shape[0] == 3 and out["flows"].shape[0] == 3

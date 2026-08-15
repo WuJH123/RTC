@@ -111,8 +111,14 @@ def _denormalize_group(
         batch.previous_actuator_flow * tensor(normalization.flow_std).clamp_min(1e-6)
         + tensor(normalization.flow_mean)
     )
-    states = torch.cat((batch.true_reference_states, batch.true_candidate_states), dim=1)[0]
-    flows = torch.cat((batch.true_reference_flows, batch.true_candidate_flows), dim=1)[0]
+    ref_states, cand_states = batch.true_reference_states, batch.true_candidate_states
+    ref_flows, cand_flows = batch.true_reference_flows, batch.true_candidate_flows
+    if ref_states.ndim == cand_states.ndim - 1:
+        ref_states = ref_states[:, None]
+    if ref_flows.ndim == cand_flows.ndim - 1:
+        ref_flows = ref_flows[:, None]
+    states = torch.cat((ref_states, cand_states), dim=1)[0]
+    flows = torch.cat((ref_flows, cand_flows), dim=1)[0]
     settings = torch.cat((batch.reference_settings[:, None], batch.candidate_settings), dim=1)[0]
     branches = int(settings.shape[0])
     if states.shape[0] != branches or flows.shape[0] != branches:
