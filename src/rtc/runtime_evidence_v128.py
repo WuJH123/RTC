@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 
 V128_RUNTIME_ACCEPTANCE_CONTRACT = (
-    "PROJECT7_V128_AUTHORITATIVE_600S_RUNTIME_ACCEPTANCE_V2_GUARDED_CALLBACK"
+    "PROJECT7_V128_AUTHORITATIVE_600S_RUNTIME_ACCEPTANCE_V3_FAIL_CLOSED_EVIDENCE"
 )
 
 
@@ -52,9 +52,6 @@ def audit_v128_runtime_decisions(
             fallback += 1
         diagnostics = row.get("diagnostics") or {}
 
-        # The hard 600-s acceptance uses the complete guarded supervisory callback. Older
-        # inner-controller timing is retained only as a diagnostic and cannot substitute
-        # for the guarded measurement in a V128 authoritative run.
         guarded_runtime = diagnostics.get("guarded_decision_runtime_seconds")
         if guarded_runtime is None:
             raise ValueError(
@@ -82,11 +79,15 @@ def audit_v128_runtime_decisions(
                 or diagnostics.get("continuous_optimizer_deadline_exceeded", False)
             )
         )
-        if diagnostics.get("score_equals_execute") is False:
+
+        # These are hard evidence contracts, not optional diagnostics.  Missing fields are
+        # failures because otherwise an old controller/guard could silently pass a V128
+        # runtime audit without proving the exact scored target was executable unchanged.
+        if diagnostics.get("score_equals_execute") is not True:
             score_execute_failures += 1
-        if diagnostics.get("score_equals_execute_under_engineering_envelope") is False:
+        if diagnostics.get("score_equals_execute_under_engineering_envelope") is not True:
             score_execute_failures += 1
-        if diagnostics.get("continuity_guard_passed") is False:
+        if diagnostics.get("continuity_guard_passed") is not True:
             continuity_failures += 1
 
     runtime_array = np.asarray(runtimes, dtype=float)
@@ -136,8 +137,9 @@ def audit_v128_runtime_decisions(
         "sources": sources,
         "interpretation": (
             "passed proves the measured authoritative run completed every full guarded "
-            "supervisory decision inside the 600-s control period; it is not a universal "
-            "worst-case industrial hard-real-time guarantee on other hardware/events"
+            "supervisory decision inside the 600-s control period and explicitly proved "
+            "score==execute plus continuity; it is not a universal worst-case industrial "
+            "hard-real-time guarantee on other hardware/events"
         ),
     }
     return payload
