@@ -13,6 +13,21 @@ from rtc.production_cli import _load_graph
 from rtc.step2_differentiable_v128_edge import build_v128_edge_aware_model_from_graph
 
 
+def _delegate_help() -> None:
+    """Show the delegated spatial-audit help without requiring edge-only arguments first."""
+    print(
+        "Edge-aware spatial-audit wrapper option: --edge-physics <EDGE_PHYSICS.npz>.\n"
+        "Delegated current spatial-audit options follow:\n",
+        flush=True,
+    )
+    previous = sys.argv
+    try:
+        sys.argv = [previous[0], "--help"]
+        audit.main()
+    finally:
+        sys.argv = previous
+
+
 def _extract(argv: list[str]) -> tuple[str, list[str]]:
     p = argparse.ArgumentParser(add_help=False)
     p.add_argument("--edge-physics", required=True)
@@ -21,7 +36,12 @@ def _extract(argv: list[str]) -> tuple[str, list[str]]:
 
 
 def main() -> None:
-    edge_path, remaining = _extract(sys.argv[1:])
+    argv = list(sys.argv[1:])
+    if any(value in {"-h", "--help"} for value in argv):
+        _delegate_help()
+        return
+
+    edge_path, remaining = _extract(argv)
     try:
         checkpoint = Path(remaining[remaining.index("--stage-checkpoint") + 1])
         graph_path = remaining[remaining.index("--graph") + 1]
@@ -29,7 +49,7 @@ def main() -> None:
         raise ValueError("edge spatial audit requires --stage-checkpoint and --graph") from exc
     graph = _load_graph(graph_path)
     artifact = load_edge_physics_artifact_v128(edge_path, graph)
-    payload = torch.load(checkpoint, map_location="cpu")
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=True)
     state = dict(payload.get("model_state_dict") or {})
     saved_edge = state.get("transition.edge_static_features")
     saved_length = state.get("transition.edge_effective_length_m")
