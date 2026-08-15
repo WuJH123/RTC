@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_V5_NO_AMBIGUOUS_CURRENT_SURFACE",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_V6_NO_AMBIGUOUS_CURRENT_SURFACE",
   "production": {
     "status": "CURRENT_UNTIL_V128_EMPIRICALLY_PROMOTED",
     "project_contract": "PROJECT7_V127_CONTINUOUS_DIFFERENTIABLE_MPC_CORRECTNESS_V2",
@@ -15,7 +15,7 @@
     "checkpoint_contract": "PROJECT7_V128_STEP2_CHECKPOINT_V3_MODEL_AND_TRAINING_SOURCE_STRICT",
     "step3_contract": "PROJECT7_V128_109ACT_H120_PER_ACTUATOR_ENVELOPE_LBFGSB_MPC_V1_ANYTIME",
     "engineering_envelope_contract": "PROJECT7_V128_PER_ACTUATOR_ENGINEERING_ENVELOPE_V2_SOURCE_SEMANTICS_STRICT",
-    "runtime_acceptance_contract": "PROJECT7_V128_AUTHORITATIVE_600S_RUNTIME_ACCEPTANCE_V2_GUARDED_CALLBACK",
+    "runtime_acceptance_contract": "PROJECT7_V128_AUTHORITATIVE_600S_RUNTIME_ACCEPTANCE_V3_FAIL_CLOSED_EVIDENCE",
     "base_training": "scripts/run_step2_v128_control_4060.py",
     "ranking_horizon_audit": "scripts/audit_step2_v128_fast.py",
     "d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
@@ -34,7 +34,7 @@
     "never project a scored V128 command after MPC; engineering envelope must be inside the differentiable decoder",
     "never let a custom engineering envelope masquerade as IDEALIZED_DEFAULT_0P5_PER_10MIN",
     "never claim a custom per-actuator engineering envelope is D5-validated using the historical idealized 0.5 decoder",
-    "never call a measured authoritative V128 run real-time unless every guarded supervisory callback is <600 seconds",
+    "never call a measured authoritative V128 run real-time unless every guarded supervisory callback is <600 seconds and score==execute plus continuity are explicitly true",
     "never access Validation/Final/Formal/Policy Lock while V128 remains development-only"
   ]
 }
