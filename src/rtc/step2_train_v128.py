@@ -1,16 +1,16 @@
 """V128 control-identification training extensions.
 
 The V127 streaming objective is memory-safe on an 8-GB GPU, but candidate-candidate
-pairwise supervision is formed only inside each small GPU microbatch.  With 24 candidates
+pairwise supervision is formed only inside each small GPU microbatch. With 24 candidates
 and a chunk of two, most within-state action-order pairs never contribute a direct ranking
 term in an epoch.
 
-V128 keeps the same small H360 microbatch but stores each completed candidate's smooth TFV
-prediction as a detached scalar.  Later microbatches compare their live predictions with
-all earlier detached predictions.  Because the optimizer is stepped only after the whole
-counterfactual group, those detached values were produced by the same parameter snapshot.
-This yields full within-group candidate-pair ranking coverage without retaining earlier
-H360 autograd graphs in VRAM.
+V128 stores each completed candidate's smooth TFV prediction as a detached scalar. Later
+microbatches compare live predictions with all earlier predictions. The optimizer steps
+only after the whole counterfactual group, so detached values come from the same parameter
+snapshot while earlier H360 autograd graphs can be released. Pair losses are accumulated
+as sums and divided by the exact group-level informative-pair count; therefore the ranking
+objective is invariant to the chosen GPU microbatch partition.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 
 from .step2_train_response_v60 import InputNormalizationV60
-from .step2_train_v127 import _branch_indices, _ordered, _static, _truth_node_volume
+from .step2_train_v127 import _ordered, _static, _truth_node_volume
 from .step2_train_v127_control import (
     V127ControlTrainingDesign,
     _candidate_permutation,
@@ -38,7 +38,7 @@ from .step2_train_v127_streaming import (
 )
 
 V128_OBJECTIVE_TRAINING_CONTRACT = (
-    "PROJECT7_V128_H360_FULL_WITHIN_GROUP_RANKING_CPU_STREAM_GPU_MICROBATCH_V1"
+    "PROJECT7_V128_H360_FULL_WITHIN_GROUP_RANKING_MICROBATCH_INVARIANT_V2"
 )
 
 
@@ -60,7 +60,7 @@ def _candidate_loss_v128(
     informative_threshold: float,
     previous_truth_delta: torch.Tensor | None,
     previous_smooth_delta: torch.Tensor | None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, int]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int]:
     output = model.objective_rollout(
         initial_state=chunk["initial"],
         rainfall=chunk["rainfall"],
@@ -98,11 +98,27 @@ def _candidate_loss_v128(
         smooth_delta / delta_scale, true_delta / delta_scale, beta=0.5
     )
 
+    # Candidate reconstruction/action-effect losses remain candidate-mean quantities and
+    # are weighted by chunk_n / candidate_count in the caller.
+    base_loss = (
+        design.node_flood_weight * node_effect
+        + design.tfv_weight * (hard_abs + hard_delta_loss + smooth_delta_loss)
+    )
+    retained = _retained(true_delta.device)
+    pred_states = output.rollout.states.index_select(1, retained)
+    state_loss = F.smooth_l1_loss(
+        (pred_states - chunk["states"].index_select(1, retained))
+        / model.transition.state_std,
+        torch.zeros_like(pred_states),
+        beta=0.5,
+    )
+    base_loss = base_loss + design.rollout_state_weight * state_loss
+
     pair_terms: list[torch.Tensor] = []
     reference_pairs = 0
     candidate_pairs = 0
     informative = torch.abs(true_delta) > float(informative_threshold)
-    reference_pairs += int(informative.sum().item())
+    reference_pairs = int(informative.sum().item())
     if bool(informative.any()):
         pair_terms.append(
             F.softplus(
@@ -112,7 +128,7 @@ def _candidate_loss_v128(
             )
         )
 
-    # Pairs within the current GPU microbatch keep gradients on both candidates.
+    # Within-current-microbatch pairs retain gradients on both candidates.
     if len(true_delta) > 1:
         ii, jj = torch.triu_indices(
             len(true_delta), len(true_delta), offset=1, device=true_delta.device
@@ -126,9 +142,8 @@ def _candidate_loss_v128(
                 F.softplus(-torch.sign(truth_pair[keep]) * pred_pair[keep] / delta_scale)
             )
 
-    # Cross-microbatch pairs: previous predictions are detached so VRAM does not scale with
-    # group candidate count. Parameters have not stepped yet, therefore these are not stale
-    # model predictions; only the earlier autograd graphs are intentionally discarded.
+    # Cross-microbatch pairs keep the current graph only. Earlier predictions are detached
+    # but were produced before any optimizer step, so they share the same parameter snapshot.
     if previous_truth_delta is not None and previous_smooth_delta is not None:
         truth_pair = true_delta[:, None] - previous_truth_delta[None, :]
         pred_pair = smooth_delta[:, None] - previous_smooth_delta.detach()[None, :]
@@ -139,32 +154,33 @@ def _candidate_loss_v128(
                 F.softplus(-torch.sign(truth_pair[keep]) * pred_pair[keep] / delta_scale)
             )
 
-    pair_loss = (
-        torch.cat([term.reshape(-1) for term in pair_terms]).mean()
+    pair_sum = (
+        torch.cat([term.reshape(-1) for term in pair_terms]).sum()
         if pair_terms
         else smooth_delta.new_zeros(())
     )
-    retained = _retained(true_delta.device)
-    pred_states = output.rollout.states.index_select(1, retained)
-    state_loss = F.smooth_l1_loss(
-        (pred_states - chunk["states"].index_select(1, retained))
-        / model.transition.state_std,
-        torch.zeros_like(pred_states),
-        beta=0.5,
-    )
-    loss = (
-        design.node_flood_weight * node_effect
-        + design.tfv_weight * (hard_abs + hard_delta_loss + smooth_delta_loss)
-        + design.pairwise_weight * pair_loss
-        + design.rollout_state_weight * state_loss
-    )
     return (
-        loss,
+        base_loss,
+        pair_sum,
         true_delta.detach(),
         smooth_delta.detach(),
         reference_pairs,
         candidate_pairs,
     )
+
+
+def _informative_pair_totals(
+    true_delta: np.ndarray, *, threshold: float
+) -> tuple[int, int, int]:
+    values = np.asarray(true_delta, dtype=np.float64).reshape(-1)
+    reference = int(np.sum(np.abs(values) > float(threshold)))
+    if len(values) < 2:
+        return reference, 0, reference
+    ii, jj = np.triu_indices(len(values), k=1)
+    candidate = int(
+        np.sum(np.abs(values[ii] - values[jj]) > float(threshold))
+    )
+    return reference, candidate, reference + candidate
 
 
 def train_objective_stage_streaming_v128(
@@ -178,7 +194,7 @@ def train_objective_stage_streaming_v128(
     flood_rate_index: int,
     design: V127ControlTrainingDesign,
 ) -> list[dict[str, float | int | str]]:
-    """H360 objective with full within-state ranking and bounded GPU memory."""
+    """H360 objective with exact full within-state ranking and bounded GPU memory."""
     design.validate()
     static = _static(graph, device)
     model.train().to(device)
@@ -195,6 +211,8 @@ def train_objective_stage_streaming_v128(
         total_candidates = 0
         reference_pair_terms = 0
         candidate_pair_terms = 0
+        expected_reference_pairs = 0
+        expected_candidate_pairs = 0
         possible_candidate_pairs = 0
         for source, name in _ordered(source_groups, epoch + 17, design.seed):
             cpu = _cpu_group(source_caches[source], name, normalization)
@@ -226,6 +244,11 @@ def train_objective_stage_streaming_v128(
                 device=device,
             )
             threshold = informative_pair_threshold_v127(float(true_tfv_np[0]), design)
+            group_ref_total, group_cand_total, group_pair_total = _informative_pair_totals(
+                true_delta_np, threshold=threshold
+            )
+            expected_reference_pairs += group_ref_total
+            expected_candidate_pairs += group_cand_total
             optimizer.zero_grad(set_to_none=True)
 
             ref = _select_to_device(cpu, [0], device=device, include_truth=True)
@@ -270,6 +293,8 @@ def train_objective_stage_streaming_v128(
 
             previous_truth: list[torch.Tensor] = []
             previous_pred: list[torch.Tensor] = []
+            seen_ref = 0
+            seen_cand = 0
             order = _candidate_permutation(
                 candidate_count, group_name=name, epoch=epoch, seed=design.seed
             )
@@ -279,17 +304,16 @@ def train_objective_stage_streaming_v128(
                 truth_chunk = torch.as_tensor(
                     truth_np[positions], dtype=torch.float32, device=device
                 )
-                memory_truth = (
-                    torch.cat(previous_truth)
-                    if previous_truth
-                    else None
-                )
-                memory_pred = (
-                    torch.cat(previous_pred)
-                    if previous_pred
-                    else None
-                )
-                loss, true_delta, smooth_delta, ref_pairs, cand_pairs = _candidate_loss_v128(
+                memory_truth = torch.cat(previous_truth) if previous_truth else None
+                memory_pred = torch.cat(previous_pred) if previous_pred else None
+                (
+                    base_loss,
+                    pair_sum,
+                    true_delta,
+                    smooth_delta,
+                    ref_pairs,
+                    cand_pairs,
+                ) = _candidate_loss_v128(
                     model,
                     chunk=chunk,
                     truth_volume=truth_chunk,
@@ -307,24 +331,47 @@ def train_objective_stage_streaming_v128(
                     previous_truth_delta=memory_truth,
                     previous_smooth_delta=memory_pred,
                 )
-                weight = float(len(positions)) / float(candidate_count)
-                weighted = loss * weight
+                candidate_weight = float(len(positions)) / float(candidate_count)
+                weighted = base_loss * candidate_weight
+                if group_pair_total > 0:
+                    weighted = weighted + design.pairwise_weight * (
+                        pair_sum / float(group_pair_total)
+                    )
                 if not bool(torch.isfinite(weighted)):
                     raise RuntimeError(f"{name}: V128 candidate objective loss non-finite")
                 weighted.backward()
                 group_loss += float(weighted.detach())
+                seen_ref += int(ref_pairs)
+                seen_cand += int(cand_pairs)
                 reference_pair_terms += int(ref_pairs)
                 candidate_pair_terms += int(cand_pairs)
                 previous_truth.append(true_delta)
                 previous_pred.append(smooth_delta)
-                del chunk, truth_chunk, loss, weighted, true_delta, smooth_delta
+                del (
+                    chunk,
+                    truth_chunk,
+                    base_loss,
+                    pair_sum,
+                    weighted,
+                    true_delta,
+                    smooth_delta,
+                )
+            if seen_ref != group_ref_total or seen_cand != group_cand_total:
+                raise RuntimeError(
+                    f"{name}: V128 pair partition incomplete: "
+                    f"reference {seen_ref}/{group_ref_total}, candidate {seen_cand}/{group_cand_total}"
+                )
             torch.nn.utils.clip_grad_norm_(model.parameters(), design.grad_clip)
             optimizer.step()
             records.append(group_loss)
             total_candidates += candidate_count
             del cpu, ref, ref_volume, previous_truth, previous_pred
 
-        row: dict[str, float | int | str] = {
+        if reference_pair_terms != expected_reference_pairs:
+            raise RuntimeError("V128 epoch reference-pair coverage is incomplete")
+        if candidate_pair_terms != expected_candidate_pairs:
+            raise RuntimeError("V128 epoch candidate-pair coverage is incomplete")
+        row: dict[str, float | int | str | bool] = {
             "stage": "h360_v128_full_within_group_ranking_cpu_stream_gpu_microbatch",
             "contract": V128_OBJECTIVE_TRAINING_CONTRACT,
             "epoch": epoch,
@@ -334,12 +381,16 @@ def train_objective_stage_streaming_v128(
             "candidate_coverage_fraction": 1.0 if total_candidates else 0.0,
             "objective_candidate_chunk": int(design.objective_candidate_chunk),
             "informative_reference_pair_terms": int(reference_pair_terms),
+            "informative_reference_pair_expected": int(expected_reference_pairs),
             "informative_candidate_pair_terms": int(candidate_pair_terms),
-            "candidate_pair_partition_coverage": (
+            "informative_candidate_pair_expected": int(expected_candidate_pairs),
+            "candidate_pair_partition_complete": True,
+            "informative_candidate_pair_fraction": (
                 float(candidate_pair_terms) / float(possible_candidate_pairs)
                 if possible_candidate_pairs
                 else 0.0
             ),
+            "pair_loss_global_mean_invariant_to_microbatch_partition": True,
             "cross_microbatch_pairwise_memory": "detached_same_parameter_snapshot",
             "ranking_threshold": "absolute SWMM effect floor from V128 training design",
             **_cuda_peak(device),
@@ -358,5 +409,6 @@ def train_objective_stage_streaming_v128(
 
 __all__ = [
     "V128_OBJECTIVE_TRAINING_CONTRACT",
+    "_informative_pair_totals",
     "train_objective_stage_streaming_v128",
 ]
