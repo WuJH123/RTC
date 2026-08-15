@@ -1,133 +1,117 @@
 # Project7 — TFV-first continuous real-time control methodology testbed
 
-This repository implements an **idealized EPA-SWMM urban-drainage real-time-control methodology test** on a simplified Wuhan network. It is **not** a field-calibrated Wuhan digital twin and does not certify field actuator capability.
+This repository implements an **idealized EPA-SWMM urban-drainage RTC methodology test** on a simplified Wuhan network. It is **not** a field-calibrated digital twin. SWMM is the authoritative hydraulic truth.
 
-## Current research target
+## Frozen control problem
 
-Every 600 s, the current method:
+Every 600 s:
 
 ```text
 causal sparse sensing
-  -> Step1 current full-network state reconstruction
-  -> typed/physics-aware differentiable action-conditioned Step2 surrogate
-  -> H360 prediction + 12 x 109 continuous 10-min target fractions over H120
-  -> per-actuator engineering envelope inside the differentiable decoder
-  -> execute only the first 10-min target
-  -> authoritative SWMM target write/readback
-  -> re-observe and re-optimize
+ -> Step1 full-network current-state reconstruction
+ -> differentiable action-conditioned Step2 surrogate
+ -> H360 prediction / H120 free control / 109 continuous actuators
+ -> engineering envelope inside differentiable decoder
+ -> execute only first 10-min target
+ -> SWMM write/readback
+ -> re-observe and re-optimize
 ```
 
-Scientific hierarchy:
+Scientific hierarchy: **system-wide cumulative TFV primary**, Priority8 PFV **one-sided soft secondary**, Global Peak **report-only**. Model/observation step is 300 s; control update 600 s; 12 x 109 = 1308 free MPC variables.
 
-- **system-wide cumulative TFV is the primary objective**;
-- Priority8 PFV is a **one-sided soft secondary** quantity;
-- Global Peak is **report-only**;
-- authoritative truth is **SWMM**.
+## Debug first, full last
 
-The default online rainfall forecast is causal deterministic persistence/decay. It must not be described as robust/stochastic MPC unless a separate multi-scenario forecast/evidence contract is frozen.
-
-Frozen timing:
+The current development priority is to find weak Proposal components quickly and reject bad ideas before a multi-hour full run. `scripts/run_step2_current.py` therefore has **no default training cost**: the caller must choose one of:
 
 ```text
-model / observation step       300 s
-supervisory control update     600 s
-prediction horizon             72 x 5 min = 360 min
-free control horizon           12 x 10 min = 120 min
-execute                         first 10 min target only
+--profile smoke   tiny deterministic Development subset; nonfinal
+--profile dev     larger deterministic Development proxy; nonfinal
+--profile full    canonical scientific Development training
 ```
 
-## One current execution surface
+`smoke` and `dev` preserve the 109-actuator/H360/V128/exact-pairwise code path but reduce data coverage and repetitions. They cannot create a strict final checkpoint and cannot enter D5/runtime/Policy Lock. Only explicit `--profile full` can create the strict V6 V128 base checkpoint.
 
-Do not select scripts from historical version numbers. Start only from:
-
-- `CODEX_START_HERE.md` — complete current execution order;
-- `configs/step2_current_contract.json` — machine-readable research/method contract;
-- `configs/project7_execution_registry.json` — canonical routing;
-- `configs/v128_control_execution.json` — selected implementation/hardware contract.
-
-Stable user/Codex entrypoints:
+Recommended funnel:
 
 ```text
+unit/preflight
+ -> smoke one-group profiler
+ -> smoke
+ -> spatial/ranking/gradient diagnosis
+ -> dev
+ -> reject or promote
+ -> full once
+ -> D5 + authoritative Development closed loop
+ -> seven-strategy Development comparison
+ -> Policy Lock only after gates
+```
+
+Stage checkpoints (`stage_a.pt`, `stage_b0.pt`, `stage_objective.pt`) make Stage-A/B0 recomputation avoidable after compatible interruptions. They are explicitly NONFINAL and fail closed on profile/graph/data/design mismatch.
+
+## Current P0 correctness fixes
+
+The exact H360 objective now uses one **canonical float32 SWMM candidate TFV delta** for informative-pair census, reported pair loss and live directed gradient. This eliminates threshold-partition drift caused by mixing NumPy float64 census sums with float32 CUDA reductions around the frozen 1 m3 action-effect floor.
+
+Current strict checkpoint:
+
+```text
+PROJECT7_V128_STEP2_CHECKPOINT_V6_CURRENT_PROFILE_TRAINING_SOURCE_STRICT
+```
+
+It rejects smoke/dev artifacts, stale model/training source, graph/schema/time mismatch and old V127/V128 checkpoint contracts.
+
+## Spatial/action-effect diagnostics
+
+A control facility can influence nodes many graph hops away. Current V128 already propagates effects recursively, but long-range accuracy must be measured rather than assumed.
+
+Current Development diagnostics:
+
+```text
+scripts/audit_step2_spatial_current.py
+    held-out D2 action-effect sign/magnitude at 1-3 / 4-6 / 7-12 / 13+ hops
+
+scripts/audit_step1_global_attention_current.py
+    frozen Step1 vs V122 sensor-to-all-node attention on identical held-out windows
+
+scripts/build_edge_physics_current.py
+scripts/run_step2_edge_aware_dev.py
+scripts/audit_step2_edge_spatial_current.py
+    Development-only V128 edge-aware ablation using SWMM link physics + dynamic head gradients
+
+scripts/build_hydraulic_influence_current.py
+    Development-only sparse remote influence shortcut candidates from D2 TrainFit only
+```
+
+These experiments are not automatically promoted. Global-attention Step1 requires a rebuilt causal state store and complete Step2 retraining if selected. Edge-aware/influence variants must first improve held-out spatial/ranking/gradient evidence.
+
+## Physics diagnostics
+
+V128 actuator injection is locally conservative, but the current Step2 state does not expose every SWMM node-loss term or ordinary conduit dynamic flow. `src/rtc/physics_diagnostics_v128.py` therefore provides a diagnostic continuity proxy and a conduit-flow-label readiness gate; it deliberately does **not** enable an incomplete physics loss or fabricate link-flow labels.
+
+## One current user surface
+
+Start from:
+
+```text
+CODEX_START_HERE.md
+configs/step2_current_contract.json
+configs/project7_execution_registry.json
+configs/v128_control_execution.json
+```
+
+Stable entrypoints:
+
+```text
+rtc-current-preflight
 scripts/run_step2_current.py
 scripts/run_policy_current.py
 scripts/run_seven_strategies_current.py
 ```
 
-Current internal Step2 implementation uses the V128 typed actuator-message architecture and the two-pass exact full within-group pairwise first-order training objective:
+The obsolete full-only `scripts/run_step2_v128_control_4060.py` and detached `src/rtc/step2_train_v128.py` are deleted. Historical V127 modules that remain are archival or still-used shared implementations; they are not user entrypoints.
 
-```text
-src/rtc/step2_differentiable_v128.py
-src/rtc/step2_train_v128_hydraulic.py
-src/rtc/step2_train_v128_exact.py
-src/rtc/checkpoint_v128.py
-```
+## Boundaries
 
-Versioned V127 modules that remain in the repository are either archival implementations or audited shared orchestration used internally. They are not current user entrypoints.
+No future realised rainfall/state/Internal trajectory online. No Validation/Final/Formal/Policy Lock during development. Do not claim robust/stochastic MPC for the default deterministic persistence/decay rainfall forecast. Do not project an action after scoring. Ranking, D2 and D5 evidence for promotion must reference the identical final Step2 SHA256. A real-time claim additionally requires every guarded decision <600 s plus explicit score==execute, continuity and same-epoch target readback.
 
-## Control/action semantics
-
-All 109 writable actuators are eligible. MPC optimizes 1308 free variables: 12 future 10-min target fractions x 109 actuators.
-
-Engineering bounds and target-rate limits are applied **inside the differentiable fraction-to-target decoder before scoring**, so the scored action is the action that can be executed. Post-score projection is not allowed.
-
-The historical default envelope uses graph min/max bounds plus a 0.5 target change per 10 min. This is an **idealized methodology assumption**, not a field-device claim. A custom per-actuator envelope requires matching decoder-space D5 evidence.
-
-The supervisory slew anchor is the previous issued `target_setting`. Realised `current_setting` is hydraulic state/tracking diagnostic and may lag the target.
-
-## Step2 scientific role
-
-Step2 must learn decision-relevant hydraulic/action consequences, not just low average state error. Current V128 removes two previous failure modes:
-
-1. actuator settings are no longer collapsed into lossy per-node scalar sums; each actuator contributes a typed/physics-aware, direction-aware message using endpoint state, setting, previous/predicted managed flow, responsiveness, physical/type features and actuator identity;
-2. H360 candidate ranking uses a two-pass same-parameter-snapshot construction so full within-state pairwise **first-order gradients** are recovered while only one GPU microbatch autograd graph is resident at a time.
-
-The training ranking floor is a fixed 1 m3 SWMM action-effect threshold; event magnitude does not enlarge the training deadband.
-
-## Causality and data boundaries
-
-Allowed online information:
-
-- frozen sparse sensor observations/history;
-- realised rainfall observed up to the current time;
-- actuator current/target readback;
-- causal rainfall forecast derived from observed history.
-
-Forbidden online information:
-
-- future realised rainfall;
-- future SWMM hydraulic/flooding state;
-- future Internal-RTC trajectory;
-- Validation/Final/Formal truth.
-
-Development training must not use InternalHoldout, D4-AUDIT, D5-AUDIT or D2 development-validation outcomes. Ranking, D2 and D5 evidence must all reference the identical final Step2 SHA256.
-
-## Checkpoint and runtime correctness
-
-A current Step2 checkpoint is fail-closed against:
-
-- model-source semantic changes;
-- exact-training-source semantic changes;
-- graph/schema/time-contract mismatch;
-- V127/older-V128 checkpoint mixing.
-
-A real-time claim requires every complete continuity-guarded supervisory decision callback to finish in **less than 600 s**, with explicit score==execute, continuity and same-epoch SWMM target-write/readback evidence.
-
-## Authoritative comparison
-
-Exactly seven strategies are compared on the same event/clock/engine:
-
-1. Proposed current continuous differentiable MPC;
-2. No-control;
-3. Internal RTC;
-4. Auto-RBC;
-5. storage-volume EFD;
-6. All-open;
-7. All-closed.
-
-TFV/PFV are recomputed from authoritative node statistics. Global Peak is obtained by routing-step frozen-decision replay and remains report-only.
-
-## Development versus scientific promotion
-
-The current implementation is merged and maintained on `main` to remove repository routing ambiguity, but code/CI success is **not** Policy Lock or Final evidence. Promotion still requires same-checkpoint ranking/gradient evidence, acceptable H30-H360 hydraulic behavior, authoritative development TFV/PFV, and measured sub-600-s decisions without execution violations.
-
-See `CODEX_START_HERE.md` for the exact workstation commands and stop rules.
+See `CODEX_START_HERE.md` for the exact debug-first commands and stop rules.
