@@ -1,160 +1,158 @@
-# Project7 V128 P0-P3 code audit and remediation ledger
+# Project7 current P0-P3 code audit and remediation ledger
 
-Status: **development candidate only**. V127 remains the production identity until V128
-passes the same-checkpoint evidence and authoritative SWMM development comparison.
+Status: **current development implementation, not Policy Locked**. Merging the code to `main`
+removes repository routing ambiguity; it does not constitute scientific promotion or Final evidence.
 
-Scientific target is unchanged: sparse causal sensing -> Step1 current full-network state ->
-action-conditioned differentiable hydraulic surrogate -> 12x109 H120 continuous MPC inside
-H360 prediction -> execute first 600 s only -> authoritative SWMM re-observation. TFV is
-primary; Priority8 PFV is one-sided soft secondary; Global Peak is report-only.
+Frozen scientific target remains:
 
-## P0 — wrong execution/training contracts
+```text
+causal sparse sensing -> Step1 current full-network state
+-> typed differentiable hydraulic/action Step2
+-> 12 x 109 H120 continuous MPC inside H360
+-> execute first 600 s only -> authoritative SWMM re-observation
+```
 
-### P0.1 Stale Step2 trainer could be called canonical
+TFV is primary; Priority8 PFV is one-sided soft secondary; Global Peak is report-only.
 
-**Problem.** `scripts/run_step2_v127.py` and the memory-safe/current control-oriented
-`run_step2_v127_control_streaming.py` had different training semantics while current docs
-and configs could point to the old entrypoint.
+## P0 — execution and artifact identity
 
-**Fix.** Current V127 registry/guide now routes base training to
-`run_step2_v127_control_streaming.py`; `run_step2_v127.py` is explicitly historical.
-Regression coverage: `tests/test_current_step2_routing.py`.
+### P0.1 Multiple files claimed to be the single current start guide
 
-### P0.2 V128 typed model was initially incompatible with inherited Stage-A teacher forcing
+**Problem.** `CODEX_START_HERE_V069.md`, `CODEX_START_HERE_V127.md` and
+`CODEX_START_HERE_V128.md` each described themselves as current/single entrypoints.
 
-**Problem.** V127 Stage A directly called the legacy two-channel `_setting_context()` rather
-than `model.rollout()`. Replacing only the model builder would therefore bypass the typed
-V128 action path during teacher forcing.
+**Fix.** They were removed. `CODEX_START_HERE.md` is now the only root start guide. User/Codex
+training, runtime and seven-strategy entrypoints are stable and unversioned:
 
-**Fix.** `src/rtc/step2_train_v128_hydraulic.py` versions Stage A and uses the same typed
-endpoint-state/setting/flow/physics/identity message as online rollout. The V128 runner
-explicitly replaces both Stage A and H360 objective training.
+```text
+scripts/run_step2_current.py
+scripts/run_policy_current.py
+scripts/run_seven_strategies_current.py
+```
 
-### P0.3 V127/V128 checkpoint and evidence identities could otherwise be mixed
+### P0.2 Current contract still routed users to V127
 
-**Fix.** `src/rtc/checkpoint_v128.py` provides a distinct source-strict V128 checkpoint.
-V127 and V128 loaders reject each other's checkpoints. Model-behavior source SHA is checked
-at load time; package-local training-source SHA is recorded. Ranking, D2 and D5 evidence
-must describe the identical final Step2 file SHA before V128 continuous evidence can be
-compiled.
+**Problem.** `configs/step2_current_contract.json` and the execution registry still selected V127
+paths even after V128 became the active development implementation.
 
-### P0.4 V128 runtime called a nonexistent `ControllerConfig.validate()`
+**Fix.** Current routing now selects the unversioned surface. V127 files that remain are explicitly
+classified as archival or internal shared orchestration, never user entrypoints.
 
-**Problem.** `ControllerConfig` is a dataclass and has no `validate()` method. This would
-have failed immediately before authoritative runtime.
+### P0.3 Exact V128 pairwise implementation existed but canonical training still imported the old objective
 
-**Fix.** `scripts/run_policy_v128.py` now performs explicit H72/2x300-s/legacy-slew-off and
-runtime-budget checks rather than invoking a nonexistent API.
+**Problem.** `src/rtc/step2_train_v128_exact.py` implemented the two-pass exact first-order pairwise
+algorithm, while `scripts/run_step2_v128_control_4060.py` still imported the older detached-memory
+`src/rtc/step2_train_v128.py`. PR/docs could therefore claim exact gradients while a real local run
+executed the older objective.
+
+**Fix.** The canonical V128 implementation now imports only `step2_train_v128_exact`. The old
+`step2_train_v128.py` module was deleted. Regression tests verify the current runner source and the
+absence of the obsolete module.
+
+### P0.4 Typed V128 model versus inherited Stage-A teacher forcing
+
+**Problem.** Replacing only the V127 model builder would leave teacher forcing on the legacy action
+context.
+
+**Fix.** `src/rtc/step2_train_v128_hydraulic.py` owns current Stage A and uses the same typed
+endpoint-state/setting/flow/physics/identity action path used by online rollout.
+
+### P0.5 Checkpoint contract claimed training-source strictness without enforcing it
+
+**Problem.** the previous loader compared model-source SHA but only checked that training-source SHA
+looked syntactically valid. A checkpoint trained under the obsolete detached-memory objective could
+therefore load under current code.
+
+**Fix.** `PROJECT7_V128_STEP2_CHECKPOINT_V4_MODEL_AND_EXACT_TRAINING_SOURCE_STRICT` compares both
+current model-source and exact-training-source fingerprints. Either mismatch fails closed and requires
+retraining/re-audit. V127/older-V128 checkpoints are also rejected by contract.
 
 ## P1 — control-identification and engineering semantics
 
-### P1.1 Large events suppressed useful action-order labels
+### P1.1 Large-event action-order deadband
 
-**Problem.** V127 used `max(1 m3, 0.001 * reference TFV)` for explicit sign/ranking terms.
-Large floods could discard operationally relevant candidate differences.
+Current V128 uses a fixed 1 m3 SWMM action-effect floor for explicit ranking/sign supervision rather
+than scaling the training deadband with event TFV.
 
-**Fix.** V128 uses a frozen 1 m3 absolute action-effect floor; no event-size proportional
-ranking deadband.
+### P1.2 Physically different actuator combinations aliased by setting sums
 
-### P1.2 Direct hydraulic action context aliased physically different devices
+`src/rtc/step2_differentiable_v128.py` uses typed, direction-aware actuator-to-node messages containing
+upstream/downstream hydraulic state, target setting, previous/predicted managed flow, responsiveness,
+actuator physics/type features and actuator identity. Managed-flow injection remains a separate physical
+pathway.
 
-**Problem.** V127 direct context reduced all incident actuator targets to outgoing/incoming
-raw setting sums. Different pump/orifice/weir combinations could therefore have identical
-direct context even when their physical effects differ.
+### P1.3 Engineering envelope and score==execute
 
-**Fix.** `src/rtc/step2_differentiable_v128.py` uses typed/physics-aware actuator-to-node
-messages containing endpoint hydraulic state, setting, previous and predicted managed flow,
-responsiveness, actuator physics/type features and actuator identity. Physical flow injection
-remains a separate conservation-oriented pathway.
+`src/rtc/engineering_v128.py` defines ordered/hashable per-actuator min/max/max-delta semantics.
+`src/rtc/step3_mpc_v128.py` applies that envelope inside the differentiable decoder before scoring.
+Post-score projection is forbidden. The historical 0.5-per-10-min default is explicitly idealized,
+not a field-device claim, and a custom envelope requires matching decoder-space D5 evidence.
 
-### P1.3 Uniform 0.5 slew was implicit for heterogeneous devices
+### P1.4 Tracking lag versus supervisory command slew
 
-**Fix.** `src/rtc/engineering_v128.py` defines an ordered, hashable per-actuator envelope:
-min setting, max setting and max target change per 10 min. The historical 0.5 envelope is
-still available, but explicitly labeled idealized and cannot be presented as field-device
-truth. A file cannot spoof the idealized source label while changing bounds/rates.
+The hard command-rate anchor is the previous issued `target_setting`; realised `current_setting` is
+hydraulic state/tracking diagnostic. RBC warm-start/fallback and current MPC follow the same command
+semantics.
 
-### P1.4 Engineering projection had to preserve score==execute
+## P2 — exact ranking gradients and workstation efficiency
 
-**Fix.** `src/rtc/step3_mpc_v128.py` applies bounds/rates in the differentiable fraction-to-
-physical-target decoder before surrogate scoring. Post-score projection is forbidden.
-`src/rtc/controller_v128.py` revalidates every returned command, including fallback actions.
+### P2.1 Full within-state pairwise first-order gradient under 8-GB VRAM
 
-### P1.5 Sparse-RBC warm start/fallback used the wrong rate anchor under tracking lag
+`src/rtc/step2_train_v128_exact.py` uses two passes at one parameter snapshot:
 
-**Fix.** V128 may use physical current setting as hydraulic feedback, but its supervisory
-target is projected against the active target latch plus/minus the same per-actuator envelope
-before scoring. Runtime continuity also uses the previous supervisory target as the hard
-command-rate anchor.
+1. no-grad H360 pass caches every candidate smooth-TFV delta;
+2. gradient H360 pass recomputes candidates in small GPU microbatches;
+3. every live candidate is compared with all cached candidates;
+4. every informative unordered candidate pair is visited from both endpoints;
+5. directed terms are divided by the original unordered-pair denominator.
 
-## P2 — training coverage and workstation efficiency
+A pure autograd regression test compares this constructed gradient elementwise with the complete
+unordered pair-loss gradient. Only one H360 autograd microbatch is resident at a time.
 
-### P2.1 Candidate-candidate ranking was limited by GPU microbatch partition
+### P2.2 Repeated immutable graph tensors inside L-BFGS-B
 
-**Problem.** With 24 candidates and a two-candidate H360 microbatch, most within-state
-candidate pairs did not directly enter the pairwise objective.
+`src/rtc/step3_runtime_v128.py` caches topology, actuator endpoint/physics and static-node tensors by
+device/dtype. This is an execution optimization; scoring semantics are unchanged.
 
-**Fix.** `src/rtc/step2_train_v128.py` uses detached same-parameter-snapshot cross-microbatch
-prediction memory. Every informative candidate pair is covered without retaining prior H360
-autograd graphs. Pair loss is accumulated as a sum and divided by the exact group-level
-informative-pair count, so the ranking objective is invariant to microbatch partition.
+### P2.3 RTX 4060 / 16-GB execution profile
 
-### P2.2 Repeated immutable CPU->GPU graph tensor construction inside L-BFGS-B
+Current execution keeps CPU-group/GPU-microbatch training, AMP off and activation checkpointing off.
+FP32 matmul `high` is the default workstation profile and `highest` is the frozen numerical/runtime
+sensitivity comparison. SWMM generation should remain at <=16 workers and one SWMM thread/process on
+the stated 16-GB workstation.
 
-**Fix.** `src/rtc/step3_runtime_v128.py` caches topology, endpoint indices, actuator physics
-and static-node tensors per device/dtype. The scoring equations are unchanged.
+### P2.4 Real-time acceptance
 
-### P2.3 RTX 4060 / 16-GB workstation execution
+`src/rtc/runtime_controller_guard.py` measures the wrapped supervisory callback and
+`src/rtc/runtime_evidence_v128.py` requires exact 600-s decision spacing, every guarded callback below
+600 s, explicit score==execute and continuity evidence. Same-epoch SWMM target write/readback remains a
+separate authoritative execution audit.
 
-V128 reuses CPU-group/GPU-microbatch training. Default scientific execution keeps AMP and
-activation checkpointing off. `torch.set_float32_matmul_precision("high")` is available as
-an auditable performance profile; `highest` must be run as a frozen numerical-sensitivity
-comparison. Existing SWMM generation remains at no more than 16 workers, one SWMM thread
-per process, subject to RAM/IO telemetry.
+## P3 — version and evidence hygiene
 
-### P2.4 Real-time status previously relied on configured deadlines rather than measured run evidence
+- `CODEX_START_HERE.md` is the only current human execution guide.
+- `configs/step2_current_contract.json` defines the research/method surface.
+- `configs/project7_execution_registry.json` defines one current routing surface.
+- `configs/v128_control_execution.json` binds the selected exact V128 implementation and workstation.
+- `rtc-v128-preflight` fails closed on wrong graph/actuator/CUDA/checkpoint/evidence/envelope identity.
+- ranking, D2 and D5 evidence must reference one identical final Step2 SHA256.
+- root/versioned historical guides were removed; Git history preserves their provenance.
 
-**Fix.** `src/rtc/runtime_controller_guard.py` measures the complete wrapped supervisory
-callback (inner decision plus continuity checks). `src/rtc/runtime_evidence_v128.py` requires
-all guarded decision runtimes, exact 600-s decision spacing, explicit score==execute and
-continuity evidence. Any guarded callback >=600 s fails measured real-time acceptance.
-Same-epoch target write/readback remains a separate authoritative execution audit.
+## Deliberate non-changes
 
-## P3 — version drift and evidence hygiene
-
-- `configs/project7_execution_registry.json` separates current V127 production from V128
-  development candidate.
-- `configs/v128_control_execution.json` freezes V128 time, architecture, checkpoint,
-  engineering, hardware, evidence and runtime contracts.
-- `src/rtc/v128_preflight.py` / `rtc-v128-preflight` fail closed before expensive runtime on
-  wrong actuator count, unavailable CUDA, wrong checkpoint/evidence SHA or unsupported
-  engineering-envelope evidence.
-- `CODEX_START_HERE_V128.md` is the single V128 execution order.
-- V128 ranking/horizon, D2, D5, continuous-evidence, runtime and seven-strategy scripts use
-  V128-specific checkpoint/contract identities rather than silently relabeling V127 assets.
-
-## Deliberate non-changes / claims that remain forbidden
-
-1. Default online rainfall remains one causal persistence/decay scenario. CVaR machinery is
-   present, but the default V128 run is **not** claimed robust/stochastic MPC.
-2. A custom per-actuator engineering envelope changes decoder-space gradients. Existing D5
-   supports only the historical idealized 0.5 envelope; custom envelopes require newly frozen
-   matching D5 evidence.
-3. Code correctness and CI do not prove hydraulic/control benefit. V128 must still be trained
-   on the user's frozen local assets and evaluated on the exact final checkpoint.
-4. No Validation, Final, Formal or Policy Lock access is allowed while V128 is development-only.
+1. Default rainfall is one causal persistence/decay scenario; the default method is not robust/stochastic MPC.
+2. Existing D5 evidence applies only to its frozen decoder/envelope space.
+3. Code correctness/CI cannot prove hydraulic control benefit.
+4. Validation, Final, Formal and Policy Lock remain untouched during current development.
 
 ## Required empirical promotion evidence
 
-Promotion requires the exact final V128 checkpoint to provide, without model selection on
-holdouts:
+Before any Policy-Lock/Final claim, the exact final checkpoint must provide:
 
 - InternalHoldout D2/D3 rank, pairwise, top1 and selected regret;
 - D2 and untouched D5-AUDIT TFV gradient sign/cosine/MAE;
 - H30-H360 hydraulic/managed-flow and TFV-delta error growth;
-- one fixed authoritative development closed loop with every guarded decision <600 s,
-  target write/readback PASS, continuity PASS and score==execute PASS;
+- one preselected authoritative development closed loop with every guarded decision <600 s;
+- target write/readback PASS, continuity PASS and score==execute PASS;
 - authoritative seven-strategy TFV/Priority8 PFV/report-only Global Peak comparison;
 - RTX 4060 `high` versus `highest` numerical/runtime sensitivity.
-
-Only after those results are reviewed should V128 replace the V127 production identity.
