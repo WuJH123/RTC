@@ -11,6 +11,8 @@ CURRENT = ROOT / "configs" / "step2_current_contract.json"
 GUIDE = ROOT / "CODEX_START_HERE.md"
 REGISTRY = ROOT / "configs" / "project7_execution_registry.json"
 V128_EXECUTION = ROOT / "configs" / "v128_control_execution.json"
+CURRENT_LINT = ROOT / "configs" / "project7_current_lint_surface.json"
+CURRENT_LINT_RUNNER = ROOT / "scripts" / "lint_current_surface.py"
 PYPROJECT = ROOT / "pyproject.toml"
 PROFILE_RUNNER = ROOT / "scripts" / "run_step2_v128_current_profiles.py"
 OBSOLETE_V128_RUNNER = ROOT / "scripts" / "run_step2_v128_control_4060.py"
@@ -74,12 +76,36 @@ def test_project7_registry_has_one_current_user_surface_and_complete_dev_diagnos
     assert current["step2_training"] == "scripts/run_step2_current.py"
     assert current["runtime"] == "scripts/run_policy_current.py"
     assert current["seven_strategy"] == "scripts/run_seven_strategies_current.py"
+    assert current["lint_gate"] == "python scripts/lint_current_surface.py"
+    assert current["lint_surface_contract"] == "configs/project7_current_lint_surface.json"
     assert current["status"] == "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED"
     diagnostics = payload["development_diagnostics"]
     assert diagnostics["step1_attention_trainer"] == "scripts/train_step1_global_attention_dev.py"
     assert diagnostics["step1_distance_attention_ablation"] == "scripts/audit_step1_global_attention_current.py"
     assert diagnostics["step2_spatial_action_effect"] == "scripts/audit_step2_spatial_current.py"
     assert diagnostics["step2_development_gradient"] == "scripts/audit_step2_gradient_current_dev.py"
+
+
+def test_current_lint_surface_is_explicit_and_contains_required_entrypoints() -> None:
+    payload = json.loads(CURRENT_LINT.read_text(encoding="utf-8"))
+    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_V1_ACTIVE_ONLY"
+    assert payload["full_repository_ruff_is_gate"] is False
+    assert payload["current_surface_ruff_is_gate"] is True
+    paths = [str(path) for path in payload["paths"]]
+    assert len(paths) == len(set(paths))
+    required = {
+        "scripts/lint_current_surface.py",
+        "scripts/run_step2_current.py",
+        "scripts/run_policy_current.py",
+        "scripts/run_seven_strategies_current.py",
+        "scripts/audit_step2_spatial_current.py",
+        "scripts/audit_step2_gradient_current_dev.py",
+        "src/rtc/step2_train_v128_exact.py",
+        "src/rtc/step3_mpc_v128.py",
+        "src/rtc/controller_v128.py",
+    }
+    assert required.issubset(paths)
+    assert all((ROOT / path).is_file() for path in paths)
 
 
 def test_v128_execution_config_distinguishes_dev_and_full_gradient_surfaces() -> None:
@@ -154,6 +180,7 @@ def test_v128_seven_strategy_translates_current_evidence_only_inside_shared_boun
 
 def test_obsolete_current_surfaces_are_removed() -> None:
     assert GUIDE.is_file()
+    assert CURRENT_LINT_RUNNER.is_file()
     assert not OBSOLETE_OBJECTIVE.exists()
     assert not OBSOLETE_V128_RUNNER.exists()
     assert all(not path.exists() for path in VERSIONED_START_GUIDES)
