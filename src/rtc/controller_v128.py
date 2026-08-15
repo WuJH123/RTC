@@ -12,7 +12,7 @@ from .step2_differentiable_v128 import V128_STEP2_CONTRACT
 from .step3_mpc_v128 import V128_STEP3_CONTRACT
 
 V128_CONTROLLER_CONTRACT = (
-    "PROJECT7_V128_TYPED_STEP2_PER_ACTUATOR_ENVELOPE_TARGET_LATCH_CONTROLLER_V2"
+    "PROJECT7_V128_TYPED_STEP2_PER_ACTUATOR_ENVELOPE_TARGET_LATCH_CONTROLLER_V3_FINITE_DIAGNOSTICS"
 )
 
 
@@ -71,6 +71,13 @@ class V128TorchMPCController(V127TorchMPCController):
             )
 
         diagnostics = dict(action.diagnostics or {})
+        gradient = diagnostics.get("gradient_norm")
+        if gradient is None or not np.isfinite(float(gradient)):
+            diagnostics.pop("gradient_norm", None)
+            diagnostics["gradient_evaluated"] = False
+        else:
+            diagnostics["gradient_norm"] = float(gradient)
+            diagnostics["gradient_evaluated"] = True
         diagnostics.update(
             {
                 "v128_controller_contract": V128_CONTROLLER_CONTRACT,
