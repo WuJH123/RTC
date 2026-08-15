@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from typing import Mapping
 
 import numpy as np
@@ -10,7 +11,7 @@ from .runtime import choose_first_move, command_continuity
 
 
 CONTINUITY_GUARD_CONTRACT = (
-    "RTC_SUPERVISORY_TEMPORAL_CONTINUITY_V4_PER_ACTUATOR_COMMAND_ENVELOPE"
+    "RTC_SUPERVISORY_TEMPORAL_CONTINUITY_V5_PER_ACTUATOR_COMMAND_ENVELOPE_TOTAL_RUNTIME"
 )
 
 
@@ -38,9 +39,10 @@ class ContinuityGuardController:
     policies can retain the stricter two-anchor rule; V127/V128 and fair Python comparators
     set ``enforce_current_delta=False`` so rate limits apply to consecutive target commands.
 
-    ``max_delta_per_update`` may be a scalar or one value per actuator. This removes the
-    previous implicit assumption that every pump/orifice/weir/outlet has the same command
-    travel envelope while remaining backward compatible with the frozen 0.5 scalar study.
+    ``max_delta_per_update`` may be a scalar or one value per actuator.  The guard also
+    records wall-clock time around the *entire* wrapped decision plus continuity checks, so
+    V128 real-time acceptance is based on the complete supervisory callback rather than the
+    inner optimizer/controller timing alone.
     """
 
     def __init__(
@@ -84,6 +86,7 @@ class ContinuityGuardController:
     def decide(
         self, obs: CausalObservation, *, observation_already_recorded: bool = False
     ) -> ControllerAction:
+        guarded_started = time.perf_counter()
         action = self._call_inner(
             obs, observation_already_recorded=observation_already_recorded
         )
@@ -132,6 +135,9 @@ class ContinuityGuardController:
             raise RuntimeError("supervisory continuity guard failed after projection")
 
         self.previous_requested = decision.requested.copy()
+        guarded_elapsed = float(time.perf_counter() - guarded_started)
+        if not np.isfinite(guarded_elapsed) or guarded_elapsed < 0.0:
+            raise RuntimeError("continuity guard produced invalid wall-clock runtime")
         diagnostics = dict(action.diagnostics or {})
         diagnostics.update(
             {
@@ -147,6 +153,8 @@ class ContinuityGuardController:
                 "max_setting_delta_per_update_max": float(delta.max()),
                 "max_setting_delta_is_per_actuator": bool(np.ptp(delta) > 1e-12),
                 "max_setting_delta_vector_sha256": _array_sha256(delta),
+                "guarded_decision_runtime_seconds": guarded_elapsed,
+                "guarded_runtime_semantics": "inner_decision_plus_continuity_validation_projection_check",
             }
         )
         return ControllerAction(
