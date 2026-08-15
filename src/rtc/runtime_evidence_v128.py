@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 
 V128_RUNTIME_ACCEPTANCE_CONTRACT = (
-    "PROJECT7_V128_AUTHORITATIVE_600S_RUNTIME_ACCEPTANCE_V1"
+    "PROJECT7_V128_AUTHORITATIVE_600S_RUNTIME_ACCEPTANCE_V2_GUARDED_CALLBACK"
 )
 
 
@@ -38,6 +38,7 @@ def audit_v128_runtime_decisions(
     )
 
     runtimes: list[float] = []
+    inner_runtimes: list[float] = []
     optimizer_runtimes: list[float] = []
     deadline = 0
     fallback = 0
@@ -50,12 +51,26 @@ def audit_v128_runtime_decisions(
         if "FALLBACK" in source or source.startswith("RBC_SAFETY"):
             fallback += 1
         diagnostics = row.get("diagnostics") or {}
-        runtime = diagnostics.get("decision_runtime_seconds")
-        if runtime is not None:
-            value = float(runtime)
+
+        # The hard 600-s acceptance uses the complete guarded supervisory callback. Older
+        # inner-controller timing is retained only as a diagnostic and cannot substitute
+        # for the guarded measurement in a V128 authoritative run.
+        guarded_runtime = diagnostics.get("guarded_decision_runtime_seconds")
+        if guarded_runtime is None:
+            raise ValueError(
+                "V128 authoritative decision lacks guarded_decision_runtime_seconds"
+            )
+        guarded_value = float(guarded_runtime)
+        if not np.isfinite(guarded_value) or guarded_value < 0.0:
+            raise ValueError("V128 guarded decision runtime contains invalid values")
+        runtimes.append(guarded_value)
+
+        inner_runtime = diagnostics.get("decision_runtime_seconds")
+        if inner_runtime is not None:
+            value = float(inner_runtime)
             if not np.isfinite(value) or value < 0.0:
-                raise ValueError("V128 decision runtime contains invalid values")
-            runtimes.append(value)
+                raise ValueError("V128 inner decision runtime contains invalid values")
+            inner_runtimes.append(value)
         optimizer = diagnostics.get("optimizer_elapsed_seconds")
         if optimizer is not None:
             value = float(optimizer)
@@ -76,7 +91,8 @@ def audit_v128_runtime_decisions(
 
     runtime_array = np.asarray(runtimes, dtype=float)
     if runtime_array.size != len(rows):
-        raise ValueError("V128 every authoritative decision must report wall-clock runtime")
+        raise ValueError("V128 every authoritative decision must report guarded wall-clock runtime")
+    inner_array = np.asarray(inner_runtimes, dtype=float)
     optimizer_array = np.asarray(optimizer_runtimes, dtype=float)
     max_runtime = float(runtime_array.max())
     hard_realtime_pass = bool(max_runtime < float(control_update_seconds))
@@ -91,11 +107,19 @@ def audit_v128_runtime_decisions(
         "decision_count": len(rows),
         "control_update_seconds": int(control_update_seconds),
         "decision_interval_exact_600s": interval_pass,
+        "decision_runtime_semantics": "complete continuity-guarded supervisory callback",
         "decision_runtime_seconds": {
             "mean": float(runtime_array.mean()),
             "p50": _quantile(runtime_array, 0.50),
             "p95": _quantile(runtime_array, 0.95),
             "max": max_runtime,
+        },
+        "inner_controller_runtime_seconds": {
+            "count": int(inner_array.size),
+            "mean": float(inner_array.mean()) if inner_array.size else None,
+            "p50": _quantile(inner_array, 0.50) if inner_array.size else None,
+            "p95": _quantile(inner_array, 0.95) if inner_array.size else None,
+            "max": float(inner_array.max()) if inner_array.size else None,
         },
         "optimizer_runtime_seconds": {
             "count": int(optimizer_array.size),
@@ -111,9 +135,9 @@ def audit_v128_runtime_decisions(
         "continuity_failures": int(continuity_failures),
         "sources": sources,
         "interpretation": (
-            "passed proves the measured authoritative run completed every logged decision "
-            "inside the 600-s control period; it is not a universal worst-case industrial "
-            "hard-real-time guarantee on other hardware/events"
+            "passed proves the measured authoritative run completed every full guarded "
+            "supervisory decision inside the 600-s control period; it is not a universal "
+            "worst-case industrial hard-real-time guarantee on other hardware/events"
         ),
     }
     return payload
