@@ -1,0 +1,60 @@
+{
+  "contract": "PROJECT7_V128_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V1",
+  "base": {
+    "canonical_main_sha_at_branch": "390ab19f59bebf20e62d4a7f49e7e579192bd021",
+    "inherits": "PROJECT7_V127_CANONICAL_CONTROL_EXECUTION_V3_RUNTIME_ACCELERATED_VALIDATION",
+    "research_goal_changed": false,
+    "authoritative_truth_changed": false,
+    "time_contract_changed": false,
+    "model_architecture_changed": false,
+    "data_split_changed": false
+  },
+  "scientific_change": {
+    "purpose": "increase decision-relevant action-order supervision resolution for continuous MPC",
+    "v127_training_pair_threshold": "max(1 m3, 0.001 * abs(reference TFV))",
+    "v128_training_pair_threshold": "1 m3 absolute floor",
+    "informative_pair_reference_fraction": 0.0,
+    "informative_pair_absolute_m3": 1.0,
+    "why": "do not let event flood magnitude suppress small-to-medium SWMM action-effect ordering labels needed by local MPC"
+  },
+  "hardware_execution": {
+    "target_gpu": "NVIDIA RTX 4060 8 GB",
+    "target_ram_gb": 16,
+    "swmm_workers": 16,
+    "swmm_threads_per_process": 1,
+    "pytorch_float32_matmul_precision_default": "high",
+    "strict_comparison_precision": "highest",
+    "amp_enabled": false,
+    "activation_checkpointing_enabled": false,
+    "cuda_allocator_recommendation": "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+  },
+  "entrypoints": {
+    "step2_training": "scripts/run_step2_v128_control_4060.py",
+    "profile": "src/rtc/v128_control_profile.py",
+    "tests": "tests/test_v128_control_profile.py",
+    "step3_runtime": "scripts/run_policy_v127.py",
+    "seven_strategy_development": "scripts/run_seven_strategies_v127.py"
+  },
+  "required_comparison": {
+    "same_seed_data_splits_and_architecture": true,
+    "compare_matmul_high_vs_highest": true,
+    "metrics": [
+      "InternalHoldout D2/D3 hard TFV rank/pairwise/top1/selected regret",
+      "D2 and D5-AUDIT TFV gradient sign/cosine/MAE",
+      "H30-H360 hydraulic and TFV delta errors",
+      "authoritative development TFV/PFV across seven strategies",
+      "decision runtime p50/p95/max and deadline/fallback counts"
+    ],
+    "promotion_rule": "do not replace V127 production identity unless V128 improves control-identification evidence without material regression in hydraulic accuracy or authoritative closed-loop performance"
+  },
+  "boundaries": {
+    "validation_access": false,
+    "final_access": false,
+    "formal_access": false,
+    "policy_lock_access": false,
+    "new_swmm_required_for_step2_base_training": false,
+    "d5_audit_used_for_training": false,
+    "future_realized_rainfall_online": false,
+    "future_swmm_state_online": false
+  }
+}
