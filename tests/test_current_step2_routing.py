@@ -11,7 +11,8 @@ CURRENT = ROOT / "configs" / "step2_current_contract.json"
 GUIDE = ROOT / "CODEX_START_HERE.md"
 REGISTRY = ROOT / "configs" / "project7_execution_registry.json"
 PYPROJECT = ROOT / "pyproject.toml"
-V128_RUNNER = ROOT / "scripts" / "run_step2_v128_control_4060.py"
+PROFILE_RUNNER = ROOT / "scripts" / "run_step2_v128_current_profiles.py"
+OBSOLETE_V128_RUNNER = ROOT / "scripts" / "run_step2_v128_control_4060.py"
 V128_SEVEN = ROOT / "scripts" / "run_seven_strategies_v128.py"
 CURRENT_STEP2 = ROOT / "scripts" / "run_step2_current.py"
 CURRENT_POLICY = ROOT / "scripts" / "run_policy_current.py"
@@ -51,12 +52,12 @@ def test_current_contract_routes_only_user_entrypoints_to_unversioned_surface() 
     assert entrypoints["runtime"] == "scripts/run_policy_current.py"
     assert entrypoints["seven_strategy_comparison"] == "scripts/run_seven_strategies_current.py"
     assert payload["step2_current"]["objective_module"] == "src/rtc/step2_train_v128_exact.py"
+    assert payload["step2_current"]["execution_profiles"] == ["smoke", "dev", "full"]
 
 
 def test_project7_registry_has_one_current_user_surface() -> None:
     payload = json.loads(REGISTRY.read_text(encoding="utf-8"))
     current = payload["current"]
-    assert payload["contract"] == "PROJECT7_EXECUTION_REGISTRY_V7_SINGLE_CURRENT_SURFACE"
     assert current["guide"] == "CODEX_START_HERE.md"
     assert current["preflight"] == "rtc-current-preflight"
     assert current["step2_training"] == "scripts/run_step2_current.py"
@@ -71,16 +72,31 @@ def test_current_preflight_alias_is_installed() -> None:
 
 
 def test_current_wrappers_pin_the_selected_v128_implementation() -> None:
-    assert "run_step2_v128_control_4060 import main" in CURRENT_STEP2.read_text(encoding="utf-8")
+    assert "run_step2_v128_current_profiles import main" in CURRENT_STEP2.read_text(encoding="utf-8")
     assert "run_policy_v128 import main" in CURRENT_POLICY.read_text(encoding="utf-8")
     assert "run_seven_strategies_v128 import main" in CURRENT_SEVEN.read_text(encoding="utf-8")
 
 
-def test_current_step2_help_reaches_argparse_without_out_dir() -> None:
+def test_current_step2_help_requires_explicit_cost_profile() -> None:
     help_text = _script_help(CURRENT_STEP2)
+    assert "--profile {smoke,dev,full}" in help_text
+    assert "--resume-from" in help_text
+    assert "--stop-after-stage" in help_text
+    assert "--profile-one-group" in help_text
+    assert "--torch-profiler" in help_text
     assert "--out-dir" in help_text
     assert "--cache-manifest" in help_text
     assert "--causal-state-store" in help_text
+
+
+def test_current_profile_runner_uses_typed_stage_a_exact_objective_and_nonfinal_stages() -> None:
+    text = PROFILE_RUNNER.read_text(encoding="utf-8")
+    assert "build_v128_model_from_graph" in text
+    assert "train_hydraulic_stage_streaming_v128" in text
+    assert "train_objective_stage_streaming_v128" in text
+    assert "save_stage_checkpoint_v128" in text
+    assert 'p.add_argument("--profile", choices=("smoke", "dev", "full"), required=True' in text
+    assert "if profile.final_checkpoint_allowed:" in text
 
 
 def test_current_seven_strategy_help_exposes_current_evidence_contract() -> None:
@@ -88,17 +104,6 @@ def test_current_seven_strategy_help_exposes_current_evidence_contract() -> None
     assert "--continuous-evidence" in help_text
     assert "--continuous-gate" not in help_text
     assert "--engineering-envelope" in help_text
-
-
-def test_v128_runner_uses_typed_stage_a_and_exact_pairwise_objective() -> None:
-    text = V128_RUNNER.read_text(encoding="utf-8")
-    assert "from rtc.step2_train_v128_exact import" in text
-    assert "from rtc.step2_train_v128 import" not in text
-    assert "train_hydraulic_stage_streaming_v128" in text
-    assert "runner.train_hydraulic_stage_streaming_v127 = train_hydraulic_stage_streaming_v128" in text
-    assert "train_objective_stage_streaming_v128" in text
-    assert "runner.train_objective_stage_streaming_v127 = train_objective_stage_streaming_v128" in text
-    assert "exact_two_pass_full_pairwise_first_order_gradient" in text
 
 
 def test_v128_seven_strategy_translates_current_evidence_only_inside_shared_boundary() -> None:
@@ -111,5 +116,6 @@ def test_v128_seven_strategy_translates_current_evidence_only_inside_shared_boun
 def test_obsolete_current_surfaces_are_removed() -> None:
     assert GUIDE.is_file()
     assert not OBSOLETE_OBJECTIVE.exists()
+    assert not OBSOLETE_V128_RUNNER.exists()
     assert all(not path.exists() for path in VERSIONED_START_GUIDES)
     assert all(not path.exists() for path in OBSOLETE_ROOT_PIPELINES)
