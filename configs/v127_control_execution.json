@@ -1,8 +1,23 @@
 {
-  "contract": "PROJECT7_V127_CANONICAL_CONTROL_EXECUTION_V1",
+  "contract": "PROJECT7_V127_CANONICAL_CONTROL_EXECUTION_V2_STREAMING_VALIDATION",
   "research_goal": "every 10 minutes reconstruct causal hydraulic state, optimize all 109 writable target settings continuously over H120 with a differentiable hydraulic surrogate inside H360 prediction, minimize system-wide cumulative TFV, keep Priority8 PFV as a one-sided soft secondary objective, execute only the first 600 s target, and verify outcomes in authoritative SWMM",
   "authoritative_truth": "SWMM",
   "canonical_git_requirement": "use the exact merged main SHA reported with this file; do not run historical V120-V126 training entrypoints",
+  "hardware_profile": {
+    "target_system_ram_gb": 16,
+    "target_gpu": "NVIDIA RTX 4060",
+    "target_vram_gb": 8,
+    "cpu_cache_semantics": "mmap plus one CPU counterfactual group at a time",
+    "gpu_transfer_semantics": "only selected branch microbatches and online-admissible shared inputs are materialized on CUDA",
+    "hydraulic_branch_chunk": 4,
+    "rollout_candidates_per_group": 2,
+    "objective_candidate_chunk": 2,
+    "evaluation_branch_chunk": 4,
+    "residual_sample_rows_global": 131072,
+    "amp_default": false,
+    "activation_checkpointing_default": false,
+    "allocator_recommendation": "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+  },
   "data": {
     "D2_source_branches": 4800,
     "D2_trainfit_groups": 112,
@@ -22,14 +37,15 @@
     "D5_label_summary": "D5_GRADIENT_LABELS.json"
   },
   "step2": {
-    "base_training": "scripts/run_step2_v127_control.py",
-    "training_module": "src/rtc/step2_train_v127_control.py",
+    "base_training": "scripts/run_step2_v127_control_streaming.py",
+    "training_module": "src/rtc/step2_train_v127_streaming.py",
     "D3_information_audit": "scripts/audit_d3_information_v127.py",
     "TFV_sampling_gap_audit": "scripts/audit_tfv_sampling_gap_v127.py",
     "horizon_rollout_audit": "scripts/audit_step2_v127_horizon.py",
     "ranking_audit": "scripts/audit_step2_v127_control_ranking.py",
     "D2_gradient_audit": "scripts/audit_step2_v127_d2_gradients.py",
-    "D5_gradient_finetune": "scripts/run_step2_v127_d5_gradient.py",
+    "D5_gradient_finetune": "scripts/run_step2_v127_d5_gradient_streaming.py",
+    "D5_gradient_module": "src/rtc/step2_gradient_v127_streaming.py",
     "D5_gradient_labels": "scripts/build_d5_gradient_labels_v127.py",
     "continuous_evidence": "scripts/build_v127_continuous_gate.py"
   },
@@ -45,6 +61,7 @@
   },
   "evaluation": {
     "seven_strategy_comparison": "scripts/run_seven_strategies_v127.py",
+    "validation": "scripts/run_validation_v127.py",
     "strategies": [
       "Proposed V127 continuous differentiable MPC",
       "No-control",
@@ -57,30 +74,41 @@
     "global_peak_role": "report only",
     "target_write_readback_required": true
   },
-  "development_boundaries": {
+  "training_boundaries": {
     "train_on_InternalHoldout": false,
     "train_on_D4_AUDIT": false,
     "train_on_D5_AUDIT": false,
     "train_on_D2_development_validation": false,
     "future_realized_rainfall_online": false,
     "future_SWMM_state_online": false,
-    "Validation_access": false,
     "Final_access": false,
-    "Formal_access": false,
-    "Policy_Lock": false
+    "Formal_access": false
+  },
+  "validation_boundary": {
+    "validation_allowed_after_final_step2_freeze": true,
+    "validation_read_once": true,
+    "validation_used_for_training": false,
+    "validation_used_for_model_selection": false,
+    "validation_used_for_threshold_selection": false,
+    "return_to_development_after_validation": false,
+    "Final_access": false,
+    "Formal_access": false
   },
   "execution_order": [
     "verify exact Git SHA and clean worktree",
+    "set expandable CUDA allocator before Python import and verify no competing GPU process",
     "verify frozen assets and causal state/rainfall lineage",
     "run D3 information audit and 300-s-vs-exact TFV sampling-gap audit",
-    "train corrected V127 base Step2 from D2 TrainFit + targeted D3 TrainFit + D4-FIT",
+    "train corrected V127 base Step2 with CPU-group/GPU-microbatch streaming from D2 TrainFit + targeted D3 TrainFit + D4-FIT",
     "run corrected base ranking and horizon audits",
     "audit D5-AUDIT gradients before D5-FIT training using D5_GRADIENT_LABELS.csv",
-    "fine-tune with D5-FIT only using D5_GRADIENT_LABELS.csv",
+    "fine-tune with D5-FIT only using streaming causal inputs and D5_GRADIENT_LABELS.csv",
     "re-run ranking, horizon, D2-gradient and D5-AUDIT evidence on the same final Step2 checkpoint",
     "compile continuous evidence",
     "run limited development closed-loop Proposed diagnostic",
-    "if runtime/correctness is healthy, run seven-strategy development comparison",
-    "stop before Validation/Final/Formal/Policy Lock"
+    "run seven-strategy development comparison if runtime/correctness is healthy",
+    "freeze the final Step2 checkpoint, continuous evidence and all runtime parameters",
+    "run the predeclared Validation manifest once with scripts/run_validation_v127.py",
+    "stop after Validation; do not access Final/Formal and do not tune on Validation"
   ]
 }
