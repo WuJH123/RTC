@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +12,7 @@ GUIDE = ROOT / "CODEX_START_HERE.md"
 REGISTRY = ROOT / "configs" / "project7_execution_registry.json"
 PYPROJECT = ROOT / "pyproject.toml"
 V128_RUNNER = ROOT / "scripts" / "run_step2_v128_control_4060.py"
+V128_SEVEN = ROOT / "scripts" / "run_seven_strategies_v128.py"
 CURRENT_STEP2 = ROOT / "scripts" / "run_step2_current.py"
 CURRENT_POLICY = ROOT / "scripts" / "run_policy_current.py"
 CURRENT_SEVEN = ROOT / "scripts" / "run_seven_strategies_current.py"
@@ -23,6 +26,19 @@ OBSOLETE_ROOT_PIPELINES = (
     ROOT / "FORMAL_PIPELINE_LATEST.md",
     ROOT / "FORMAL_PIPELINE_V2.md",
 )
+
+
+def _script_help(path: Path) -> str:
+    result = subprocess.run(
+        [sys.executable, str(path), "--help"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout.lower()
+    return result.stdout
 
 
 def test_current_contract_routes_only_user_entrypoints_to_unversioned_surface() -> None:
@@ -60,6 +76,20 @@ def test_current_wrappers_pin_the_selected_v128_implementation() -> None:
     assert "run_seven_strategies_v128 import main" in CURRENT_SEVEN.read_text(encoding="utf-8")
 
 
+def test_current_step2_help_reaches_argparse_without_out_dir() -> None:
+    help_text = _script_help(CURRENT_STEP2)
+    assert "--out-dir" in help_text
+    assert "--cache-manifest" in help_text
+    assert "--causal-state-store" in help_text
+
+
+def test_current_seven_strategy_help_exposes_current_evidence_contract() -> None:
+    help_text = _script_help(CURRENT_SEVEN)
+    assert "--continuous-evidence" in help_text
+    assert "--continuous-gate" not in help_text
+    assert "--engineering-envelope" in help_text
+
+
 def test_v128_runner_uses_typed_stage_a_and_exact_pairwise_objective() -> None:
     text = V128_RUNNER.read_text(encoding="utf-8")
     assert "from rtc.step2_train_v128_exact import" in text
@@ -69,6 +99,13 @@ def test_v128_runner_uses_typed_stage_a_and_exact_pairwise_objective() -> None:
     assert "train_objective_stage_streaming_v128" in text
     assert "runner.train_objective_stage_streaming_v127 = train_objective_stage_streaming_v128" in text
     assert "exact_two_pass_full_pairwise_first_order_gradient" in text
+
+
+def test_v128_seven_strategy_translates_current_evidence_only_inside_shared_boundary() -> None:
+    text = V128_SEVEN.read_text(encoding="utf-8")
+    assert 'p.add_argument("--continuous-evidence", required=True)' in text
+    assert '"--continuous-gate", str(args.continuous_evidence)' in text
+    assert "_build_current_parser().parse_args()" in text
 
 
 def test_obsolete_current_surfaces_are_removed() -> None:
