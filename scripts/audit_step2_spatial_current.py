@@ -19,7 +19,7 @@ from rtc.development_profile_v128 import apply_profile_to_design, get_execution_
 from rtc.production_cli import _load_graph
 from rtc.stage_checkpoint_v128 import load_stage_checkpoint_v128
 from rtc.step2_causal_rainfall_v123 import CausalForecastValueCacheV123, load_causal_forecast_store_v123
-from rtc.step2_d4_cache_v125 import D4CausalForecastValueCacheV125, D4_SOURCE_KIND
+from rtc.step2_d4_cache_v125 import D4_SOURCE_KIND
 from rtc.step2_differentiable_v128 import build_v128_model_from_graph
 from rtc.step2_spatial_audit_v128 import evaluate_d2_spatial_action_effect_v128
 from rtc.step2_state_store_v127 import CausalStep1StateCacheV127, derive_v127_input_normalization, load_causal_state_store_v127

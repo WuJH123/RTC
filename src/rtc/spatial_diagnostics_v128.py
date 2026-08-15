@@ -7,7 +7,6 @@ edge-aware, or influence-graph experiments.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
 import numpy as np

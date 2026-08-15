@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_V9_DEBUG_FIRST_SINGLE_CURRENT_SURFACE",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_V10_DEBUG_FIRST_CURRENT_LINT",
   "current": {
     "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
     "research_contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V2_DEBUG_FIRST",
@@ -9,6 +9,8 @@
     "runtime": "scripts/run_policy_current.py",
     "seven_strategy": "scripts/run_seven_strategies_current.py",
     "preflight": "rtc-current-preflight",
+    "lint_gate": "python scripts/lint_current_surface.py",
+    "lint_surface_contract": "configs/project7_current_lint_surface.json",
     "required_step2_profiles": ["smoke", "dev", "full"]
   },
   "selected_internal_implementation": {
@@ -49,6 +51,7 @@
   },
   "hard_rules": [
     "user and Codex Step2 workflows must enter through scripts/run_step2_current.py and explicitly choose smoke/dev/full",
+    "run python scripts/lint_current_surface.py as the lint stop-gate; do not use full-repository ruff check . as a smoke/dev prerequisite while archival Ruff debt remains",
     "smoke/dev are Development screening only and cannot create a strict final Step2 checkpoint or enter D5/runtime/Policy Lock",
     "run smoke one-group profiler before expensive performance tuning; profile only bounded Development data",
     "use scripts/audit_step2_gradient_current_dev.py for smoke/dev stage_objective.pt; use scripts/audit_step2_v128_d2_gradients_fast.py only for a strict full checkpoint",

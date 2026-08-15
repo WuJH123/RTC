@@ -47,6 +47,7 @@ Read first:
 configs/step2_current_contract.json
 configs/project7_execution_registry.json
 configs/v128_control_execution.json
+configs/project7_current_lint_surface.json
 ```
 
 Stable user/Codex entrypoints:
@@ -98,63 +99,46 @@ activation checkpointing off
 
 The previous full run showed host-memory paging while CUDA was not saturated. Current training therefore uses lazy mmap branch streaming. Profile before changing chunks/workers.
 
-## 5. Recover a mixed local checkout safely
+## 5. Synchronize local code to GitHub main
 
-The GitHub `main` branch is the source of truth. Do **not** merge a mixed local working tree into current code just to preserve old experiments.
-
-Preferred recovery sequence in PowerShell:
+GitHub `main` is the code source of truth. If the user explicitly says old local changes are disposable, do not recover, merge or cherry-pick them.
 
 ```powershell
 cd E:\RTC_sewer\Project7\repo
-
-git status --short --branch
-git remote -v
-```
-
-If the working tree contains anything you may want later, preserve it without applying it to current code:
-
-```powershell
-$Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
-git diff > "E:\RTC_sewer\Project7\local_pre_sync_$Stamp.patch"
-git diff --cached > "E:\RTC_sewer\Project7\local_pre_sync_index_$Stamp.patch"
-git stash push -u -m "pre-current-main-sync-$Stamp"
-```
-
-Then make local `main` exactly equal to GitHub `origin/main`:
-
-```powershell
 git fetch origin --prune
 git switch main
 git reset --hard origin/main
 git clean -fd
-
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/main
 ```
 
-The two SHAs must match and `git status --short` must be empty.
+The two SHAs must match and the working tree must be clean. Never delete the separate study root or authoritative SWMM/cache assets when resetting the code checkout.
 
-If the local repository itself is structurally unreliable, prefer a clean clone rather than repairing years of branch residue:
-
-```powershell
-cd E:\RTC_sewer\Project7
-Rename-Item repo ("repo_legacy_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
-git clone https://github.com/WuJH123/RTC.git repo
-cd repo
-git switch main
-git pull --ff-only
-```
-
-Do not delete the study root or authoritative SWMM/cache assets when replacing the code checkout.
-
-Install the current package from the synchronized checkout:
+Install the synchronized package:
 
 ```powershell
 python -m pip install -e ".[dev,swmm]"
-python -m pytest -q
-python -m ruff check .
 ```
+
+## 6. Cheap code gates before any training
+
+Run the complete unit/regression suite:
+
+```powershell
+python -m pytest -q
+```
+
+Then run the **current Project7 lint gate**:
+
+```powershell
+python scripts/lint_current_surface.py
+```
+
+Do **not** use `python -m ruff check .` as a smoke/dev stop-gate. The repository intentionally retains historical/archival Vxxx source for provenance and shared orchestration, and that historical tree contains pre-existing Ruff debt. Current execution/development files are fail-closed through `configs/project7_current_lint_surface.json` and GitHub Actions.
+
+Do not run `ruff --fix .` or mass-format archival files during model debugging. Historical style cleanup is a separate maintenance task and must not alter scientific provenance or consume the current debugging cycle.
 
 Key CLI smoke checks must all exit 0:
 
@@ -169,7 +153,11 @@ python scripts/audit_step2_edge_spatial_current.py --help
 python scripts/run_seven_strategies_current.py --help
 ```
 
-## 6. Preflight gate
+If pytest, current lint, or a current CLI help fails, stop before expensive work and report the exact failure. Do not substitute full-repository lint debt for a current-code failure.
+
+## 7. Asset admission and preflight
+
+Reuse existing frozen Development assets. Do not regenerate D2/D3/D4 merely because code was synchronized. Prefer the semantic-complete causal state store V2 and verify graph/Step1/sensor/rainfall lineage before training.
 
 ```powershell
 $env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
@@ -181,11 +169,9 @@ rtc-current-preflight `
   --out <DEBUG_ROOT>\PREFLIGHT.json
 ```
 
-Require the current 109-actuator graph/device contract to pass before training.
+Require the current 109-actuator graph/device/engineering contract to pass.
 
-## 7. First execution: one-group profiler, not full
-
-This exercises the real 109-actuator/H360/exact-pairwise path on one deterministic group per source:
+## 8. First expensive action: one-group profiler, never full
 
 ```powershell
 python scripts/run_step2_current.py `
@@ -202,16 +188,9 @@ python scripts/run_step2_current.py `
   --device cuda
 ```
 
-Inspect:
+Inspect `TRAINING_TELEMETRY.jsonl` and `TORCH_PROFILER_TRACE.json`. Classify time into host materialization/I/O, H2D, CUDA forward, H360 rollout, autograd/backward, optimizer and GC. Do not increase hidden dimension, chunks or workers until the profile identifies the real bottleneck.
 
-```text
-TRAINING_TELEMETRY.jsonl
-TORCH_PROFILER_TRACE.json
-```
-
-Do not increase hidden dimension, branch chunk or worker count until the profile shows what is actually limiting throughput.
-
-## 8. Baseline smoke training
+## 9. Baseline smoke training
 
 ```powershell
 python scripts/run_step2_current.py `
@@ -226,11 +205,11 @@ python scripts/run_step2_current.py `
   --device cuda
 ```
 
-Smoke preserves the current architecture, 109 actuators, H360 objective and exact two-pass pairwise code path, but uses a small deterministic Development subset and reduced repetition. It is **not paper evidence**.
+Smoke keeps the real V128 typed architecture, 109 actuators, H360 objective and exact two-pass pairwise path. It reduces Development coverage/repetition only and is **not paper evidence**.
 
-The exact objective must use one canonical float32 SWMM candidate TFV delta for pair census, reported pair loss and live gradients. The historical float64/float32 `544/542` pair-coverage mismatch must never reappear.
+The exact objective must share one canonical float32 SWMM candidate TFV delta across pair census, reported pair loss and live gradients. The historical `544/542` float64/float32 pair-coverage mismatch must never reappear.
 
-### Stage checkpoint / resume
+### Stage checkpoint/resume
 
 The runner writes NONFINAL stage-boundary checkpoints:
 
@@ -240,25 +219,15 @@ stage_b0.pt
 stage_objective.pt
 ```
 
-Pause deliberately with:
+Use `--stop-after-stage` and `--resume-from` only when profile, graph, data lineage, training design and source fingerprints remain compatible. This is stage-boundary resume, not mid-epoch resume. Smoke/dev stage checkpoints must never enter D5/runtime/Policy Lock.
 
-```text
---stop-after-stage stage_a
---stop-after-stage stage_b0
---stop-after-stage objective
-```
+## 10. Mandatory smoke diagnosis before architecture changes
 
-Resume with the same profile/data/design:
+### 10.1 Ranking/action identification
 
-```text
---resume-from <RUN>\stage_b0.pt
-```
+Read `STEP2_V128_CURRENT_REPORT.json` and report held-out ranking, pairwise, top1, TFV-delta MAE and selected regret. Training loss alone is not a promotion criterion.
 
-Resume fails closed if profile, graph, data lineage, training design, model source, training source or model-class source differs. This is stage-boundary resume, not a mid-epoch resume claim.
-
-## 9. Mandatory smoke diagnostics before any architecture change
-
-### 9.1 Step2 spatial action-effect audit
+### 10.2 Spatial action-effect audit
 
 ```powershell
 python scripts/audit_step2_spatial_current.py `
@@ -274,20 +243,9 @@ python scripts/audit_step2_spatial_current.py `
   --device cuda
 ```
 
-Read held-out D2 action-effect sign/magnitude/error by actuator-to-node graph distance:
+Report truth/predicted action effect, MAE/relative MAE and sign accuracy for `1-3`, `4-6`, `7-12`, and `13+` actuator-to-node graph hops.
 
-```text
-1-3 hops
-4-6 hops
-7-12 hops
-13+ hops
-```
-
-If far-field action effects collapse while near-field is good, do not spend a full run before testing spatial P1 variants.
-
-### 9.2 Smoke/dev D2 gradient audit
-
-For `stage_objective.pt`, use the Development-only auditor, **not** the strict full-checkpoint auditor:
+### 10.3 Development D2 gradient audit
 
 ```powershell
 python scripts/audit_step2_gradient_current_dev.py `
@@ -303,21 +261,23 @@ python scripts/audit_step2_gradient_current_dev.py `
   --device cuda
 ```
 
-Report at minimum:
+Report TFV gradient sign accuracy, gradient cosine similarity and gradient MAE. The strict `scripts/audit_step2_v128_d2_gradients_fast.py` is full-checkpoint evidence and must not be used on smoke/dev stage artifacts.
 
-- TFV gradient sign accuracy;
-- gradient cosine similarity;
-- gradient MAE.
+## 11. Failure-mode routing
 
-The strict `scripts/audit_step2_v128_d2_gradients_fast.py` is full-checkpoint evidence and must not be used to pretend a smoke/dev stage artifact is final.
+Use the evidence to decide what to test next:
 
-### 9.3 Ranking/action-identification readout
+- ranking + gradient + near/far action effects all poor -> inspect local action identifiability, objective supervision and training coverage first;
+- near-field good but `7-12`/`13+` action effects poor -> test the edge-aware Development path;
+- Step1 error rises strongly with distance to nearest sensor -> test V122 sensor-to-all-node global attention;
+- ranking acceptable but gradient sign/cosine poor -> fix gradient/objective path before Step1 or graph expansion;
+- ranking/spatial/gradient all coherent -> only then investigate H360 autoregressive drift, optimizer/runtime, richer rainfall forecasting or horizon sensitivity.
 
-Read `STEP2_V128_CURRENT_REPORT.json` for held-out ranking, pairwise, top1, TFV-delta MAE and selected regret. A lower training loss alone is not a promotion criterion.
+Do not create a new version number merely because one smoke metric is weak.
 
-## 10. Step1 global-attention ablation only when Step1 distance is a plausible blocker
+## 12. Step1 global-attention ablation
 
-The frozen production Step1 remains the baseline. Train a separate V122 sensor-to-all-node attention checkpoint on the same Development TrainFit data:
+Only when Step1 distance is a plausible blocker, train a separate Development V122 attention model and compare it against the frozen legacy Step1 on identical Development validation windows:
 
 ```powershell
 python scripts/train_step1_global_attention_dev.py `
@@ -327,13 +287,7 @@ python scripts/train_step1_global_attention_dev.py `
   --out <DEBUG_ROOT>\step1_v122_attention.pt `
   --device cuda `
   --no-amp
-```
 
-Use the same frozen training split/sensor layout; do not overwrite the frozen Step1 checkpoint.
-
-Then compare legacy and V122 on identical Development validation windows:
-
-```powershell
 python scripts/audit_step1_global_attention_current.py `
   --run-index <STEP1_RUN_INDEX> `
   --graph <FROZEN_GRAPH> `
@@ -344,11 +298,11 @@ python scripts/audit_step1_global_attention_current.py `
   --device cuda
 ```
 
-Compare depth error by nearest-sensor hops. Do **not** hot-swap Step1. If V122 is promoted, rebuild the causal Step1 state store and retrain Step2 from the beginning.
+Compare nearest-sensor hop bins. Do not hot-swap Step1. If V122 is promoted, rebuild the causal Step1 state store and retrain Step2 from the beginning.
 
-## 11. Edge-physics ablation only if Step2 far-field propagation is implicated
+## 13. Edge-physics ablation
 
-Compile edge physics from the frozen INP:
+Only if Step2 far-field propagation is implicated:
 
 ```powershell
 python scripts/build_edge_physics_current.py `
@@ -356,11 +310,7 @@ python scripts/build_edge_physics_current.py `
   --graph <FROZEN_GRAPH> `
   --out-npz <DEBUG_ROOT>\EDGE_PHYSICS.npz `
   --out-json <DEBUG_ROOT>\EDGE_PHYSICS.json
-```
 
-Run the same smoke/dev curriculum with V128 typed actuator messages plus edge-aware ordinary-network propagation:
-
-```powershell
 python scripts/run_step2_edge_aware_dev.py `
   --edge-physics <DEBUG_ROOT>\EDGE_PHYSICS.npz `
   --profile smoke `
@@ -376,73 +326,23 @@ python scripts/run_step2_edge_aware_dev.py `
 
 `--profile full` is deliberately forbidden for this experimental architecture until held-out ranking/spatial/gradient evidence supports promotion.
 
-## 12. Hydraulic-influence graph is diagnostic/experimental, not a default model change
+## 14. Influence graph and physics diagnostics
 
-Only after Development D2 shows meaningful remote actuator-node effects that baseline/edge-aware propagation still fails to learn:
+Build a hydraulic-influence artifact only after authoritative Development D2 proves meaningful remote effects that baseline/edge-aware propagation still fails to learn. Use Development TrainFit D2 only; never Validation/Final/Formal data. Building an influence artifact does not promote it into the full model.
 
-```powershell
-python scripts/build_hydraulic_influence_current.py `
-  --graph <FROZEN_GRAPH> `
-  --cache-manifest <CANONICAL_D2_D3_CACHE> `
-  --out-npz <DEBUG_ROOT>\HYDRAULIC_INFLUENCE.npz `
-  --out-json <DEBUG_ROOT>\HYDRAULIC_INFLUENCE.json
-```
+Current V128 actuator injection is conservative, but the learned ordinary-network transition is not a full Saint-Venant solver and current training data do not contain all terms required for exact node continuity or authoritative ordinary-conduit flow supervision. Therefore continuity remains a diagnostic proxy, `continuity_proxy_training_loss=false`, and missing conduit-flow labels must never be fabricated.
 
-The artifact may use Development TrainFit D2 only. Never construct influence shortcuts from Validation/Final/Formal data. Building the artifact does not promote it into the full model.
+## 15. Dev promotion
 
-## 13. Physics diagnostics
+Only smoke variants that improve the intended failure mode progress to explicit `--profile dev`. Repeat ranking, spatial and Development D2 gradient audits and compare H30-H360 drift plus runtime/RAM/swap/CUDA usage.
 
-Current V128 actuator injection is explicitly conservative, but the learned ordinary-network transition is not a full Saint-Venant/continuity solver. Current node state also lacks all terms needed for an exact node mass-balance equation and does not carry authoritative ordinary-conduit dynamic flow labels.
+Promote using evidence, not training loss alone. At minimum compare ranking/pairwise/top1, selected regret, TFV-delta error, D2 gradient sign/cosine/MAE, `1-3`/`4-6`/`7-12`/`13+` hop behavior, H360 drift and resource cost. Reject variants that do not solve their intended failure mode.
 
-Therefore:
+## 16. Full only after one Development winner
 
-- continuity is a diagnostic proxy only;
-- `continuity_proxy_training_loss` remains false;
-- ordinary-conduit flow supervision is gated on real authoritative labels;
-- do not fabricate missing link-flow labels to obtain a "physics-informed" claim.
+Do not run `--profile full` merely because the code compiles. The full profile retains the canonical 112 D2 + 112 D3 + 33 D4-FIT census, Stage A four epochs, H60/H120 rollout curriculum and H360 exact objective three epochs. Only an explicit full profile can create the strict V6 base checkpoint.
 
-## 14. Development proxy
-
-Only variants that pass smoke and improve the intended failure mode progress to:
-
-```powershell
-python scripts/run_step2_current.py `
-  --profile dev `
-  <same frozen data arguments> `
-  --out-dir <DEBUG_ROOT>\<variant>_dev `
-  --device cuda
-```
-
-Repeat the same ranking, spatial and Development D2 gradient audits with `--profile dev`.
-
-Promotion should consider at minimum:
-
-- held-out ranking/pairwise/top1;
-- selected regret;
-- D2 gradient sign/cosine/MAE;
-- 1-3, 4-6, 7-12 and 13+ hop action-effect behavior;
-- H30-H360 rollout drift;
-- wall time, RAM/swap and CUDA usage.
-
-Reject a variant that does not improve the failure mode it was introduced to solve.
-
-## 15. Full Step2 only after one Development winner is frozen
-
-Do not run full merely because code compiles.
-
-```powershell
-python scripts/run_step2_current.py `
-  --profile full `
-  <same frozen data arguments> `
-  --out-dir <FULL_ROOT>\step2_base `
-  --device cuda
-```
-
-`full` preserves the canonical 112 D2 + 112 D3 + 33 D4-FIT census, Stage A four epochs, H60/H120 rollout curriculum and H360 exact objective three epochs. Only explicit `--profile full` can create `step2_v128_control_base.pt` under the strict V6 source/profile contract.
-
-## 16. Full-only downstream sequence
-
-Only after the full base checkpoint passes ranking/horizon + strict D2 gradient + spatial gates:
+Only after a full checkpoint passes coherent ranking/horizon, strict D2 gradient and spatial gates may the workflow continue:
 
 ```text
 D5-FIT using frozen D5-FIT only
@@ -453,17 +353,6 @@ D5-FIT using frozen D5-FIT only
 -> seven-strategy authoritative Development comparison
 ```
 
-Full-only evidence scripts:
-
-```text
-scripts/audit_step2_v128_fast.py
-scripts/audit_step2_v128_d2_gradients_fast.py
-scripts/run_step2_v128_d5_gradient_fast.py
-scripts/build_v128_continuous_evidence.py
-scripts/run_policy_current.py
-scripts/run_seven_strategies_current.py
-```
-
 Every guarded supervisory callback must be <600 s for a real-time claim; target write/readback, continuity and score==execute are mandatory.
 
 ## 17. Promotion rule
@@ -472,7 +361,8 @@ The current development loop is:
 
 ```text
 idea
- -> unit/preflight
+ -> pytest + current-surface lint + CLI help
+ -> preflight
  -> one-group profiler
  -> smoke
  -> ranking + spatial + gradient diagnosis
