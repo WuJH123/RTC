@@ -21,7 +21,7 @@ from .step2_differentiable_v128 import (
 from .step2_train_response_v60 import InputNormalizationV60
 
 V128_CHECKPOINT_CONTRACT = (
-    "PROJECT7_V128_STEP2_CHECKPOINT_V1_TYPED_ACTUATOR_MESSAGE_STRICT"
+    "PROJECT7_V128_STEP2_CHECKPOINT_V2_TYPED_ACTUATOR_MESSAGE_SOURCE_STRICT"
 )
 _V128_SOURCE_FILES = (
     "models.py",
@@ -42,6 +42,13 @@ def v128_step2_source_sha256() -> str:
         digest.update(name.encode("utf-8"))
         digest.update(hashlib.sha256(path.read_bytes()).digest())
     return digest.hexdigest()
+
+
+def _require_sha256(value: object, *, label: str) -> str:
+    text = str(value or "").lower()
+    if len(text) != 64 or any(ch not in "0123456789abcdef" for ch in text):
+        raise ValueError(f"V128 checkpoint lacks canonical {label} SHA256")
+    return text
 
 
 def save_step2_v128(
@@ -102,12 +109,20 @@ def load_step2_v128(
         raise ValueError("V128 Step2 checkpoint must contain a dictionary")
     if payload.get("checkpoint_contract") != V128_CHECKPOINT_CONTRACT:
         raise ValueError(
-            "not a V128 typed-actuator checkpoint; do not route V127 checkpoints through the V128 loader"
+            "not a V128 typed-actuator checkpoint; do not route V127/older V128 checkpoints through the current V128 loader"
         )
     if payload.get("step2_contract") != V128_STEP2_CONTRACT:
         raise ValueError("V128 Step2 scientific contract mismatch")
     if payload.get("scientific_split") != "development":
         raise ValueError("V128 Step2 checkpoint is not development-lineage")
+    stored_source = _require_sha256(
+        payload.get("v128_step2_source_sha256"), label="Step2 source"
+    )
+    current_source = v128_step2_source_sha256()
+    if stored_source != current_source:
+        raise ValueError(
+            "V128 Step2 source semantics changed after checkpoint creation; retrain/re-audit instead of loading stale weights"
+        )
     if payload.get("graph_semantic_sha256") != graph_semantic_sha256_v127(graph):
         raise ValueError("V128 Step2 graph topology/features differ from runtime graph")
     _ = input_normalization_from_v127_checkpoint(payload)
@@ -162,7 +177,7 @@ def load_step2_v128(
             "free_control_horizon_steps": 24,
             "time_contract": "PROJECT7_V128_300S_MODEL_600S_RECEDING_CONTROL_V1",
             "graph_semantic_sha256": payload["graph_semantic_sha256"],
-            "v128_step2_source_sha256": payload.get("v128_step2_source_sha256", ""),
+            "v128_step2_source_sha256": stored_source,
         }
     )
     return model.to(target).eval(), payload
