@@ -94,7 +94,7 @@
   ],
   "canonical_entrypoints": {
     "guide": "CODEX_START_HERE.md",
-    "preflight": "rtc-v128-preflight",
+    "preflight": "rtc-current-preflight",
     "existing_data_training": "scripts/run_step2_current.py",
     "ranking_audit": "scripts/audit_step2_v128_fast.py",
     "d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
