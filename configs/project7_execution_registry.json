@@ -1,23 +1,35 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_V7_SINGLE_CURRENT_SURFACE",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_V8_DEBUG_FIRST_SINGLE_CURRENT_SURFACE",
   "current": {
     "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
-    "research_contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V1",
-    "implementation_contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V7_EXACT_PAIRWISE_STRICT_RUNTIME",
+    "research_contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V2_DEBUG_FIRST",
+    "implementation_contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_DEBUG_FIRST_EXACT_PAIRWISE",
     "guide": "CODEX_START_HERE.md",
     "step2_training": "scripts/run_step2_current.py",
     "runtime": "scripts/run_policy_current.py",
     "seven_strategy": "scripts/run_seven_strategies_current.py",
-    "preflight": "rtc-current-preflight"
+    "preflight": "rtc-current-preflight",
+    "required_step2_profiles": ["smoke", "dev", "full"]
   },
   "selected_internal_implementation": {
     "step2_model": "src/rtc/step2_differentiable_v128.py",
     "step2_stage_a": "src/rtc/step2_train_v128_hydraulic.py",
     "step2_stage_b_exact": "src/rtc/step2_train_v128_exact.py",
+    "step2_profile_contract": "src/rtc/development_profile_v128.py",
+    "step2_stage_checkpoint": "src/rtc/stage_checkpoint_v128.py",
     "checkpoint": "src/rtc/checkpoint_v128.py",
     "step3": "src/rtc/step3_mpc_v128.py",
     "controller": "src/rtc/controller_v128.py",
     "runtime_evidence": "src/rtc/runtime_evidence_v128.py"
+  },
+  "development_diagnostics": {
+    "step1_distance_attention_ablation": "scripts/audit_step1_global_attention_current.py",
+    "step2_spatial_action_effect": "scripts/audit_step2_spatial_current.py",
+    "edge_physics_builder": "scripts/build_edge_physics_current.py",
+    "edge_aware_smoke_dev": "scripts/run_step2_edge_aware_dev.py",
+    "edge_aware_spatial_audit": "scripts/audit_step2_edge_spatial_current.py",
+    "hydraulic_influence_builder": "scripts/build_hydraulic_influence_current.py",
+    "physics_readiness": "src/rtc/physics_diagnostics_v128.py"
   },
   "evidence_entrypoints": {
     "ranking_horizon_audit": "scripts/audit_step2_v128_fast.py",
@@ -27,23 +39,29 @@
   },
   "historical_and_shared": {
     "scripts/run_step2_v127.py": "ARCHIVAL_NONCURRENT",
-    "scripts/run_step2_v127_control_streaming.py": "SHARED_STREAMING_ORCHESTRATION_INTERNAL_ONLY",
+    "scripts/run_step2_v127_control_streaming.py": "SHARED_STREAMING_IMPLEMENTATION_INTERNAL_ONLY",
+    "scripts/run_step2_v128_control_4060.py": "DELETED_OBSOLETE_FULL_ONLY_USER_RUNNER",
     "scripts/run_policy_v127.py": "ARCHIVAL_NONCURRENT",
     "scripts/run_seven_strategies_v127.py": "SHARED_BASELINE_ORCHESTRATION_INTERNAL_ONLY",
     "src/rtc/step2_train_v128.py": "DELETED_OBSOLETE_DETACHED_PAIRWISE_OBJECTIVE"
   },
   "hard_rules": [
-    "user and Codex workflows must enter through the unversioned current scripts or CODEX_START_HERE.md",
+    "user and Codex Step2 workflows must enter through scripts/run_step2_current.py and explicitly choose smoke/dev/full",
+    "smoke/dev are Development screening only and cannot create a strict final Step2 checkpoint or enter D5/runtime/Policy Lock",
+    "run smoke one-group profiler before expensive performance tuning; profile only bounded Development data",
     "never load V127 checkpoint through V128 loader or V128 checkpoint through V127 loader",
     "never load a V128 checkpoint after either its model-source or exact-training-source fingerprint changes",
     "never route current training to the deleted detached-memory src/rtc/step2_train_v128.py objective",
+    "never reintroduce NumPy-float64 pair census; exact pair census/report/live gradient share canonical float32 SWMM truth deltas",
     "never combine ranking, D2 and D5 reports from different Step2 SHA256 values",
     "never project a scored current command after MPC; engineering envelope must be inside the differentiable decoder",
     "never let a custom engineering envelope masquerade as IDEALIZED_DEFAULT_0P5_PER_10MIN",
-    "never claim a custom per-actuator engineering envelope is D5-validated using the historical idealized 0.5 decoder",
+    "never claim edge-aware or hydraulic-influence development experiments are the full model until held-out spatial/ranking evidence promotes them",
+    "never construct hydraulic-influence shortcuts from Validation/Final/Formal data",
+    "never fabricate ordinary-conduit flow labels or enable incomplete continuity proxy as a physics loss",
     "never call a measured authoritative run real-time unless every guarded supervisory callback is below 600 seconds and score==execute plus continuity are explicitly true",
     "never use future realized rainfall, future SWMM state, or future Internal trajectory online",
     "never access Validation/Final/Formal/Policy Lock while the current implementation remains development-only"
   ],
-  "merge_semantics": "merging this current implementation to main removes repository routing ambiguity; it does not by itself constitute scientific promotion, Policy Lock or Final evidence"
+  "merge_semantics": "merging debug/development infrastructure to main removes routing ambiguity and accelerates model selection; it does not itself constitute scientific promotion, Policy Lock or Final evidence"
 }
