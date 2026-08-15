@@ -1,10 +1,10 @@
-"""Current V128 objective wrapper with canonical float32 SWMM truth partitioning.
+"""Current V128 objective truth partition with canonical float32 semantics.
 
 The authoritative SWMM node-volume labels are stored as float32 in the training cache and
 live CUDA losses reduce them in float32.  The historical pair census re-summed the same
 labels in NumPy float64, which can move a pair across the frozen 1 m3 informative threshold
-and produce impossible coverage failures such as 544/542.  Current training uses one
-canonical float32 partition for census, first-pass reporting, and live gradients.
+and produce impossible coverage failures such as 544/542.  Current training therefore uses
+one canonical float32 predicate for the pair census, first-pass report, and live gradients.
 """
 from __future__ import annotations
 
@@ -36,24 +36,24 @@ def informative_pair_totals_float32(true_delta: np.ndarray, *, threshold: float)
     return reference, candidate, reference + candidate
 
 
-def train_objective_stage_streaming_v128(*args, **kwargs):
-    """Run the audited exact objective with a canonical float32 pair census.
+def activate_current_truth_partition() -> None:
+    """Install the canonical predicate into the audited exact implementation.
 
-    The temporary replacement changes only the truth-partition predicate.  All H360 rollout,
-    losses, exact two-pass gradient normalization, optimizer state, and candidate coverage stay
-    in the audited exact implementation.
+    The current stable entrypoint calls this before importing/running the staged trainer.
+    Versioned archival runners do not receive the patch implicitly.
     """
-    previous = _exact._informative_pair_totals
     _exact._informative_pair_totals = informative_pair_totals_float32
-    try:
-        return _exact.train_objective_stage_streaming_v128(*args, **kwargs)
-    finally:
-        _exact._informative_pair_totals = previous
+
+
+def train_objective_stage_streaming_v128(*args, **kwargs):
+    activate_current_truth_partition()
+    return _exact.train_objective_stage_streaming_v128(*args, **kwargs)
 
 
 __all__ = [
     "V128_OBJECTIVE_TRAINING_CONTRACT",
     "V128_TRUTH_PARTITION_CONTRACT",
+    "activate_current_truth_partition",
     "canonical_float32_tfv_and_delta",
     "informative_pair_totals_float32",
     "train_objective_stage_streaming_v128",
