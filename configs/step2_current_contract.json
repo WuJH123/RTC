@@ -1,17 +1,20 @@
 {
-  "contract": "PROJECT7_V127_CONTINUOUS_DIFFERENTIABLE_MPC_CORRECTNESS_V2",
-  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, use a control-oriented differentiable action-conditioned hydraulic surrogate to optimize all 109 writable target settings continuously over H120 within an H360 prediction horizon, minimize system-wide cumulative TFV, treat Priority8 PFV as a one-sided soft secondary objective, and execute only the first 10-minute target in authoritative SWMM",
+  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V1",
+  "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
+  "selected_implementation_contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V7_EXACT_PAIRWISE_STRICT_RUNTIME",
+  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, use a differentiable action-conditioned hydraulic surrogate to optimize all 109 writable target settings continuously over H120 within an H360 prediction horizon, minimize system-wide cumulative TFV, treat Priority8 PFV as a one-sided soft secondary objective, and execute only the first 10-minute target in authoritative SWMM",
   "authoritative_truth": "SWMM",
   "method_identity": {
+    "testbed": "IDEALIZED_SWMM_METHODOLOGY_TESTBED_NOT_FIELD_DIGITAL_TWIN",
     "step1": "sparse causal current-state reconstruction",
-    "step2": "control-oriented differentiable hydraulic world surrogate",
+    "step2": "typed physics-aware differentiable hydraulic/action surrogate",
     "step3": "bounded continuous 109-actuator L-BFGS-B receding-horizon MPC",
-    "rbc_role": "warm start, safety fallback, engineering comparator",
-    "rbc_is_value_reference": false,
-    "rbc_is_action_space_ceiling": false,
     "tfv_role": "PRIMARY_OBJECTIVE",
     "priority8_pfv_role": "ONE_SIDED_SOFT_SECONDARY",
-    "global_peak_role": "REPORT_ONLY"
+    "global_peak_role": "REPORT_ONLY",
+    "rbc_role": "warm start, safety fallback, engineering comparator",
+    "rbc_is_value_reference": false,
+    "rbc_is_action_space_ceiling": false
   },
   "time_contract": {
     "observation_and_model_step_seconds": 300,
@@ -20,6 +23,7 @@
     "prediction_horizon_steps": 72,
     "free_control_horizon_minutes": 120,
     "free_control_blocks": 12,
+    "free_control_model_steps": 24,
     "execute_minutes": 10,
     "terminal_tail": "hold the final H120 target through H360"
   },
@@ -28,161 +32,59 @@
     "all_writable_actuators_eligible": true,
     "continuous_variables": 1308,
     "variable_definition": "12 future 10-minute target fractions x 109 actuators",
-    "per_actuator_bounds": "frozen graph min_setting/max_setting",
-    "max_target_delta_per_10min": 0.5,
+    "engineering_envelope": "per-actuator min/max/max-delta enters the differentiable decoder before scoring",
+    "historical_default_envelope": "graph min/max plus 0.5 target delta per 10 min; explicitly idealized and not a field claim",
     "slew_anchor": "previous supervisory target_setting; realised current_setting is hydraulic state/tracking diagnostic",
     "optimizer": "multi-start scipy L-BFGS-B with PyTorch autograd",
     "warm_starts": ["HOLD", "Sparse-RBC", "shifted previous physical target sequence"],
-    "fallback": "Sparse-RBC on non-finite optimization, deadline/runtime failure, or when the best finite continuous solution does not predict lower hard TFV than RBC"
+    "post_score_projection_allowed": false,
+    "score_equals_execute_required": true
   },
-  "retained_v125_v126_correctness": [
-    "D2/D3/D4 lineage and rainfall-group split discipline",
-    "branch/group/unique-state census",
-    "causal rainfall only online",
-    "candidate/reference identity and float32 target-identity fixes",
-    "target-latch write/readback authority",
-    "current-setting tracking diagnostics",
-    "continuity and score==execute evidence",
-    "six fixed baselines remain external comparators",
-    "Validation/Final/Formal/Policy Lock remain untouched during development"
-  ],
-  "revoked_anchor_centric_contracts": [
-    "Sparse-RBC as Step2 Value reference",
-    "candidate-minus-anchor scalar Value as final Step2 target",
-    "anchor-neighbourhood finite candidate search as final Step3",
-    "Sparse-RBC as default Proposed action when continuous MPC is numerically healthy",
-    "D4 anchor advantage as primary final training task",
-    "group-basis D5 as evidence for the 1308-variable online optimizer"
-  ],
-  "correctness_repairs": [
-    "authoritative SWMM node-flood-volume labels are reordered reference-first to match model branch tensors",
-    "hard TFV is supervised against absolute SWMM cumulative volume while the smooth Softplus proxy is supervised only on same-prefix counterfactual volume/TFV differences so its common zero-rate offset cannot bias absolute training",
-    "rank uses average tie ranks and top1 accepts any tied authoritative optimum",
-    "D2 finite differences are strictly group-local and follow the actual D2 action-sequence direction",
-    "D5 probes and audits the exact online 12x109 L-BFGS-B fraction tensor through the same sequential decoder",
-    "D5 is information-efficient: causal-state diversity selection, local online-relevant centres, duplicate action removal, and no outcome-driven redesign",
-    "Step1/sensor train-deploy identity uses semantic model tensors and ordered sensor IDs; raw file SHA remains provenance",
-    "Step2 checkpoints remain bound to semantic graph topology/features and Step2 computation source",
-    "ranking, D2-gradient and D5-gradient evidence must refer to the same final Step2 checkpoint SHA",
-    "supervisory slew constraints act on consecutive target commands rather than physical current-setting tracking lag",
-    "Auto-RBC/EFD preserve the supervisory target latch for untouched assets",
-    "EFD filling degree uses storage volume/capacity from SWMM FUNCTIONAL/TABULAR storage geometry",
-    "all seven strategies use common event/clock/engine verification and routing-step frozen-decision replay for report-only Global Peak",
-    "the current Step2 training entrypoint is the memory-safe full-coverage control-oriented streaming curriculum; the older scripts/run_step2_v127.py implementation is historical only"
-  ],
-  "data_roles": {
-    "D2": {
-      "source_branches": 4800,
-      "source_groups": 192,
-      "train_eligible_branches": 3600,
-      "train_eligible_groups": 144,
-      "development_validation_branches": 1200,
-      "development_validation_groups": 48,
-      "canonical_trainfit_groups": 112,
-      "canonical_internal_holdout_groups": 32,
-      "v127_role": "single-actuator hydraulic sensitivity and local Jacobian support"
-    },
-    "targeted_D3": {
-      "branches": 3600,
-      "groups": 144,
-      "trainfit_groups": 112,
-      "internal_holdout_groups": 32,
-      "v127_role": "joint multi-actuator nonlinear hydraulic response and action generalization"
-    },
-    "legacy_D3": {
-      "historical_expected_branches": "approximately 1318",
-      "automatic_training": false,
-      "v127_role": "optional auxiliary hydraulic support only after explicit lineage/overlap audit"
-    },
-    "D4": {
-      "branches": 390,
-      "fit_branches": 269,
-      "fit_groups": 33,
-      "audit_branches": 121,
-      "audit_groups": 15,
-      "v127_role": "local physical-response support and untouched local ranking diagnostic"
-    },
-    "D5": {
-      "design": "outcome-blind information-efficient symmetric central differences in the exact online 12x109 continuous MPC fraction space",
-      "maximum_checkpoints": 24,
-      "maximum_centers_per_checkpoint": 3,
-      "directions_per_retained_center": 6,
-      "maximum_planned_branches": 936,
-      "maximum_gradient_directions": 432,
-      "actual_counts": "plan-derived after causal-state/action deduplication; may be below the maximum budget",
-      "checkpoint_selection": "rainfall-balanced farthest-point diversity using causal hydraulic severity/distribution, active target, current setting and tracking-lag descriptors; no D5 outcome",
-      "centers": ["HOLD", "Sparse-RBC warm start", "local non-RBC exploration near the HOLD-RBC operating corridor"],
-      "direction_families": [
-        "first_move_single_actuator",
-        "persistent_single_actuator",
-        "temporal_single_actuator",
-        "first_move_multi_actuator",
-        "single_block_spatial_interaction",
-        "sparse_spatiotemporal_interaction"
-      ],
-      "fit_audit_split": "rainfall-group, frozen before outcomes",
-      "audit_used_for_training": false,
-      "deduplication": "exact duplicate centre/probe action sequences at the same checkpoint are not sent to SWMM",
-      "symmetry": "never clip +/- fraction probes; reduce epsilon or reject a direction if the exact online decoder breaks the central pair"
-    }
+  "step2_current": {
+    "architecture": "typed/physics-aware actuator-to-node messages plus separate managed-flow injection",
+    "stage_A": "typed teacher-forced hydraulic transition and managed-flow learning",
+    "stage_B0": "H60/H120 autoregressive truncated-rollout curriculum",
+    "stage_B": "H360 two-pass exact full within-group pairwise first-order gradient training with memory-safe GPU microbatches",
+    "training_pair_threshold": "1 m3 absolute SWMM action-effect floor",
+    "objective_module": "src/rtc/step2_train_v128_exact.py",
+    "obsolete_objective_module_forbidden": "src/rtc/step2_train_v128.py",
+    "checkpoint": "model-source and exact-training-source fingerprints are both fail-closed",
+    "ranking_d2_d5_same_final_step2_sha_required": true
   },
-  "input_contract": {
-    "training_initial_state": "frozen causal Step1 reconstruction, not SWMM checkpoint truth",
-    "training_rainfall": "causal runtime-equivalent persistence/decay forecast, not realized future rainfall",
-    "future_swmm_states": "supervision only",
-    "future_swmm_flows": "supervision only",
-    "exact_node_flood_volume": "authoritative supervision/evaluation only"
+  "causality": {
+    "training_initial_state": "frozen causal Step1 reconstruction, not future SWMM truth",
+    "online_rainfall": "causal persistence/decay forecast from observed history",
+    "future_realized_rainfall_online": false,
+    "future_swmm_state_online": false,
+    "future_internal_trajectory_online": false,
+    "default_is_robust_or_stochastic_mpc": false
   },
-  "step2_training": {
-    "stage_A": "source-balanced teacher-forced hydraulic transition and actuator-flow learning from D2 + targeted D3 + D4-FIT",
-    "stage_B0": "H60/H120 autoregressive truncated-rollout curriculum to reduce compounding hydraulic/managed-flow drift before the H360 objective stage",
-    "stage_B": "H360 rollout: hard physical TFV learns absolute SWMM magnitude; smooth node-volume/TFV proxy learns same-prefix counterfactual action effects and ordering; retained hydraulic states constrain rollout drift",
-    "stage_C_after_D5": "D5-FIT first-order-in-parameters symmetric directional-gradient supervision; D5-AUDIT uses true online fraction-space autograd and never trains",
-    "hard_tfv": "physical clamp-based surrogate reporting/evaluation, absolute magnitude supervision and continuous-vs-RBC acceptance check",
-    "smooth_tfv": "differentiable Softplus proxy used only for counterfactual effects/gradients and L-BFGS-B, not as an authoritative absolute volume",
+  "data_boundaries": {
+    "D2": "single-actuator hydraulic sensitivity/local Jacobian support",
+    "targeted_D3": "joint multi-actuator nonlinear response/action generalization",
+    "D4_FIT": "local physical-response support",
     "D4_AUDIT_training": false,
+    "D5_FIT": "exact online fraction-space directional-gradient fine-tuning",
     "D5_AUDIT_training": false,
     "InternalHoldout_training": false,
-    "D2_development_validation_training": false
-  },
-  "model_evidence": {
-    "report": [
-      "InternalHoldout D3 rank/pairwise/top1/TFV MAE/selected regret",
-      "InternalHoldout D2 TFV gradient sign/cosine/MAE",
-      "D5-AUDIT fraction-space TFV gradient sign/cosine/MAE"
-    ],
-    "performance_scores_are_universal_runtime_gates": false,
-    "hard_requirements": [
-      "finite evidence metrics",
-      "causal Step1 state verified",
-      "causal rainfall verified",
-      "ranking/D2/D5 evidence bound to the identical final Step2 model"
-    ],
-    "interpretation": "weak model-quality scores must be reported and may make the method scientifically unconvincing, but they do not silently redefine Proposed as RBC"
+    "D2_development_validation_training": false,
+    "Validation_access": false,
+    "Final_access": false,
+    "Formal_access": false,
+    "Policy_Lock_access": false
   },
   "runtime_correctness": {
     "all_109_targets_written_each_decision": true,
     "target_latch_readback_required": true,
-    "command_slew_anchor": "previous supervisory target_setting",
-    "physical_current_setting_is_second_slew_anchor": false,
     "continuity_violation_allowed": false,
-    "post_score_projection_allowed": false,
-    "score_equals_execute_required": true,
     "decision_period_seconds": 600,
     "optimizer_default_deadline_seconds": 480,
     "controller_default_budget_seconds": 540,
-    "optimizer_and_controller_must_finish_inside_600s": true,
+    "every_guarded_callback_must_finish_below_seconds": 600,
     "nonfinite_gradient_or_objective_falls_back_to_rbc": true
   },
-  "final_metrics": {
-    "tfv_m3": "authoritative SWMM cumulative sewer-node flooding volume",
-    "priority8_pfv_m3": "authoritative SWMM cumulative flooding volume over frozen Priority8",
-    "global_peak_flood_rate_m3s": "routing-step frozen-decision SWMM replay; report only",
-    "flow_routing_error_pct": "authoritative SWMM routing error",
-    "control_diagnostics": ["continuous decision count", "RBC fallback count", "deadline fallback count", "optimizer runtime", "target-write/readback", "target-command continuity", "current-setting tracking lag", "score==execute violations"]
-  },
   "seven_strategies": [
-    "Proposed V127 continuous differentiable MPC",
+    "Proposed current continuous differentiable MPC",
     "No-control",
     "Internal RTC",
     "Auto-RBC",
@@ -191,33 +93,21 @@
     "All-closed"
   ],
   "canonical_entrypoints": {
-    "current_surface": "rtc.step2_current",
-    "causal_state_store": "scripts/build_step2_v127_causal_state_store.py",
-    "existing_data_training": "scripts/run_step2_v127_control_streaming.py",
-    "historical_noncanonical_training": "scripts/run_step2_v127.py",
-    "d5_plan": "scripts/plan_d5_gradient_v127.py",
-    "d5_execution_manifest": "scripts/build_d5_execution_manifest_v127.py",
-    "d5_swmm_runner": "rtc-run-d3-batch",
-    "d5_labels": "scripts/build_d5_gradient_labels_v127.py",
-    "d5_gradient_training": "scripts/run_step2_v127_d5_gradient_fast.py",
-    "ranking_audit": "scripts/audit_step2_v127_fast.py",
-    "d2_gradient_audit": "scripts/audit_step2_v127_d2_gradients_fast.py",
-    "continuous_evidence": "scripts/build_v127_continuous_gate.py",
-    "runtime": "scripts/run_policy_v127.py",
-    "seven_strategy_comparison": "scripts/run_seven_strategies_v127.py"
+    "guide": "CODEX_START_HERE.md",
+    "preflight": "rtc-v128-preflight",
+    "existing_data_training": "scripts/run_step2_current.py",
+    "ranking_audit": "scripts/audit_step2_v128_fast.py",
+    "d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
+    "d5_gradient_training": "scripts/run_step2_v128_d5_gradient_fast.py",
+    "continuous_evidence": "scripts/build_v128_continuous_evidence.py",
+    "runtime": "scripts/run_policy_current.py",
+    "seven_strategy_comparison": "scripts/run_seven_strategies_current.py"
   },
-  "forbidden_during_development": [
-    "training on the 1200 D2 development-validation branches",
-    "training on InternalHoldout",
-    "training on D4-AUDIT or D5-AUDIT",
-    "future realized rainfall online",
-    "future SWMM state online",
-    "using RBC as Proposed action-space ceiling or Value reference",
-    "changing D5 checkpoint/action selection after observing D5 outcomes",
-    "changing model-quality thresholds after seeing a control result to manufacture a claim",
-    "Validation outcomes",
-    "Final outcomes",
-    "Formal outcomes",
-    "Policy Lock"
-  ]
+  "historical_entrypoints": {
+    "scripts/run_step2_v127.py": "ARCHIVAL_NONCURRENT",
+    "scripts/run_step2_v127_control_streaming.py": "SHARED_ORCHESTRATION_INTERNAL_NOT_USER_ENTRY",
+    "scripts/run_policy_v127.py": "ARCHIVAL_NONCURRENT",
+    "scripts/run_seven_strategies_v127.py": "SHARED_BASELINE_ORCHESTRATION_INTERNAL_NOT_USER_ENTRY"
+  },
+  "promotion_rule": "merging the implementation to main does not constitute scientific Policy Lock; authoritative SWMM development evidence must still demonstrate acceptable ranking/gradients, TFV/PFV and sub-600-second runtime before any production/final claim"
 }
