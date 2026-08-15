@@ -47,6 +47,7 @@ configs/v128_control_execution.json
 User/Codex entrypoints are intentionally unversioned:
 
 ```text
+rtc-current-preflight
 scripts/run_step2_current.py
 scripts/run_policy_current.py
 scripts/run_seven_strategies_current.py
@@ -104,7 +105,7 @@ Keep AMP and activation checkpointing disabled unless a separately frozen experi
 ## 0. Preflight before expensive work
 
 ```powershell
-rtc-v128-preflight `
+rtc-current-preflight `
   --graph <FROZEN_GRAPH> `
   --device cuda `
   --out <CURRENT_ROOT>\PREFLIGHT_BEFORE_TRAINING.json
@@ -203,7 +204,7 @@ The compiler must fail if the three reports do not identify one identical final 
 ## 5. Runtime preflight
 
 ```powershell
-rtc-v128-preflight `
+rtc-current-preflight `
   --graph <FROZEN_GRAPH> `
   --step2 <CURRENT_ROOT>\step2_final_high\step2_v128_d5_gradient.pt `
   --continuous-evidence <CURRENT_ROOT>\final_high\V128_CONTINUOUS_EVIDENCE.json `
