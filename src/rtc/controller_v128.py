@@ -1,4 +1,4 @@
-"""V128 controller adapter: exact scored first target under frozen engineering envelope."""
+"""V128 controller adapter for exact scored commands under a frozen engineering envelope."""
 from __future__ import annotations
 
 from typing import Any
@@ -12,13 +12,11 @@ from .step2_differentiable_v128 import V128_STEP2_CONTRACT
 from .step3_mpc_v128 import V128_STEP3_CONTRACT
 
 V128_CONTROLLER_CONTRACT = (
-    "PROJECT7_V128_TYPED_STEP2_PER_ACTUATOR_ENVELOPE_TARGET_LATCH_CONTROLLER_V1"
+    "PROJECT7_V128_TYPED_STEP2_PER_ACTUATOR_ENVELOPE_TARGET_LATCH_CONTROLLER_V2"
 )
 
 
 class V128TorchMPCController(V127TorchMPCController):
-    """Use V122/V127 causal execution shell while validating V128's exact envelope."""
-
     def __init__(
         self,
         *args: Any,
@@ -60,6 +58,18 @@ class V128TorchMPCController(V127TorchMPCController):
         action = super().decide(
             obs, observation_already_recorded=observation_already_recorded
         )
+        requested = np.asarray(
+            [float(action.settings[aid]) for aid in self.graph.actuator_ids], dtype=float
+        )
+        active_target = np.asarray(obs.actuator_target_setting, dtype=float).reshape(-1)
+        executable, reason = self._validate_scored_first_move(
+            requested, active_target=active_target
+        )
+        if not executable:
+            raise RuntimeError(
+                f"V128 command violates frozen engineering envelope: {reason}"
+            )
+
         diagnostics = dict(action.diagnostics or {})
         diagnostics.update(
             {
@@ -70,6 +80,7 @@ class V128TorchMPCController(V127TorchMPCController):
                 "engineering_envelope_source": self.engineering_envelope.source,
                 "engineering_envelope_is_idealized_default": self.engineering_envelope.is_idealized_default,
                 "score_equals_execute_under_engineering_envelope": True,
+                "engineering_envelope_validation_reason": reason,
             }
         )
         result = self.mpc.last_result
