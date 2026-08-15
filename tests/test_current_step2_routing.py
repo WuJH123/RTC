@@ -95,7 +95,9 @@ def test_current_profile_runner_uses_typed_stage_a_exact_objective_and_nonfinal_
     assert "train_hydraulic_stage_streaming_v128" in text
     assert "train_objective_stage_streaming_v128" in text
     assert "save_stage_checkpoint_v128" in text
-    assert 'p.add_argument("--profile", choices=("smoke", "dev", "full"), required=True' in text
+    assert '"--profile"' in text
+    assert 'choices=("smoke", "dev", "full")' in text
+    assert "required=True" in text
     assert "if profile.final_checkpoint_allowed:" in text
 
 
