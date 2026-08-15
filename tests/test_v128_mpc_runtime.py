@@ -78,7 +78,8 @@ def _write_decisions(path: Path, runtimes: list[float]) -> None:
                 "elapsed_seconds": 3600 + 600 * index,
                 "source": "MPC_V128_CONTINUOUS",
                 "diagnostics": {
-                    "decision_runtime_seconds": runtime,
+                    "decision_runtime_seconds": max(0.0, runtime - 0.05),
+                    "guarded_decision_runtime_seconds": runtime,
                     "optimizer_elapsed_seconds": max(0.0, runtime - 1.0),
                     "optimizer_deadline_exceeded": False,
                     "score_equals_execute": True,
@@ -90,16 +91,27 @@ def _write_decisions(path: Path, runtimes: list[float]) -> None:
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
 
-def test_v128_runtime_acceptance_requires_every_decision_below_600s(tmp_path) -> None:
+def test_v128_runtime_acceptance_requires_every_guarded_decision_below_600s(tmp_path) -> None:
     good = tmp_path / "good.jsonl"
     _write_decisions(good, [12.0, 20.0, 30.0])
     audit = audit_v128_runtime_decisions(good)
     assert audit["passed"] is True
     assert audit["decision_interval_exact_600s"] is True
     assert audit["decision_runtime_seconds"]["max"] == pytest.approx(30.0)
+    assert audit["decision_runtime_semantics"].startswith("complete continuity-guarded")
 
     bad = tmp_path / "bad.jsonl"
     _write_decisions(bad, [12.0, 601.0, 30.0])
     failed = audit_v128_runtime_decisions(bad)
     assert failed["passed"] is False
     assert failed["hard_realtime_max_lt_600s"] is False
+
+
+def test_v128_runtime_acceptance_rejects_inner_only_timing(tmp_path) -> None:
+    path = tmp_path / "inner_only.jsonl"
+    _write_decisions(path, [10.0])
+    row = json.loads(path.read_text(encoding="utf-8"))
+    row["diagnostics"].pop("guarded_decision_runtime_seconds")
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="lacks guarded_decision_runtime_seconds"):
+        audit_v128_runtime_decisions(path)
