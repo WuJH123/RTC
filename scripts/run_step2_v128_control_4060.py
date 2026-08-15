@@ -32,7 +32,7 @@ from rtc.v128_control_profile import (
 )
 
 V128_STREAMING_RUN_CONTRACT = (
-    "PROJECT7_V128_TYPED_ACTUATOR_EXACT_PAIRWISE_4060_STREAMING_V5_STAGEA_ALIGNED"
+    "PROJECT7_V128_TYPED_ACTUATOR_EXACT_PAIRWISE_4060_STREAMING_V6_CURRENT_CLI"
 )
 V128_REPORT_FILENAME = "STEP2_V128_CONTROL_BASE_REPORT.json"
 V128_CHECKPOINT_FILENAME = "step2_v128_control_base.pt"
@@ -49,6 +49,10 @@ def _load_v127_runner() -> ModuleType:
     return module
 
 
+def _help_requested() -> bool:
+    return any(arg in {"-h", "--help"} for arg in sys.argv[1:])
+
+
 def _cli_out_dir() -> Path:
     try:
         index = sys.argv.index("--out-dir")
@@ -58,8 +62,18 @@ def _cli_out_dir() -> Path:
 
 
 def main() -> None:
-    execution_profile = configure_v128_cuda_matmul_precision()
     runner = _load_v127_runner()
+
+    # Help must be owned by argparse.  The previous wrapper tried to extract --out-dir
+    # before the shared parser saw --help, so the canonical current entrypoint failed its
+    # own CLI preflight.  Reuse the audited parser without starting training or touching
+    # CUDA execution configuration.
+    if _help_requested():
+        runner.__doc__ = __doc__
+        runner.main()
+        return
+
+    execution_profile = configure_v128_cuda_matmul_precision()
     out_dir = _cli_out_dir()
 
     # The shared runner owns only unchanged data/split/memory orchestration. Every semantic

@@ -1,6 +1,7 @@
 """Run Project7 V128 Proposed plus six fixed authoritative SWMM baselines."""
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 from pathlib import Path
@@ -11,7 +12,7 @@ from types import ModuleType
 import numpy as np
 
 V128_SEVEN_STRATEGY_CONTRACT = (
-    "PROJECT7_V128_SEVEN_STRATEGY_AUTHORITATIVE_SWMM_COMPARISON_V1_TYPED_RUNTIME_ACCEPTED"
+    "PROJECT7_V128_SEVEN_STRATEGY_AUTHORITATIVE_SWMM_COMPARISON_V2_CURRENT_CLI"
 )
 _V128_ENGINEERING_ENVELOPE: str | None = None
 
@@ -24,6 +25,54 @@ def _load_v127_runner() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _build_current_parser() -> argparse.ArgumentParser:
+    """Own the user-facing current CLI while preserving shared baseline orchestration."""
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--inp", required=True)
+    p.add_argument("--event-id", required=True)
+    p.add_argument("--sensors", required=True)
+    p.add_argument("--priority-nodes", required=True)
+    p.add_argument("--config", required=True)
+    p.add_argument("--native-controls-template", required=True)
+    p.add_argument("--graph", required=True)
+    p.add_argument("--step1", required=True)
+    p.add_argument("--step2", required=True)
+    p.add_argument("--continuous-evidence", required=True)
+    p.add_argument("--engineering-envelope")
+    p.add_argument("--out-dir", required=True)
+    p.add_argument("--device", default="cuda")
+    p.add_argument("--lbfgsb-maxiter", type=int, default=30)
+    p.add_argument("--optimizer-deadline-seconds", type=float, default=480.0)
+    p.add_argument("--decision-runtime-budget-seconds", type=float, default=540.0)
+    p.add_argument("--pfv-soft-margin-m3", type=float, default=100.0)
+    p.add_argument("--pfv-penalty-weight", type=float, default=1.0)
+    return p
+
+
+def _legacy_shared_argv(args: argparse.Namespace) -> list[str]:
+    """Translate the current CLI namespace into the frozen shared V127 parser contract."""
+    return [
+        sys.argv[0],
+        "--inp", str(args.inp),
+        "--event-id", str(args.event_id),
+        "--sensors", str(args.sensors),
+        "--priority-nodes", str(args.priority_nodes),
+        "--config", str(args.config),
+        "--native-controls-template", str(args.native_controls_template),
+        "--graph", str(args.graph),
+        "--step1", str(args.step1),
+        "--step2", str(args.step2),
+        "--continuous-gate", str(args.continuous_evidence),
+        "--out-dir", str(args.out_dir),
+        "--device", str(args.device),
+        "--lbfgsb-maxiter", str(args.lbfgsb_maxiter),
+        "--optimizer-deadline-seconds", str(args.optimizer_deadline_seconds),
+        "--decision-runtime-budget-seconds", str(args.decision_runtime_budget_seconds),
+        "--pfv-soft-margin-m3", str(args.pfv_soft_margin_m3),
+        "--pfv-penalty-weight", str(args.pfv_penalty_weight),
+    ]
 
 
 def _run_proposed_v128(args, root: Path) -> dict[str, object]:
@@ -123,30 +172,27 @@ def _run_proposed_v128(args, root: Path) -> dict[str, object]:
     }
 
 
-def _extract_v128_only_args() -> None:
-    global _V128_ENGINEERING_ENVELOPE
-    if "--engineering-envelope" in sys.argv:
-        index = sys.argv.index("--engineering-envelope")
-        try:
-            _V128_ENGINEERING_ENVELOPE = sys.argv[index + 1]
-        except IndexError as exc:
-            raise ValueError("--engineering-envelope requires a path") from exc
-        del sys.argv[index : index + 2]
-    if "--continuous-evidence" in sys.argv:
-        sys.argv[sys.argv.index("--continuous-evidence")] = "--continuous-gate"
-
-
 def main() -> None:
-    _extract_v128_only_args()
+    global _V128_ENGINEERING_ENVELOPE
+    args = _build_current_parser().parse_args()
+    _V128_ENGINEERING_ENVELOPE = (
+        str(args.engineering_envelope) if args.engineering_envelope else None
+    )
+
     runner = _load_v127_runner()
-    # Reuse the already audited baseline execution/statistics/replay code. Only Proposed and
-    # artifact identity differ. The V128-only args were removed before the shared parser.
+    # Reuse the audited baseline execution/statistics/replay implementation, but keep its
+    # historical CLI private.  The user-facing current parser above owns current parameter
+    # names and translates once into the frozen shared namespace.
     runner._run_proposed = _run_proposed_v128
     runner.V127_SEVEN_STRATEGY_CONTRACT = V128_SEVEN_STRATEGY_CONTRACT
-    runner.main()
+    original_argv = sys.argv
+    try:
+        sys.argv = _legacy_shared_argv(args)
+        runner.main()
+    finally:
+        sys.argv = original_argv
 
-    out_index = sys.argv.index("--out-dir")
-    root = Path(sys.argv[out_index + 1]).resolve()
+    root = Path(args.out_dir).resolve()
     old_json = root / "PROJECT7_V127_SEVEN_STRATEGY_COMPARISON.json"
     old_csv = root / "PROJECT7_V127_SEVEN_STRATEGY_COMPARISON.csv"
     new_json = root / "PROJECT7_V128_SEVEN_STRATEGY_COMPARISON.json"
