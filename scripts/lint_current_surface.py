@@ -1,31 +1,39 @@
-"""Run Ruff only on the active Project7 execution/development surface.
+"""Run the high-signal Ruff gate for the maintained Project7 surface.
 
-The repository intentionally retains historical implementation files for provenance and
-shared orchestration. Their pre-existing lint debt must not block smoke/dev debugging.
-This gate is the authoritative lint check for the current Project7 surface and is also run
-by GitHub Actions.
+The repository intentionally retains historical/shared implementation files for provenance and
+reproducibility. Their pre-existing style/refactor debt must not block smoke/dev debugging.
+This gate therefore checks explicit maintained paths using correctness-oriented Ruff rule
+families only; the full pytest suite remains the broader behavioral regression gate.
 """
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "configs" / "project7_current_lint_surface.json"
-EXPECTED_CONTRACT = "PROJECT7_CURRENT_LINT_SURFACE_V1_ACTIVE_ONLY"
+EXPECTED_CONTRACT = "PROJECT7_CURRENT_LINT_SURFACE_V2_HIGH_SIGNAL_ACTIVE_ONLY"
+EXPECTED_RULES = ("E4", "E7", "E9", "F")
 
 
-def _load_paths() -> list[str]:
+def _load_contract() -> tuple[list[str], tuple[str, ...]]:
     payload = json.loads(CONFIG.read_text(encoding="utf-8"))
     if payload.get("contract") != EXPECTED_CONTRACT:
         raise RuntimeError(f"unexpected current lint contract: {payload.get('contract')!r}")
     if payload.get("full_repository_ruff_is_gate") is not False:
-        raise RuntimeError("current lint contract must not turn archival Ruff debt into a stop-gate")
+        raise RuntimeError("current lint contract must not turn repository-wide Ruff debt into a stop-gate")
     if payload.get("current_surface_ruff_is_gate") is not True:
         raise RuntimeError("current lint surface must remain a fail-closed gate")
+
+    rules_raw = payload.get("rule_select")
+    if not isinstance(rules_raw, list):
+        raise RuntimeError("current lint contract lacks rule_select")
+    rules = tuple(str(value) for value in rules_raw)
+    if rules != EXPECTED_RULES:
+        raise RuntimeError(f"current lint rules must remain {list(EXPECTED_RULES)}, got {list(rules)}")
 
     raw = payload.get("paths")
     if not isinstance(raw, list) or not raw:
@@ -40,13 +48,14 @@ def _load_paths() -> list[str]:
     non_python = [path for path in paths if not path.endswith(".py")]
     if non_python:
         raise RuntimeError(f"current lint surface contains non-Python files: {non_python}")
-    return paths
+    return paths, rules
 
 
 def main() -> int:
-    paths = _load_paths()
-    print(f"{EXPECTED_CONTRACT}: checking {len(paths)} active Python files")
-    command = [sys.executable, "-m", "ruff", "check", *paths]
+    paths, rules = _load_contract()
+    select = ",".join(rules)
+    print(f"{EXPECTED_CONTRACT}: checking {len(paths)} maintained Python files with --select {select}")
+    command = [sys.executable, "-m", "ruff", "check", "--select", select, *paths]
     completed = subprocess.run(command, cwd=ROOT, check=False)
     return int(completed.returncode)
 
