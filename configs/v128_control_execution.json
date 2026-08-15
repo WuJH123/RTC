@@ -68,8 +68,8 @@
     "step2_cpu_group_streaming": true,
     "step2_gpu_microbatch": true,
     "step3_immutable_graph_tensor_cache_used_by_runtime": true,
-    "runtime_acceptance_contract": "PROJECT7_V128_AUTHORITATIVE_600S_RUNTIME_ACCEPTANCE_V2_GUARDED_CALLBACK",
-    "measured_runtime_acceptance": "every complete continuity-guarded supervisory decision callback must be <600 s"
+    "runtime_acceptance_contract": "PROJECT7_V128_AUTHORITATIVE_600S_RUNTIME_ACCEPTANCE_V3_FAIL_CLOSED_EVIDENCE",
+    "measured_runtime_acceptance": "every complete continuity-guarded supervisory decision callback must be <600 s and score==execute plus continuity must be explicitly true"
   },
   "rainfall_runtime": {
     "causal_forecast": "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92)",
