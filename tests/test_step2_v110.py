@@ -197,7 +197,7 @@ def test_v110_active_thresholds_are_local_and_physically_floored():
 def test_historical_v110_remains_importable_but_current_surface_is_v127():
     import rtc.step2_current as current
 
-    assert current.CURRENT_PROJECT7_CONTRACT == "PROJECT7_V127_CONTINUOUS_DIFFERENTIABLE_MPC_RESTORATION_V1"
+    assert current.CURRENT_PROJECT7_CONTRACT == "PROJECT7_V127_CONTINUOUS_DIFFERENTIABLE_MPC_CORRECTNESS_V2"
     assert current.CURRENT_STEP2_CONTRACT.startswith("PROJECT7_V127_CONTROL_ORIENTED_DIFFERENTIABLE_HYDRAULIC_SURROGATE")
     assert current.CURRENT_STEP3_CONTRACT.startswith("PROJECT7_V127_109ACT_H120_LBFGSB_RECEDING_HORIZON_MPC")
     assert current.CONTINUOUS_MPC_ENABLED is True

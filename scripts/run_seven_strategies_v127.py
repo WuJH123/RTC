@@ -1,4 +1,4 @@
-"""Run Project7 V127 Proposed plus the six frozen authoritative SWMM baselines."""
+"""Run Project7 V127 Proposed plus six authoritative SWMM baselines on one event."""
 from __future__ import annotations
 
 import argparse
@@ -9,12 +9,17 @@ from pathlib import Path
 import subprocess
 import sys
 
+import numpy as np
+
+from rtc.execution_audit_v127 import audit_target_write_readback_v127
+from rtc.replay_peak import replay_exact_global_peak
+
 try:
     from run_six_baselines_v122 import BASELINES, _run_one
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.run_six_baselines_v122 import BASELINES, _run_one
 
-V127_SEVEN_STRATEGY_CONTRACT = "PROJECT7_V127_SEVEN_STRATEGY_AUTHORITATIVE_SWMM_COMPARISON_V2_CAUSAL_RAIN"
+V127_SEVEN_STRATEGY_CONTRACT = "PROJECT7_V127_SEVEN_STRATEGY_AUTHORITATIVE_SWMM_COMPARISON_V6_SEMANTIC_EVENT_WRITE_AUDIT"
 
 
 def _priority_nodes(path: Path) -> set[str]:
@@ -59,6 +64,51 @@ def _augment(row: dict[str, object], priority: set[str]) -> dict[str, object]:
     return result
 
 
+def _exact_peak(row: dict[str, object]) -> dict[str, object]:
+    result = dict(row)
+    metadata_path = Path(str(result["metadata_path"]))
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    write_audit = audit_target_write_readback_v127(metadata_path=metadata_path)
+    if write_audit.get("passed") is not True:
+        raise RuntimeError(
+            f"{result.get('strategy')}: target write/readback audit failed: "
+            + json.dumps(write_audit, sort_keys=True)
+        )
+    runtime_inp = Path(str(metadata["inp_path"]))
+    decision_name = str(metadata.get("decision_file", ""))
+    decision_path = metadata_path.parent / decision_name if decision_name else None
+    if decision_path is not None and not decision_path.is_file():
+        raise RuntimeError(f"missing frozen decision log for exact peak replay: {decision_path}")
+    replay_path = metadata_path.with_suffix(".routing_step_peak.json")
+    replay = replay_exact_global_peak(
+        inp_path=runtime_inp,
+        decision_log_path=decision_path,
+        output_path=replay_path,
+        source_main_metadata_path=metadata_path,
+    )
+    if str(replay.get("swmm_engine_version", "")) != str(metadata.get("swmm_engine_version", "")):
+        raise RuntimeError("exact-peak replay SWMM engine differs from authoritative main run")
+    result["target_write_readback_passed"] = True
+    result["target_write_readback_max_error"] = float(
+        write_audit["max_target_write_readback_error"]
+    )
+    result["sampled_300s_global_peak_flood_rate_m3s"] = float(
+        result.get("global_peak_flood_rate_m3s", 0.0)
+    )
+    result["global_peak_flood_rate_m3s"] = float(
+        replay["routing_step_global_peak_flood_rate_m3s"]
+    )
+    result["global_peak_semantics"] = "routing-step frozen-decision replay"
+    result["global_peak_replay_path"] = str(replay_path.resolve())
+    result["runtime_inp_sha256"] = str(metadata.get("inp_sha256", ""))
+    result["source_inp_sha256_provenance"] = str(metadata.get("source_inp_sha256", ""))
+    result["swmm_engine_version"] = str(metadata.get("swmm_engine_version", ""))
+    result["control_start_minutes"] = int(metadata["control_start_minutes"])
+    result["control_update_seconds"] = int(metadata["control_update_seconds"])
+    result["observation_update_seconds"] = int(metadata["observation_update_seconds"])
+    return result
+
+
 def _run_proposed(args, root: Path) -> dict[str, object]:
     out = root / "proposed_v127"
     out.mkdir(parents=True, exist_ok=True)
@@ -85,8 +135,6 @@ def _run_proposed(args, root: Path) -> dict[str, object]:
         str(Path(args.step1).resolve()),
         "--step2",
         str(Path(args.step2).resolve()),
-        "--causal-store",
-        str(Path(args.causal_store).resolve()),
         "--continuous-gate",
         str(Path(args.continuous_gate).resolve()),
         "--device",
@@ -115,17 +163,30 @@ def _run_proposed(args, root: Path) -> dict[str, object]:
         if line.strip()
     ]
     continuous = sum(
-        1 for row in decisions if str(row.get("source")) == "MPC_V127_CONTINUOUS"
+        1 for item in decisions if str(item.get("source")) == "MPC_V127_CONTINUOUS"
     )
-    rbc = sum(1 for row in decisions if str(row.get("source")) == "RBC_SAFETY_V127")
+    rbc = sum(
+        1 for item in decisions if str(item.get("source")) == "RBC_SAFETY_V127"
+    )
     deadline = sum(
         1
-        for row in decisions
-        if bool((row.get("diagnostics") or {}).get("continuous_optimizer_deadline_exceeded", False))
+        for item in decisions
+        if bool((item.get("diagnostics") or {}).get("optimizer_deadline_exceeded", False))
     )
+    runtimes = np.asarray(
+        [
+            float((item.get("diagnostics") or {}).get("optimizer_elapsed_seconds"))
+            for item in decisions
+            if (item.get("diagnostics") or {}).get("optimizer_elapsed_seconds") is not None
+        ],
+        dtype=float,
+    )
+    if runtimes.size and not np.isfinite(runtimes).all():
+        raise RuntimeError("V127 decision log contains non-finite optimizer runtimes")
     return {
         "event_id": str(args.event_id),
         "strategy": "proposed_v127",
+        "source_inp_path": str(Path(args.inp).resolve()),
         "tfv_m3": 0.0,
         "global_peak_flood_rate_m3s": float(meta["global_peak_flood_rate_m3s"]),
         "flow_routing_error_pct": float(meta["flow_routing_error_pct"]),
@@ -133,9 +194,37 @@ def _run_proposed(args, root: Path) -> dict[str, object]:
         "continuous_decisions": continuous,
         "rbc_safety_fallback_decisions": rbc,
         "optimizer_deadline_fallbacks": deadline,
+        "optimizer_runtime_mean_s": float(runtimes.mean()) if runtimes.size else 0.0,
+        "optimizer_runtime_p95_s": float(np.quantile(runtimes, 0.95)) if runtimes.size else 0.0,
+        "optimizer_runtime_max_s": float(runtimes.max()) if runtimes.size else 0.0,
         "metadata_path": str(meta_path.resolve()),
         "node_statistics_path": str(stats_path.resolve()),
         "decision_path": str(decisions_path.resolve()),
+    }
+
+
+def _verify_common_execution(rows: list[dict[str, object]]) -> dict[str, object]:
+    source_paths = {str(row.get("source_inp_path", "")) for row in rows}
+    engines = {str(row.get("swmm_engine_version", "")) for row in rows}
+    starts = {int(row["control_start_minutes"]) for row in rows}
+    updates = {int(row["control_update_seconds"]) for row in rows}
+    observations = {int(row["observation_update_seconds"]) for row in rows}
+    if len(source_paths) != 1 or "" in source_paths:
+        raise RuntimeError("seven strategies were not orchestrated from one source-event INP")
+    if len(engines) != 1 or "" in engines:
+        raise RuntimeError("seven strategies do not share one SWMM engine")
+    if len(starts) != 1 or len(updates) != 1 or len(observations) != 1:
+        raise RuntimeError("seven strategies do not share identical observation/control clocks")
+    if any(row.get("target_write_readback_passed") is not True for row in rows):
+        raise RuntimeError("one or more strategies failed target write/readback verification")
+    return {
+        "source_inp_path": next(iter(source_paths)),
+        "swmm_engine_version": next(iter(engines)),
+        "control_start_minutes": next(iter(starts)),
+        "control_update_seconds": next(iter(updates)),
+        "observation_update_seconds": next(iter(observations)),
+        "target_write_readback_all_strategies": True,
+        "source_file_sha_is_provenance_not_execution_gate": True,
     }
 
 
@@ -150,7 +239,6 @@ def main() -> None:
     p.add_argument("--graph", required=True)
     p.add_argument("--step1", required=True)
     p.add_argument("--step2", required=True)
-    p.add_argument("--causal-store", required=True)
     p.add_argument("--continuous-gate", required=True)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--device", default="cuda")
@@ -170,7 +258,6 @@ def main() -> None:
         Path(args.graph),
         Path(args.step1),
         Path(args.step2),
-        Path(args.causal_store),
         Path(args.continuous_gate),
     ]
     for path in required:
@@ -179,9 +266,12 @@ def main() -> None:
     if not 0.0 < float(args.optimizer_deadline_seconds) < float(
         args.decision_runtime_budget_seconds
     ) < 600.0:
-        raise ValueError("V127 seven-strategy runtime deadlines must satisfy optimizer < controller < 600 s")
+        raise ValueError(
+            "V127 seven-strategy deadlines must satisfy optimizer < controller < 600 s"
+        )
 
     priority = _priority_nodes(Path(args.priority_nodes))
+    source_inp_path = str(Path(args.inp).resolve())
     root = Path(args.out_dir).resolve()
     root.mkdir(parents=True, exist_ok=True)
     runtime_cache = root / "_runtime_inp"
@@ -197,8 +287,10 @@ def main() -> None:
             runtime_cache=runtime_cache,
             event_id=str(args.event_id),
         )
-        rows.append(_augment(row, priority))
-    rows.append(_augment(_run_proposed(args, root), priority))
+        row["source_inp_path"] = source_inp_path
+        rows.append(_exact_peak(_augment(row, priority)))
+    rows.append(_exact_peak(_augment(_run_proposed(args, root), priority)))
+    common_execution = _verify_common_execution(rows)
 
     no_control = next(row for row in rows if row["strategy"] == "no_control")
     nc_tfv = float(no_control["tfv_m3"])
@@ -226,6 +318,9 @@ def main() -> None:
         "tfv_primary": True,
         "priority8_pfv_soft_secondary": True,
         "global_peak_report_only": True,
+        "global_peak_semantics": "routing-step frozen-decision replay for every strategy",
+        "target_write_readback_all_strategies": True,
+        "common_execution": common_execution,
         "rows": rows,
         "comparison_csv": str(csv_path.resolve()),
     }

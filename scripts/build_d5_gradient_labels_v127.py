@@ -1,8 +1,8 @@
 """Compile V127 D5 central-difference TFV/PFV gradient truth from authoritative SWMM.
 
-The script never estimates gradients from a learned model.  It only joins the frozen D5
+The script never estimates gradients from a learned model.  It joins the frozen D5
 execution manifest to completed SWMM branches and computes (f_plus-f_minus)/(2*epsilon)
-for each coefficient-space unit direction.
+for unit directions in the exact 12 x 109 L-BFGS-B fraction tensor used online.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from rtc.d5_gradient_v127 import V127_D5_CONTRACT
 from rtc.data_index import standardize_d3_run_index
 from rtc.production_cli import _load_graph
 
-V127_D5_LABEL_CONTRACT = "PROJECT7_V127_D5_AUTHORITATIVE_DIRECTIONAL_GRADIENT_LABELS_V1"
+V127_D5_LABEL_CONTRACT = "PROJECT7_V127_D5_AUTHORITATIVE_1308VAR_DIRECTIONAL_GRADIENT_LABELS_V2"
 
 
 def _sha(path: str | Path) -> str:
@@ -28,7 +28,8 @@ def _sha(path: str | Path) -> str:
 
 def _priority(path: str | Path, graph) -> np.ndarray:
     nodes = [
-        line.strip() for line in Path(path).read_text(encoding="utf-8").splitlines()
+        line.strip()
+        for line in Path(path).read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
     if len(nodes) != 8 or len(set(nodes)) != 8:
@@ -41,12 +42,17 @@ def _priority(path: str | Path, graph) -> np.ndarray:
 
 
 def build_labels(
-    *, execution_manifest_path: str | Path, run_summary_path: str | Path,
-    graph_path: str | Path, priority_path: str | Path,
+    *,
+    execution_manifest_path: str | Path,
+    run_summary_path: str | Path,
+    graph_path: str | Path,
+    priority_path: str | Path,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     manifest = pd.read_csv(execution_manifest_path)
     if set(manifest["v127_d5_contract"].astype(str)) != {V127_D5_CONTRACT}:
         raise ValueError("V127 D5 execution manifest contract mismatch")
+    if set(manifest["direct_mpc_variable_count"].astype(int)) != {12 * 109}:
+        raise ValueError("V127 D5 execution manifest is not the online 1308-variable space")
     runs = standardize_d3_run_index(pd.read_csv(run_summary_path))
     provenance = manifest.rename(columns={"sequence_sha256": "action_or_sequence_sha256"})
     keys = ["checkpoint_id", "action_or_sequence_sha256"]
@@ -58,7 +64,9 @@ def build_labels(
         suffixes=("_run", "_plan"),
     )
     if len(joined) != len(manifest):
-        raise ValueError(f"V127 D5 SWMM summary matched {len(joined)} of {len(manifest)} rows")
+        raise ValueError(
+            f"V127 D5 SWMM summary matched {len(joined)} of {len(manifest)} rows"
+        )
     graph = _load_graph(graph_path)
     pidx = _priority(priority_path, graph)
     volume_cache: dict[str, np.ndarray] = {}
@@ -85,41 +93,77 @@ def build_labels(
             plus = pair[pair["probe_role"] == "plus"]
             minus = pair[pair["probe_role"] == "minus"]
             if len(plus) != 1 or len(minus) != 1:
-                raise RuntimeError(f"V127 D5 {direction_id} is not one completed +/- pair")
+                raise RuntimeError(
+                    f"V127 D5 {direction_id} is not one completed +/- pair"
+                )
             plus_row, minus_row = plus.iloc[0], minus.iloc[0]
             eps = float(plus_row["epsilon"])
             if eps <= 0 or abs(float(minus_row["epsilon"]) - eps) > 1e-12:
                 raise RuntimeError(f"V127 D5 {direction_id} epsilon drift")
-            plus_volume = volumes(plus_row)
-            minus_volume = volumes(minus_row)
-            plus_tfv, minus_tfv = float(plus_volume.sum()), float(minus_volume.sum())
-            plus_pfv, minus_pfv = float(plus_volume[pidx].sum()), float(minus_volume[pidx].sum())
-            rows.append({
-                "contract": V127_D5_LABEL_CONTRACT,
-                "split_role": str(plus_row["d5_split_role"]),
-                "rainfall_group": str(plus_row["rainfall_group_plan"] if "rainfall_group_plan" in plus_row else plus_row["rainfall_group"]),
-                "event_id": str(plus_row["event_id_plan"] if "event_id_plan" in plus_row else plus_row["event_id"]),
-                "checkpoint_id": str(plus_row["checkpoint_id"]),
-                "center_id": str(center_id),
-                "center_family": str(plus_row["center_family"]),
-                "direction_id": str(direction_id),
-                "direction_coefficients_json": str(plus_row["direction_coefficients_json"]),
-                "epsilon": eps,
-                "center_sequence_sha256": str(center_row["d5_scoring_sequence_sha256"]),
-                "center_tfv_m3": center_tfv,
-                "center_pfv_m3": center_pfv,
-                "plus_tfv_m3": plus_tfv,
-                "minus_tfv_m3": minus_tfv,
-                "plus_pfv_m3": plus_pfv,
-                "minus_pfv_m3": minus_pfv,
-                "true_tfv_directional_gradient_m3_per_coeff": (plus_tfv - minus_tfv) / (2.0 * eps),
-                "true_pfv_directional_gradient_m3_per_coeff": (plus_pfv - minus_pfv) / (2.0 * eps),
-                "central_difference": True,
-                "symmetric_pair_verified": True,
-            })
+            direction = np.asarray(
+                json.loads(str(plus_row["direction_fractions_json"])), dtype=np.float64
+            )
+            if direction.shape != (12, 109) or not np.isfinite(direction).all():
+                raise RuntimeError(f"V127 D5 {direction_id} direction shape is invalid")
+            if abs(float(np.linalg.norm(direction)) - 1.0) > 5e-5:
+                raise RuntimeError(f"V127 D5 {direction_id} direction is not unit-L2")
+            if str(minus_row["direction_fractions_json"]) != str(
+                plus_row["direction_fractions_json"]
+            ):
+                raise RuntimeError(f"V127 D5 {direction_id} direction lineage differs across pair")
+            plus_tfv, minus_tfv = float(volumes(plus_row).sum()), float(volumes(minus_row).sum())
+            plus_pfv = float(volumes(plus_row)[pidx].sum())
+            minus_pfv = float(volumes(minus_row)[pidx].sum())
+            rows.append(
+                {
+                    "contract": V127_D5_LABEL_CONTRACT,
+                    "split_role": str(plus_row["d5_split_role"]),
+                    "rainfall_group": str(
+                        plus_row["rainfall_group_plan"]
+                        if "rainfall_group_plan" in plus_row
+                        else plus_row["rainfall_group"]
+                    ),
+                    "event_id": str(
+                        plus_row["event_id_plan"]
+                        if "event_id_plan" in plus_row
+                        else plus_row["event_id"]
+                    ),
+                    "checkpoint_id": str(plus_row["checkpoint_id"]),
+                    "center_id": str(center_id),
+                    "center_family": str(plus_row["center_family"]),
+                    "direction_id": str(direction_id),
+                    "direction_family": str(plus_row["direction_family"]),
+                    "direction_fractions_json": str(
+                        plus_row["direction_fractions_json"]
+                    ),
+                    "epsilon": eps,
+                    "direct_mpc_variable_count": 12 * 109,
+                    "center_sequence_sha256": str(
+                        center_row["d5_scoring_sequence_sha256"]
+                    ),
+                    "center_tfv_m3": center_tfv,
+                    "center_pfv_m3": center_pfv,
+                    "plus_tfv_m3": plus_tfv,
+                    "minus_tfv_m3": minus_tfv,
+                    "plus_pfv_m3": plus_pfv,
+                    "minus_pfv_m3": minus_pfv,
+                    "true_tfv_directional_gradient_m3_per_fraction": (
+                        plus_tfv - minus_tfv
+                    )
+                    / (2.0 * eps),
+                    "true_pfv_directional_gradient_m3_per_fraction": (
+                        plus_pfv - minus_pfv
+                    )
+                    / (2.0 * eps),
+                    "central_difference": True,
+                    "symmetric_pair_verified": True,
+                }
+            )
     result = pd.DataFrame.from_records(rows)
     if result.empty or result["direction_id"].duplicated().any():
-        raise RuntimeError("V127 D5 gradient label set is empty or duplicates directions")
+        raise RuntimeError(
+            "V127 D5 gradient label set is empty or duplicates directions"
+        )
     if set(result["split_role"].astype(str)) - {"fit", "audit"}:
         raise RuntimeError("V127 D5 labels have invalid FIT/AUDIT role")
     if (result.groupby("rainfall_group")["split_role"].nunique() != 1).any():
@@ -130,11 +174,13 @@ def build_labels(
         "fit_directions": int((result["split_role"] == "fit").sum()),
         "audit_directions": int((result["split_role"] == "audit").sum()),
         "rainfall_groups": int(result["rainfall_group"].nunique()),
+        "gradient_variable_space": "exact online 12x109 L-BFGS-B fraction tensor",
+        "direct_mpc_variable_count": 12 * 109,
         "execution_manifest_sha256": _sha(execution_manifest_path),
         "run_summary_sha256": _sha(run_summary_path),
         "graph_sha256": _sha(graph_path),
         "priority_sha256": _sha(priority_path),
-        "truth": "authoritative SWMM central finite difference in normalized coefficient directions",
+        "truth": "authoritative SWMM central finite difference in unit-L2 online MPC fraction directions",
         "audit_used_for_training": False,
         "validation_accessed": False,
         "final_accessed": False,
@@ -160,7 +206,9 @@ def main() -> None:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(out, index=False)
-    out.with_suffix(".json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    out.with_suffix(".json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 

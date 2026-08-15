@@ -1,4 +1,4 @@
-"""V127 controller adapter over the validated V122 target-latch execution shell."""
+"""V127 controller adapter over the validated target-latch execution shell."""
 from __future__ import annotations
 
 from typing import Any
@@ -7,7 +7,7 @@ from .closed_loop import CausalObservation, ControllerAction
 from .controller_v122 import V122TorchMPCController
 from .step3_mpc_v127 import V127_STEP3_CONTRACT
 
-V127_CONTROLLER_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_TARGET_LATCH_CONTROLLER_V2_DEADLINE_EVIDENCE"
+V127_CONTROLLER_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_TARGET_LATCH_CONTROLLER_V3_CANONICAL_RUNTIME_DIAGNOSTICS"
 
 
 class _ResultCaptureV127:
@@ -25,7 +25,7 @@ class _ResultCaptureV127:
 
 
 class V127TorchMPCController(V122TorchMPCController):
-    """Execute the exact V127 scored first target and report optimizer/fallback truth."""
+    """Execute the exact V127-scored first target and report optimizer/fallback truth."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -34,7 +34,9 @@ class V127TorchMPCController(V122TorchMPCController):
     def decide(
         self, obs: CausalObservation, *, observation_already_recorded: bool = False
     ) -> ControllerAction:
-        action = super().decide(obs, observation_already_recorded=observation_already_recorded)
+        action = super().decide(
+            obs, observation_already_recorded=observation_already_recorded
+        )
         diagnostics = dict(action.diagnostics or {})
         diagnostics["v127_controller_contract"] = V127_CONTROLLER_CONTRACT
         diagnostics["v127_step3_contract"] = V127_STEP3_CONTRACT
@@ -64,16 +66,21 @@ class V127TorchMPCController(V122TorchMPCController):
             for name in ("optimisation_steps", "variable_count"):
                 if hasattr(result, name):
                     diagnostics[name] = int(getattr(result, name))
-            diagnostics["continuous_optimizer_success"] = bool(
+            selected_continuous = bool(
                 getattr(result, "continuous_optimizer_success", False)
             )
-            diagnostics["continuous_optimizer_deadline_exceeded"] = bool(
-                getattr(result, "deadline_exceeded", False)
-            )
+            deadline_exceeded = bool(getattr(result, "deadline_exceeded", False))
+            diagnostics["continuous_optimizer_success"] = selected_continuous
+            diagnostics["optimizer_deadline_exceeded"] = deadline_exceeded
+            # Backward-compatible alias retained for V127 artifacts produced before the
+            # correctness audit.
+            diagnostics["continuous_optimizer_deadline_exceeded"] = deadline_exceeded
             diagnostics["v127_selected_source"] = str(
                 getattr(result, "selected_source", "unknown")
             )
-            diagnostics["scipy_message"] = str(getattr(result, "scipy_message", ""))[:2000]
+            diagnostics["scipy_message"] = str(
+                getattr(result, "scipy_message", "")
+            )[:2000]
 
         source = str(action.source)
         if source == "MPC_V122" and result is not None:
@@ -87,7 +94,9 @@ class V127TorchMPCController(V122TorchMPCController):
             )
         elif source.endswith("_V122"):
             source = source[:-5] + "_V127"
-        return ControllerAction(settings=action.settings, source=source, diagnostics=diagnostics)
+        return ControllerAction(
+            settings=action.settings, source=source, diagnostics=diagnostics
+        )
 
 
 __all__ = ["V127_CONTROLLER_CONTRACT", "V127TorchMPCController"]

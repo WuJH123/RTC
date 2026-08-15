@@ -1,26 +1,39 @@
-# Codex start here — Project7 V127 continuous differentiable MPC
+# Codex start here — Project7 V127 final correctness path
 
-This is the **single canonical local execution entrypoint** for the V127 restoration. If any older V120–V126 prompt or `CODEX_START_HERE_V069.md` conflicts with this file, this V127 file and `configs/step2_current_contract.json` are authoritative.
+This is the single canonical local execution guide for Project7 V127 development. Read this file together with `configs/step2_current_contract.json`. Historical V120–V126 prompts/PRs are evidence and forensics only when they conflict with the current contract.
 
-## 1. Scientific question
+## Scientific target
 
-Project7 is an idealized EPA-SWMM methodology testbed. Every 10 min:
+Project7 is an idealized EPA-SWMM methodology testbed. Every 600 s:
 
-1. reconstruct the current hydraulic state from sparse causal observations with frozen Step1;
-2. predict future hydraulic response under a continuous action sequence with the differentiable V127 Step2 world model;
-3. optimize all 109 writable pump/orifice/weir targets continuously over H120 inside an H360 prediction horizon;
-4. execute only the first 10-min target in authoritative SWMM;
-5. observe again and repeat.
+1. frozen Step1 reconstructs current full-network hydraulic state from sparse causal observations;
+2. V127 Step2 rolls an action-conditioned differentiable hydraulic world model for H360 using causal current state, causal rainfall forecast, current actuator flow, graph/physics and proposed future targets;
+3. PyTorch autograd supplies action gradients;
+4. L-BFGS-B optimizes the exact `12 x 109 = 1308` H120 target-fraction variables;
+5. only the first 600-s target is written to all 109 actuators, then SWMM is observed and optimization repeats.
 
-TFV is the primary objective. Priority8 PFV is one-sided soft secondary protection. Global Peak is report-only.
+Whole-system cumulative TFV is primary. Priority8 PFV is a one-sided soft secondary objective. Global Peak is report-only. RBC is a warm start, safety fallback and comparator; never a Step2 Value reference or action-space ceiling.
 
-**RBC provides safety; differentiable MPC provides optimization.** Sparse-RBC is a warm start, fail-safe and comparator. It is not the Step2 reference and is not an action-space ceiling.
+Model-quality scores are scientific evidence, not arbitrary runtime switches. Hard runtime correctness means causal inputs, finite computation, valid model/input semantics, engineering target bounds/slew, exact target write/readback, score==execute and completion inside the 600-s decision period.
 
-## 2. Git discipline
+## 1. Git and code baseline
 
-Run only from `main` at the exact merged V127 SHA supplied by the supervising ChatGPT response. Do not merge a local V125/V126 commit into V127. If local `main` diverges, create a backup ref, fetch `origin`, and reset/switch safely to the supplied `origin/main` SHA. Working tree must be clean before any scientific run.
+Use only the final merged `origin/main` SHA supplied by the supervising response. Do not run scientific training from PR branches or old local main.
 
-Run first:
+```powershell
+cd E:\RTC_sewer\Project7\repo
+git status
+git fetch origin --prune
+# Preserve local work first if needed.
+git switch main
+git reset --hard origin/main
+git rev-parse HEAD
+git status --short
+```
+
+The printed SHA must exactly equal the final SHA supplied by ChatGPT and the worktree must be clean.
+
+Then run:
 
 ```powershell
 python -m pytest -q
@@ -29,8 +42,13 @@ python -m py_compile `
   src/rtc/step2_state_store_v127.py `
   src/rtc/step2_train_v127.py `
   src/rtc/step2_gradient_v127.py `
+  src/rtc/checkpoint_v127.py `
   src/rtc/step3_mpc_v127.py `
   src/rtc/controller_v127.py `
+  src/rtc/runtime.py `
+  src/rtc/runtime_controller_guard.py `
+  src/rtc/rule_baselines.py `
+  src/rtc/execution_audit_v127.py `
   scripts/build_step2_v127_causal_state_store.py `
   scripts/run_step2_v127.py `
   scripts/plan_d5_gradient_v127.py `
@@ -45,26 +63,29 @@ python -m py_compile `
 git diff --check
 ```
 
-Any failure is a correctness blocker. Fix only the failing layer, add regression coverage, and stop downstream work until the full test/compile/diff baseline passes.
+Do not bypass a real code/test failure. A stale historical test expectation should be updated only if the current scientific contract intentionally supersedes it; never delete test coverage just to make CI green.
 
-## 3. Frozen existing data
+## 2. Existing authoritative data
 
-Use the local assets whose SHA256 matches the supervising prompt/history. Do not guess by filename.
+Locate local assets automatically under `E:\RTC_sewer\Project7\study_v069` and prior development outputs; do not ask for each path separately if it can be discovered from manifests.
 
-- D2 authoritative source: 4800 branches / 192 groups.
-- D2 frozen train-eligible: 3600 branches / 144 groups.
-- D2 development-validation: 1200 branches / 48 groups; **never train on these during this development run**.
-- targeted D3: 3600 branches / 144 groups; canonical TrainFit/InternalHoldout = 112/32 groups.
-- legacy D3: approximately 1318 historical branches; non-canonical and unused unless a separate lineage audit proves compatibility.
-- D4 V2 authoritative: 390 branches; FIT 269 branches / 33 groups / 10 rainfall groups; AUDIT 121 branches / 15 groups / 4 rainfall groups.
+Expected census to verify from files, not assume:
 
-D4-AUDIT and InternalHoldout are read-only. Validation/Final/Formal/Policy Lock are forbidden during V127 development.
+- D2 source: 4800 branches / 192 groups;
+- D2 train-eligible: 3600 / 144 groups;
+- D2 development-validation: 1200 / 48 groups, never train during this development run;
+- canonical D2 TrainFit/InternalHoldout: 112/32 groups;
+- targeted D3: 3600 / 144 groups, TrainFit/InternalHoldout 112/32;
+- legacy D3: non-canonical historical pool, never silently concatenate;
+- D4: 390 branches, FIT 269 / 33 groups / 10 rainfall groups, AUDIT 121 / 15 groups / 4 rainfall groups.
 
-## 4. Stage A — build online-equivalent causal Step1 state store
+V127 branch tensors and authoritative SWMM cumulative node-flood-volume labels are always ordered `reference first, then candidates`. Never revert to raw shard row order.
 
-Historical SWMM shards contain authoritative checkpoint state as `initial_state`. That is useful truth but is not available online. V127 Step2 must train on exactly the causal Step1 state it will receive online.
+Raw file SHA values are provenance/reproducibility aids. Do not fail training merely because semantically identical files were reserialized or comments changed. Hard compatibility is based on the actual model/input semantics required by the current code. Exact final Step2 identity across ranking/D2/D5 evidence remains mandatory because those reports describe a particular trained model.
 
-Locate and verify the frozen graph, Step1 checkpoint, sensors, train index, canonical D2/D3 cache, D4 FIT cache and D4 AUDIT cache. Then run:
+## 3. Build the new causal Step1-state store
+
+Because the final state-store contract uses semantic Step1 parameter identity and ordered sensor identity, rebuild the store once even if an older V127 state store exists.
 
 ```powershell
 python scripts/build_step2_v127_causal_state_store.py `
@@ -79,11 +100,13 @@ python scripts/build_step2_v127_causal_state_store.py `
   --device cuda
 ```
 
-Verify every required event/checkpoint is present, hashes are finite/unique, actuator count is 109, and only `development/train/no_control` causal histories were used. No new SWMM is run here.
+Require unique/complete event-checkpoint identities, 109 actuators, `development/train/no_control` causal histories, no future hydraulic truth as model input. Preserve raw SHA provenance but use semantic Step1 state-dict and ordered sensor identities for train/deploy compatibility.
 
-## 5. Stage B — existing D2/D3/D4 differentiable surrogate training
+Do not retrain Step1 unless its own acceptance evidence or a real incompatibility fails. Step1 is frozen for this V127 run.
 
-Run:
+## 4. Retrain the final V127 Step2 once
+
+All checkpoints produced before `PROJECT7_V127_STEP2_CHECKPOINT_V4_SEMANTIC_COMPATIBILITY` are stale. Retrain from the corrected label/objective contract rather than bypassing the loader.
 
 ```powershell
 python scripts/run_step2_v127.py `
@@ -97,21 +120,25 @@ python scripts/run_step2_v127.py `
   --device cuda
 ```
 
-The model inputs must be causal Step1 state + causal rainfall + current actuator flow + continuous future targets. Future SWMM hydraulics/flood volumes are labels only.
-
 Training roles:
-- D2: single-actuator hydraulic sensitivity / Jacobian support;
+
+- D2: single-actuator hydraulic sensitivity/Jacobian support;
 - targeted D3: coordinated multi-actuator nonlinear response;
 - D4-FIT: local physical-response support;
-- D4-AUDIT: read-only local audit.
+- Stage A: teacher-forced hydraulic transition + managed actuator flow;
+- Stage B: H360 rollout.
 
-Stage A of training is teacher-forced hydraulic transition/managed-flow learning. Stage B is H360 end-to-end flood-objective rollout training. Hard physical TFV is used for magnitude/reporting; smooth positive TFV is used for differentiable ordering/optimization to avoid clamp gradient dead zones.
+Stage-B objective semantics are important:
 
-Do not tune hidden size, seed, epochs or loss weights after seeing holdout results in the first V127 run.
+- hard clamp-based TFV is the physical surrogate and learns absolute authoritative SWMM cumulative TFV magnitude;
+- the differentiable Softplus node-volume/TFV proxy is trained on same-prefix counterfactual action differences and ordering, not absolute SWMM volume. Its common zero-rate Softplus offset therefore cancels rather than biasing absolute flood-volume training;
+- retained hydraulic states constrain long-horizon rollout drift.
 
-## 6. Stage C — plan high-value D5 gradient data
+Do not perform an architecture/hidden-size sweep before this corrected data/objective run. Historical V124 already showed that more representational capacity alone did not solve action ranking. First isolate the corrected supervision and gradient evidence.
 
-D5 is not another random candidate bank. It directly measures control gradients.
+## 5. Plan D5 before running any new SWMM
+
+D5 is a small high-information gradient experiment, not a random candidate bank and not a 1308-coordinate sweep.
 
 ```powershell
 python scripts/plan_d5_gradient_v127.py `
@@ -119,39 +146,44 @@ python scripts/plan_d5_gradient_v127.py `
   --cache-manifest <CANONICAL_V60_CACHE> `
   --causal-state-store <V127_CAUSAL_STATE_STORE> `
   --out-dir <V127_ROOT>\d5_plan `
-  --max-checkpoints 48 `
-  --directions-per-center 4
+  --max-checkpoints 24 `
+  --directions-per-center 6
 ```
 
-Expected scientific design:
-- 48 outcome-blind TrainFit checkpoints;
-- three centres/checkpoint: HOLD, Sparse-RBC warm start, broad continuous manifold;
-- four normalized spatiotemporal directions/centre;
-- one center + exact `+epsilon/-epsilon` per direction;
-- H120 free control then terminal target held to H360;
-- expected 1296 branches and 576 gradient directions;
-- FIT/AUDIT rainfall groups frozen before SWMM outcomes;
-- if engineering decoding breaks central symmetry, epsilon is reduced or the direction is rejected.
+The defaults are a **maximum budget**, not a target count that must be filled:
 
-Review the plan before SWMM. Do not alter candidates after seeing outcomes.
+- at most 24 outcome-blind TrainFit checkpoints;
+- up to 3 centres/checkpoint: HOLD, Sparse-RBC warm start, local non-RBC exploration near the HOLD↔RBC operating corridor;
+- 6 directions per retained centre;
+- maximum 936 SWMM branches and maximum 432 gradient pairs;
+- actual counts may be lower when centres/actions collapse or duplicate after the exact decoder. This is desirable; do not add random replacements merely to reach 936.
 
-## 7. Stage D — build D5 execution manifest and census
+Checkpoint selection is rainfall-balanced and uses causal state/command descriptors plus farthest-point diversity to avoid redundant hydraulic states. It must not inspect D5 outcomes.
+
+Direction families are:
+
+1. first-move single actuator;
+2. persistent single actuator;
+3. temporal single actuator;
+4. first-move multi-actuator;
+5. single-block spatial interaction;
+6. sparse spatiotemporal interaction with first-move content.
+
+All directions live in the exact `[12,109]` fraction space used online. Plus/minus variables are never clipped; reduce epsilon or reject the direction if bounds or the sequential decoder destroy central symmetry. Centre executability is independent from central-pair feasibility.
+
+Before SWMM, review the plan for information value. Do not impose arbitrary score thresholds. Stop only for a real degeneracy such as duplicate physical actions surviving deduplication, missing required direction families, zero/non-finite physical displacement, broken +/- symmetry, wrong H120/H360 structure, or clearly collapsed checkpoint diversity. Report actuator/block/coordinate coverage and first-move/physical displacement. D5 does not need to touch all 1308 coordinates: D2 already provides local single-actuator/boundary finite-difference information; D5 tests representative continuous interior/projected gradient directions relevant to MPC.
+
+## 6. Build D5 execution manifest and census
 
 ```powershell
 python scripts/build_d5_execution_manifest_v127.py `
-  --plan <D5_PLAN.csv> `
+  --plan <V127_ROOT>\d5_plan\STEP2_V127_D5_GRADIENT_PLAN.csv `
   --checkpoints <FROZEN_CHECKPOINT_METADATA.csv> `
   --graph <FROZEN_GRAPH> `
   --out <V127_ROOT>\D5_EXECUTION_MANIFEST.csv
-```
 
-Verify H72 x 109 actions, paired 5-min targets exactly equal inside every 10-min block, max target change <=0.5, exactly one center per center ID and one +/- pair per direction.
-
-Then use the existing validated runner in census-only mode:
-
-```powershell
 rtc-run-d3-batch `
-  --manifest <D5_EXECUTION_MANIFEST.csv> `
+  --manifest <V127_ROOT>\D5_EXECUTION_MANIFEST.csv `
   --out-dir <V127_ROOT>\d5_swmm `
   --control-block-seconds 600 `
   --stride-seconds 300 `
@@ -162,26 +194,24 @@ rtc-run-d3-batch `
   --census-only
 ```
 
-Require endpoint/identity/missing-prefix/missing-INP failures = 0. If census fails, stop.
+Reduce workers if RAM/IO cannot sustain 16; do not alter the scientific manifest to fix a resource problem. Require no missing prefix/INP/identity/endpoint failure. Verify H72x109 action arrays, paired 5-min frames within each 10-min command, target-command slew <=0.5, H120 free control, H120→H360 terminal hold, and fraction/decoded central symmetry.
 
-## 8. Stage E — execute authoritative D5 SWMM
+Only after census succeeds, run the identical batch command without `--census-only`. Resume exact simulation identities only.
 
-Only after census passes, rerun the same command without `--census-only`. Do not modify the manifest. Allow exact simulation-identity reuse/resume only. Verify all requested branches are terminal, same-prefix/asset lineage is valid, routing error acceptable, and no NaN/Inf exists.
-
-Then build authoritative directional-gradient labels:
+## 7. Build authoritative D5 gradient truth
 
 ```powershell
 python scripts/build_d5_gradient_labels_v127.py `
-  --execution-manifest <D5_EXECUTION_MANIFEST.csv> `
+  --execution-manifest <V127_ROOT>\D5_EXECUTION_MANIFEST.csv `
   --run-summary <D5_RUN_SUMMARY.csv> `
   --graph <FROZEN_GRAPH> `
   --priority-nodes <FROZEN_PRIORITY8> `
   --out <V127_ROOT>\D5_DIRECTIONAL_GRADIENT_LABELS.csv
 ```
 
-Each gradient label must be `(TFV_plus - TFV_minus)/(2*epsilon)` from authoritative SWMM. D5-AUDIT remains untouched.
+Truth is authoritative SWMM `(TFV_plus - TFV_minus)/(2*epsilon)` along a unit direction in the exact online fraction tensor. D5 central differences mainly validate interior continuous directions; one-sided/boundary sensitivity evidence from D2 should be reported separately rather than forcing invalid central probes at active bounds.
 
-## 9. Stage F — D5 FIT gradient fine-tune and untouched D5-AUDIT
+## 8. D5-FIT gradient fine-tuning and untouched D5-AUDIT
 
 ```powershell
 python scripts/run_step2_v127_d5_gradient.py `
@@ -190,17 +220,15 @@ python scripts/run_step2_v127_d5_gradient.py `
   --causal-store <FROZEN_CAUSAL_RAINFALL_STORE> `
   --causal-state-store <V127_CAUSAL_STATE_STORE> `
   --step2 <V127_EXISTING_DATA_CHECKPOINT> `
-  --d5-execution-manifest <D5_EXECUTION_MANIFEST.csv> `
-  --d5-gradient-labels <D5_DIRECTIONAL_GRADIENT_LABELS.csv> `
+  --d5-execution-manifest <V127_ROOT>\D5_EXECUTION_MANIFEST.csv `
+  --d5-gradient-labels <V127_ROOT>\D5_DIRECTIONAL_GRADIENT_LABELS.csv `
   --out-dir <V127_ROOT>\step2_d5 `
   --device cuda
 ```
 
-D5-FIT uses symmetric smooth-TFV finite differences to train the model with ordinary first-order parameter gradients. D5-AUDIT evaluates the actual autograd directional gradient used online. D5-AUDIT never trains.
+D5-FIT uses symmetric smooth-TFV differences and ordinary first-order parameter training. D5-AUDIT never trains and evaluates the quantity used online: autograd with respect to the centre `[12,109]` fraction tensor through the same decoder, dotted with the frozen direction.
 
-## 10. Stage G — final untouched ranking and gradient audits
-
-Ranking:
+## 9. Audit the same final Step2 model
 
 ```powershell
 python scripts/audit_step2_v127_ranking.py `
@@ -213,11 +241,7 @@ python scripts/audit_step2_v127_ranking.py `
   --step2 <V127_D5_CHECKPOINT> `
   --out <V127_ROOT>\V127_RANKING_AUDIT.json `
   --device cuda
-```
 
-InternalHoldout D2 gradient audit:
-
-```powershell
 python scripts/audit_step2_v127_d2_gradients.py `
   --graph <FROZEN_GRAPH> `
   --cache-manifest <CANONICAL_V60_CACHE> `
@@ -228,35 +252,36 @@ python scripts/audit_step2_v127_d2_gradients.py `
   --device cuda
 ```
 
-## 11. Stage H — continuous-MPC gate
+D2 finite differences must stay inside each exact InternalHoldout counterfactual group and use the actual D2 action-sequence direction. Report tie-aware rank, pairwise, top1, TFV MAE/regret and D2/D5 gradient sign/cosine/MAE. Never train on InternalHoldout/D4-AUDIT/D5-AUDIT.
+
+Compile evidence:
 
 ```powershell
 python scripts/build_v127_continuous_gate.py `
-  --ranking-report <V127_RANKING_AUDIT.json> `
-  --d2-gradient-report <D2_INTERNAL_HOLDOUT_GRADIENT_METRICS.json> `
-  --d5-gradient-report <STEP2_V127_D5_GRADIENT_REPORT.json> `
-  --out <V127_ROOT>\V127_CONTINUOUS_GATE.json
+  --ranking-report <V127_ROOT>\V127_RANKING_AUDIT.json `
+  --d2-gradient-report <V127_ROOT>\d2_gradient_audit\D2_INTERNAL_HOLDOUT_GRADIENT_METRICS.json `
+  --d5-gradient-report <V127_ROOT>\step2_d5\STEP2_V127_D5_GRADIENT_REPORT.json `
+  --out <V127_ROOT>\V127_CONTINUOUS_EVIDENCE.json
 ```
 
-Continuous MPC is authorized only if all pass:
-- InternalHoldout D3 rank >= 0.70;
-- InternalHoldout D3 top1 >= 0.50;
-- InternalHoldout D2 gradient sign >= 0.70;
-- InternalHoldout D2 gradient cosine >= 0.60;
-- D5-AUDIT gradient sign >= 0.70;
-- D5-AUDIT gradient cosine >= 0.60;
-- causal Step1 state and causal rainfall verified.
+The reports must describe the same final Step2 checkpoint and finite causal evidence. Do not invent rank/cosine thresholds to silently replace the method by RBC. Weak evidence is a scientific limitation to report.
 
-Do not lower thresholds after seeing results. If gate fails, stop before T5 and classify the failed evidence layer.
+## 10. Runtime semantics
 
-## 12. Stage I — V127 continuous T5 and seven strategies
+V127 target slew is defined between consecutive **supervisory target settings**. Physical `current_setting` may lag due to device dynamics and is an input/diagnostic, not a second slew anchor. The controller must not project a scored V127 action after optimization. Score==execute is mandatory.
 
-Only with a passed gate, run the exact frozen development event comparison:
+Every authoritative run is post-audited by `audit_target_write_readback_v127`: the 109 requested settings in each decision log must equal compact SWMM `target_setting` at the same elapsed epoch. Current setting is not used as target-write acceptance.
+
+Rainfall online uses causal persistence/decay only (`history_steps_for_level=1`, `decay_per_step=0.92`, scenario 1.0). The runtime does not need the training rainfall-store file; it must reproduce the forecast algorithm semantics recorded by Step2.
+
+## 11. Proposed plus six fixed baselines
+
+Run one fixed development comparison with:
 
 ```powershell
 python scripts/run_seven_strategies_v127.py `
-  --inp <FROZEN_T5_INP> `
-  --event-id T5_D180_chicago `
+  --inp <FROZEN_DEVELOPMENT_INP> `
+  --event-id <FROZEN_DEVELOPMENT_EVENT_ID> `
   --sensors <FROZEN_SENSORS> `
   --priority-nodes <FROZEN_PRIORITY8> `
   --config <FROZEN_RUNTIME_CONFIG> `
@@ -264,9 +289,8 @@ python scripts/run_seven_strategies_v127.py `
   --graph <FROZEN_GRAPH> `
   --step1 <FROZEN_STEP1> `
   --step2 <V127_D5_CHECKPOINT> `
-  --causal-store <FROZEN_CAUSAL_RAINFALL_STORE> `
-  --continuous-gate <V127_CONTINUOUS_GATE.json> `
-  --out-dir <V127_ROOT>\t5_seven_strategies `
+  --continuous-gate <V127_ROOT>\V127_CONTINUOUS_EVIDENCE.json `
+  --out-dir <V127_ROOT>\seven_strategies `
   --device cuda `
   --lbfgsb-maxiter 30 `
   --optimizer-deadline-seconds 480 `
@@ -275,28 +299,51 @@ python scripts/run_seven_strategies_v127.py `
   --pfv-penalty-weight 1
 ```
 
-Seven strategies are exactly: Proposed V127, No-control, Internal RTC, Auto-RBC, EFD, All-open, All-closed.
+There is intentionally **no `--causal-store` runtime argument**.
 
-Report authoritative SWMM TFV, TFV reduction vs No-control, frozen Priority8 PFV and change vs No-control, Global Peak, routing error, decision count, continuous-MPC count, RBC safety-fallback count, optimizer deadline fallbacks, mean/p95/max decision runtime, write/readback failures, continuity violations and score==execute violations.
+Formal comparison set is exactly:
 
-## 13. Interpretation
+1. Proposed V127 continuous differentiable MPC;
+2. No-control;
+3. Internal RTC;
+4. Auto-RBC;
+5. storage-volume EFD;
+6. All-open;
+7. All-closed.
 
-The immediate Project7 success criterion is not “beat RBC by construction.” Proposed must optimize a continuous action space and demonstrate positive authoritative TFV benefit under the fixed development comparison without material Priority8 PFV deterioration. Auto-RBC is a strong external comparator; it is not a candidate ceiling or training target.
+No-control disables supervisory RTC but preserves intrinsic SWMM facility physics. Internal RTC uses the frozen native controls. Auto-RBC/EFD generate the next command from the current supervisory target latch, not a lagged physical current setting. EFD filling degree is storage volume/capacity from FUNCTIONAL/TABULAR geometry. All Python comparator commands use the same target-command slew semantics as Proposed. Internal native rules remain an external comparator and may naturally have their own native rule evaluation timing; do not falsify their method identity to force a Python command cadence.
 
-If the continuous gate passes but T5 underperforms, do not retune on T5. Diagnose surrogate objective bias, forecast uncertainty, horizon/terminal effects and optimization convergence with new outcome-blind development evidence.
+All seven final rows must share source-event identity, SWMM engine, common observation/control clock where applicable, pass same-epoch target-write/readback audit, and use authoritative cumulative SWMM node statistics for TFV/PFV. Final Global Peak is routing-step frozen-decision replay, report-only; the 300-s sampled peak is diagnostic.
 
-## 14. Forbidden
+## 12. Interpretation and stop rule
 
-During this development run do not:
-- train on the 1200 D2 development-validation branches;
-- train on InternalHoldout, D4-AUDIT or D5-AUDIT;
-- access Validation/Final/Formal/Policy Lock;
-- use future realized rainfall or future SWMM state online;
-- use Sparse-RBC as Step2 reference or action-space ceiling;
-- restore V125/V126 anchor-relative finite policy as current method;
-- lower continuous gates after observing results;
-- alter D5 FIT/AUDIT or action plan after SWMM outcomes.
+Do not retune on the fixed development comparison event.
 
-## 15. Required final local report
+- poor ranking/gradient evidence => surrogate/action-effect identification remains weak;
+- good gradients but many RBC fallbacks => inspect optimizer convergence, hard-vs-smooth disagreement, forecast/horizon and runtime budget;
+- continuous actions execute but authoritative SWMM TFV worsens => surrogate control generalization/objective bias;
+- runtime approaches 600 s => method is not yet real-time even if hydraulic benefit is good.
 
-Write `PROJECT7_V127_CONTINUOUS_MPC_DEVELOPMENT.json` and `.md` with exact Git SHA, all frozen asset SHA256s, causal-state store SHA, D5 plan/manifest/run/label SHAs, D2/D3/D4/D5 data counts, all Step2 ranking and gradient metrics, gate verdict, seven-strategy table, continuous/fallback/deadline counts, runtime/execution evidence and a single final development verdict. Do not enter Validation/Final/Formal/Policy Lock automatically.
+Do not automatically retrain Step1, expand D5, enlarge the neural network, add Global Peak penalties or introduce new safety thresholds after seeing one event. Diagnose the failing layer first.
+
+## 13. Development boundaries
+
+Do not train on D2 development-validation, InternalHoldout, D4-AUDIT or D5-AUDIT. Do not use future realized rainfall or future SWMM hydraulic state online. Do not change D5 checkpoint/action selection after seeing D5 outcomes. Do not access Validation, Final, Formal or Policy Lock automatically.
+
+## 14. Required final development report
+
+Write `PROJECT7_V127_CONTINUOUS_MPC_DEVELOPMENT.json` and `.md` with:
+
+- exact final Git SHA and clean worktree;
+- discovered frozen assets and provenance plus semantic Step1/sensor/graph identities;
+- D2/D3/D4 census;
+- D5 actual (not assumed maximum) checkpoint/centre/pair/branch counts, deduplication, diversity, direction-family/actuator/block/coordinate coverage, epsilon and physical/first-move displacement diagnostics;
+- Stage-A and Stage-B training history;
+- final Step2 checkpoint identity;
+- ranking, D2 gradient and D5-AUDIT gradient evidence;
+- seven-strategy authoritative TFV, TFV reduction vs No-control, Priority8 PFV/change, exact Global Peak and routing error;
+- continuous/RBC/deadline counts and optimizer runtime mean/p95/max;
+- target-write/readback, target-command continuity, physical tracking-lag and score==execute evidence;
+- a professor-level conclusion on Step1 adequacy, hydraulic rollout, TFV/action-effect prediction, gradient credibility, continuous-action use, real-time feasibility and whether the current development evidence is scientifically convincing for a Water Research methodology paper.
+
+Stop after this development report. Do not enter Validation/Final/Formal/Policy Lock automatically.

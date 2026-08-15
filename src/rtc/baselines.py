@@ -23,7 +23,7 @@ class BaselineDefinition:
 BASELINES = {
     "proposed": BaselineDefinition(
         "proposed",
-        "Sparse-state causal knowledge-anchored finite RTC with TFV-primary/PFV-soft Value scoring; continuous MPC remains evidence-gated",
+        "V127 sparse-state control-oriented differentiable hydraulic surrogate with 109-actuator continuous H120/H360 receding-horizon MPC; RBC is warm start/safety fallback only",
         True,
         False,
         False,
@@ -48,7 +48,7 @@ BASELINES = {
     ),
     "efd": BaselineDefinition(
         "efd",
-        "Storage-aware Equal Filling Degree control using current normalized storage depths and writable storage outflows",
+        "Storage Equal Filling Degree control using causal storage-volume/capacity filling degree and writable storage outflows",
         True,
         False,
     ),
@@ -126,11 +126,12 @@ def write_no_control_inp(
 
 def write_passive_no_rtc_inp(source: str | Path, destination: str | Path) -> Path:
     """Deprecated compatibility alias for :func:`write_no_control_inp`."""
-
     return write_no_control_inp(source, destination)
 
 
-def constant_setting_controller(value: float, source: str) -> Callable[[CausalObservation], ControllerAction]:
+def constant_setting_controller(
+    value: float, source: str
+) -> Callable[[CausalObservation], ControllerAction]:
     if not 0.0 <= float(value) <= 1.0:
         raise ValueError("constant baseline setting must be inside [0,1]")
 
@@ -172,7 +173,6 @@ def fixed_baseline_controller(
     max_delta_per_update: float | None = None,
 ):
     """Return the deterministic Python controller for a fixed/reference strategy."""
-
     strategy = canonical_baseline_id(strategy)
     if strategy in {"no_control", "internal_rtc"}:
         return None

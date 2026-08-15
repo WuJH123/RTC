@@ -8,17 +8,17 @@ from .closed_loop import CausalObservation, ControllerAction
 from .runtime import choose_first_move, command_continuity
 
 
-CONTINUITY_GUARD_CONTRACT = "RTC_SUPERVISORY_TEMPORAL_CONTINUITY_V2_TARGET_READBACK"
+CONTINUITY_GUARD_CONTRACT = "RTC_SUPERVISORY_TEMPORAL_CONTINUITY_V3_COMMAND_VS_TRACKING"
 
 
 class ContinuityGuardController:
-    """Wrap a Python policy with physical and command-path continuity.
+    """Wrap a Python policy with explicit command and tracking continuity semantics.
 
-    The authoritative cross-decision anchor is the SWMM ``target_setting`` observed immediately
-    before the new decision. Internal memory is retained only to audit whether the target readback
-    matches the command issued at the preceding epoch. For Proposed, projection is forbidden:
-    the MPC controller itself must emit an executable first move. Rule/diagnostic baselines may
-    be projected so an idealized target is approached through the same movement envelope.
+    The SWMM ``target_setting`` is the cross-decision supervisory command latch.  Realised
+    ``current_setting`` can lag that latch for physically modulated devices.  Historical
+    policies can retain the stricter two-anchor rule; V127 and its fixed Python comparators
+    set ``enforce_current_delta=False`` so the per-update slew is applied to consecutive
+    target commands while current-setting lag is recorded as a hydraulic diagnostic.
     """
 
     def __init__(
@@ -27,12 +27,14 @@ class ContinuityGuardController:
         *,
         max_delta_per_update: float,
         allow_projection: bool,
+        enforce_current_delta: bool = True,
     ) -> None:
         if max_delta_per_update < 0:
             raise ValueError("max_delta_per_update must be non-negative")
         self.controller = controller
         self.max_delta_per_update = float(max_delta_per_update)
         self.allow_projection = bool(allow_projection)
+        self.enforce_current_delta = bool(enforce_current_delta)
         self.previous_requested: np.ndarray | None = None
 
     def observe(self, obs: CausalObservation) -> None:
@@ -72,33 +74,33 @@ class ContinuityGuardController:
         previous_write_mismatch = (
             0.0
             if self.previous_requested is None
-            else float(
-                np.abs(active_target - self.previous_requested).max(initial=0.0)
-            )
+            else float(np.abs(active_target - self.previous_requested).max(initial=0.0))
         )
         decision = choose_first_move(
             optimized_sequence=raw[None, :],
             surrogate_admissible=True,
-            fallback_first_move=current,
+            fallback_first_move=active_target,
             current_settings=current,
             previous_requested_settings=active_target,
             min_settings=0.0,
             max_settings=1.0,
             max_delta_per_update=self.max_delta_per_update,
+            enforce_current_delta=self.enforce_current_delta,
         )
         raw_projection = float(np.abs(decision.requested - raw).max(initial=0.0))
         if raw_projection > 1e-9 and not self.allow_projection:
             raise RuntimeError(
-                "Proposed emitted a command that violates the frozen temporal-continuity contract: "
+                "policy emitted a command outside its declared temporal-continuity contract: "
                 f"projection={raw_projection:.12g}, "
-                f"current_delta={np.abs(raw - current).max(initial=0.0):.12g}, "
-                f"target_delta={np.abs(raw - active_target).max(initial=0.0):.12g}"
+                f"current_tracking_delta={np.abs(raw-current).max(initial=0.0):.12g}, "
+                f"target_command_delta={np.abs(raw-active_target).max(initial=0.0):.12g}"
             )
         continuity = command_continuity(
             decision.requested,
             current,
             previous_requested_settings=active_target,
             max_delta_per_update=self.max_delta_per_update,
+            enforce_current_delta=self.enforce_current_delta,
         )
         if not continuity.passed:
             raise RuntimeError("supervisory continuity guard failed after projection")
@@ -112,8 +114,9 @@ class ContinuityGuardController:
                 "continuity_projection_applied": bool(raw_projection > 1e-9),
                 "continuity_raw_to_projected_max": raw_projection,
                 "previous_write_target_readback_mismatch_max": previous_write_mismatch,
-                "command_delta_from_current_max": continuity.max_delta_from_current,
+                "command_delta_from_current_tracking_max": continuity.max_delta_from_current,
                 "command_delta_from_previous_target_max": continuity.max_delta_from_previous_command,
+                "current_delta_is_hard_constraint": self.enforce_current_delta,
                 "max_setting_delta_per_update": self.max_delta_per_update,
             }
         )

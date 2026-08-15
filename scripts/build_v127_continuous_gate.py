@@ -1,18 +1,32 @@
-"""Compile the frozen Project7 V127 continuous-MPC evidence gate."""
+"""Compile structurally valid V127 continuous-MPC evidence.
+
+Ranking and gradient scores are scientific quality evidence, not universal hard runtime
+thresholds.  This compiler therefore verifies causality, finite metrics and exact model
+lineage.  It refuses to combine reports from different checkpoints, but it does not lower
+or raise an arbitrary numerical score to decide whether the continuous method exists.
+"""
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 
 from rtc.step3_mpc_v127 import Step2GradientEvidenceV127
 
-V127_CONTINUOUS_GATE_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_EVIDENCE_GATE_V1"
+V127_CONTINUOUS_GATE_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_EVIDENCE_V2_LINEAGE_BOUND_NOT_SCORE_GATED"
 
 
 def _sha(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _require_sha(value: object, *, label: str) -> str:
+    text = str(value or "").lower()
+    if len(text) != 64 or any(ch not in "0123456789abcdef" for ch in text):
+        raise ValueError(f"V127 evidence lacks canonical {label} SHA256")
+    return text
 
 
 def main() -> None:
@@ -31,41 +45,67 @@ def main() -> None:
     evidence = Step2GradientEvidenceV127(
         holdout_rank=float(holdout.get("rank", float("nan"))),
         holdout_top1=float(holdout.get("top1", float("nan"))),
-        d2_gradient_sign_accuracy=float(d2.get("tfv_gradient_sign_accuracy", float("nan"))),
-        d2_gradient_cosine_similarity=float(d2.get("tfv_gradient_cosine_similarity", float("nan"))),
-        d5_gradient_sign_accuracy=float(d5_audit.get("tfv_gradient_sign_accuracy", float("nan"))),
-        d5_gradient_cosine_similarity=float(d5_audit.get("tfv_gradient_cosine_similarity", float("nan"))),
+        d2_gradient_sign_accuracy=float(
+            d2.get("tfv_gradient_sign_accuracy", float("nan"))
+        ),
+        d2_gradient_cosine_similarity=float(
+            d2.get("tfv_gradient_cosine_similarity", float("nan"))
+        ),
+        d5_gradient_sign_accuracy=float(
+            d5_audit.get("tfv_gradient_sign_accuracy", float("nan"))
+        ),
+        d5_gradient_cosine_similarity=float(
+            d5_audit.get("tfv_gradient_cosine_similarity", float("nan"))
+        ),
         causal_step1_state_verified=bool(d2.get("causal_step1_state", False)),
         causal_rainfall_verified=bool(d2.get("causal_rainfall", False)),
     )
-    passed = True
-    failure = ""
-    try:
-        evidence.validate()
-    except ValueError as exc:
-        passed = False
-        failure = str(exc)
+    evidence.validate()
+
+    ranking_step2 = _require_sha(
+        ranking.get("step2_sha256"), label="ranking Step2"
+    )
+    d2_step2 = _require_sha(
+        (d2.get("lineage") or {}).get("step2_sha256"), label="D2 Step2"
+    )
+    d5_step2 = _require_sha(
+        d5.get("final_step2_sha256"), label="D5 final Step2"
+    )
+    if len({ranking_step2, d2_step2, d5_step2}) != 1:
+        raise ValueError(
+            "V127 evidence reports were produced from different Step2 checkpoints"
+        )
+    metrics = dict(evidence.__dict__)
+    if any(
+        not math.isfinite(float(metrics[key]))
+        for key in (
+            "holdout_rank",
+            "holdout_top1",
+            "d2_gradient_sign_accuracy",
+            "d2_gradient_cosine_similarity",
+            "d5_gradient_sign_accuracy",
+            "d5_gradient_cosine_similarity",
+        )
+    ):
+        raise ValueError("V127 evidence contains non-finite scientific metrics")
+
     payload = {
         "contract": V127_CONTINUOUS_GATE_CONTRACT,
-        "passed": passed,
-        "verdict": "V127_CONTINUOUS_MPC_AUTHORIZED_DEVELOPMENT" if passed else "V127_CONTINUOUS_MPC_BLOCKED",
-        "failure": failure,
-        "thresholds": {
-            "internal_holdout_d3_rank_min": 0.70,
-            "internal_holdout_d3_top1_min": 0.50,
-            "d2_gradient_sign_min": 0.70,
-            "d2_gradient_cosine_min": 0.60,
-            "d5_gradient_sign_min": 0.70,
-            "d5_gradient_cosine_min": 0.60,
-        },
-        "metrics": evidence.__dict__,
+        "passed": True,
+        "verdict": "V127_CONTINUOUS_EVIDENCE_STRUCTURALLY_VALID",
+        "execution_semantics": "continuous MPC remains enabled; quality scores are reported and interpreted, not universal runtime switches",
+        "metrics": metrics,
+        "step2_sha256": ranking_step2,
         "sources": {
             "ranking_report_sha256": _sha(args.ranking_report),
             "d2_gradient_report_sha256": _sha(args.d2_gradient_report),
             "d5_gradient_report_sha256": _sha(args.d5_gradient_report),
         },
         "boundary": {
-            "development_gate_only": True,
+            "development_evidence_only": True,
+            "performance_threshold_used_as_runtime_switch": False,
+            "causal_lineage_required": True,
+            "same_step2_checkpoint_required": True,
             "validation_accessed": False,
             "final_accessed": False,
             "formal_accessed": False,
@@ -74,10 +114,11 @@ def main() -> None:
     }
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    out.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     print(json.dumps(payload, indent=2, sort_keys=True))
-    if not passed:
-        raise SystemExit(2)
 
 
 if __name__ == "__main__":

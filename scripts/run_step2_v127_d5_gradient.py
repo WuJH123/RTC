@@ -1,9 +1,4 @@
-"""Fine-tune V127 Step2 with D5-FIT directional gradients and audit on D5-AUDIT.
-
-D5-AUDIT is evaluated before and after but never enters optimisation.  The final gradient
-gate uses the post-training untouched D5-AUDIT metrics plus the independent D2 held-out
-gradient audit produced separately.
-"""
+"""Fine-tune V127 Step2 with D5-FIT gradients and audit untouched D5-AUDIT."""
 from __future__ import annotations
 
 import argparse
@@ -31,7 +26,7 @@ from rtc.step2_gradient_v127 import (
 from rtc.step2_state_store_v127 import CausalStep1StateCacheV127, load_causal_state_store_v127
 from rtc.step2_train_response_v60 import V60TrainCache
 
-V127_D5_RUN_CONTRACT = "PROJECT7_V127_D5_GRADIENT_FINETUNE_AND_AUDIT_V1"
+V127_D5_RUN_CONTRACT = "PROJECT7_V127_D5_GRADIENT_FINETUNE_AND_AUDIT_V5_SEMANTIC_CAUSAL_INPUT"
 
 
 def _sha(path: str | Path) -> str:
@@ -52,7 +47,9 @@ def main() -> None:
     p.add_argument("--device", default="cuda")
     args = p.parse_args()
 
-    device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
+    device = torch.device(
+        args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"
+    )
     graph = _load_graph(args.graph)
     model, checkpoint_payload = load_step2_v127(args.step2, graph=graph, device=device)
     normalization = input_normalization_from_v127_checkpoint(checkpoint_payload)
@@ -112,10 +109,34 @@ def main() -> None:
         "graph_sha256": _sha(args.graph),
         "base_cache_sha256": _sha(args.base_cache_manifest),
         "causal_rainfall_sha256": _sha(args.causal_store),
+        "causal_rainfall_forecast_contract": str(rain.forecast_contract),
         "causal_state_store_sha256": _sha(args.causal_state_store),
         "d5_execution_manifest_sha256": _sha(args.d5_execution_manifest),
         "d5_gradient_labels_sha256": _sha(args.d5_gradient_labels),
     }
+    base_lineage = checkpoint_payload.get("lineage")
+    if not isinstance(base_lineage, dict):
+        raise ValueError("V127 base Step2 checkpoint lacks causal lineage")
+    for key in (
+        "swmm_engine_version",
+        "causal_state_step1_model_semantic_sha256",
+        "causal_state_sensor_layout_semantic_sha256",
+    ):
+        value = str(base_lineage.get(key, "")).strip()
+        if not value:
+            raise ValueError(f"V127 base Step2 checkpoint lacks {key}")
+        lineage[key] = value
+    if (
+        lineage["causal_state_step1_model_semantic_sha256"]
+        != str(state.step1_model_semantic_sha256)
+    ):
+        raise ValueError("V127 D5 Step1 model semantics differ from the base Step2 checkpoint")
+    if (
+        lineage["causal_state_sensor_layout_semantic_sha256"]
+        != str(state.sensor_layout_semantic_sha256)
+    ):
+        raise ValueError("V127 D5 sensor layout semantics differ from the base Step2 checkpoint")
+
     report = {
         "contract": V127_D5_RUN_CONTRACT,
         "rtc_implementation_contract_sha256": rtc_implementation_contract_sha256(),
@@ -124,6 +145,7 @@ def main() -> None:
         "fit_rainfall_groups": sorted(fit_rain),
         "audit_rainfall_groups": sorted(audit_rain),
         "rainfall_overlap": sorted(fit_rain & audit_rain),
+        "causal_rainfall_forecast_contract": str(rain.forecast_contract),
         "audit_before": before,
         "training_history": history,
         "audit_after": after,
@@ -134,11 +156,8 @@ def main() -> None:
             "validation_accessed": False,
             "final_accessed": False,
             "formal_accessed": False,
-            "continuous_mpc_authorized_by_d5_alone": False,
         },
     }
-    report_path = out / "STEP2_V127_D5_GRADIENT_REPORT.json"
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
     checkpoint = save_step2_v127(
         out / "step2_v127_d5_gradient.pt",
         model=model,
@@ -148,7 +167,12 @@ def main() -> None:
         lineage=lineage,
     )
     report["checkpoint"] = str(checkpoint.resolve())
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    report["final_step2_sha256"] = _sha(checkpoint)
+    report_path = out / "STEP2_V127_D5_GRADIENT_REPORT.json"
+    report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     print(json.dumps(report, indent=2, sort_keys=True))
 
 
