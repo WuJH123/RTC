@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Mapping
 
 import numpy as np
@@ -8,31 +9,55 @@ from .closed_loop import CausalObservation, ControllerAction
 from .runtime import choose_first_move, command_continuity
 
 
-CONTINUITY_GUARD_CONTRACT = "RTC_SUPERVISORY_TEMPORAL_CONTINUITY_V3_COMMAND_VS_TRACKING"
+CONTINUITY_GUARD_CONTRACT = (
+    "RTC_SUPERVISORY_TEMPORAL_CONTINUITY_V4_PER_ACTUATOR_COMMAND_ENVELOPE"
+)
+
+
+def _delta_vector(value: float | np.ndarray, actuator_count: int) -> np.ndarray:
+    raw = np.asarray(value, dtype=float)
+    try:
+        delta = np.broadcast_to(raw, (int(actuator_count),)).astype(float, copy=True)
+    except ValueError as exc:
+        raise ValueError("max_delta_per_update is not scalar or actuator-aligned") from exc
+    if not np.isfinite(delta).all() or np.any(delta < 0.0):
+        raise ValueError("max_delta_per_update must be finite and non-negative")
+    return delta
+
+
+def _array_sha256(value: np.ndarray) -> str:
+    array = np.ascontiguousarray(np.asarray(value, dtype=np.float64))
+    return hashlib.sha256(array.tobytes(order="C")).hexdigest()
 
 
 class ContinuityGuardController:
-    """Wrap a Python policy with explicit command and tracking continuity semantics.
+    """Wrap a Python policy with explicit per-actuator command continuity semantics.
 
-    The SWMM ``target_setting`` is the cross-decision supervisory command latch.  Realised
-    ``current_setting`` can lag that latch for physically modulated devices.  Historical
-    policies can retain the stricter two-anchor rule; V127 and its fixed Python comparators
-    set ``enforce_current_delta=False`` so the per-update slew is applied to consecutive
-    target commands while current-setting lag is recorded as a hydraulic diagnostic.
+    The SWMM ``target_setting`` is the cross-decision supervisory command latch. Realised
+    ``current_setting`` can lag that latch for physically modulated devices. Historical
+    policies can retain the stricter two-anchor rule; V127/V128 and fair Python comparators
+    set ``enforce_current_delta=False`` so rate limits apply to consecutive target commands.
+
+    ``max_delta_per_update`` may be a scalar or one value per actuator. This removes the
+    previous implicit assumption that every pump/orifice/weir/outlet has the same command
+    travel envelope while remaining backward compatible with the frozen 0.5 scalar study.
     """
 
     def __init__(
         self,
         controller,
         *,
-        max_delta_per_update: float,
+        max_delta_per_update: float | np.ndarray,
         allow_projection: bool,
         enforce_current_delta: bool = True,
     ) -> None:
-        if max_delta_per_update < 0:
-            raise ValueError("max_delta_per_update must be non-negative")
+        raw = np.asarray(max_delta_per_update, dtype=float)
+        if raw.ndim > 1 or not np.isfinite(raw).all() or np.any(raw < 0.0):
+            raise ValueError("max_delta_per_update must be finite, non-negative scalar/vector")
         self.controller = controller
-        self.max_delta_per_update = float(max_delta_per_update)
+        self.max_delta_per_update = (
+            float(raw) if raw.ndim == 0 else raw.reshape(-1).astype(float, copy=True)
+        )
         self.allow_projection = bool(allow_projection)
         self.enforce_current_delta = bool(enforce_current_delta)
         self.previous_requested: np.ndarray | None = None
@@ -70,6 +95,7 @@ class ContinuityGuardController:
         active_target = np.asarray(obs.actuator_target_setting, dtype=float).reshape(-1)
         if active_target.shape != current.shape:
             raise ValueError("target/current readback shapes differ")
+        delta = _delta_vector(self.max_delta_per_update, len(expected))
 
         previous_write_mismatch = (
             0.0
@@ -84,7 +110,7 @@ class ContinuityGuardController:
             previous_requested_settings=active_target,
             min_settings=0.0,
             max_settings=1.0,
-            max_delta_per_update=self.max_delta_per_update,
+            max_delta_per_update=delta,
             enforce_current_delta=self.enforce_current_delta,
         )
         raw_projection = float(np.abs(decision.requested - raw).max(initial=0.0))
@@ -99,7 +125,7 @@ class ContinuityGuardController:
             decision.requested,
             current,
             previous_requested_settings=active_target,
-            max_delta_per_update=self.max_delta_per_update,
+            max_delta_per_update=delta,
             enforce_current_delta=self.enforce_current_delta,
         )
         if not continuity.passed:
@@ -117,7 +143,10 @@ class ContinuityGuardController:
                 "command_delta_from_current_tracking_max": continuity.max_delta_from_current,
                 "command_delta_from_previous_target_max": continuity.max_delta_from_previous_command,
                 "current_delta_is_hard_constraint": self.enforce_current_delta,
-                "max_setting_delta_per_update": self.max_delta_per_update,
+                "max_setting_delta_per_update_min": float(delta.min(initial=0.0)),
+                "max_setting_delta_per_update_max": float(delta.max(initial=0.0)),
+                "max_setting_delta_is_per_actuator": bool(np.ptp(delta) > 1e-12),
+                "max_setting_delta_vector_sha256": _array_sha256(delta),
             }
         )
         return ControllerAction(
