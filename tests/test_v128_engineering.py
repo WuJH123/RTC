@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -76,3 +77,24 @@ def test_engineering_envelope_fails_closed_on_wrong_actuator_order(tmp_path) -> 
     )
     with pytest.raises(ValueError, match="order differs"):
         load_engineering_envelope_v128(path, graph=changed)
+
+
+def test_idealized_source_name_cannot_spoof_custom_slew_and_reuse_old_d5(tmp_path) -> None:
+    graph = _graph()
+    path = save_idealized_engineering_envelope_v128(graph, tmp_path / "spoof.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["source"] == V128_IDEALIZED_ENVELOPE_SOURCE
+    payload["actuators"][0]["max_delta_per_10min"] = 0.1
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="requires exactly 0.5"):
+        load_engineering_envelope_v128(path, graph=graph)
+
+
+def test_idealized_source_requires_explicit_no_field_claim(tmp_path) -> None:
+    graph = _graph()
+    path = save_idealized_engineering_envelope_v128(graph, tmp_path / "claim.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["field_engineering_claim"] = True
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="field_engineering_claim=false"):
+        load_engineering_envelope_v128(path, graph=graph)
