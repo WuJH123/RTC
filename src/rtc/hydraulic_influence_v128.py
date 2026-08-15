@@ -1,7 +1,7 @@
 """Build a sparse Development-only hydraulic influence graph from authoritative D2 effects.
 
-This module does not change the physical SWMM graph.  It derives optional shortcut candidates
-for later smoke/dev ablations using only same-prefix Development D2 counterfactuals.  The
+This module does not change the physical SWMM graph. It derives optional shortcut candidates
+for later smoke/dev ablations using only same-prefix Development D2 counterfactuals. The
 artifact is prohibited from using Validation/Final/Formal data and is never enabled in the
 current full model unless separately promoted after evidence.
 """
@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 import numpy as np
+import torch
 
 from .spatial_diagnostics_v128 import actuator_node_hops
 from .step2_spatial_audit_v128 import _changed_actuator_per_candidate
@@ -61,9 +62,7 @@ def build_hydraulic_influence_edges_v128(
         order = _branch_indices(entry)
         arrays = entry.arrays
         settings = np.asarray(arrays["settings"][order], dtype=np.float32)
-        actuators = _changed_actuator_per_candidate(
-            __import__("torch").as_tensor(settings, dtype=__import__("torch").float32)
-        )
+        actuators = _changed_actuator_per_candidate(torch.as_tensor(settings, dtype=torch.float32))
         volume = _truth_node_volume(cache, name)
         states = np.asarray(arrays["target_states"][order], dtype=np.float32)
         if states.ndim != 4 or states.shape[0] != len(order) or states.shape[2] != node_count:
