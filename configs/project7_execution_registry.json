@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_V8_DEBUG_FIRST_SINGLE_CURRENT_SURFACE",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_V9_DEBUG_FIRST_SINGLE_CURRENT_SURFACE",
   "current": {
     "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
     "research_contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V2_DEBUG_FIRST",
@@ -23,8 +23,10 @@
     "runtime_evidence": "src/rtc/runtime_evidence_v128.py"
   },
   "development_diagnostics": {
+    "step1_attention_trainer": "scripts/train_step1_global_attention_dev.py",
     "step1_distance_attention_ablation": "scripts/audit_step1_global_attention_current.py",
     "step2_spatial_action_effect": "scripts/audit_step2_spatial_current.py",
+    "step2_development_gradient": "scripts/audit_step2_gradient_current_dev.py",
     "edge_physics_builder": "scripts/build_edge_physics_current.py",
     "edge_aware_smoke_dev": "scripts/run_step2_edge_aware_dev.py",
     "edge_aware_spatial_audit": "scripts/audit_step2_edge_spatial_current.py",
@@ -32,8 +34,8 @@
     "physics_readiness": "src/rtc/physics_diagnostics_v128.py"
   },
   "evidence_entrypoints": {
-    "ranking_horizon_audit": "scripts/audit_step2_v128_fast.py",
-    "d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
+    "full_ranking_horizon_audit": "scripts/audit_step2_v128_fast.py",
+    "full_d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
     "d5_gradient_fit_audit": "scripts/run_step2_v128_d5_gradient_fast.py",
     "continuous_evidence": "scripts/build_v128_continuous_evidence.py"
   },
@@ -49,6 +51,9 @@
     "user and Codex Step2 workflows must enter through scripts/run_step2_current.py and explicitly choose smoke/dev/full",
     "smoke/dev are Development screening only and cannot create a strict final Step2 checkpoint or enter D5/runtime/Policy Lock",
     "run smoke one-group profiler before expensive performance tuning; profile only bounded Development data",
+    "use scripts/audit_step2_gradient_current_dev.py for smoke/dev stage_objective.pt; use scripts/audit_step2_v128_d2_gradients_fast.py only for a strict full checkpoint",
+    "train Step1 global-attention only through scripts/train_step1_global_attention_dev.py and compare it with scripts/audit_step1_global_attention_current.py before any Step1 promotion",
+    "if Step1 is promoted, rebuild the causal Step1 state store and retrain Step2 from the beginning; never hot-swap Step1 into an old Step2 lineage",
     "never load V127 checkpoint through V128 loader or V128 checkpoint through V127 loader",
     "never load a V128 checkpoint after either its model-source or exact-training-source fingerprint changes",
     "never route current training to the deleted detached-memory src/rtc/step2_train_v128.py objective",
