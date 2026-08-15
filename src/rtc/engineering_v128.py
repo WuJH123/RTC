@@ -72,11 +72,11 @@ class V128EngineeringEnvelope:
 
     @property
     def semantic_sha256(self) -> str:
+        """Hash physical/control semantics, not JSON bytes or formatting provenance."""
         self.validate()
         digest = hashlib.sha256()
         digest.update("\n".join(self.actuator_ids).encode("utf-8"))
         digest.update(str(self.source).encode("utf-8"))
-        digest.update(bytes.fromhex(self.source_sha256))
         digest.update(
             bytes.fromhex(
                 _sha_arrays(
