@@ -1,7 +1,7 @@
 """Development-only Step1 long-range ablation on identical held-out validation windows.
 
 Compare the accepted frozen legacy SparseStateEstimator with a separately trained V122
-sensor-to-all-node attention checkpoint.  Both receive the same graph, sensor layout,
+sensor-to-all-node attention checkpoint. Both receive the same graph, sensor layout,
 13-frame causal history, node-local causal context, and Development validation fold.
 The report is diagnostic only: it cannot replace the frozen Step1 or rebuild the causal
 Step2 state store automatically.
@@ -15,16 +15,27 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 from rtc.large_model_cli import _device, _filtered_index, _read_lines
 from rtc.lazy_step1 import CausalStep1TrajectoryDataset, TrajectoryBatchSampler
 from rtc.production_cli import _load_graph
-from rtc.spatial_diagnostics_v128 import DEFAULT_DISTANCE_BINS, nearest_source_hops, distance_bin_name
+from rtc.spatial_diagnostics_v128 import DEFAULT_DISTANCE_BINS, distance_bin_name, nearest_source_hops
 from rtc.step1_runtime_v122 import load_step1_v122
 from rtc.step1_runtime_v127 import load_frozen_step1_v127
 
-CONTRACT = "PROJECT7_STEP1_GLOBAL_ATTENTION_DISTANCE_ABLATION_V1_DEVELOPMENT_ONLY"
+CONTRACT = "PROJECT7_STEP1_GLOBAL_ATTENTION_DISTANCE_ABLATION_V2_INDEX_BOUND_DEVELOPMENT_ONLY"
+
+
+class _IndexedDataset(Dataset):
+    def __init__(self, base: CausalStep1TrajectoryDataset):
+        self.base = base
+
+    def __len__(self) -> int:
+        return len(self.base)
+
+    def __getitem__(self, index: int):
+        return index, *self.base[index]
 
 
 def _sha(path: str | Path) -> str:
@@ -77,14 +88,11 @@ def _group_balanced(groups: dict[str, dict[str, dict[str, float]]]) -> dict[str,
     return result
 
 
-def _far_summary(metrics: dict[str, object]) -> dict[str, float | bool]:
-    near = float(dict(metrics.get("1-3", {})).get("rmse_m", float("nan")))
-    far_7 = float(dict(metrics.get("7-12", {})).get("rmse_m", float("nan")))
-    far_13 = float(dict(metrics.get("13+", {})).get("rmse_m", float("nan")))
+def _far_summary(metrics: dict[str, object]) -> dict[str, float]:
     return {
-        "near_1_3_rmse_m": near,
-        "far_7_12_rmse_m": far_7,
-        "far_13_plus_rmse_m": far_13,
+        "near_1_3_rmse_m": float(dict(metrics.get("1-3", {})).get("rmse_m", float("nan"))),
+        "far_7_12_rmse_m": float(dict(metrics.get("7-12", {})).get("rmse_m", float("nan"))),
+        "far_13_plus_rmse_m": float(dict(metrics.get("13+", {})).get("rmse_m", float("nan"))),
     }
 
 
@@ -112,7 +120,7 @@ def main() -> None:
     distance = nearest_source_hops(graph.edge_index, len(graph.node_ids), sensor_idx)
 
     index = _filtered_index(args.run_index, split="development", fold="validation")
-    dataset = CausalStep1TrajectoryDataset(
+    base = CausalStep1TrajectoryDataset(
         index,
         graph=graph,
         sensor_nodes=sensors,
@@ -122,8 +130,9 @@ def main() -> None:
         development_fold="validation",
         cache_trajectories=2,
     )
-    sampler = TrajectoryBatchSampler(dataset, batch_size=args.batch_size, seed=0, shuffle=False, stratified=False)
-    loader = DataLoader(dataset, batch_sampler=sampler, num_workers=0, pin_memory=False)
+    indexed = _IndexedDataset(base)
+    sampler = TrajectoryBatchSampler(base, batch_size=args.batch_size, seed=0, shuffle=False, stratified=False)
+    loader = DataLoader(indexed, batch_sampler=sampler, num_workers=0, pin_memory=False)
 
     legacy = load_frozen_step1_v127(args.legacy_model, device)
     attention = load_step1_v122(args.attention_model, device)
@@ -131,19 +140,18 @@ def main() -> None:
         runtime = dict(getattr(model, "runtime_metadata", {}))
         if int(runtime.get("history_steps", -1)) != 13 or int(runtime.get("model_step_seconds", -1)) != 300:
             raise ValueError(f"{label} Step1 checkpoint violates 13-frame/300-s contract")
-        if str(runtime.get("swmm_engine_version", "")) != dataset.swmm_engine_version:
+        if str(runtime.get("swmm_engine_version", "")) != base.swmm_engine_version:
             raise ValueError(f"{label} Step1 SWMM engine differs from validation dataset")
 
     static = torch.as_tensor(graph.static_node_features, dtype=torch.float32, device=device)
     edges = torch.as_tensor(graph.edge_index, dtype=torch.long, device=device)
     aggregate: dict[str, dict[str, dict[str, dict[str, float]]]] = {
-        "legacy": {distance_bin_name(lo, hi): {} for lo, hi in DEFAULT_DISTANCE_BINS},
-        "attention": {distance_bin_name(lo, hi): {} for lo, hi in DEFAULT_DISTANCE_BINS},
+        "legacy": {distance_bin_name(lo, hi): {} for lo, hi in DEFAULT_DISTANCE_BINS if lo > 0},
+        "attention": {distance_bin_name(lo, hi): {} for lo, hi in DEFAULT_DISTANCE_BINS if lo > 0},
     }
 
     with torch.no_grad():
-        sample_cursor = 0
-        for obs, mask, context, target in loader:
+        for indices, obs, mask, context, target in loader:
             obs_d = obs.to(device)
             mask_d = mask.to(device)
             context_d = context.to(device)
@@ -152,12 +160,12 @@ def main() -> None:
                 "attention": attention(obs_d, mask_d, static, edges, context_d).cpu().numpy(),
             }
             truth = target.numpy()
-            for local in range(int(target.shape[0])):
-                ref = dataset.samples[sample_cursor + local]
+            for local, sample_index in enumerate(indices.numpy().astype(int)):
+                ref = base.samples[int(sample_index)]
                 group_id = str(ref.rainfall_group)
                 for lo, hi in DEFAULT_DISTANCE_BINS:
                     if lo == 0:
-                        continue  # configured sensor nodes are measured, not reconstructed.
+                        continue
                     node_mask = distance >= lo
                     if hi is not None:
                         node_mask &= distance <= hi
@@ -167,7 +175,6 @@ def main() -> None:
                     for label in ("legacy", "attention"):
                         agg = aggregate[label][bin_name].setdefault(group_id, _new_agg())
                         _acc(agg, truth[local, node_mask, 0], predictions[label][local, node_mask, 0])
-            sample_cursor += int(target.shape[0])
 
     metrics = {label: _group_balanced(groups) for label, groups in aggregate.items()}
     comparison: dict[str, object] = {}
@@ -185,7 +192,9 @@ def main() -> None:
                 if np.isfinite(legacy_rmse) and np.isfinite(attention_rmse) and legacy_rmse > 0
                 else float("nan")
             ),
-            "attention_better": bool(np.isfinite(legacy_rmse) and np.isfinite(attention_rmse) and attention_rmse < legacy_rmse),
+            "attention_better": bool(
+                np.isfinite(legacy_rmse) and np.isfinite(attention_rmse) and attention_rmse < legacy_rmse
+            ),
         }
 
     payload = {
@@ -199,7 +208,7 @@ def main() -> None:
         "run_index_sha256": _sha(args.run_index),
         "legacy_model_sha256": _sha(args.legacy_model),
         "attention_model_sha256": _sha(args.attention_model),
-        "validation_windows": len(dataset),
+        "validation_windows": len(base),
         "distance_definition": "undirected shortest hops to nearest configured sensor",
         "metrics": metrics,
         "comparison": comparison,
