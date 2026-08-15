@@ -21,16 +21,32 @@ def resource_snapshot(device: torch.device | str) -> dict[str, Any]:
         import psutil  # type: ignore
 
         process = psutil.Process()
+        basic = process.memory_info()
+        full = process.memory_full_info()
         vm = psutil.virtual_memory()
         payload.update(
             {
-                "process_rss_gb": float(process.memory_info().rss / 1024**3),
+                "psutil_available": True,
+                "process_rss_gb": float(basic.rss / 1024**3),
+                "process_vms_gb": float(basic.vms / 1024**3),
                 "system_ram_available_gb": float(vm.available / 1024**3),
                 "system_ram_percent": float(vm.percent),
             }
         )
+        for source_name, output_name in (
+            ("uss", "process_uss_gb"),
+            ("private", "process_private_gb"),
+        ):
+            value = getattr(full, source_name, None)
+            if value is not None:
+                payload[output_name] = float(value / 1024**3)
         swap = psutil.swap_memory()
-        payload["swap_used_gb"] = float(swap.used / 1024**3)
+        payload.update(
+            {
+                "swap_used_gb": float(swap.used / 1024**3),
+                "swap_percent": float(swap.percent),
+            }
+        )
     except Exception:
         payload["psutil_available"] = False
     if target.type == "cuda" and torch.cuda.is_available():
@@ -39,6 +55,8 @@ def resource_snapshot(device: torch.device | str) -> dict[str, Any]:
             {
                 "cuda_allocated_gb": float(torch.cuda.memory_allocated(target) / 1024**3),
                 "cuda_reserved_gb": float(torch.cuda.memory_reserved(target) / 1024**3),
+                "cuda_peak_allocated_gb": float(torch.cuda.max_memory_allocated(target) / 1024**3),
+                "cuda_peak_reserved_gb": float(torch.cuda.max_memory_reserved(target) / 1024**3),
                 "cuda_free_gb": float(free / 1024**3),
                 "cuda_total_gb": float(total / 1024**3),
             }

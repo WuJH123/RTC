@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import torch
 
+import rtc.v128_preflight as v128_preflight
 from rtc.development_profile_v128 import (
     apply_profile_to_design,
     deterministic_subset,
@@ -150,3 +151,52 @@ def test_action_effect_distance_metrics_use_actuator_endpoints() -> None:
     )
     assert metrics["1-3"]["informative_sign_total"] >= 2
     assert metrics["1-3"]["effect_sign_accuracy"] < 1.0
+
+
+def test_preflight_applies_requested_v128_matmul_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    graph_path = tmp_path / "graph.npz"
+    graph_path.write_bytes(b"graph")
+
+    class Graph:
+        actuator_ids = tuple(f"A{i}" for i in range(109))
+
+    class Envelope:
+        source = "IDEALIZED_DEFAULT_0P5_PER_10MIN"
+        semantic_sha256 = "semantic"
+        is_idealized_default = True
+
+    monkeypatch.setattr(v128_preflight, "_load_graph", lambda _: Graph())
+    monkeypatch.setattr(
+        v128_preflight,
+        "idealized_engineering_envelope_v128",
+        lambda _: Envelope(),
+    )
+    monkeypatch.setenv("RTC_V128_MATMUL_PRECISION", "high")
+
+    before = torch.get_float32_matmul_precision()
+    try:
+        torch.set_float32_matmul_precision("highest")
+        payload = v128_preflight.inspect_v128_preflight(
+            graph_path=graph_path,
+            device_text="cpu",
+        )
+        assert payload["hardware"]["float32_matmul_precision_before"] == "highest"
+        assert payload["hardware"]["float32_matmul_precision"] == "high"
+        assert torch.get_float32_matmul_precision() == "high"
+    finally:
+        torch.set_float32_matmul_precision(before)
+
+
+def test_current_step2_entrypoint_rejects_unbounded_raw_torch_trace() -> None:
+    text = Path("scripts/run_step2_current.py").read_text(encoding="utf-8")
+    assert '"--torch-profiler" in sys.argv[1:]' in text
+    assert "disables raw --torch-profiler trace export" in text
+    assert "TRAINING_TELEMETRY.jsonl" in text
+
+
+def test_dev_extra_installs_psutil_for_resource_telemetry() -> None:
+    text = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert '"psutil>=5.9"' in text

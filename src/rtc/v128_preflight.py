@@ -17,6 +17,7 @@ from .engineering_v128 import (
 )
 from .production_cli import _load_graph
 from .step2_differentiable_v128 import V128_STEP2_CONTRACT
+from .v128_control_profile import configure_v128_cuda_matmul_precision
 
 V128_PREFLIGHT_CONTRACT = "PROJECT7_V128_FAIL_CLOSED_PREFLIGHT_V1"
 V128_EVIDENCE_CONTRACT = "PROJECT7_V128_CONTINUOUS_MPC_EVIDENCE_V1_TYPED_SAME_CHECKPOINT"
@@ -66,6 +67,7 @@ def inspect_v128_preflight(
     engineering_envelope_path: str | Path | None = None,
     device_text: str = "cuda",
 ) -> dict[str, Any]:
+    matmul_profile = configure_v128_cuda_matmul_precision()
     graph = _load_graph(graph_path)
     if len(graph.actuator_ids) != 109:
         raise ValueError("V128 requires exactly 109 ordered writable actuators")
@@ -79,7 +81,9 @@ def inspect_v128_preflight(
         "requested_device": device_text,
         "resolved_device": str(device),
         "system_ram_gb": _system_ram_gb(),
-        "float32_matmul_precision": str(torch.get_float32_matmul_precision()),
+        "float32_matmul_precision_before": matmul_profile["float32_matmul_precision_before"],
+        "float32_matmul_precision": matmul_profile["float32_matmul_precision"],
+        "amp_enabled": False,
     }
     if device_text == "cuda" and device.type != "cuda":
         raise RuntimeError("V128 CUDA preflight requested but CUDA is unavailable")
