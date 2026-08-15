@@ -21,7 +21,7 @@ from .step2_differentiable_v128 import (
 from .step2_train_response_v60 import InputNormalizationV60
 
 V128_CHECKPOINT_CONTRACT = (
-    "PROJECT7_V128_STEP2_CHECKPOINT_V5_MODEL_BASE_D5_TRAINING_SOURCE_STRICT"
+    "PROJECT7_V128_STEP2_CHECKPOINT_V6_CURRENT_PROFILE_TRAINING_SOURCE_STRICT"
 )
 _V128_MODEL_SOURCE_FILES = (
     "models.py",
@@ -36,6 +36,8 @@ _V128_TRAINING_SOURCE_FILES = (
     "step2_train_v127_control.py",
     "step2_train_v128_hydraulic.py",
     "step2_train_v128_exact.py",
+    "step2_train_v128_current.py",
+    "development_profile_v128.py",
     "v128_control_profile.py",
     # D5-FIT changes the final runtime weights and therefore belongs to the same
     # fail-closed training fingerprint.  The V127-named modules are retained shared
@@ -90,6 +92,11 @@ def save_step2_v128(
 ) -> Path:
     if not isinstance(model, TypedActuatorMessageSurrogateV128):
         raise TypeError("V128 checkpoint saver requires TypedActuatorMessageSurrogateV128")
+    profile = str(training_report.get("profile", "full")).strip().lower()
+    if profile != "full":
+        raise ValueError("strict V128 checkpoint saver accepts only the explicit full profile")
+    if training_report.get("final_checkpoint_allowed") is False:
+        raise ValueError("training report explicitly forbids final checkpoint creation")
     payload = {
         "checkpoint_contract": V128_CHECKPOINT_CONTRACT,
         "step2_contract": V128_STEP2_CONTRACT,
@@ -98,6 +105,7 @@ def save_step2_v128(
         "v128_training_source_sha256": v128_training_source_sha256(),
         "graph_semantic_sha256": graph_semantic_sha256_v127(graph),
         "scientific_split": "development",
+        "execution_profile": profile,
         "model_config": {
             "state_dim": int(model.transition.state_mean.numel()),
             "rainfall_dim": int(model.transition.rain_mean.numel()),
@@ -144,6 +152,8 @@ def load_step2_v128(
         raise ValueError("V128 Step2 scientific contract mismatch")
     if payload.get("scientific_split") != "development":
         raise ValueError("V128 Step2 checkpoint is not development-lineage")
+    if str(payload.get("execution_profile", "")).lower() != "full":
+        raise ValueError("V128 runtime rejects smoke/dev nonfinal artifacts")
 
     stored_model_source = _require_sha256(
         payload.get("v128_step2_source_sha256"), label="Step2 model source"
@@ -219,6 +229,7 @@ def load_step2_v128(
             "graph_semantic_sha256": payload["graph_semantic_sha256"],
             "v128_step2_source_sha256": stored_model_source,
             "v128_training_source_sha256": stored_training_source,
+            "execution_profile": "full",
         }
     )
     return model.to(target).eval(), payload
