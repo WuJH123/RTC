@@ -21,7 +21,7 @@ from .step2_differentiable_v128 import (
 from .step2_train_response_v60 import InputNormalizationV60
 
 V128_CHECKPOINT_CONTRACT = (
-    "PROJECT7_V128_STEP2_CHECKPOINT_V4_MODEL_AND_EXACT_TRAINING_SOURCE_STRICT"
+    "PROJECT7_V128_STEP2_CHECKPOINT_V5_MODEL_BASE_D5_TRAINING_SOURCE_STRICT"
 )
 _V128_MODEL_SOURCE_FILES = (
     "models.py",
@@ -31,11 +31,20 @@ _V128_MODEL_SOURCE_FILES = (
     "checkpoint_v128.py",
 )
 _V128_TRAINING_SOURCE_FILES = (
+    # Base Stage A/B0/B training semantics.
     "step2_train_v127_streaming.py",
     "step2_train_v127_control.py",
     "step2_train_v128_hydraulic.py",
     "step2_train_v128_exact.py",
     "v128_control_profile.py",
+    # D5-FIT changes the final runtime weights and therefore belongs to the same
+    # fail-closed training fingerprint.  The V127-named modules are retained shared
+    # implementations, not a V127 scientific identity at runtime.
+    "step2_gradient_v127.py",
+    "step2_gradient_v127_streaming.py",
+    "step2_gradient_v127_fast.py",
+    # Frozen D5 fraction-space semantics use the historical idealized 0.5 decoder.
+    "step3_mpc_v127.py",
 )
 
 
@@ -55,9 +64,9 @@ def v128_step2_source_sha256() -> str:
 
 
 def v128_training_source_sha256() -> str:
-    # Only installable package modules enter this fingerprint. The outer runner has an
-    # explicit V128_STREAMING_RUN_CONTRACT inside the training report, avoiding a fragile
-    # dependency on an uninstalled repository-level scripts/ path.
+    # Only installable package modules enter this fingerprint. Outer scripts have explicit
+    # run/report contracts, while all functions that can update current Step2 weights are
+    # included here so a base or D5 algorithm change invalidates stale checkpoints.
     return _source_files_sha256(
         Path(__file__).resolve().parent, _V128_TRAINING_SOURCE_FILES
     )
@@ -151,7 +160,7 @@ def load_step2_v128(
     current_training_source = v128_training_source_sha256()
     if stored_training_source != current_training_source:
         raise ValueError(
-            "V128 Step2 training-source semantics changed after checkpoint creation; retrain/re-audit instead of loading weights trained by an obsolete objective"
+            "V128 Step2 training-source semantics changed after checkpoint creation; retrain/re-audit instead of loading weights trained by an obsolete base/D5 objective"
         )
 
     if payload.get("graph_semantic_sha256") != graph_semantic_sha256_v127(graph):
