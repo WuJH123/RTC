@@ -67,8 +67,7 @@
     "tests/test_v128_training_objective.py",
     "tests/test_v128_checkpoint_strict.py",
     "tests/test_v128_mpc_runtime.py",
-    "tests/test_v128_development_profiles.py",
-    "tests/test_v128_stage_checkpoint.py"
+    "tests/test_v128_development_profiles.py"
   ],
   "non_gate_historical_debt_policy": "Historical/archival files remain covered by pytest where relevant but their pre-existing Ruff findings are not a prerequisite for current smoke/dev execution. Do not mass-format or auto-fix archival code during model debugging."
 }
