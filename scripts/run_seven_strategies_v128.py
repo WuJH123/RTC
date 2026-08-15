@@ -13,6 +13,7 @@ import numpy as np
 V128_SEVEN_STRATEGY_CONTRACT = (
     "PROJECT7_V128_SEVEN_STRATEGY_AUTHORITATIVE_SWMM_COMPARISON_V1_TYPED_RUNTIME_ACCEPTED"
 )
+_V128_ENGINEERING_ENVELOPE: str | None = None
 
 
 def _load_v127_runner() -> ModuleType:
@@ -50,9 +51,11 @@ def _run_proposed_v128(args, root: Path) -> dict[str, object]:
         "--pfv-soft-margin-m3", str(args.pfv_soft_margin_m3),
         "--pfv-penalty-weight", str(args.pfv_penalty_weight),
     ]
-    engineering = getattr(args, "engineering_envelope", None)
-    if engineering:
-        command += ["--engineering-envelope", str(Path(engineering).resolve())]
+    if _V128_ENGINEERING_ENVELOPE:
+        command += [
+            "--engineering-envelope",
+            str(Path(_V128_ENGINEERING_ENVELOPE).resolve()),
+        ]
     subprocess.run(command, check=True)
 
     meta_path = out / f"{run_id}.json"
@@ -120,21 +123,28 @@ def _run_proposed_v128(args, root: Path) -> dict[str, object]:
     }
 
 
-def main() -> None:
-    runner = _load_v127_runner()
-    # Reuse the already audited baseline execution/statistics/replay code. Only Proposed and
-    # artifact identity differ. Keep the V127 CLI parser for all common arguments.
-    runner._run_proposed = _run_proposed_v128
-    runner.V127_SEVEN_STRATEGY_CONTRACT = V128_SEVEN_STRATEGY_CONTRACT
-
-    # The common V127 parser calls this argument --continuous-gate. Expose the V128-facing
-    # name while translating only the argv token; the value itself is V128 evidence.
+def _extract_v128_only_args() -> None:
+    global _V128_ENGINEERING_ENVELOPE
+    if "--engineering-envelope" in sys.argv:
+        index = sys.argv.index("--engineering-envelope")
+        try:
+            _V128_ENGINEERING_ENVELOPE = sys.argv[index + 1]
+        except IndexError as exc:
+            raise ValueError("--engineering-envelope requires a path") from exc
+        del sys.argv[index : index + 2]
     if "--continuous-evidence" in sys.argv:
         sys.argv[sys.argv.index("--continuous-evidence")] = "--continuous-gate"
+
+
+def main() -> None:
+    _extract_v128_only_args()
+    runner = _load_v127_runner()
+    # Reuse the already audited baseline execution/statistics/replay code. Only Proposed and
+    # artifact identity differ. The V128-only args were removed before the shared parser.
+    runner._run_proposed = _run_proposed_v128
+    runner.V127_SEVEN_STRATEGY_CONTRACT = V128_SEVEN_STRATEGY_CONTRACT
     runner.main()
 
-    # The shared runner intentionally retains its historical output filenames. Rename and
-    # stamp the final artifacts so downstream code cannot confuse V128 with V127.
     out_index = sys.argv.index("--out-dir")
     root = Path(sys.argv[out_index + 1]).resolve()
     old_json = root / "PROJECT7_V127_SEVEN_STRATEGY_COMPARISON.json"
