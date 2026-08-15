@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_V10_DEBUG_FIRST_CURRENT_LINT",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_V11_LOW_MEMORY_DEBUG_PROFILE",
   "current": {
     "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
     "research_contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V2_DEBUG_FIRST",
@@ -11,7 +11,8 @@
     "preflight": "rtc-current-preflight",
     "lint_gate": "python scripts/lint_current_surface.py",
     "lint_surface_contract": "configs/project7_current_lint_surface.json",
-    "required_step2_profiles": ["smoke", "dev", "full"]
+    "required_step2_profiles": ["smoke", "dev", "full"],
+    "development_profile_mode": "profile-one-group telemetry only; raw torch Chrome trace disabled on current 16-GB workstation"
   },
   "selected_internal_implementation": {
     "step2_model": "src/rtc/step2_differentiable_v128.py",
@@ -53,7 +54,8 @@
     "user and Codex Step2 workflows must enter through scripts/run_step2_current.py and explicitly choose smoke/dev/full",
     "run python scripts/lint_current_surface.py as the lint stop-gate; do not use full-repository ruff check . as a smoke/dev prerequisite while archival Ruff debt remains",
     "smoke/dev are Development screening only and cannot create a strict final Step2 checkpoint or enter D5/runtime/Policy Lock",
-    "run smoke one-group profiler before expensive performance tuning; profile only bounded Development data",
+    "profile the bounded smoke one-group path with TRAINING_TELEMETRY.jsonl and optional low-frequency external GPU sampling; do not use raw --torch-profiler Chrome-trace export on the current 16-GB workstation",
+    "profiler/export/sampler failure after successful training checkpoints is not a scientific Step2 failure; stop only on real stage/OOM/nonfinite/lineage/checkpoint/resource-leak failures",
     "use scripts/audit_step2_gradient_current_dev.py for smoke/dev stage_objective.pt; use scripts/audit_step2_v128_d2_gradients_fast.py only for a strict full checkpoint",
     "train Step1 global-attention only through scripts/train_step1_global_attention_dev.py and compare it with scripts/audit_step1_global_attention_current.py before any Step1 promotion",
     "if Step1 is promoted, rebuild the causal Step1 state store and retrain Step2 from the beginning; never hot-swap Step1 into an old Step2 lineage",
