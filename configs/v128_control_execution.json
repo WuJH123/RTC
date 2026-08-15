@@ -1,21 +1,31 @@
 {
-  "contract": "PROJECT7_V128_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V1",
+  "contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V2",
   "base": {
     "canonical_main_sha_at_branch": "390ab19f59bebf20e62d4a7f49e7e579192bd021",
-    "inherits": "PROJECT7_V127_CANONICAL_CONTROL_EXECUTION_V3_RUNTIME_ACCELERATED_VALIDATION",
+    "inherits_time_and_research_goal_from": "PROJECT7_V127_CONTINUOUS_DIFFERENTIABLE_MPC_CORRECTNESS_V2",
     "research_goal_changed": false,
     "authoritative_truth_changed": false,
     "time_contract_changed": false,
-    "model_architecture_changed": false,
-    "data_split_changed": false
+    "model_architecture_changed": true,
+    "data_split_changed": false,
+    "v127_checkpoint_compatible": false
   },
   "scientific_change": {
-    "purpose": "increase decision-relevant action-order supervision resolution for continuous MPC",
+    "purpose": "improve decision-relevant action-effect identification and gradients for continuous MPC",
     "v127_training_pair_threshold": "max(1 m3, 0.001 * abs(reference TFV))",
     "v128_training_pair_threshold": "1 m3 absolute floor",
     "informative_pair_reference_fraction": 0.0,
     "informative_pair_absolute_m3": 1.0,
-    "why": "do not let event flood magnitude suppress small-to-medium SWMM action-effect ordering labels needed by local MPC"
+    "action_context_v127": "per-node outgoing/incoming raw setting sums",
+    "action_context_v128": "typed physics-aware actuator-to-node messages using endpoint state, setting, previous/predicted managed flow, responsiveness, actuator physics/type and identity",
+    "why": "large-event magnitude must not suppress operational action ordering, and physically different actuator combinations must not alias merely because their raw setting sums match"
+  },
+  "checkpoint_contract": {
+    "step2_contract": "PROJECT7_V128_TYPED_PHYSICS_AWARE_ACTUATOR_MESSAGE_SURROGATE_V1",
+    "checkpoint_contract": "PROJECT7_V128_STEP2_CHECKPOINT_V1_TYPED_ACTUATOR_MESSAGE_STRICT",
+    "loader": "rtc.checkpoint_v128.load_step2_v128",
+    "v127_loader_must_reject_v128": true,
+    "v128_loader_must_reject_v127": true
   },
   "hardware_execution": {
     "target_gpu": "NVIDIA RTX 4060 8 GB",
@@ -30,13 +40,21 @@
   },
   "entrypoints": {
     "step2_training": "scripts/run_step2_v128_control_4060.py",
-    "profile": "src/rtc/v128_control_profile.py",
-    "tests": "tests/test_v128_control_profile.py",
-    "step3_runtime": "scripts/run_policy_v127.py",
-    "seven_strategy_development": "scripts/run_seven_strategies_v127.py"
+    "step2_model": "src/rtc/step2_differentiable_v128.py",
+    "step2_checkpoint": "src/rtc/checkpoint_v128.py",
+    "training_profile": "src/rtc/v128_control_profile.py",
+    "tests": [
+      "tests/test_v128_control_profile.py",
+      "tests/test_v128_typed_surrogate.py",
+      "tests/test_current_step2_routing.py"
+    ],
+    "step3_runtime": "NOT_PROMOTED_UNTIL_V128_EVIDENCE_PATH_IS_BOUND",
+    "seven_strategy_development": "NOT_PROMOTED_UNTIL_V128_RUNTIME_IS_BOUND"
   },
   "required_comparison": {
-    "same_seed_data_splits_and_architecture": true,
+    "same_seed_and_data_splits": true,
+    "architecture_ablation_required": true,
+    "ranking_deadband_ablation_required": true,
     "compare_matmul_high_vs_highest": true,
     "metrics": [
       "InternalHoldout D2/D3 hard TFV rank/pairwise/top1/selected regret",
@@ -45,7 +63,7 @@
       "authoritative development TFV/PFV across seven strategies",
       "decision runtime p50/p95/max and deadline/fallback counts"
     ],
-    "promotion_rule": "do not replace V127 production identity unless V128 improves control-identification evidence without material regression in hydraulic accuracy or authoritative closed-loop performance"
+    "promotion_rule": "do not replace V127 production identity unless the exact final V128 checkpoint improves control-identification evidence without material hydraulic regression and also improves or preserves authoritative closed-loop SWMM performance"
   },
   "boundaries": {
     "validation_access": false,
@@ -55,6 +73,8 @@
     "new_swmm_required_for_step2_base_training": false,
     "d5_audit_used_for_training": false,
     "future_realized_rainfall_online": false,
-    "future_swmm_state_online": false
+    "future_swmm_state_online": false,
+    "runtime_may_load_v127_checkpoint_as_v128": false,
+    "runtime_may_load_v128_checkpoint_as_v127": false
   }
 }
