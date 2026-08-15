@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V2_DEBUG_FIRST",
+  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V3_DEBUG_FIRST_ROUTING_COMPLETE",
   "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
   "selected_implementation_contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_DEBUG_FIRST_EXACT_PAIRWISE",
   "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, use a differentiable action-conditioned hydraulic surrogate to optimize all 109 writable target settings continuously over H120 within an H360 prediction horizon, minimize system-wide cumulative TFV, treat Priority8 PFV as a one-sided soft secondary objective, and execute only the first 10-minute target in authoritative SWMM",
@@ -67,11 +67,12 @@
     "promotion_order": ["unit/preflight", "smoke one-group profiler", "smoke", "smoke ranking+spatial+gradient", "dev", "full", "D5", "development closed loop", "seven-strategy development", "Policy Lock only after gates"]
   },
   "spatial_diagnostics": {
+    "step1_attention_trainer": "scripts/train_step1_global_attention_dev.py",
     "step1_distance_audit": "scripts/audit_step1_global_attention_current.py",
     "step2_action_effect_distance_audit": "scripts/audit_step2_spatial_current.py",
     "step2_development_gradient_audit": "scripts/audit_step2_gradient_current_dev.py",
     "distance_bins_hops": ["1-3", "4-6", "7-12", "13+"],
-    "global_attention_ablation": "compare frozen legacy Step1 to separately trained V122 on identical Development validation windows; no hot replacement",
+    "global_attention_ablation": "train a separate V122 checkpoint, compare frozen legacy Step1 to V122 on identical Development validation windows, and never hot replace the frozen Step1",
     "edge_physics_builder": "scripts/build_edge_physics_current.py",
     "edge_aware_experiment": "scripts/run_step2_edge_aware_dev.py",
     "hydraulic_influence_builder": "scripts/build_hydraulic_influence_current.py",
@@ -130,6 +131,7 @@
     "existing_data_training": "scripts/run_step2_current.py",
     "step2_spatial_audit": "scripts/audit_step2_spatial_current.py",
     "step2_development_gradient_audit": "scripts/audit_step2_gradient_current_dev.py",
+    "step1_attention_trainer": "scripts/train_step1_global_attention_dev.py",
     "step1_attention_ablation": "scripts/audit_step1_global_attention_current.py",
     "full_ranking_audit": "scripts/audit_step2_v128_fast.py",
     "full_d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
