@@ -1,9 +1,9 @@
 """Project7 V127 bounded continuous differentiable rolling MPC.
 
-RBC provides safety/fallback; the differentiable surrogate provides optimisation.  Model
+RBC provides safety/fallback; the differentiable surrogate provides optimisation. Model
 quality metrics are scientific evidence and are recorded, not arbitrary runtime switches.
-Runtime remains fail-closed on causality, non-finite data/gradients, engineering bounds,
-write/readback semantics and the 10-minute computation deadline.
+The multi-start optimizer is anytime: the deadline stops additional search but does not
+discard a finite better solution found by an earlier warm start.
 """
 from __future__ import annotations
 
@@ -20,16 +20,16 @@ from .step2_differentiable_v127 import ControlOrientedDifferentiableSurrogateV12
 from .step2_v60_contract import require_feature
 from .step3_knowledge_seeds_v123 import build_sparse_state_auto_rbc_anchor_v123
 
-V127_STEP3_CONTRACT = "PROJECT7_V127_109ACT_H120_LBFGSB_RECEDING_HORIZON_MPC_V4_EVIDENCE_NOT_GATE"
+V127_STEP3_CONTRACT = "PROJECT7_V127_109ACT_H120_LBFGSB_RECEDING_HORIZON_MPC_V5_ANYTIME"
 
 
 @dataclass(frozen=True)
 class Step2GradientEvidenceV127:
     """Scientific evidence attached to a V127 model/runtime.
 
-    These metrics describe model quality.  They are not universal physical thresholds and
+    These metrics describe model quality. They are not universal physical thresholds and
     therefore do not disable the method simply because an empirical score falls below an
-    author-chosen number.  Causal provenance and finite metric values are hard contracts.
+    author-chosen number. Causal provenance and finite metric values are hard contracts.
     """
 
     holdout_rank: float
@@ -592,9 +592,12 @@ class DifferentiableRollingMPCV127:
                 )
 
         numerical_eps = 1.0e-6
+        # Anytime semantics: hitting the search deadline only stops additional starts. If an
+        # earlier start already produced a finite solution that improves hard predicted TFV
+        # without worsening the smooth objective, execute that best-so-far solution rather
+        # than discarding it solely because a later warm start ran out of search time.
         use_continuous = bool(
-            not deadline_exceeded
-            and best is not None
+            best is not None
             and math.isfinite(float(best["hard_tfv"]))
             and float(best["hard_tfv"])
             < float(rbc_hard_tfv)
