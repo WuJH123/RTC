@@ -143,8 +143,8 @@ class ContinuityGuardController:
                 "command_delta_from_current_tracking_max": continuity.max_delta_from_current,
                 "command_delta_from_previous_target_max": continuity.max_delta_from_previous_command,
                 "current_delta_is_hard_constraint": self.enforce_current_delta,
-                "max_setting_delta_per_update_min": float(delta.min(initial=0.0)),
-                "max_setting_delta_per_update_max": float(delta.max(initial=0.0)),
+                "max_setting_delta_per_update_min": float(delta.min()),
+                "max_setting_delta_per_update_max": float(delta.max()),
                 "max_setting_delta_is_per_actuator": bool(np.ptp(delta) > 1e-12),
                 "max_setting_delta_vector_sha256": _array_sha256(delta),
             }
