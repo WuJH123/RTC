@@ -97,7 +97,9 @@ AMP off for current Step2
 activation checkpointing off
 ```
 
-The previous full run showed host-memory paging while CUDA was not saturated. Current training therefore uses lazy mmap branch streaming. Profile before changing chunks/workers.
+The previous full runs showed host-memory paging while CUDA was not always saturated. Current training therefore uses lazy mmap branch streaming. `psutil` is installed in the Development extra so stage telemetry records RSS/VMS/private-or-USS memory, available RAM, swap and CUDA peaks.
+
+A raw Torch Chrome trace across the whole one-group Stage A/B0/objective sequence is **not supported on the current 16-GB workstation**. A real run completed all three training stages but `export_chrome_trace(...)` drove process private memory to tens of GB and exhausted available RAM. The stable current entrypoint therefore rejects raw `--torch-profiler` before expensive work. This is a diagnostic-infrastructure rule, not a scientific-model change.
 
 ## 5. Synchronize local code to GitHub main
 
@@ -169,15 +171,16 @@ rtc-current-preflight `
   --out <DEBUG_ROOT>\PREFLIGHT.json
 ```
 
-Require the current 109-actuator graph/device/engineering contract to pass.
+Require the current 109-actuator graph/device/engineering contract to pass. Preflight now applies the same V128 matmul-policy function used by training; with the environment above, `hardware.float32_matmul_precision` must be `high`. A preflight report that still says `highest` while `RTC_V128_MATMUL_PRECISION=high` is invalid and must be investigated before training.
 
-## 8. First expensive action: one-group profiler, never full
+## 8. First expensive action: one-group low-overhead resource profile
+
+Do **not** add `--torch-profiler` on the current 16-GB workstation. Run the real one-group smoke path with ordinary stage/resource telemetry:
 
 ```powershell
 python scripts/run_step2_current.py `
   --profile smoke `
   --profile-one-group `
-  --torch-profiler `
   --graph <FROZEN_GRAPH> `
   --cache-manifest <CANONICAL_D2_D3_CACHE> `
   --d4-fit-cache <D4_FIT_CACHE> `
@@ -188,7 +191,11 @@ python scripts/run_step2_current.py `
   --device cuda
 ```
 
-Inspect `TRAINING_TELEMETRY.jsonl` and `TORCH_PROFILER_TRACE.json`. Classify time into host materialization/I/O, H2D, CUDA forward, H360 rollout, autograd/backward, optimizer and GC. Do not increase hidden dimension, chunks or workers until the profile identifies the real bottleneck.
+Inspect `TRAINING_TELEMETRY.jsonl`. Record Stage A/B0/objective/evaluation wall time, process RSS/VMS/private-or-USS memory, available RAM, swap and CUDA allocated/reserved/peak values. If useful, sample `nvidia-smi` externally at low frequency for GPU utilisation/VRAM; do not start a second training process.
+
+This resource profile is **diagnostic, not a scientific stop-gate**. Stop downstream only for a real training/runtime failure such as OOM, non-finite loss/gradient, stage error, lineage/contract mismatch, broken checkpoint, or an unreleased process/resource leak. Failure of an optional profiler/export/sampler after successful stage checkpoints is not evidence that Step2 failed.
+
+Do not increase hidden dimension, chunks or workers merely because host memory is tight. First distinguish model/training memory from diagnostic instrumentation overhead.
 
 ## 9. Baseline smoke training
 
@@ -363,7 +370,7 @@ The current development loop is:
 idea
  -> pytest + current-surface lint + CLI help
  -> preflight
- -> one-group profiler
+ -> one-group low-overhead resource profile
  -> smoke
  -> ranking + spatial + gradient diagnosis
  -> dev
