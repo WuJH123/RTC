@@ -1,26 +1,28 @@
-"""Run the V127 streaming Step2 pipeline with the V128 control-identifiability profile.
+"""Train the V128 typed actuator-message Step2 on the canonical streaming pipeline.
 
-Why this wrapper exists
------------------------
-V127 already contains the memory-safe 16-GB-RAM / 8-GB-VRAM implementation.  Recopying
-that large runner would create another stale scientific pipeline.  V128 therefore loads
-that canonical runner, changes only two explicitly versioned execution/training choices,
-and records both in the normal report:
+The large memory-safe data/training loop remains single-sourced in
+``run_step2_v127_control_streaming.py``.  V128 substitutes only explicit versioned hooks:
 
-1. Keep action-order supervision down to the existing 1 m3 absolute SWMM effect floor,
-   instead of additionally discarding pairs below 0.1% of reference-event TFV.
-2. Default FP32 matrix multiplication to PyTorch ``high`` precision so RTX 4060 tensor
-   cores can be used.  Set RTC_V128_MATMUL_PRECISION=highest for strict FP32 comparison.
+* typed/physics-aware actuator-to-node message architecture;
+* contract-strict V128 checkpoint saver;
+* 1 m3 absolute action-ranking floor (no event-size proportional deadband);
+* RTX-4060 FP32 matmul execution profile.
 
-No AMP is enabled.  No SWMM labels, rainfall splits, causal inputs, horizons or objectives
-are changed by this wrapper.
+The wrapper also redirects output names so a V128 checkpoint/report can never be mistaken
+for V127.  No SWMM labels, causal splits, horizons or authoritative truth are changed.
 """
 from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import sys
 from types import ModuleType
 
+from rtc.checkpoint_v128 import save_step2_v128
+from rtc.step2_differentiable_v128 import (
+    V128_STEP2_CONTRACT,
+    build_v128_model_from_graph,
+)
 from rtc.v128_control_profile import (
     V128_CONTROL_PROFILE_CONTRACT,
     build_v128_control_training_design,
@@ -28,8 +30,10 @@ from rtc.v128_control_profile import (
 )
 
 V128_STREAMING_RUN_CONTRACT = (
-    "PROJECT7_V128_CONTROL_IDENTIFIABILITY_4060_STREAMING_V1"
+    "PROJECT7_V128_TYPED_ACTUATOR_CONTROL_IDENTIFIABILITY_4060_STREAMING_V2"
 )
+V128_REPORT_FILENAME = "STEP2_V128_CONTROL_BASE_REPORT.json"
+V128_CHECKPOINT_FILENAME = "step2_v128_control_base.pt"
 
 
 def _load_v127_runner() -> ModuleType:
@@ -42,15 +46,31 @@ def _load_v127_runner() -> ModuleType:
     return module
 
 
+def _cli_out_dir() -> Path:
+    try:
+        index = sys.argv.index("--out-dir")
+        return Path(sys.argv[index + 1])
+    except (ValueError, IndexError) as exc:
+        raise ValueError("V128 runner requires an explicit --out-dir") from exc
+
+
 def main() -> None:
     execution_profile = configure_v128_cuda_matmul_precision()
     runner = _load_v127_runner()
+    out_dir = _cli_out_dir()
 
-    # Keep one canonical implementation of the memory-safe training/evaluation loop.
-    # Only the V128 design factory is substituted; all other scientific semantics remain
-    # in the V127 runner and therefore continue to receive its existing regression tests.
+    # Keep one canonical implementation of group streaming, split discipline and losses.
+    # The substituted hooks are all contract-versioned and covered by strict checkpoint
+    # loading, so V127 and V128 artifacts cannot be interchanged accidentally.
     runner.V127ControlTrainingDesign = build_v128_control_training_design
+    runner.build_v127_model_from_graph = build_v128_model_from_graph
     runner.V127_STREAMING_RUN_CONTRACT = V128_STREAMING_RUN_CONTRACT
+
+    def save_v128_redirect(path, **kwargs):
+        del path
+        return save_step2_v128(out_dir / V128_CHECKPOINT_FILENAME, **kwargs)
+
+    runner.save_step2_v127 = save_v128_redirect
 
     base_hardware = runner._hardware
 
@@ -59,6 +79,8 @@ def main() -> None:
         payload.update(
             {
                 "v128_control_profile_contract": V128_CONTROL_PROFILE_CONTRACT,
+                "v128_step2_contract": V128_STEP2_CONTRACT,
+                "typed_physics_aware_actuator_messages": True,
                 "float32_matmul_precision": execution_profile[
                     "float32_matmul_precision"
                 ],
@@ -73,6 +95,18 @@ def main() -> None:
 
     runner._hardware = hardware_with_v128_profile
     runner.main()
+
+    historical_report = out_dir / "STEP2_V127_CONTROL_BASE_REPORT.json"
+    v128_report = out_dir / V128_REPORT_FILENAME
+    if not historical_report.is_file():
+        raise RuntimeError(
+            "canonical streaming runner did not emit its expected intermediate report"
+        )
+    if v128_report.exists():
+        raise RuntimeError(f"refusing to overwrite existing V128 report: {v128_report}")
+    historical_report.replace(v128_report)
+    if not (out_dir / V128_CHECKPOINT_FILENAME).is_file():
+        raise RuntimeError("V128 strict checkpoint was not created")
 
 
 if __name__ == "__main__":
