@@ -31,7 +31,7 @@
     "training": "scripts/run_step2_current.py",
     "runtime": "scripts/run_policy_current.py",
     "seven_strategy": "scripts/run_seven_strategies_current.py",
-    "preflight": "rtc-v128-preflight",
+    "preflight": "rtc-current-preflight",
     "ranking": "scripts/audit_step2_v128_fast.py",
     "d2": "scripts/audit_step2_v128_d2_gradients_fast.py",
     "d5": "scripts/run_step2_v128_d5_gradient_fast.py",
