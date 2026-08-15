@@ -9,6 +9,7 @@ import torch
 
 from rtc.engineering_v128 import V128EngineeringEnvelope
 from rtc.runtime_evidence_v128 import audit_v128_runtime_decisions
+from rtc.step3_mpc_v127 import ContinuousMPCDesignV127, decode_fractional_targets_v127
 from rtc.step3_mpc_v128 import (
     ContinuousMPCDesignV128,
     decode_fractional_targets_v128,
@@ -68,6 +69,40 @@ def test_v128_decoder_enforces_per_actuator_slew_before_scoring() -> None:
         design=design,
     )
     torch.testing.assert_close(round_trip, sequence, rtol=0.0, atol=1e-6)
+
+
+def test_historical_d5_fraction_decoder_equals_v128_idealized_0p5_decoder() -> None:
+    rng = np.random.default_rng(128)
+    lo_np = rng.uniform(0.0, 0.15, size=109).astype(np.float32)
+    hi_np = rng.uniform(0.85, 1.0, size=109).astype(np.float32)
+    active_np = ((lo_np + hi_np) / 2.0).astype(np.float32)
+    fractions = torch.as_tensor(rng.uniform(0.0, 1.0, size=(12, 109)), dtype=torch.float32)
+    lo = torch.as_tensor(lo_np)
+    hi = torch.as_tensor(hi_np)
+    active = torch.as_tensor(active_np)
+
+    historical = decode_fractional_targets_v127(
+        fractions,
+        active_target=active,
+        min_setting=lo,
+        max_setting=hi,
+        design=ContinuousMPCDesignV127(max_setting_delta_per_update=0.5),
+    )
+    envelope = V128EngineeringEnvelope(
+        actuator_ids=tuple(f"a{i}" for i in range(109)),
+        min_setting=lo_np.astype(np.float64),
+        max_setting=hi_np.astype(np.float64),
+        max_delta_per_10min=np.full(109, 0.5, dtype=np.float64),
+        source="idealized_equivalence_test",
+        source_sha256="b" * 64,
+    )
+    current = decode_fractional_targets_v128(
+        fractions,
+        active_target=active,
+        envelope=envelope,
+        design=ContinuousMPCDesignV128(),
+    )
+    torch.testing.assert_close(current, historical, rtol=0.0, atol=1e-7)
 
 
 def _write_decisions(path: Path, runtimes: list[float]) -> None:
