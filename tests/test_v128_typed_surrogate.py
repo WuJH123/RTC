@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import torch
 
+from rtc.checkpoint_v127 import load_step2_v127
 from rtc.checkpoint_v128 import (
     V128_CHECKPOINT_CONTRACT,
     load_step2_v128,
@@ -69,8 +70,8 @@ def test_v128_equal_scalar_setting_sum_does_not_alias_typed_actions() -> None:
     predicted = torch.tensor([[0.1, 0.2]])
     response = torch.tensor([[0.6, 0.7]])
 
-    # Both actions have the same raw setting sum at n0/n1.  The V127 two-scalar direct
-    # context would therefore be identical.  V128 must preserve which physical device
+    # Both actions have the same raw setting sum at n0/n1. The V127 two-scalar direct
+    # context would therefore be identical. V128 must preserve which physical device
     # received which target.
     first = model._typed_action_context(
         state=state,
@@ -145,7 +146,15 @@ def test_v128_checkpoint_round_trip_and_contract_isolation(tmp_path) -> None:
     assert payload["checkpoint_contract"] == V128_CHECKPOINT_CONTRACT
     assert payload["step2_contract"] == V128_STEP2_CONTRACT
 
+    with pytest.raises(ValueError, match="not a current V127"):
+        load_step2_v127(path, graph=graph, device="cpu")
+
     fake = tmp_path / "not_v128.pt"
-    torch.save({"checkpoint_contract": "PROJECT7_V127_STEP2_CHECKPOINT_V4_SEMANTIC_COMPATIBILITY"}, fake)
+    torch.save(
+        {
+            "checkpoint_contract": "PROJECT7_V127_STEP2_CHECKPOINT_V4_SEMANTIC_COMPATIBILITY"
+        },
+        fake,
+    )
     with pytest.raises(ValueError, match="not a V128"):
         load_step2_v128(fake, graph=graph, device="cpu")
