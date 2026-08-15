@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,11 +86,12 @@ def test_project7_registry_has_one_current_user_surface_and_complete_dev_diagnos
     assert diagnostics["step2_development_gradient"] == "scripts/audit_step2_gradient_current_dev.py"
 
 
-def test_current_lint_surface_is_explicit_and_contains_required_entrypoints() -> None:
+def test_current_lint_surface_is_high_signal_and_excludes_archival_style_debt() -> None:
     payload = json.loads(CURRENT_LINT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_V1_ACTIVE_ONLY"
+    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_V2_HIGH_SIGNAL_ACTIVE_ONLY"
     assert payload["full_repository_ruff_is_gate"] is False
     assert payload["current_surface_ruff_is_gate"] is True
+    assert payload["rule_select"] == ["E4", "E7", "E9", "F"]
     paths = [str(path) for path in payload["paths"]]
     assert len(paths) == len(set(paths))
     required = {
@@ -103,8 +104,17 @@ def test_current_lint_surface_is_explicit_and_contains_required_entrypoints() ->
         "src/rtc/step2_train_v128_exact.py",
         "src/rtc/step3_mpc_v128.py",
         "src/rtc/controller_v128.py",
+        "src/rtc/spatial_diagnostics_v128.py",
+        "src/rtc/step2_spatial_audit_v128.py",
+        "src/rtc/step2_gradient_audit_v128_dev.py",
     }
     assert required.issubset(paths)
+    historical_shared = {
+        "src/rtc/step2_train_response_v60.py",
+        "src/rtc/step2_train_v127_streaming.py",
+        "src/rtc/step2_gradient_v127_fast.py",
+    }
+    assert historical_shared.isdisjoint(paths)
     assert all((ROOT / path).is_file() for path in paths)
 
 
