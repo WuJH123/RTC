@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V3_COMPLETE_DEVELOPMENT_CHAIN",
+  "contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V4_STAGEA_SOURCE_STRICT",
   "status": "DEVELOPMENT_ONLY_NOT_PRODUCTION_NOT_POLICY_LOCKED",
   "base": {
     "canonical_main_sha_at_branch": "390ab19f59bebf20e62d4a7f49e7e579192bd021",
@@ -28,14 +28,16 @@
     "informative_pair_absolute_m3": 1.0,
     "action_context_v127": "per-node outgoing/incoming raw setting sums",
     "action_context_v128": "typed physics-aware actuator-to-node messages using endpoint state, setting, previous/predicted managed flow, responsiveness, actuator physics/type and identity",
+    "stage_a_action_path": "same typed actuator-message transition as online rollout",
     "candidate_pair_supervision_v127": "candidate-candidate ranking only inside small GPU microbatches",
     "candidate_pair_supervision_v128": "full within-group candidate ordering via detached same-parameter-snapshot cross-microbatch memory",
     "why": "large-event magnitude and microbatch partitioning must not suppress operational action ordering, and physically different actuator combinations must not alias merely because their raw setting sums match"
   },
   "checkpoint_contract": {
     "step2_contract": "PROJECT7_V128_TYPED_PHYSICS_AWARE_ACTUATOR_MESSAGE_SURROGATE_V1",
-    "checkpoint_contract": "PROJECT7_V128_STEP2_CHECKPOINT_V1_TYPED_ACTUATOR_MESSAGE_STRICT",
+    "checkpoint_contract": "PROJECT7_V128_STEP2_CHECKPOINT_V2_TYPED_ACTUATOR_MESSAGE_SOURCE_STRICT",
     "loader": "rtc.checkpoint_v128.load_step2_v128",
+    "source_semantic_sha_must_match_current_model_code": true,
     "v127_loader_must_reject_v128": true,
     "v128_loader_must_reject_v127": true,
     "ranking_d2_d5_same_final_step2_sha_required": true
@@ -63,7 +65,7 @@
     "cuda_allocator_recommendation": "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
     "step2_cpu_group_streaming": true,
     "step2_gpu_microbatch": true,
-    "step3_immutable_graph_tensor_cache_available": true,
+    "step3_immutable_graph_tensor_cache_used_by_runtime": true,
     "measured_runtime_acceptance": "every authoritative decision wall-clock must be <600 s"
   },
   "rainfall_runtime": {
@@ -78,6 +80,7 @@
     "preflight": "rtc-v128-preflight",
     "step2_training": "scripts/run_step2_v128_control_4060.py",
     "step2_model": "src/rtc/step2_differentiable_v128.py",
+    "step2_stage_a": "src/rtc/step2_train_v128_hydraulic.py",
     "step2_training_objective": "src/rtc/step2_train_v128.py",
     "step2_checkpoint": "src/rtc/checkpoint_v128.py",
     "training_profile": "src/rtc/v128_control_profile.py",
@@ -86,6 +89,7 @@
     "d5_gradient_fit_audit": "scripts/run_step2_v128_d5_gradient_fast.py",
     "continuous_evidence": "scripts/build_v128_continuous_evidence.py",
     "step3": "src/rtc/step3_mpc_v128.py",
+    "step3_runtime_cache": "src/rtc/step3_runtime_v128.py",
     "controller": "src/rtc/controller_v128.py",
     "runtime": "scripts/run_policy_v128.py",
     "runtime_acceptance": "src/rtc/runtime_evidence_v128.py",
