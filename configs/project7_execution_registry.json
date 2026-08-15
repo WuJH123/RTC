@@ -1,0 +1,35 @@
+{
+  "contract": "PROJECT7_EXECUTION_REGISTRY_V1_NO_AMBIGUOUS_CURRENT_SURFACE",
+  "production": {
+    "status": "CURRENT_UNTIL_V128_EMPIRICALLY_PROMOTED",
+    "project_contract": "PROJECT7_V127_CONTINUOUS_DIFFERENTIABLE_MPC_CORRECTNESS_V2",
+    "base_training": "scripts/run_step2_v127_control_streaming.py",
+    "runtime": "scripts/run_policy_v127.py",
+    "seven_strategy": "scripts/run_seven_strategies_v127.py",
+    "historical_trainer_forbidden_as_current": "scripts/run_step2_v127.py"
+  },
+  "experimental_candidate": {
+    "status": "DEVELOPMENT_ONLY_NOT_POLICY_LOCKED",
+    "project_contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V2",
+    "step2_contract": "PROJECT7_V128_TYPED_PHYSICS_AWARE_ACTUATOR_MESSAGE_SURROGATE_V1",
+    "checkpoint_contract": "PROJECT7_V128_STEP2_CHECKPOINT_V1_TYPED_ACTUATOR_MESSAGE_STRICT",
+    "step3_contract": "PROJECT7_V128_109ACT_H120_PER_ACTUATOR_ENVELOPE_LBFGSB_MPC_V1_ANYTIME",
+    "base_training": "scripts/run_step2_v128_control_4060.py",
+    "ranking_horizon_audit": "scripts/audit_step2_v128_fast.py",
+    "d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
+    "d5_gradient_fit_audit": "scripts/run_step2_v128_d5_gradient_fast.py",
+    "continuous_evidence": "scripts/build_v128_continuous_evidence.py",
+    "runtime": "scripts/run_policy_v128.py",
+    "seven_strategy": "scripts/run_seven_strategies_v128.py",
+    "preflight": "python -m rtc.v128_preflight"
+  },
+  "hard_rules": [
+    "never load V127 checkpoint through V128 loader or V128 checkpoint through V127 loader",
+    "never call scripts/run_step2_v127.py a current canonical trainer",
+    "never combine ranking, D2 and D5 reports from different Step2 SHA256 values",
+    "never project a scored V128 command after MPC; engineering envelope must be inside the differentiable decoder",
+    "never claim a custom per-actuator engineering envelope is D5-validated using the historical idealized 0.5 decoder",
+    "never call a measured authoritative V128 run real-time if any logged decision wall-clock is >=600 seconds",
+    "never access Validation/Final/Formal/Policy Lock while V128 remains development-only"
+  ]
+}
