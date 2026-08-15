@@ -67,7 +67,8 @@
     "supervisory slew constraints act on consecutive target commands rather than physical current-setting tracking lag",
     "Auto-RBC/EFD preserve the supervisory target latch for untouched assets",
     "EFD filling degree uses storage volume/capacity from SWMM FUNCTIONAL/TABULAR storage geometry",
-    "all seven strategies use common event/clock/engine verification and routing-step frozen-decision replay for report-only Global Peak"
+    "all seven strategies use common event/clock/engine verification and routing-step frozen-decision replay for report-only Global Peak",
+    "the current Step2 training entrypoint is the memory-safe full-coverage control-oriented streaming curriculum; the older scripts/run_step2_v127.py implementation is historical only"
   ],
   "data_roles": {
     "D2": {
@@ -134,6 +135,7 @@
   },
   "step2_training": {
     "stage_A": "source-balanced teacher-forced hydraulic transition and actuator-flow learning from D2 + targeted D3 + D4-FIT",
+    "stage_B0": "H60/H120 autoregressive truncated-rollout curriculum to reduce compounding hydraulic/managed-flow drift before the H360 objective stage",
     "stage_B": "H360 rollout: hard physical TFV learns absolute SWMM magnitude; smooth node-volume/TFV proxy learns same-prefix counterfactual action effects and ordering; retained hydraulic states constrain rollout drift",
     "stage_C_after_D5": "D5-FIT first-order-in-parameters symmetric directional-gradient supervision; D5-AUDIT uses true online fraction-space autograd and never trains",
     "hard_tfv": "physical clamp-based surrogate reporting/evaluation, absolute magnitude supervision and continuous-vs-RBC acceptance check",
@@ -191,14 +193,15 @@
   "canonical_entrypoints": {
     "current_surface": "rtc.step2_current",
     "causal_state_store": "scripts/build_step2_v127_causal_state_store.py",
-    "existing_data_training": "scripts/run_step2_v127.py",
+    "existing_data_training": "scripts/run_step2_v127_control_streaming.py",
+    "historical_noncanonical_training": "scripts/run_step2_v127.py",
     "d5_plan": "scripts/plan_d5_gradient_v127.py",
     "d5_execution_manifest": "scripts/build_d5_execution_manifest_v127.py",
     "d5_swmm_runner": "rtc-run-d3-batch",
     "d5_labels": "scripts/build_d5_gradient_labels_v127.py",
-    "d5_gradient_training": "scripts/run_step2_v127_d5_gradient.py",
-    "ranking_audit": "scripts/audit_step2_v127_ranking.py",
-    "d2_gradient_audit": "scripts/audit_step2_v127_d2_gradients.py",
+    "d5_gradient_training": "scripts/run_step2_v127_d5_gradient_fast.py",
+    "ranking_audit": "scripts/audit_step2_v127_fast.py",
+    "d2_gradient_audit": "scripts/audit_step2_v127_d2_gradients_fast.py",
     "continuous_evidence": "scripts/build_v127_continuous_gate.py",
     "runtime": "scripts/run_policy_v127.py",
     "seven_strategy_comparison": "scripts/run_seven_strategies_v127.py"
