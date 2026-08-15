@@ -5,7 +5,10 @@ import json
 
 
 IMPLEMENTATION_CONTRACT = {
-    "release": "WUHAN_RTC_V068_SIMULATION_ASSET_LINEAGE_IMPLEMENTATION_V1",
+    "release": "PROJECT7_CURRENT_TFV_FIRST_109ACT_V128_EXACT_PAIRWISE_IMPLEMENTATION_V1",
+    "current_execution_surface": "UNVERSIONED_CURRENT_ENTRYPOINTS_V1",
+    "current_step2": "V128_TYPED_PHYSICS_AWARE_EXACT_PAIRWISE_V1",
+    "current_checkpoint": "V5_MODEL_BASE_D5_TRAINING_SOURCE_STRICT",
     "causal_observation": "T0_INCLUDED_ALL_TRAJECTORIES_V2",
     "event_preparation": "EXPLICIT_SOURCE_ADDITIONAL_EFFECTIVE_WARMUP_V2",
     "hydraulic_initialization": "WARMUP_DISTINCT_FROM_HISTORY_WITH_DEVELOPMENT_SENSITIVITY_V2",
@@ -40,10 +43,15 @@ IMPLEMENTATION_CONTRACT = {
     "endpoint_preflight": "CHECKPOINT_PLUS_HORIZON_BEFORE_SWMM_LAUNCH_V1",
     "horizon_reuse": "LONG_TRAJECTORY_PREFIX_FOR_TIMING_NOT_CUMULATIVE_TRUTH_V1",
 }
-CODE_CONTRACT = "RTC_SCIENTIFIC_IMPLEMENTATION_CONTRACT_V2"
+CODE_CONTRACT = "RTC_SCIENTIFIC_IMPLEMENTATION_CONTRACT_V3_CURRENT_PROJECT7"
 
 
 def rtc_implementation_contract_sha256() -> str:
+    """Hash the declared scientific implementation contract.
+
+    This is a semantic contract hash, not a byte-for-byte source-tree hash. Current V128
+    checkpoints additionally carry explicit model/training file-content fingerprints.
+    """
     canonical = json.dumps(
         {"contract": CODE_CONTRACT, "implementation": IMPLEMENTATION_CONTRACT},
         sort_keys=True,
@@ -53,4 +61,5 @@ def rtc_implementation_contract_sha256() -> str:
 
 
 def rtc_source_tree_sha256() -> str:
+    """Historical compatibility alias for the semantic implementation-contract hash."""
     return rtc_implementation_contract_sha256()
