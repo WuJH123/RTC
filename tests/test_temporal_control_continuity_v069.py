@@ -144,7 +144,7 @@ def test_proposed_outer_guard_refuses_illegal_jump() -> None:
     guard = ContinuityGuardController(
         _ConstantController(1.0), max_delta_per_update=0.5, allow_projection=False
     )
-    with pytest.raises(RuntimeError, match="violates the frozen temporal-continuity"):
+    with pytest.raises(RuntimeError, match="outside its declared temporal-continuity contract"):
         guard(_observation(0.0))
 
 

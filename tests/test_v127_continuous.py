@@ -18,7 +18,7 @@ from rtc.rule_baselines import StorageGeometry
 from rtc.runtime import command_continuity
 from rtc.step2_differentiable_v127 import ControlOrientedDifferentiableSurrogateV127
 from rtc.step2_state_store_v127 import CausalStateStoreV127
-from rtc.step2_train_v127 import _spearman, _truth_node_volume
+from rtc.step2_train_v127 import _spearman, _truth_node_volume, derive_residual_scales_v127
 from rtc.step3_mpc_v127 import (
     ContinuousMPCDesignV127,
     Step2GradientEvidenceV127,
@@ -265,3 +265,21 @@ def test_efd_functional_storage_uses_volume_not_depth_fraction() -> None:
     )
     assert geometry.capacity_m3 == pytest.approx(2.0)
     assert geometry.volume_m3(1.0) / geometry.capacity_m3 == pytest.approx(0.25)
+
+
+def test_v127_residual_scale_preparation_is_bounded_and_finite() -> None:
+    class Entry:
+        indices = (0,)
+        arrays = {
+            "target_states": np.ones((1, 72, 3, 2), dtype=np.float32),
+            "initial_state": np.zeros((1, 3, 2), dtype=np.float32),
+            "target_actuator_flows": np.ones((1, 72, 2), dtype=np.float32),
+            "previous_actuator_flow": np.zeros((1, 2), dtype=np.float32),
+        }
+    class Cache:
+        def entry(self, _name):
+            return Entry()
+    state, flow = derive_residual_scales_v127(((Cache(), ("g",)),))
+    assert state.shape == (2,)
+    assert flow.shape == (2,)
+    assert np.isfinite(state).all() and np.isfinite(flow).all()

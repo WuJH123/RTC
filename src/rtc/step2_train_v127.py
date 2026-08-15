@@ -165,6 +165,7 @@ def configure_model_normalization_v127(
 def derive_residual_scales_v127(
     caches_and_names: Sequence[tuple[Any, Sequence[str]]],
 ) -> tuple[np.ndarray, np.ndarray]:
+    sample_cap = 16384
     state_samples: list[np.ndarray] = []
     flow_samples: list[np.ndarray] = []
     for cache, names in caches_and_names:
@@ -175,11 +176,13 @@ def derive_residual_scales_v127(
                 states = np.asarray(arrays["target_states"][index], dtype=np.float32)
                 initial = np.asarray(arrays["initial_state"][index], dtype=np.float32)
                 previous = np.concatenate((initial[None], states[:-1]), axis=0)
-                state_samples.append(np.abs(states - previous).reshape(-1, states.shape[-1]))
+                state_residual = np.abs(states - previous).reshape(-1, states.shape[-1])
+                state_samples.append(state_residual[np.linspace(0, state_residual.shape[0] - 1, min(sample_cap, state_residual.shape[0]), dtype=np.int64)])
                 flows = np.asarray(arrays["target_actuator_flows"][index], dtype=np.float32)
                 f0 = np.asarray(arrays["previous_actuator_flow"][index], dtype=np.float32)
                 fprev = np.concatenate((f0[None], flows[:-1]), axis=0)
-                flow_samples.append(np.abs(flows - fprev))
+                flow_residual = np.abs(flows - fprev).reshape(-1, flows.shape[-1])
+                flow_samples.append(flow_residual[np.linspace(0, flow_residual.shape[0] - 1, min(sample_cap, flow_residual.shape[0]), dtype=np.int64)])
     if not state_samples or not flow_samples:
         raise ValueError("V127 cannot derive residual scales from empty data")
     return (
@@ -237,6 +240,7 @@ def train_hydraulic_stage_v127(
     for epoch in range(1, design.hydraulic_epochs + 1):
         losses: list[float] = []
         by_source: dict[str, list[float]] = {key: [] for key in source_caches}
+        phase_counts = {str(phase): 0 for phase in range(design.teacher_stride)}
         for source, name in _ordered(source_groups, epoch, design.seed):
             data = _denormalize_group(source_caches[source].batch(name, normalization, device), normalization)
             branches, horizon = data["settings"].shape[:2]
@@ -247,7 +251,9 @@ def train_hydraulic_stage_v127(
             optimizer.zero_grad(set_to_none=True)
             loss = torch.zeros((), device=device)
             count = 0
-            for k in range((epoch - 1) % design.teacher_stride, horizon, design.teacher_stride):
+            phase = _stable_seed(f"{name}:teacher-phase:{epoch}", design.seed) % design.teacher_stride
+            phase_counts[str(phase)] += 1
+            for k in range(phase, horizon, design.teacher_stride):
                 prev_state = data["initial"] if k == 0 else data["states"][:, k - 1]
                 prev_flow = data["previous_flow"] if k == 0 else data["flows"][:, k - 1]
                 q, _ = model.actuator.forward_prepared(
@@ -306,6 +312,8 @@ def train_hydraulic_stage_v127(
         for source, values in by_source.items():
             if values:
                 row[f"loss_{source.lower()}"] = float(np.mean(values))
+        row["teacher_phase_coverage"] = float(sum(v > 0 for v in phase_counts.values()) / design.teacher_stride)
+        row["teacher_transition_count_by_phase"] = ",".join(f"{p}:{phase_counts[str(p)]}" for p in range(design.teacher_stride))
         history.append(row)
         print("[V127_HYDRAULIC] " + " ".join(f"{k}={v}" for k, v in row.items()), flush=True)
     return history
@@ -319,6 +327,51 @@ def _truth_node_volume(cache: Any, name: str) -> np.ndarray:
     if values.ndim != 2 or not np.isfinite(values).all() or np.any(values < -1e-6):
         raise ValueError(f"{name}: authoritative node flood-volume labels are invalid")
     return np.clip(values, 0.0, None)
+
+
+def _objective_microbatch_loss_v127(
+    model: Any, data: dict[str, torch.Tensor], truth_volume: torch.Tensor,
+    index: torch.Tensor, static: dict[str, torch.Tensor], flood_rate_index: int,
+    design: V127TrainingDesign,
+) -> torch.Tensor:
+    output = model.objective_rollout(
+        initial_state=data["initial"].index_select(0, index),
+        rainfall=data["rainfall"].index_select(0, index),
+        settings=data["settings"].index_select(0, index),
+        previous_actuator_flow=data["previous_flow"].index_select(0, index),
+        actuator_upstream=static["up"], actuator_downstream=static["down"],
+        actuator_physics=static["physics"], static_node_features=static["static"],
+        edge_index=static["edges"], flood_rate_index=flood_rate_index,
+        priority_indices=None, dt_seconds=300.0,
+    )
+    target_volume = truth_volume.index_select(0, index)
+    true_tfv = target_volume.sum(-1)
+    tfv_scale = torch.quantile(true_tfv.detach(), 0.75).clamp_min(100.0)
+    hard_tfv_loss = F.smooth_l1_loss((output.tfv_m3 - true_tfv) / tfv_scale, torch.zeros_like(true_tfv), beta=0.5)
+    true_node_delta = target_volume[1:] - target_volume[0:1]
+    smooth_node_delta = output.optimization_node_flood_volume_m3[1:] - output.optimization_node_flood_volume_m3[0:1]
+    node_delta_scale = torch.quantile(torch.abs(true_node_delta.detach()).reshape(-1), 0.75).clamp_min(25.0)
+    node_effect_loss = F.smooth_l1_loss(smooth_node_delta / node_delta_scale, true_node_delta / node_delta_scale, beta=0.5)
+    true_tfv_delta = (true_tfv[1:] - true_tfv[0]).detach()
+    smooth_tfv_delta = output.optimization_tfv_m3[1:] - output.optimization_tfv_m3[0]
+    hard_tfv_delta_loss = F.smooth_l1_loss((output.tfv_m3[1:] - output.tfv_m3[0]) / tfv_scale, true_tfv_delta / tfv_scale, beta=0.5)
+    tfv_effect_loss = F.smooth_l1_loss(smooth_tfv_delta / tfv_scale, true_tfv_delta / tfv_scale, beta=0.5)
+    pair_terms: list[torch.Tensor] = []
+    informative = torch.abs(true_tfv_delta) > 1.0e-9
+    if bool(informative.any()):
+        pair_terms.append(F.softplus(-torch.sign(true_tfv_delta[informative]) * smooth_tfv_delta[informative] / tfv_scale))
+    if len(true_tfv_delta) > 1:
+        ii, jj = torch.triu_indices(len(true_tfv_delta), len(true_tfv_delta), offset=1, device=true_tfv_delta.device)
+        dd, pp = true_tfv_delta[ii] - true_tfv_delta[jj], smooth_tfv_delta[ii] - smooth_tfv_delta[jj]
+        keep = torch.abs(dd) > 1.0e-9
+        if bool(keep.any()):
+            pair_terms.append(F.softplus(-torch.sign(dd[keep]) * pp[keep] / tfv_scale))
+    pair_loss = torch.cat(pair_terms).mean() if pair_terms else smooth_tfv_delta.new_zeros(())
+    retained = torch.as_tensor([5, 11, 23, 35, 47, 71], dtype=torch.long, device=true_tfv_delta.device)
+    true_states = data["states"].index_select(0, index).index_select(1, retained)
+    pred_states = output.rollout.states.index_select(1, retained)
+    state_loss = F.smooth_l1_loss((pred_states - true_states) / model.transition.state_std, torch.zeros_like(pred_states), beta=0.5)
+    return design.node_flood_weight * node_effect_loss + design.tfv_weight * (hard_tfv_loss + hard_tfv_delta_loss + tfv_effect_loss) + design.pairwise_weight * pair_loss + design.rollout_state_weight * state_loss
 
 
 def train_objective_stage_v127(
@@ -351,95 +404,30 @@ def train_objective_stage_v127(
             branch_count = int(data["settings"].shape[0])
             if truth_volume.shape[0] != branch_count:
                 raise RuntimeError(f"{name}: SWMM label count does not match model branch order")
-            chosen = _objective_branch_subset(
-                branch_count, group_name=name, epoch=epoch, design=design
-            )
-            if chosen[0] != 0 or len(chosen) < 2:
-                raise RuntimeError("V127 objective branch subset lost reference-first semantics")
-            selected_candidates.append(len(chosen) - 1)
-            index = torch.as_tensor(chosen, dtype=torch.long, device=device)
+            candidates = np.arange(1, branch_count, dtype=np.int64)
+            candidates = np.random.default_rng(_stable_seed(name, design.seed)).permutation(candidates)
+            chunks = [candidates[i : i + 3] for i in range(0, len(candidates), 3)]
+            selected_candidates.append(len(candidates))
             optimizer.zero_grad(set_to_none=True)
-            output = model.objective_rollout(
-                initial_state=data["initial"].index_select(0, index),
-                rainfall=data["rainfall"].index_select(0, index),
-                settings=data["settings"].index_select(0, index),
-                previous_actuator_flow=data["previous_flow"].index_select(0, index),
-                actuator_upstream=static["up"],
-                actuator_downstream=static["down"],
-                actuator_physics=static["physics"],
-                static_node_features=static["static"],
-                edge_index=static["edges"],
-                flood_rate_index=flood_rate_index,
-                priority_indices=None,
-                dt_seconds=300.0,
-            )
-            target_volume = truth_volume.index_select(0, index)
-            true_tfv = target_volume.sum(-1)
-            tfv_scale = torch.quantile(true_tfv.detach(), 0.75).clamp_min(100.0)
-            hard_tfv_loss = F.smooth_l1_loss(
-                (output.tfv_m3 - true_tfv) / tfv_scale,
-                torch.zeros_like(true_tfv),
-                beta=0.5,
-            )
-
-            # Smooth Softplus volume has a common zero-rate offset. Compare every selected
-            # candidate with branch 0 (the explicit reference), so that offset cancels and
-            # the model uses many existing action labels instead of one random pair/group.
-            true_node_delta = target_volume[1:] - target_volume[0:1]
-            smooth_node_delta = (
-                output.optimization_node_flood_volume_m3[1:]
-                - output.optimization_node_flood_volume_m3[0:1]
-            )
-            node_delta_scale = torch.quantile(
-                torch.abs(true_node_delta.detach()).reshape(-1), 0.75
-            ).clamp_min(25.0)
-            node_effect_loss = F.smooth_l1_loss(
-                smooth_node_delta / node_delta_scale,
-                true_node_delta / node_delta_scale,
-                beta=0.5,
-            )
-            true_tfv_delta = (true_tfv[1:] - true_tfv[0]).detach()
-            smooth_tfv_delta = output.optimization_tfv_m3[1:] - output.optimization_tfv_m3[0]
-            tfv_effect_loss = F.smooth_l1_loss(
-                smooth_tfv_delta / tfv_scale,
-                true_tfv_delta / tfv_scale,
-                beta=0.5,
-            )
-            informative = torch.abs(true_tfv_delta) > 1.0e-9
-            if bool(informative.any()):
-                pair_loss = F.softplus(
-                    -torch.sign(true_tfv_delta[informative])
-                    * smooth_tfv_delta[informative]
-                    / tfv_scale
-                ).mean()
-            else:
-                pair_loss = smooth_tfv_delta.new_zeros(())
-
-            retained = torch.as_tensor([5, 11, 23, 35, 47, 71], dtype=torch.long, device=device)
-            true_states = data["states"].index_select(0, index).index_select(1, retained)
-            pred_states = output.rollout.states.index_select(1, retained)
-            state_loss = F.smooth_l1_loss(
-                (pred_states - true_states) / model.transition.state_std,
-                torch.zeros_like(pred_states),
-                beta=0.5,
-            )
-            loss = (
-                design.node_flood_weight * node_effect_loss
-                + design.tfv_weight * (hard_tfv_loss + tfv_effect_loss)
-                + design.pairwise_weight * pair_loss
-                + design.rollout_state_weight * state_loss
-            )
-            if not bool(torch.isfinite(loss)):
-                raise RuntimeError(f"{name}: V127 H360 objective loss non-finite")
-            loss.backward()
+            group_loss = 0.0
+            for chunk in chunks:
+                index = torch.as_tensor(np.concatenate((np.asarray([0], dtype=np.int64), chunk)), dtype=torch.long, device=device)
+                loss = _objective_microbatch_loss_v127(model, data, truth_volume, index, static, flood_rate_index, design)
+                if not bool(torch.isfinite(loss)):
+                    raise RuntimeError(f"{name}: V127 H360 objective loss non-finite")
+                (loss / len(chunks)).backward()
+                group_loss += float(loss.detach()) / len(chunks)
             torch.nn.utils.clip_grad_norm_(model.parameters(), design.grad_clip)
             optimizer.step()
-            records.append(float(loss.detach()))
+            records.append(group_loss)
         row: dict[str, float | int | str] = {
             "stage": "h360_reference_anchored_physical_and_differentiable_action_effect",
             "epoch": epoch,
             "loss": float(np.mean(records)) if records else float("nan"),
-            "mean_candidates_per_group": float(np.mean(selected_candidates)) if selected_candidates else 0.0,
+            "candidate_total": int(np.sum(selected_candidates)) if selected_candidates else 0,
+            "candidate_seen_unique": int(np.sum(selected_candidates)) if selected_candidates else 0,
+            "candidate_coverage_fraction": 1.0 if selected_candidates else 0.0,
+            "candidate_repeat_count": 0,
         }
         if not math.isfinite(float(row["loss"])):
             raise RuntimeError("V127 H360 objective stage produced no finite loss")

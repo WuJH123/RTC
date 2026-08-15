@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from rtc.baselines import (
     FORMAL_FIXED_BASELINE_IDS,
@@ -124,7 +125,7 @@ def test_rule_baseline_preserves_uncontrolled_target_when_current_lags(tmp_path:
     # than overwriting it with the lagged physical readback.
     assert action.settings["O1"] == 0.8
     assert action.diagnostics is not None
-    assert float(action.diagnostics["current_tracking_lag_max"]) == 0.7
+    assert float(action.diagnostics["current_tracking_lag_max"]) == pytest.approx(0.7)
 
 
 def test_rule_baseline_move_limit_matches_target_command_limit(tmp_path: Path) -> None:
