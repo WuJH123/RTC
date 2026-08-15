@@ -8,7 +8,9 @@ same field actuation rate.
 V128 makes the envelope explicit and hashable.  A real/frozen metadata file can provide
 one min/max/rate triplet per ordered actuator.  When such metadata is unavailable the code
 may deliberately construct the historical idealised envelope, but the source label records
-that fact so it cannot be described as field engineering truth.
+that fact so it cannot be described as field engineering truth.  A file claiming the
+historical idealised source must also match its exact graph bounds and 0.5-per-10min rate;
+renaming a custom envelope cannot make old D5 evidence applicable.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ import numpy as np
 from .step2_v60_contract import require_feature
 
 V128_ENGINEERING_ENVELOPE_CONTRACT = (
-    "PROJECT7_V128_PER_ACTUATOR_ENGINEERING_ENVELOPE_V1"
+    "PROJECT7_V128_PER_ACTUATOR_ENGINEERING_ENVELOPE_V2_SOURCE_SEMANTICS_STRICT"
 )
 V128_IDEALIZED_ENVELOPE_SOURCE = "IDEALIZED_DEFAULT_0P5_PER_10MIN"
 
@@ -131,6 +133,41 @@ def idealized_engineering_envelope_v128(
     return envelope
 
 
+def _assert_idealized_source_semantics(
+    envelope: V128EngineeringEnvelope, *, graph: Any, payload: dict[str, Any]
+) -> None:
+    if not envelope.is_idealized_default:
+        return
+    expected = idealized_engineering_envelope_v128(graph)
+    if payload.get("field_engineering_claim") is not False:
+        raise ValueError(
+            "V128 idealized envelope must explicitly declare field_engineering_claim=false"
+        )
+    if not np.allclose(
+        np.asarray(envelope.min_setting, dtype=float),
+        np.asarray(expected.min_setting, dtype=float),
+        rtol=0.0,
+        atol=1e-12,
+    ):
+        raise ValueError("V128 idealized source label does not match frozen graph min settings")
+    if not np.allclose(
+        np.asarray(envelope.max_setting, dtype=float),
+        np.asarray(expected.max_setting, dtype=float),
+        rtol=0.0,
+        atol=1e-12,
+    ):
+        raise ValueError("V128 idealized source label does not match frozen graph max settings")
+    if not np.allclose(
+        np.asarray(envelope.max_delta_per_10min, dtype=float),
+        np.asarray(expected.max_delta_per_10min, dtype=float),
+        rtol=0.0,
+        atol=1e-12,
+    ):
+        raise ValueError(
+            "V128 idealized source label requires exactly 0.5 target delta per 10 min"
+        )
+
+
 def load_engineering_envelope_v128(path: str | Path, *, graph: Any) -> V128EngineeringEnvelope:
     source = Path(path)
     payload = json.loads(source.read_text(encoding="utf-8"))
@@ -162,6 +199,7 @@ def load_engineering_envelope_v128(path: str | Path, *, graph: Any) -> V128Engin
         source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
     )
     envelope.assert_graph_order(graph)
+    _assert_idealized_source_semantics(envelope, graph=graph, payload=payload)
     return envelope
 
 
