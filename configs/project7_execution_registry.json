@@ -8,7 +8,7 @@
     "step2_training": "scripts/run_step2_current.py",
     "runtime": "scripts/run_policy_current.py",
     "seven_strategy": "scripts/run_seven_strategies_current.py",
-    "preflight": "rtc-v128-preflight"
+    "preflight": "rtc-current-preflight"
   },
   "selected_internal_implementation": {
     "step2_model": "src/rtc/step2_differentiable_v128.py",
