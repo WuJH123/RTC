@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CURRENT = ROOT / "configs" / "step2_current_contract.json"
 GUIDE = ROOT / "CODEX_START_HERE.md"
 REGISTRY = ROOT / "configs" / "project7_execution_registry.json"
+PYPROJECT = ROOT / "pyproject.toml"
 V128_RUNNER = ROOT / "scripts" / "run_step2_v128_control_4060.py"
 CURRENT_STEP2 = ROOT / "scripts" / "run_step2_current.py"
 CURRENT_POLICY = ROOT / "scripts" / "run_policy_current.py"
@@ -18,6 +19,10 @@ VERSIONED_START_GUIDES = (
     ROOT / "CODEX_START_HERE_V127.md",
     ROOT / "CODEX_START_HERE_V128.md",
 )
+OBSOLETE_ROOT_PIPELINES = (
+    ROOT / "FORMAL_PIPELINE_LATEST.md",
+    ROOT / "FORMAL_PIPELINE_V2.md",
+)
 
 
 def test_current_contract_routes_only_user_entrypoints_to_unversioned_surface() -> None:
@@ -25,6 +30,7 @@ def test_current_contract_routes_only_user_entrypoints_to_unversioned_surface() 
     assert payload["status"] == "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED"
     entrypoints = payload["canonical_entrypoints"]
     assert entrypoints["guide"] == "CODEX_START_HERE.md"
+    assert entrypoints["preflight"] == "rtc-current-preflight"
     assert entrypoints["existing_data_training"] == "scripts/run_step2_current.py"
     assert entrypoints["runtime"] == "scripts/run_policy_current.py"
     assert entrypoints["seven_strategy_comparison"] == "scripts/run_seven_strategies_current.py"
@@ -36,10 +42,16 @@ def test_project7_registry_has_one_current_user_surface() -> None:
     current = payload["current"]
     assert payload["contract"] == "PROJECT7_EXECUTION_REGISTRY_V7_SINGLE_CURRENT_SURFACE"
     assert current["guide"] == "CODEX_START_HERE.md"
+    assert current["preflight"] == "rtc-current-preflight"
     assert current["step2_training"] == "scripts/run_step2_current.py"
     assert current["runtime"] == "scripts/run_policy_current.py"
     assert current["seven_strategy"] == "scripts/run_seven_strategies_current.py"
     assert current["status"] == "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED"
+
+
+def test_current_preflight_alias_is_installed() -> None:
+    text = PYPROJECT.read_text(encoding="utf-8")
+    assert 'rtc-current-preflight = "rtc.v128_preflight:main"' in text
 
 
 def test_current_wrappers_pin_the_selected_v128_implementation() -> None:
@@ -63,3 +75,4 @@ def test_obsolete_current_surfaces_are_removed() -> None:
     assert GUIDE.is_file()
     assert not OBSOLETE_OBJECTIVE.exists()
     assert all(not path.exists() for path in VERSIONED_START_GUIDES)
+    assert all(not path.exists() for path in OBSOLETE_ROOT_PIPELINES)
