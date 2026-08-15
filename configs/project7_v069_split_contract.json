@@ -3,6 +3,7 @@
   "instruction": "This split is frozen before fresh hydraulic generation. It was selected only from rainfall forcing descriptors (return period and duration); no SWMM hydraulic outcome, controller result, PFV, TFV, depth, or Final truth was used. Do not regenerate, reshuffle, or tune this split after any hydraulic evidence is observed.",
   "portable_registry": "configs/project7_v069_events_with_splits.csv",
   "portable_registry_sha256": "2dafcbe55db3181b233cc562d493beef83913bc1e21f5897205b259a97c0a50d",
+  "portable_registry_hash_semantics": "sha256 of registry bytes after CRLF/CR to LF normalization; all other bytes remain frozen",
   "event_count": 30,
   "rainfall_group_count": 30,
   "counts": {

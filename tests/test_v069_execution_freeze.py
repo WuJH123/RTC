@@ -16,12 +16,27 @@ def _json(path: str) -> dict[str, object]:
     return value
 
 
+def _canonical_lf_sha256(path: Path) -> str:
+    """Hash text bytes after normalizing only platform EOL representation to LF.
+
+    Git may check a text file out as CRLF on Windows when core.autocrlf is enabled.
+    The scientific split must not change identity solely because of that transport-level
+    representation. All non-EOL bytes, row order, values and final-newline presence remain
+    part of the frozen identity.
+    """
+
+    raw = path.read_bytes()
+    canonical = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def test_active_split_hash_and_18_6_6_contract() -> None:
     registry_path = ROOT / "configs/project7_v069_events_with_splits.csv"
     contract = _json("configs/project7_v069_split_contract.json")
-    assert hashlib.sha256(registry_path.read_bytes()).hexdigest() == contract[
-        "portable_registry_sha256"
-    ]
+    assert contract["portable_registry_hash_semantics"] == (
+        "sha256 of registry bytes after CRLF/CR to LF normalization; all other bytes remain frozen"
+    )
+    assert _canonical_lf_sha256(registry_path) == contract["portable_registry_sha256"]
     frame = pd.read_csv(registry_path, keep_default_na=False)
     train = frame[
         (frame["scientific_split"] == "development")
@@ -46,6 +61,17 @@ def test_active_split_hash_and_18_6_6_contract() -> None:
         300: 3,
         360: 3,
     }
+
+
+def test_split_registry_hash_is_identical_for_lf_and_crlf_worktrees(tmp_path: Path) -> None:
+    source = ROOT / "configs/project7_v069_events_with_splits.csv"
+    contract = _json("configs/project7_v069_split_contract.json")
+    canonical = source.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    assert hashlib.sha256(canonical).hexdigest() == contract["portable_registry_sha256"]
+
+    crlf_path = tmp_path / "events_crlf.csv"
+    crlf_path.write_bytes(canonical.replace(b"\n", b"\r\n"))
+    assert _canonical_lf_sha256(crlf_path) == contract["portable_registry_sha256"]
 
 
 def test_controller_is_fully_resolved_and_frozen() -> None:

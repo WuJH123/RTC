@@ -1,0 +1,2 @@
+# Keep the preregistered Project7 split registry byte-stable across Windows/Linux checkouts.
+configs/project7_v069_events_with_splits.csv text eol=lf
