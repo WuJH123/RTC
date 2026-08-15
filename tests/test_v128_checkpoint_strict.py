@@ -37,7 +37,7 @@ def _normalization() -> InputNormalizationV60:
     )
 
 
-def test_v128_loader_rejects_stale_model_source_fingerprint(tmp_path) -> None:
+def _current_checkpoint(tmp_path):
     graph = _graph()
     model = TypedActuatorMessageSurrogateV128(
         state_dim=3,
@@ -59,9 +59,24 @@ def test_v128_loader_rejects_stale_model_source_fingerprint(tmp_path) -> None:
         training_report={"contract": "test"},
         lineage={"swmm_engine_version": "test"},
     )
+    return graph, path
+
+
+def test_v128_loader_rejects_stale_model_source_fingerprint(tmp_path) -> None:
+    graph, path = _current_checkpoint(tmp_path)
     payload = torch.load(path, map_location="cpu")
     payload["v128_step2_source_sha256"] = "0" * 64
-    stale = tmp_path / "stale.pt"
+    stale = tmp_path / "stale_model.pt"
     torch.save(payload, stale)
     with pytest.raises(ValueError, match="model-source semantics changed"):
+        load_step2_v128(stale, graph=graph, device="cpu")
+
+
+def test_v128_loader_rejects_stale_training_source_fingerprint(tmp_path) -> None:
+    graph, path = _current_checkpoint(tmp_path)
+    payload = torch.load(path, map_location="cpu")
+    payload["v128_training_source_sha256"] = "0" * 64
+    stale = tmp_path / "stale_training.pt"
+    torch.save(payload, stale)
+    with pytest.raises(ValueError, match="training-source semantics changed"):
         load_step2_v128(stale, graph=graph, device="cpu")
