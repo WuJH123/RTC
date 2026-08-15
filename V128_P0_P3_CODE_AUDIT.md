@@ -33,17 +33,23 @@ Smoke/dev keep 109 actuators, H360 and the exact pairwise code path. They reduce
 
 ### P0.3 Stage checkpoint / resume — ADDED
 
-`src/rtc/stage_checkpoint_v128.py` writes NONFINAL stage-boundary checkpoints after Stage A, B0 and objective. It stores graph/data/design identity plus Python/NumPy/Torch RNG and fails closed on mismatches. `--stop-after-stage` and `--resume-from` prevent repeated Stage-A/B0 work after compatible interruptions. Stage checkpoints are deliberately incompatible with final/runtime loaders.
+`src/rtc/stage_checkpoint_v128.py` writes NONFINAL stage-boundary checkpoints after Stage A, B0 and objective. It stores graph/data/design identity plus Python/NumPy/Torch RNG and fails closed on profile, graph, lineage, training design, model source, training source and model-class source mismatch. `--stop-after-stage` and `--resume-from` prevent repeated Stage-A/B0 work after compatible interruptions. Stage checkpoints are deliberately incompatible with final/runtime loaders.
 
 ### P0.4 Resource/profiler evidence — ADDED
 
 `TRAINING_TELEMETRY.jsonl` records stage wall time, RSS, available RAM/swap and CUDA memory. `--profile-one-group --torch-profiler` exercises the real H360/exact code path on bounded data and exports a Chrome trace. The previous full run showed severe host paging while GPU utilisation remained partial; performance work must therefore start from profiling rather than blind chunk growth.
 
+Current `scripts/run_step2_current.py` installs `src/rtc/step2_lazy_stream_v128.py`, keeping large authoritative target-state/flow arrays mmap-backed until the active branch microbatch is selected.
+
 ### P0.5 Spatial-distance evidence — ADDED
 
 `src/rtc/spatial_diagnostics_v128.py` and `scripts/audit_step2_spatial_current.py` quantify held-out D2 action-effect sign/magnitude at 1-3, 4-6, 7-12 and 13+ actuator-to-node graph hops. This is the required gate before attributing poor TFV control to long-range graph propagation.
 
-`scripts/audit_step1_global_attention_current.py` compares frozen legacy Step1 with separately trained V122 sensor-to-all-node attention on identical Development validation windows and reports depth error by distance to nearest sensor. Sample indices are carried explicitly through the trajectory-group sampler so rainfall-group evidence cannot be misattributed.
+`scripts/train_step1_global_attention_dev.py` is the stable Development-only trainer for a separate V122 sensor-to-all-node attention checkpoint. `scripts/audit_step1_global_attention_current.py` then compares frozen legacy Step1 with that checkpoint on identical Development validation windows and reports depth error by distance to nearest sensor. Sample indices are carried explicitly through the trajectory-group sampler so rainfall-group evidence cannot be misattributed.
+
+### P0.6 Smoke/dev gradient evidence — ADDED
+
+`scripts/audit_step2_gradient_current_dev.py` consumes only a source-strict NONFINAL `stage_objective.pt` from `--profile smoke|dev` and reports held-out D2 TFV gradient sign/cosine/MAE. It is distinct from `scripts/audit_step2_v128_d2_gradients_fast.py`, which is strict full-checkpoint evidence. The two entrypoints must never be interchanged.
 
 ## P1 — representation experiments, not automatic promotion
 
@@ -63,7 +69,7 @@ scripts/run_step2_edge_aware_dev.py
 scripts/audit_step2_edge_spatial_current.py
 ```
 
-They reuse audited SWMM link parsing semantics to align conduit length/roughness/slope/geometry/loss/type/orientation descriptors with current graph edges, and add current head difference plus length-normalized head-gradient messages. The V128 typed actuator pathway is retained. The edge-aware runner forbids `--profile full`; promotion requires held-out spatial/ranking improvement.
+They reuse audited SWMM link parsing semantics to align conduit length/roughness/slope/geometry/loss/type/orientation descriptors with current graph edges, and add current head difference plus length-normalized head-gradient messages. The V128 typed actuator pathway is retained. The edge-aware runner forbids `--profile full`; promotion requires held-out spatial/ranking/gradient improvement.
 
 ### P1.3 Ordinary conduit flow supervision — GATED, NOT FABRICATED
 
@@ -71,7 +77,7 @@ The current training cache exposes node states and managed actuator flows, but n
 
 ### P1.4 Step1 global attention — ABLATION, NOT HOT SWAP
 
-V122 global sensor-to-all-node attention already exists. It is now evaluated as an explicit distance-stratified ablation. If promoted, causal Step1 state stores must be rebuilt and Step2 retrained from the beginning; current frozen state stores cannot be reused under a changed Step1 model.
+V122 global sensor-to-all-node attention already exists. It is now trained/evaluated as an explicit distance-stratified ablation. If promoted, causal Step1 state stores must be rebuilt and Step2 retrained from the beginning; current frozen state stores cannot be reused under a changed Step1 model.
 
 ## P2 — long-range structure and physics diagnostics
 
@@ -108,6 +114,8 @@ scripts/run_step2_current.py
 scripts/run_policy_current.py
 scripts/run_seven_strategies_current.py
 ```
+
+Development-only diagnostic entrypoints are registered in `configs/step2_current_contract.json`, `configs/project7_execution_registry.json`, and `configs/v128_control_execution.json`; `CODEX_START_HERE.md` remains the only execution guide.
 
 Historical/shared V127 files remain only when still required for frozen lineage, reproducibility or a shared audited implementation. Dead current-facing files are deleted rather than left as competing entrypoints.
 
