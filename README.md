@@ -37,7 +37,7 @@ Recommended funnel:
 unit/preflight
  -> smoke one-group profiler
  -> smoke
- -> spatial/ranking/gradient diagnosis
+ -> ranking + spatial + Development-gradient diagnosis
  -> dev
  -> reject or promote
  -> full once
@@ -46,7 +46,7 @@ unit/preflight
  -> Policy Lock only after gates
 ```
 
-Stage checkpoints (`stage_a.pt`, `stage_b0.pt`, `stage_objective.pt`) make Stage-A/B0 recomputation avoidable after compatible interruptions. They are explicitly NONFINAL and fail closed on profile/graph/data/design mismatch.
+Stage checkpoints (`stage_a.pt`, `stage_b0.pt`, `stage_objective.pt`) make Stage-A/B0 recomputation avoidable after compatible interruptions. They are explicitly NONFINAL and fail closed on profile/graph/data/design/source mismatch.
 
 ## Current P0 correctness fixes
 
@@ -70,8 +70,12 @@ Current Development diagnostics:
 scripts/audit_step2_spatial_current.py
     held-out D2 action-effect sign/magnitude at 1-3 / 4-6 / 7-12 / 13+ hops
 
+scripts/audit_step2_gradient_current_dev.py
+    smoke/dev stage_objective.pt D2 TFV gradient sign/cosine/MAE
+
+scripts/train_step1_global_attention_dev.py
 scripts/audit_step1_global_attention_current.py
-    frozen Step1 vs V122 sensor-to-all-node attention on identical held-out windows
+    train a separate V122 attention ablation, then compare frozen Step1 vs V122 on identical held-out windows
 
 scripts/build_edge_physics_current.py
 scripts/run_step2_edge_aware_dev.py
@@ -83,6 +87,8 @@ scripts/build_hydraulic_influence_current.py
 ```
 
 These experiments are not automatically promoted. Global-attention Step1 requires a rebuilt causal state store and complete Step2 retraining if selected. Edge-aware/influence variants must first improve held-out spatial/ranking/gradient evidence.
+
+The strict full-checkpoint D2 gradient audit remains `scripts/audit_step2_v128_d2_gradients_fast.py`; it is not a substitute for the smoke/dev stage auditor and vice versa.
 
 ## Physics diagnostics
 
@@ -99,7 +105,7 @@ configs/project7_execution_registry.json
 configs/v128_control_execution.json
 ```
 
-Stable entrypoints:
+Stable production/current entrypoints:
 
 ```text
 rtc-current-preflight
@@ -108,10 +114,10 @@ scripts/run_policy_current.py
 scripts/run_seven_strategies_current.py
 ```
 
-The obsolete full-only `scripts/run_step2_v128_control_4060.py` and detached `src/rtc/step2_train_v128.py` are deleted. Historical V127 modules that remain are archival or still-used shared implementations; they are not user entrypoints.
+Development-only diagnostic entrypoints are enumerated by the machine contracts and the sole `CODEX_START_HERE.md` guide. The obsolete full-only `scripts/run_step2_v128_control_4060.py` and detached `src/rtc/step2_train_v128.py` are deleted. Historical V127 modules that remain are archival or still-used shared implementations; they are not user entrypoints.
 
 ## Boundaries
 
 No future realised rainfall/state/Internal trajectory online. No Validation/Final/Formal/Policy Lock during development. Do not claim robust/stochastic MPC for the default deterministic persistence/decay rainfall forecast. Do not project an action after scoring. Ranking, D2 and D5 evidence for promotion must reference the identical final Step2 SHA256. A real-time claim additionally requires every guarded decision <600 s plus explicit score==execute, continuity and same-epoch target readback.
 
-See `CODEX_START_HERE.md` for the exact debug-first commands and stop rules.
+See `CODEX_START_HERE.md` for the exact local-recovery, debug-first commands and stop rules.
