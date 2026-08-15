@@ -49,6 +49,10 @@ def test_v128_idealized_envelope_is_explicit_not_field_claim(tmp_path) -> None:
     assert loaded.is_idealized_default is True
     np.testing.assert_allclose(loaded.min_setting, [0.0, 0.1, 0.0])
     np.testing.assert_allclose(loaded.max_setting, [1.0, 0.9, 0.8])
+    # Source-file bytes are provenance only. Identical control semantics must retain one
+    # semantic identity even when one envelope is generated in-memory and one from JSON.
+    assert loaded.semantic_sha256 == envelope.semantic_sha256
+    assert loaded.source_sha256 != envelope.source_sha256
 
 
 def test_per_actuator_delta_vector_changes_continuity_by_device() -> None:
