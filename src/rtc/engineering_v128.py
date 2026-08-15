@@ -86,6 +86,10 @@ class V128EngineeringEnvelope:
         )
         return digest.hexdigest()
 
+    @property
+    def is_idealized_default(self) -> bool:
+        return str(self.source) == V128_IDEALIZED_ENVELOPE_SOURCE
+
     def assert_graph_order(self, graph: Any) -> None:
         self.validate()
         if tuple(map(str, graph.actuator_ids)) != self.actuator_ids:
@@ -143,9 +147,12 @@ def load_engineering_envelope_v128(path: str | Path, *, graph: Any) -> V128Engin
         if not isinstance(row, dict):
             raise ValueError("V128 engineering actuator row must be an object")
         ids.append(str(row.get("actuator_id", "")))
-        lo.append(float(row.get("min_setting")))
-        hi.append(float(row.get("max_setting")))
-        delta.append(float(row.get("max_delta_per_10min")))
+        try:
+            lo.append(float(row["min_setting"]))
+            hi.append(float(row["max_setting"]))
+            delta.append(float(row["max_delta_per_10min"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("V128 engineering actuator row lacks valid numeric bounds/rate") from exc
     envelope = V128EngineeringEnvelope(
         actuator_ids=tuple(ids),
         min_setting=np.asarray(lo, dtype=np.float64),
@@ -178,7 +185,7 @@ def save_idealized_engineering_envelope_v128(graph: Any, path: str | Path) -> Pa
     payload = {
         "contract": V128_ENGINEERING_ENVELOPE_CONTRACT,
         "source": V128_IDEALIZED_ENVELOPE_SOURCE,
-        "field_engineering_claim": false if False else False,
+        "field_engineering_claim": False,
         "actuators": rows,
     }
     out = Path(path)
