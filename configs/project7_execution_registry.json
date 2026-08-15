@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_V2_NO_AMBIGUOUS_CURRENT_SURFACE",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_V3_NO_AMBIGUOUS_CURRENT_SURFACE",
   "production": {
     "status": "CURRENT_UNTIL_V128_EMPIRICALLY_PROMOTED",
     "project_contract": "PROJECT7_V127_CONTINUOUS_DIFFERENTIABLE_MPC_CORRECTNESS_V2",
@@ -10,9 +10,9 @@
   },
   "experimental_candidate": {
     "status": "DEVELOPMENT_ONLY_NOT_POLICY_LOCKED",
-    "project_contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V3_COMPLETE_DEVELOPMENT_CHAIN",
+    "project_contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V4_STAGEA_SOURCE_STRICT",
     "step2_contract": "PROJECT7_V128_TYPED_PHYSICS_AWARE_ACTUATOR_MESSAGE_SURROGATE_V1",
-    "checkpoint_contract": "PROJECT7_V128_STEP2_CHECKPOINT_V2_TYPED_ACTUATOR_MESSAGE_SOURCE_STRICT",
+    "checkpoint_contract": "PROJECT7_V128_STEP2_CHECKPOINT_V3_MODEL_AND_TRAINING_SOURCE_STRICT",
     "step3_contract": "PROJECT7_V128_109ACT_H120_PER_ACTUATOR_ENVELOPE_LBFGSB_MPC_V1_ANYTIME",
     "base_training": "scripts/run_step2_v128_control_4060.py",
     "ranking_horizon_audit": "scripts/audit_step2_v128_fast.py",
@@ -26,6 +26,7 @@
   "hard_rules": [
     "never load V127 checkpoint through V128 loader or V128 checkpoint through V127 loader",
     "never load a V128 checkpoint after its model-source semantic fingerprint changes",
+    "always record the package-local V128 training-source fingerprint in each checkpoint",
     "never call scripts/run_step2_v127.py a current canonical trainer",
     "never combine ranking, D2 and D5 reports from different Step2 SHA256 values",
     "never project a scored V128 command after MPC; engineering envelope must be inside the differentiable decoder",
