@@ -2,6 +2,8 @@
 
 This is the single canonical local execution guide for Project7 V127 development. Read this file together with `configs/step2_current_contract.json`. Historical V120–V126 prompts/PRs are evidence and forensics only when they conflict with the current contract.
 
+> **Current Step2 routing:** the only canonical base-training entrypoint is `scripts/run_step2_v127_control_streaming.py`. `scripts/run_step2_v127.py` is a preserved historical implementation and must not be used to produce a current V127/V128 Step2 checkpoint.
+
 ## Scientific target
 
 Project7 is an idealized EPA-SWMM methodology testbed. Every 600 s:
@@ -40,7 +42,8 @@ python -m pytest -q
 python -m py_compile `
   src/rtc/step2_differentiable_v127.py `
   src/rtc/step2_state_store_v127.py `
-  src/rtc/step2_train_v127.py `
+  src/rtc/step2_train_v127_control.py `
+  src/rtc/step2_train_v127_streaming.py `
   src/rtc/step2_gradient_v127.py `
   src/rtc/checkpoint_v127.py `
   src/rtc/step3_mpc_v127.py `
@@ -50,7 +53,7 @@ python -m py_compile `
   src/rtc/rule_baselines.py `
   src/rtc/execution_audit_v127.py `
   scripts/build_step2_v127_causal_state_store.py `
-  scripts/run_step2_v127.py `
+  scripts/run_step2_v127_control_streaming.py `
   scripts/plan_d5_gradient_v127.py `
   scripts/build_d5_execution_manifest_v127.py `
   scripts/build_d5_gradient_labels_v127.py `
@@ -106,10 +109,11 @@ Do not retrain Step1 unless its own acceptance evidence or a real incompatibilit
 
 ## 4. Retrain the final V127 Step2 once
 
-All checkpoints produced before `PROJECT7_V127_STEP2_CHECKPOINT_V4_SEMANTIC_COMPATIBILITY` are stale. Retrain from the corrected label/objective contract rather than bypassing the loader.
+All checkpoints produced before `PROJECT7_V127_STEP2_CHECKPOINT_V4_SEMANTIC_COMPATIBILITY` are stale. Retrain from the corrected label/objective contract rather than bypassing the loader. On the 16-GB RAM / RTX-4060 development workstation, use the memory-safe full-coverage control curriculum below; do **not** use the historical `scripts/run_step2_v127.py` implementation.
 
 ```powershell
-python scripts/run_step2_v127.py `
+$env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+python scripts/run_step2_v127_control_streaming.py `
   --graph <FROZEN_GRAPH> `
   --cache-manifest <CANONICAL_V60_CACHE> `
   --d4-fit-cache <D4_FIT_CACHE> `
@@ -125,8 +129,9 @@ Training roles:
 - D2: single-actuator hydraulic sensitivity/Jacobian support;
 - targeted D3: coordinated multi-actuator nonlinear response;
 - D4-FIT: local physical-response support;
-- Stage A: teacher-forced hydraulic transition + managed actuator flow;
-- Stage B: H360 rollout.
+- Stage A: full-coverage teacher-forced hydraulic transition + managed actuator flow;
+- Stage B0: H60/H120 autoregressive truncated-rollout curriculum to reduce compounding drift;
+- Stage B: H360 control-oriented objective with full candidate coverage using CPU streaming/GPU microbatches.
 
 Stage-B objective semantics are important:
 
