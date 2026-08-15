@@ -54,8 +54,9 @@
     "profile_required_on_cli": true,
     "smoke_dev_scientific_claim_allowed": false,
     "smoke_dev_d5_runtime_allowed": false,
-    "stage_checkpoint_resume": true,
+    "stage_checkpoint_resume": "stage-boundary only: after Stage A, B0 or objective; no mid-epoch resume claim",
     "stage_checkpoints_nonfinal": true,
+    "lazy_mmap_branch_streaming": "large authoritative target states/flows stay mmap-backed until active microbatch selection",
     "checkpoint": "V6 model-source and exact-training-source fingerprints are fail-closed; only explicit full profile can create strict base checkpoint",
     "ranking_d2_d5_same_final_step2_sha_required": true
   },
@@ -63,11 +64,12 @@
     "smoke": "very small deterministic Development subset; preserve 109 actuators/H360/exact-pairwise code path; reject wiring, NaN, gradient and obvious spatial failures quickly",
     "dev": "larger deterministic Development proxy for ranking, gradient, spatial action-effect and architecture comparisons",
     "full": "canonical 112 D2 + 112 D3 + 33 D4-FIT, four Stage-A epochs, H60/H120 rollout curriculum and three exact H360 objective epochs",
-    "promotion_order": ["unit/preflight", "smoke one-group profiler", "smoke", "spatial/action-effect audit", "dev", "full", "D5", "development closed loop", "seven-strategy development", "Policy Lock only after gates"]
+    "promotion_order": ["unit/preflight", "smoke one-group profiler", "smoke", "smoke ranking+spatial+gradient", "dev", "full", "D5", "development closed loop", "seven-strategy development", "Policy Lock only after gates"]
   },
   "spatial_diagnostics": {
     "step1_distance_audit": "scripts/audit_step1_global_attention_current.py",
     "step2_action_effect_distance_audit": "scripts/audit_step2_spatial_current.py",
+    "step2_development_gradient_audit": "scripts/audit_step2_gradient_current_dev.py",
     "distance_bins_hops": ["1-3", "4-6", "7-12", "13+"],
     "global_attention_ablation": "compare frozen legacy Step1 to separately trained V122 on identical Development validation windows; no hot replacement",
     "edge_physics_builder": "scripts/build_edge_physics_current.py",
@@ -127,9 +129,10 @@
     "preflight": "rtc-current-preflight",
     "existing_data_training": "scripts/run_step2_current.py",
     "step2_spatial_audit": "scripts/audit_step2_spatial_current.py",
+    "step2_development_gradient_audit": "scripts/audit_step2_gradient_current_dev.py",
     "step1_attention_ablation": "scripts/audit_step1_global_attention_current.py",
-    "ranking_audit": "scripts/audit_step2_v128_fast.py",
-    "d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
+    "full_ranking_audit": "scripts/audit_step2_v128_fast.py",
+    "full_d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
     "d5_gradient_training": "scripts/run_step2_v128_d5_gradient_fast.py",
     "continuous_evidence": "scripts/build_v128_continuous_evidence.py",
     "runtime": "scripts/run_policy_current.py",
@@ -137,7 +140,7 @@
   },
   "historical_entrypoints": {
     "scripts/run_step2_v127.py": "ARCHIVAL_NONCURRENT",
-    "scripts/run_step2_v127_control_streaming.py": "SHARED_IMPLEMENTATION_INTERNAL_NOT_USER_ENTRY",
+    "scripts/run_step2_v127_control_streaming.py": "ARCHIVAL_NONCURRENT",
     "scripts/run_step2_v128_control_4060.py": "DELETED_OBSOLETE_FULL_ONLY_USER_RUNNER",
     "scripts/run_policy_v127.py": "ARCHIVAL_NONCURRENT",
     "scripts/run_seven_strategies_v127.py": "SHARED_BASELINE_ORCHESTRATION_INTERNAL_NOT_USER_ENTRY"
