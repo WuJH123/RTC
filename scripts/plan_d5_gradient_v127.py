@@ -5,7 +5,10 @@ hydraulic/command descriptors.  Centres remain in operating regions the rolling 
 can plausibly visit (HOLD, Sparse-RBC and local non-RBC exploration).  Gradient probes use
 the exact online 12 x 109 fraction variables and exact online sequential decoder.  Centre
 executability is checked independently from +/- probe symmetry so a valid boundary centre
-is not rejected merely because one trial direction cannot support a central difference.
+is not rejected merely because one or more trial directions cannot support a central
+difference.  The per-centre direction count is an information budget, not a quota: retain
+all unique physically symmetric probes that exist, and never manufacture an infeasible pair
+to reach the maximum.
 """
 from __future__ import annotations
 
@@ -315,10 +318,14 @@ def main() -> None:
                 accepted.append((trial, direction, family, probe, plus_sha, minus_sha))
                 touched |= np.abs(direction) > 0.0
                 direction_counts[family] = direction_counts.get(family, 0) + 1
-            if len(accepted) != design.directions_per_center:
-                raise RuntimeError(
-                    f"V127 D5 lacks {design.directions_per_center} unique symmetric probes for {identity}/{centre_family}"
-                )
+            # `directions_per_center` is a maximum information budget. Boundary centres may
+            # legitimately have fewer two-sided feasible directions because the exact online
+            # decoder cannot form a central pair without clipping. Retain every real pair;
+            # never fabricate, clip or replace it with an out-of-distribution direction.
+            if not accepted:
+                used_sequences.discard(centre_sha)
+                skipped_centres += 1
+                continue
 
             centre_id = hashlib.sha256(
                 f"{V127_D5_CONTRACT}|{identity}|{centre_family}|{sequence_sha256_v127(centre_fraction)}|{centre_sha}".encode()
@@ -410,6 +417,11 @@ def main() -> None:
     probes = frame[frame["probe_role"] != "center"]
     fit_rain = sorted(set(frame.loc[frame["split_role"] == "fit", "rainfall_group"].astype(str)))
     audit_rain = sorted(set(frame.loc[frame["split_role"] == "audit", "rainfall_group"].astype(str)))
+    pairs_per_center = (
+        frame.loc[frame["probe_role"] == "plus"].groupby("center_id").size().to_numpy(dtype=np.int64)
+    )
+    if pairs_per_center.size == 0:
+        raise RuntimeError("V127 D5 retained no valid symmetric gradient pair")
     report = {
         "contract": V127_D5_CONTRACT,
         "verdict": "V127_D5_INFORMATION_VALUE_PLAN_REVIEW_REQUIRED_BEFORE_SWMM",
@@ -418,7 +430,11 @@ def main() -> None:
         "selected_checkpoints": int(len(selected)),
         "maximum_checkpoints": int(design.max_checkpoints),
         "actual_centers": int(frame["center_id"].nunique()),
-        "directions_per_retained_center": int(design.directions_per_center),
+        "maximum_directions_per_center": int(design.directions_per_center),
+        "minimum_retained_directions_per_center": int(pairs_per_center.min()),
+        "median_retained_directions_per_center": float(np.median(pairs_per_center)),
+        "maximum_retained_directions_per_center": int(pairs_per_center.max()),
+        "direction_budget_semantics": "upper_bound_not_quota; boundary centres may retain fewer symmetric feasible probes",
         "gradient_pairs": int((frame["probe_role"] == "plus").sum()),
         "gradient_variable_space": "exact online 12x109 L-BFGS-B fraction tensor",
         "direct_mpc_variable_count": 1308,
@@ -427,7 +443,7 @@ def main() -> None:
         "free_blocks_touched": int(np.any(touched, axis=1).sum()),
         "direction_family_counts": direction_counts,
         "selection_information_value": selection_diag,
-        "skipped_duplicate_centers": int(skipped_centres),
+        "skipped_duplicate_or_unprobeable_centers": int(skipped_centres),
         "rejected_duplicate_probe_pairs": int(rejected_pairs),
         "physical_displacement_l2_median": float(probes["physical_displacement_l2"].median()),
         "first_move_displacement_l2_median": float(probes["first_move_displacement_l2"].median()),
