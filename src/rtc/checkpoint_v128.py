@@ -36,6 +36,7 @@ _V128_TRAINING_SOURCE_FILES = (
     "step2_train_v127_control.py",
     "step2_train_v128_hydraulic.py",
     "step2_train_v128_exact.py",
+    "step2_lazy_stream_v128.py",
     "development_profile_v128.py",
     "v128_control_profile.py",
     "step2_gradient_v127.py",
@@ -144,10 +145,14 @@ def load_step2_v128(
     if str(payload.get("execution_profile", "")).lower() != "full":
         raise ValueError("V128 runtime rejects smoke/dev nonfinal artifacts")
 
-    stored_model_source = _require_sha256(payload.get("v128_step2_source_sha256"), label="Step2 model source")
+    stored_model_source = _require_sha256(
+        payload.get("v128_step2_source_sha256"), label="Step2 model source"
+    )
     if stored_model_source != v128_step2_source_sha256():
         raise ValueError("V128 Step2 model-source semantics changed after checkpoint creation")
-    stored_training_source = _require_sha256(payload.get("v128_training_source_sha256"), label="training source")
+    stored_training_source = _require_sha256(
+        payload.get("v128_training_source_sha256"), label="training source"
+    )
     if stored_training_source != v128_training_source_sha256():
         raise ValueError("V128 Step2 training-source semantics changed after checkpoint creation")
     if payload.get("graph_semantic_sha256") != graph_semantic_sha256_v127(graph):
