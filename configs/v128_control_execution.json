@@ -11,9 +11,9 @@
     "pairwise_gradient": "TWO_PASS_SAME_PARAMETER_SNAPSHOT_EXACT_FIRST_ORDER"
   },
   "checkpoint": {
-    "contract": "PROJECT7_V128_STEP2_CHECKPOINT_V4_MODEL_AND_EXACT_TRAINING_SOURCE_STRICT",
+    "contract": "PROJECT7_V128_STEP2_CHECKPOINT_V5_MODEL_BASE_D5_TRAINING_SOURCE_STRICT",
     "model_source_must_match": true,
-    "training_source_must_match": true,
+    "base_and_d5_training_source_must_match": true,
     "ranking_d2_d5_same_step2_sha": true
   },
   "engineering": {
@@ -23,7 +23,8 @@
     "score_equals_execute": true,
     "default": "IDEALIZED_DEFAULT_0P5_PER_10MIN",
     "default_is_field_claim": false,
-    "custom_envelope_requires_matching_d5": true
+    "custom_envelope_requires_matching_d5": true,
+    "historical_d5_decoder_equivalence_tested": true
   },
   "rainfall": {"forecast": "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92)", "scenario_multipliers": [1.0], "future_truth_online": false, "robust_claim": false},
   "hardware": {"gpu": "RTX 4060 8GB", "ram_gb": 16, "swmm_workers_max": 16, "swmm_threads_per_process": 1, "matmul_default": "high", "matmul_check": "highest", "amp": false, "activation_checkpointing": false},
