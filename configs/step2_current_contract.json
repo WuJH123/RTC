@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V3_DEBUG_FIRST_ROUTING_COMPLETE",
+  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V2_DEBUG_FIRST",
   "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
   "selected_implementation_contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_DEBUG_FIRST_EXACT_PAIRWISE",
   "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, use a differentiable action-conditioned hydraulic surrogate to optimize all 109 writable target settings continuously over H120 within an H360 prediction horizon, minimize system-wide cumulative TFV, treat Priority8 PFV as a one-sided soft secondary objective, and execute only the first 10-minute target in authoritative SWMM",
