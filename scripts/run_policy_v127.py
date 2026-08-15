@@ -20,10 +20,10 @@ from rtc.production_cli import (
     _controls_disabled_runtime,
     _load_graph,
     _load_lines,
-    _load_step1,
 )
 from rtc.project7_contract import EFFECTIVE_WARMUP_MINUTES, validate_project7_runtime_config
 from rtc.runtime_controller_guard import ContinuityGuardController
+from rtc.step1_runtime_v127 import load_frozen_step1_v127
 from rtc.step2_state_store_v127 import (
     semantic_model_state_dict_sha256,
     semantic_sensor_layout_sha256,
@@ -35,7 +35,7 @@ from rtc.step3_mpc_v127 import (
     V127_STEP3_CONTRACT,
 )
 
-V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V7_TARGET_WRITE_AUDITED"
+V127_RUNTIME_CONTRACT = "PROJECT7_V127_AUTHORITATIVE_10MIN_CONTINUOUS_RTC_V8_FROZEN_STEP1_WRITE_AUDIT"
 V127_EVIDENCE_CONTRACT = "PROJECT7_V127_CONTINUOUS_MPC_EVIDENCE_V2_LINEAGE_BOUND_NOT_SCORE_GATED"
 V127_CAUSAL_FORECAST_CONTRACT = "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92,scenario_multiplier=1.0)"
 
@@ -120,7 +120,7 @@ def main() -> None:
     )
     graph = _load_graph(args.graph)
     sensors = _load_lines(args.sensors)
-    step1 = _load_step1(args.step1, device)
+    step1 = load_frozen_step1_v127(args.step1, device)
     step2_sha = _sha(args.step2)
     step2, step2_payload = load_step2_v127(args.step2, graph=graph, device=device)
     checkpoint_lineage = step2_payload.get("lineage")
