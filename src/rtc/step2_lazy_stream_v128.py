@@ -5,15 +5,10 @@ The legacy streaming path avoided full-group CUDA materialization but still call
 before selecting a 2-4 branch microbatch. On a 16-GB workstation this can trigger Windows
 paging while the GPU is under-utilised.
 
-Current V128 can safely avoid that copy because its outer cache is contractually a
-``CausalStep1StateCacheV127`` wrapping a causal rainfall cache. This module reads only the
-small shared causal inputs eagerly (Step1 state, rainfall forecast, previous actuator flow and
-settings) and keeps the large SWMM truth state/flow arrays as mmap-backed branch views until
-``select_to_device_v128_lazy`` requests the active microbatch.
-
-Scientific semantics are unchanged: the same ordered branches, causal initial state, causal
-rainfall, settings and SWMM truth labels are returned. Unknown cache types fail back to the
-audited legacy implementation rather than guessing their wrapper structure.
+Current V128 safely avoids that copy for the accepted causal cache stack. Only the small shared
+causal inputs are materialized eagerly; large authoritative SWMM target-state/flow arrays remain
+mmap-backed until the active branch microbatch is selected. Unknown cache types fail back to the
+audited legacy implementation.
 """
 from __future__ import annotations
 
@@ -58,27 +53,27 @@ class LazyBranchArrayV128:
 
 
 def _current_causal_group(cache: Any, name: str) -> dict[str, Any] | None:
-    """Return current causal components without calling ``cache.batch()``.
-
-    The structural checks are intentionally strict. If any expected wrapper component is
-    absent, the caller falls back to the legacy path so historical cache types keep working.
-    """
     state_store = getattr(cache, "store", None)
     rain_cache = getattr(cache, "base", None)
     rain_store = getattr(rain_cache, "store", None)
     rain_index = getattr(rain_cache, "_index", None)
     raw_cache = getattr(rain_cache, "base", None)
-    if state_store is None or rain_cache is None or rain_store is None or not isinstance(rain_index, dict) or raw_cache is None:
+    if (
+        state_store is None
+        or rain_cache is None
+        or rain_store is None
+        or not isinstance(rain_index, dict)
+        or raw_cache is None
+    ):
         return None
     if name not in rain_index:
         return None
     try:
         entry = raw_cache.entry(name)
+        wrapped_entry = cache.entry(name)
     except Exception:
         return None
-    if entry is not cache.entry(name):
-        # Wrapper entry methods should preserve the exact frozen group object. Do not try to
-        # infer ordering if a future wrapper changes that invariant.
+    if entry is not wrapped_entry:
         return None
     arrays = entry.arrays
     required = {
@@ -95,10 +90,14 @@ def _current_causal_group(cache: Any, name: str) -> dict[str, Any] | None:
     rainfall = np.asarray(rain_store.forecast_mmhr[int(rain_index[name])], dtype=np.float32)
     previous = np.asarray(arrays["previous_actuator_flow"][ref], dtype=np.float32)
     settings = np.asarray(arrays["settings"][order], dtype=np.float32)
+    if initial.ndim != 2:
+        raise ValueError(f"{name}: lazy V128 causal Step1 state must be [node,state]")
     if settings.ndim != 3:
         raise ValueError(f"{name}: lazy V128 settings must be [branch,H,actuator]")
     if rainfall.shape[0] != settings.shape[1]:
         raise ValueError(f"{name}: lazy V128 causal rainfall horizon differs from settings")
+    if previous.shape != settings.shape[2:]:
+        raise ValueError(f"{name}: lazy V128 previous actuator flow shape differs from settings")
     return {
         "initial": torch.as_tensor(initial, dtype=torch.float32, device="cpu")[None],
         "rainfall": torch.as_tensor(rainfall, dtype=torch.float32, device="cpu")[None],
@@ -117,7 +116,6 @@ def cpu_group_v128_lazy(
     normalization: InputNormalizationV60,
 ) -> dict[str, Any]:
     """Return physical causal inputs + lazy truth branch views for current caches."""
-    del normalization  # current causal values and SWMM truth are already physical SI.
     current = _current_causal_group(cache, str(name))
     if current is not None:
         return current
@@ -165,12 +163,7 @@ def select_to_device_v128_lazy(
 
 
 def install_v128_lazy_streaming() -> None:
-    """Patch shared streaming globals for the current process only.
-
-    V128 exact/hydraulic modules import their helpers by name, so the current runner also
-    replaces those module globals explicitly. Historical command lines are unaffected unless
-    they intentionally call this installer.
-    """
+    """Install lazy helpers in current-process V127/V128 streaming modules only."""
     from . import step2_train_v128_exact as exact
     from . import step2_train_v128_hydraulic as hydraulic
 
