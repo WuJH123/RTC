@@ -7,13 +7,11 @@ from rtc.step2_train_v128_exact import (
     _directed_pair_gradient_sum,
     _exact_reported_pair_loss,
     _informative_pair_totals,
+    canonical_truth_tfv_delta_v128,
 )
 
 
 def test_v128_pair_totals_count_reference_and_all_candidate_pairs() -> None:
-    # Candidate deltas relative to the reference. With threshold=1:
-    # reference pairs: 5 and 9 are informative -> 2
-    # candidate pairs: |0.2-5|, |0.2-9|, |5-9| -> 3
     ref, candidate, total = _informative_pair_totals(
         np.asarray([0.2, 5.0, 9.0]), threshold=1.0
     )
@@ -27,9 +25,53 @@ def test_v128_pair_totals_exclude_near_ties_without_losing_partition_identity() 
         np.asarray([0.0, 0.5, 3.0, 3.4]), threshold=1.0
     )
     assert ref == 2
-    # Informative candidate comparisons are (0,3), (0,3.4), (0.5,3), (0.5,3.4).
     assert candidate == 4
     assert total == 6
+
+
+def test_v128_canonical_float32_truth_prevents_threshold_partition_drift() -> None:
+    """Reproduce the class of 544/542 bug without depending on one study artifact.
+
+    A deterministic search constructs float32 node-volume labels for which re-summing the
+    exact same stored labels in NumPy float64 moves one reference/candidate delta across the
+    1 m3 informative threshold.  The current canonical pathway must instead match the live
+    torch.float32 reduction exactly.
+    """
+    rng = np.random.default_rng(20260815)
+    mismatch = None
+    for _ in range(50_000):
+        ref = (rng.random(10) * 1000.0).astype(np.float32)
+        cand_a = ref + rng.normal(0.0, 0.1, 10).astype(np.float32)
+        cand_b = ref + rng.normal(0.0, 0.1, 10).astype(np.float32)
+        truth = np.stack((ref, cand_a, cand_b), axis=0).astype(np.float32)
+        tfv32, delta32 = canonical_truth_tfv_delta_v128(truth)
+        tfv64 = truth.astype(np.float64).sum(axis=1)
+        delta64 = tfv64[1:] - tfv64[0]
+        class32 = (
+            np.abs(delta32[0]) > np.float32(1.0),
+            np.abs(delta32[1]) > np.float32(1.0),
+            np.abs(delta32[0] - delta32[1]) > np.float32(1.0),
+        )
+        class64 = (
+            abs(delta64[0]) > 1.0,
+            abs(delta64[1]) > 1.0,
+            abs(delta64[0] - delta64[1]) > 1.0,
+        )
+        if class32 != class64:
+            mismatch = (truth, tfv32, delta32, class32, class64)
+            break
+    assert mismatch is not None, "deterministic fixture failed to expose precision partition drift"
+
+    truth, tfv32, delta32, class32, class64 = mismatch
+    live = torch.as_tensor(truth, dtype=torch.float32).sum(dim=1)
+    live_delta = live[1:] - live[0]
+    np.testing.assert_array_equal(tfv32, live.numpy())
+    np.testing.assert_array_equal(delta32, live_delta.numpy())
+    assert class32 != class64
+
+    expected = _informative_pair_totals(delta32, threshold=1.0)
+    observed = _informative_pair_totals(live_delta.numpy(), threshold=1.0)
+    assert observed == expected
 
 
 def test_v128_two_pass_directed_gradient_matches_full_unordered_pair_loss() -> None:
