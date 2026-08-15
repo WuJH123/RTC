@@ -1,18 +1,22 @@
 """Exact full within-group V128 pairwise gradients with bounded GPU memory.
 
 A single-pass detached-memory scheme can expose every candidate pair but gives cross-chunk
-pairs gradient only through the candidate whose graph is currently live.  V128 instead uses
-a two-pass same-parameter-snapshot algorithm:
+pairs gradient only through the candidate whose graph is currently live. V128 uses a two-pass
+same-parameter-snapshot algorithm:
 
 1. inference/no-grad H360 pass over every candidate to cache smooth TFV deltas;
 2. gradient H360 pass over the same candidates in small GPU microbatches;
 3. each live candidate is compared with every other cached candidate prediction.
 
-Every unordered candidate pair is therefore visited twice, once with each endpoint live.
-Dividing directed pair contributions by the original unordered-pair denominator reproduces
-the full first-order gradient of the original pairwise loss, while only one H360 microbatch
-autograd graph is resident at a time. The reported scalar pair loss is computed once from
-the first-pass predictions and is not doubled by the directed-gradient construction.
+Every unordered candidate pair is visited twice, once with each endpoint live. Directed pair
+contributions are divided by the original unordered-pair denominator, reproducing the full
+first-order gradient while keeping one H360 autograd microbatch resident at a time.
+
+Truth partitioning is deliberately canonicalized in float32. SWMM node-volume labels are
+stored as float32 and live training tensors are float32; re-summing those labels in NumPy
+float64 can move near-threshold pairs across the frozen 1 m3 informative floor. Census,
+reported pair loss and live candidate pair gradients therefore share the exact same precomputed
+float32 candidate-delta tensor.
 """
 from __future__ import annotations
 
@@ -40,21 +44,36 @@ from .step2_train_v127_streaming import (
 )
 
 V128_OBJECTIVE_TRAINING_CONTRACT = (
-    "PROJECT7_V128_H360_EXACT_FULL_PAIRWISE_GRADIENT_TWO_PASS_MICROBATCH_V3"
+    "PROJECT7_V128_H360_EXACT_FULL_PAIRWISE_GRADIENT_TWO_PASS_MICROBATCH_V4_CANONICAL_FLOAT32_TRUTH"
 )
+V128_TRUTH_PARTITION_CONTRACT = "PROJECT7_V128_CANONICAL_FLOAT32_TRUTH_DELTA_V1"
+
+
+def canonical_truth_tfv_delta_v128(truth_node_volume_m3: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Return reference/candidate TFV and candidate deltas using one float32 reduction.
+
+    This array is the single source of truth for all threshold predicates and pairwise targets.
+    It intentionally mirrors the precision of cached labels/model losses rather than silently
+    promoting one part of the training contract to float64.
+    """
+    truth = np.asarray(truth_node_volume_m3, dtype=np.float32)
+    if truth.ndim != 2 or truth.shape[0] < 2:
+        raise ValueError("V128 truth node-volume matrix must be [reference+candidate,node]")
+    tfv = np.sum(truth, axis=1, dtype=np.float32).astype(np.float32, copy=False)
+    delta = (tfv[1:] - tfv[0]).astype(np.float32, copy=False)
+    return tfv, delta
 
 
 def _informative_pair_totals(
     true_delta: np.ndarray, *, threshold: float
 ) -> tuple[int, int, int]:
-    values = np.asarray(true_delta, dtype=np.float64).reshape(-1)
-    reference = int(np.sum(np.abs(values) > float(threshold)))
+    values = np.asarray(true_delta, dtype=np.float32).reshape(-1)
+    threshold32 = np.float32(threshold)
+    reference = int(np.sum(np.abs(values) > threshold32))
     if len(values) < 2:
         return reference, 0, reference
     ii, jj = np.triu_indices(len(values), k=1)
-    candidate = int(
-        np.sum(np.abs(values[ii] - values[jj]) > float(threshold))
-    )
+    candidate = int(np.sum(np.abs(values[ii] - values[jj]) > threshold32))
     return reference, candidate, reference + candidate
 
 
@@ -67,6 +86,7 @@ def _candidate_base_loss(
     ref_hard_tfv: torch.Tensor,
     ref_smooth_tfv: torch.Tensor,
     ref_smooth_node: torch.Tensor,
+    canonical_true_delta: torch.Tensor,
     static: dict[str, torch.Tensor],
     flood_rate_index: int,
     design: V127ControlTrainingDesign,
@@ -101,7 +121,9 @@ def _candidate_base_loss(
         true_delta_node / node_delta_scale,
         beta=0.5,
     )
-    true_delta = true_tfv - reference_volume.sum()
+    if canonical_true_delta.shape != true_tfv.shape:
+        raise RuntimeError("V128 canonical candidate truth delta does not align with live chunk")
+    true_delta = canonical_true_delta.to(device=true_tfv.device, dtype=true_tfv.dtype)
     hard_delta = output.tfv_m3 - ref_hard_tfv.detach()
     smooth_delta = output.optimization_tfv_m3 - ref_smooth_tfv.detach()
     hard_delta_loss = F.smooth_l1_loss(
@@ -217,17 +239,13 @@ def _directed_pair_gradient_sum(
     if bool(ref_keep.any()):
         terms.append(
             F.softplus(
-                -torch.sign(live_truth[ref_keep])
-                * live_pred[ref_keep]
-                / delta_scale
+                -torch.sign(live_truth[ref_keep]) * live_pred[ref_keep] / delta_scale
             )
         )
 
     truth_pair = live_truth[:, None] - all_truth[None, :]
     pred_pair = live_pred[:, None] - all_pred_detached[None, :]
     keep = torch.abs(truth_pair) > float(threshold)
-    # Explicit self-mask even when threshold is positive: the contract should remain valid
-    # if a future experiment intentionally sets the absolute floor to zero.
     row = torch.arange(len(live_positions), device=live_truth.device)
     col = torch.as_tensor(live_positions - 1, dtype=torch.long, device=live_truth.device)
     keep[row, col] = False
@@ -287,8 +305,7 @@ def train_objective_stage_streaming_v128(
                 raise RuntimeError(f"{name}: objective group has no candidate")
             possible_candidate_pairs += candidate_count * (candidate_count - 1) // 2
 
-            true_tfv_np = truth_np.sum(axis=1, dtype=np.float64)
-            true_delta_np = true_tfv_np[1:] - true_tfv_np[0]
+            true_tfv_np, true_delta_np = canonical_truth_tfv_delta_v128(truth_np)
             tfv_scale = torch.tensor(
                 max(float(np.quantile(true_tfv_np, 0.75)), 100.0),
                 dtype=torch.float32,
@@ -313,7 +330,6 @@ def train_objective_stage_streaming_v128(
             expected_candidate_pairs += group_cand_total
             optimizer.zero_grad(set_to_none=True)
 
-            # Reference branch keeps its existing absolute hard-TFV + retained-state role.
             ref = _select_to_device(cpu, [0], device=device, include_truth=True)
             ref_volume = torch.as_tensor(truth_np[0:1], dtype=torch.float32, device=device)
             ref_output = model.objective_rollout(
@@ -330,7 +346,9 @@ def train_objective_stage_streaming_v128(
                 priority_indices=None,
                 dt_seconds=300.0,
             )
-            ref_truth_tfv = ref_volume.sum(-1)
+            ref_truth_tfv = torch.as_tensor(
+                true_tfv_np[0:1], dtype=torch.float32, device=device
+            )
             ref_hard_loss = F.smooth_l1_loss(
                 (ref_output.tfv_m3 - ref_truth_tfv) / tfv_scale,
                 torch.zeros_like(ref_truth_tfv),
@@ -354,7 +372,6 @@ def train_objective_stage_streaming_v128(
             group_base_report = float(ref_loss.detach())
             del ref_output, ref_loss, ref_hard_loss, ref_state_loss, ref_pred_states
 
-            # Pass 1: all candidates, no autograd, same parameter snapshot.
             first_pred = _first_pass_candidate_predictions(
                 model,
                 cpu=cpu,
@@ -375,8 +392,6 @@ def train_objective_stage_streaming_v128(
             if report_ref != group_ref_total or report_cand != group_cand_total:
                 raise RuntimeError(f"{name}: V128 first-pass pair census mismatch")
 
-            # Pass 2: each candidate becomes live once. Candidate pair terms are directed;
-            # every informative unordered pair must appear exactly twice across the group.
             order = _candidate_permutation(
                 candidate_count, group_name=name, epoch=epoch, seed=design.seed
             )
@@ -389,6 +404,14 @@ def train_objective_stage_streaming_v128(
                 truth_chunk = torch.as_tensor(
                     truth_np[positions], dtype=torch.float32, device=device
                 )
+                canonical_chunk_delta = all_truth.index_select(
+                    0,
+                    torch.as_tensor(
+                        np.asarray(positions, dtype=np.int64) - 1,
+                        dtype=torch.long,
+                        device=device,
+                    ),
+                )
                 base_loss, live_truth, live_pred = _candidate_base_loss(
                     model,
                     chunk=chunk,
@@ -397,6 +420,7 @@ def train_objective_stage_streaming_v128(
                     ref_hard_tfv=ref_hard,
                     ref_smooth_tfv=ref_smooth,
                     ref_smooth_node=ref_smooth_node,
+                    canonical_true_delta=canonical_chunk_delta,
                     static=static,
                     flood_rate_index=flood_rate_index,
                     design=design,
@@ -416,9 +440,6 @@ def train_objective_stage_streaming_v128(
                 candidate_weight = float(len(positions)) / float(candidate_count)
                 backward_loss = base_loss * candidate_weight
                 if group_pair_total > 0:
-                    # Reference terms occur once. Each unordered candidate pair occurs twice
-                    # with opposite endpoints live; dividing directed terms by the original
-                    # unordered denominator yields the exact full pairwise first derivative.
                     backward_loss = backward_loss + design.pairwise_weight * (
                         directed_sum / float(group_pair_total)
                     )
@@ -431,6 +452,7 @@ def train_objective_stage_streaming_v128(
                 del (
                     chunk,
                     truth_chunk,
+                    canonical_chunk_delta,
                     base_loss,
                     live_truth,
                     live_pred,
@@ -470,6 +492,7 @@ def train_objective_stage_streaming_v128(
         row: dict[str, float | int | str | bool] = {
             "stage": "h360_v128_exact_full_pairwise_gradient_two_pass_microbatch",
             "contract": V128_OBJECTIVE_TRAINING_CONTRACT,
+            "truth_partition_contract": V128_TRUTH_PARTITION_CONTRACT,
             "epoch": epoch,
             "loss": float(np.mean(records)) if records else float("nan"),
             "candidate_total": int(total_candidates),
@@ -484,6 +507,7 @@ def train_objective_stage_streaming_v128(
             "pairwise_first_derivative_exact_under_same_parameter_snapshot": True,
             "pairwise_reported_scalar_not_doubled": True,
             "pairwise_training_passes_per_candidate": 2,
+            "canonical_float32_truth_delta_shared": True,
             "ranking_threshold": "absolute SWMM effect floor from V128 training design",
             **_cuda_peak(device),
         }
@@ -501,6 +525,8 @@ def train_objective_stage_streaming_v128(
 
 __all__ = [
     "V128_OBJECTIVE_TRAINING_CONTRACT",
+    "V128_TRUTH_PARTITION_CONTRACT",
     "_informative_pair_totals",
+    "canonical_truth_tfv_delta_v128",
     "train_objective_stage_streaming_v128",
 ]

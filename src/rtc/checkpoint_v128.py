@@ -14,6 +14,7 @@ from .checkpoint_v127 import (
     input_normalization_from_v127_checkpoint,
 )
 from .code_contract import rtc_implementation_contract_sha256
+from .development_profile_v128 import V128_EXECUTION_PROFILE_CONTRACT
 from .step2_differentiable_v128 import (
     TypedActuatorMessageSurrogateV128,
     V128_STEP2_CONTRACT,
@@ -21,7 +22,7 @@ from .step2_differentiable_v128 import (
 from .step2_train_response_v60 import InputNormalizationV60
 
 V128_CHECKPOINT_CONTRACT = (
-    "PROJECT7_V128_STEP2_CHECKPOINT_V5_MODEL_BASE_D5_TRAINING_SOURCE_STRICT"
+    "PROJECT7_V128_STEP2_CHECKPOINT_V6_CURRENT_PROFILE_TRAINING_SOURCE_STRICT"
 )
 _V128_MODEL_SOURCE_FILES = (
     "models.py",
@@ -31,19 +32,16 @@ _V128_MODEL_SOURCE_FILES = (
     "checkpoint_v128.py",
 )
 _V128_TRAINING_SOURCE_FILES = (
-    # Base Stage A/B0/B training semantics.
     "step2_train_v127_streaming.py",
     "step2_train_v127_control.py",
     "step2_train_v128_hydraulic.py",
     "step2_train_v128_exact.py",
+    "step2_lazy_stream_v128.py",
+    "development_profile_v128.py",
     "v128_control_profile.py",
-    # D5-FIT changes the final runtime weights and therefore belongs to the same
-    # fail-closed training fingerprint.  The V127-named modules are retained shared
-    # implementations, not a V127 scientific identity at runtime.
     "step2_gradient_v127.py",
     "step2_gradient_v127_streaming.py",
     "step2_gradient_v127_fast.py",
-    # Frozen D5 fraction-space semantics use the historical idealized 0.5 decoder.
     "step3_mpc_v127.py",
 )
 
@@ -64,12 +62,7 @@ def v128_step2_source_sha256() -> str:
 
 
 def v128_training_source_sha256() -> str:
-    # Only installable package modules enter this fingerprint. Outer scripts have explicit
-    # run/report contracts, while all functions that can update current Step2 weights are
-    # included here so a base or D5 algorithm change invalidates stale checkpoints.
-    return _source_files_sha256(
-        Path(__file__).resolve().parent, _V128_TRAINING_SOURCE_FILES
-    )
+    return _source_files_sha256(Path(__file__).resolve().parent, _V128_TRAINING_SOURCE_FILES)
 
 
 def _require_sha256(value: object, *, label: str) -> str:
@@ -90,6 +83,12 @@ def save_step2_v128(
 ) -> Path:
     if not isinstance(model, TypedActuatorMessageSurrogateV128):
         raise TypeError("V128 checkpoint saver requires TypedActuatorMessageSurrogateV128")
+    if str(training_report.get("profile", "")).lower() != "full":
+        raise ValueError("strict V128 checkpoint saver accepts only explicit --profile full")
+    if training_report.get("execution_profile_contract") != V128_EXECUTION_PROFILE_CONTRACT:
+        raise ValueError("V128 strict checkpoint requires the current smoke/dev/full runner contract")
+    if training_report.get("final_checkpoint_allowed") is not True:
+        raise ValueError("training report does not authorize a strict final base checkpoint")
     payload = {
         "checkpoint_contract": V128_CHECKPOINT_CONTRACT,
         "step2_contract": V128_STEP2_CONTRACT,
@@ -98,6 +97,7 @@ def save_step2_v128(
         "v128_training_source_sha256": v128_training_source_sha256(),
         "graph_semantic_sha256": graph_semantic_sha256_v127(graph),
         "scientific_split": "development",
+        "execution_profile": "full",
         "model_config": {
             "state_dim": int(model.transition.state_mean.numel()),
             "rainfall_dim": int(model.transition.rain_mean.numel()),
@@ -137,32 +137,24 @@ def load_step2_v128(
     if not isinstance(payload, dict):
         raise ValueError("V128 Step2 checkpoint must contain a dictionary")
     if payload.get("checkpoint_contract") != V128_CHECKPOINT_CONTRACT:
-        raise ValueError(
-            "not a current V128 typed-actuator checkpoint; do not route V127/older V128 checkpoints through this loader"
-        )
+        raise ValueError("not a current V128 typed-actuator checkpoint")
     if payload.get("step2_contract") != V128_STEP2_CONTRACT:
         raise ValueError("V128 Step2 scientific contract mismatch")
     if payload.get("scientific_split") != "development":
         raise ValueError("V128 Step2 checkpoint is not development-lineage")
+    if str(payload.get("execution_profile", "")).lower() != "full":
+        raise ValueError("V128 runtime rejects smoke/dev nonfinal artifacts")
 
     stored_model_source = _require_sha256(
         payload.get("v128_step2_source_sha256"), label="Step2 model source"
     )
-    current_model_source = v128_step2_source_sha256()
-    if stored_model_source != current_model_source:
-        raise ValueError(
-            "V128 Step2 model-source semantics changed after checkpoint creation; retrain/re-audit instead of loading stale weights"
-        )
-
+    if stored_model_source != v128_step2_source_sha256():
+        raise ValueError("V128 Step2 model-source semantics changed after checkpoint creation")
     stored_training_source = _require_sha256(
         payload.get("v128_training_source_sha256"), label="training source"
     )
-    current_training_source = v128_training_source_sha256()
-    if stored_training_source != current_training_source:
-        raise ValueError(
-            "V128 Step2 training-source semantics changed after checkpoint creation; retrain/re-audit instead of loading weights trained by an obsolete base/D5 objective"
-        )
-
+    if stored_training_source != v128_training_source_sha256():
+        raise ValueError("V128 Step2 training-source semantics changed after checkpoint creation")
     if payload.get("graph_semantic_sha256") != graph_semantic_sha256_v127(graph):
         raise ValueError("V128 Step2 graph topology/features differ from runtime graph")
     _ = input_normalization_from_v127_checkpoint(payload)
@@ -219,6 +211,7 @@ def load_step2_v128(
             "graph_semantic_sha256": payload["graph_semantic_sha256"],
             "v128_step2_source_sha256": stored_model_source,
             "v128_training_source_sha256": stored_training_source,
+            "execution_profile": "full",
         }
     )
     return model.to(target).eval(), payload

@@ -1,6 +1,6 @@
 # Project7 current P0-P3 code audit and remediation ledger
 
-Status: **current development implementation, not Policy Locked**. Merging to `main` removes repository routing ambiguity; it does not constitute scientific promotion or Final evidence.
+Status: **current development implementation, not Policy Locked**. Current priority is rapid Proposal diagnosis and model selection; expensive full/downstream evidence comes only after smoke/dev promotion.
 
 Frozen target remains:
 
@@ -11,121 +11,106 @@ causal sparse sensing -> Step1 current full-network state
 -> execute first 600 s only -> authoritative SWMM re-observation
 ```
 
-TFV is primary; Priority8 PFV is one-sided soft secondary; Global Peak is report-only.
+TFV primary; Priority8 PFV one-sided soft secondary; Global Peak report-only.
 
-## P0 — execution and artifact identity
+## P0 — correctness, routing and diagnostic gates
 
-### P0.1 Conflicting current guides
+### P0.1 Exact pair coverage failure 544/542 — FIXED
 
-`CODEX_START_HERE_V069.md`, `CODEX_START_HERE_V127.md` and `CODEX_START_HERE_V128.md` each claimed current/single status. They were removed. `CODEX_START_HERE.md` is the only root execution guide.
+The first full V128 attempt failed inside the exact H360 objective, not from CUDA OOM. Pair census reduced float32 SWMM node-volume labels in NumPy float64 while live CUDA truth/loss was float32. Around the frozen 1 m3 informative threshold the same candidate pair could therefore be classified differently.
 
-Stable user/Codex entrypoints are:
+`src/rtc/step2_train_v128_exact.py` now precomputes one canonical float32 candidate TFV/delta tensor. Census, reported pair loss, candidate delta losses and live directed pair gradients all consume that same tensor. The objective contract is V4 canonical-float32 truth, and a deterministic regression test reproduces the precision-drift class.
+
+### P0.2 Accidental full runs — FIXED
+
+`scripts/run_step2_current.py` now requires explicit `--profile smoke|dev|full`; no default exists. The obsolete full-only `scripts/run_step2_v128_control_4060.py` was deleted.
+
+- smoke: tiny deterministic Development subset, nonfinal;
+- dev: larger deterministic Development proxy, nonfinal;
+- full: canonical 112 D2 + 112 D3 + 33 D4-FIT and complete curriculum.
+
+Smoke/dev keep 109 actuators, H360 and the exact pairwise code path. They reduce statistical coverage/repetitions only and cannot enter D5/runtime/Policy Lock.
+
+### P0.3 Stage checkpoint / resume — ADDED
+
+`src/rtc/stage_checkpoint_v128.py` writes NONFINAL stage-boundary checkpoints after Stage A, B0 and objective. It stores graph/data/design identity plus Python/NumPy/Torch RNG and fails closed on mismatches. `--stop-after-stage` and `--resume-from` prevent repeated Stage-A/B0 work after compatible interruptions. Stage checkpoints are deliberately incompatible with final/runtime loaders.
+
+### P0.4 Resource/profiler evidence — ADDED
+
+`TRAINING_TELEMETRY.jsonl` records stage wall time, RSS, available RAM/swap and CUDA memory. `--profile-one-group --torch-profiler` exercises the real H360/exact code path on bounded data and exports a Chrome trace. The previous full run showed severe host paging while GPU utilisation remained partial; performance work must therefore start from profiling rather than blind chunk growth.
+
+### P0.5 Spatial-distance evidence — ADDED
+
+`src/rtc/spatial_diagnostics_v128.py` and `scripts/audit_step2_spatial_current.py` quantify held-out D2 action-effect sign/magnitude at 1-3, 4-6, 7-12 and 13+ actuator-to-node graph hops. This is the required gate before attributing poor TFV control to long-range graph propagation.
+
+`scripts/audit_step1_global_attention_current.py` compares frozen legacy Step1 with separately trained V122 sensor-to-all-node attention on identical Development validation windows and reports depth error by distance to nearest sensor. Sample indices are carried explicitly through the trajectory-group sampler so rainfall-group evidence cannot be misattributed.
+
+## P1 — representation experiments, not automatic promotion
+
+### P1.1 Typed actuator representation — RETAINED
+
+Current V128 direction-aware actuator messages retain endpoint state, setting, previous/predicted managed flow, responsiveness, type/physics and actuator identity. Managed-flow injection remains a separate locally conservative pathway.
+
+### P1.2 Edge physics — DEVELOPMENT PATH ADDED
+
+The current graph topology is correct, but generic node message passing does not distinguish physical conduit properties per edge. New development components:
 
 ```text
+src/rtc/edge_physics_current_v128.py
+scripts/build_edge_physics_current.py
+src/rtc/step2_differentiable_v128_edge.py
+scripts/run_step2_edge_aware_dev.py
+scripts/audit_step2_edge_spatial_current.py
+```
+
+They reuse audited SWMM link parsing semantics to align conduit length/roughness/slope/geometry/loss/type/orientation descriptors with current graph edges, and add current head difference plus length-normalized head-gradient messages. The V128 typed actuator pathway is retained. The edge-aware runner forbids `--profile full`; promotion requires held-out spatial/ranking improvement.
+
+### P1.3 Ordinary conduit flow supervision — GATED, NOT FABRICATED
+
+The current training cache exposes node states and managed actuator flows, but no authoritative ordinary-conduit dynamic-flow label field was found. `src/rtc/physics_diagnostics_v128.py` reports this readiness explicitly. No synthetic conduit-flow target is introduced. Extend the SWMM data contract only if edge-aware smoke/dev evidence demonstrates enough value to justify new data production.
+
+### P1.4 Step1 global attention — ABLATION, NOT HOT SWAP
+
+V122 global sensor-to-all-node attention already exists. It is now evaluated as an explicit distance-stratified ablation. If promoted, causal Step1 state stores must be rebuilt and Step2 retrained from the beginning; current frozen state stores cannot be reused under a changed Step1 model.
+
+## P2 — long-range structure and physics diagnostics
+
+### P2.1 Do not solve long range by depth alone
+
+The development plan may compare modest graph depths, but no 10/20-layer default is introduced. Long-range performance is first measured. Edge-aware messages and optional sparse influence shortcuts are preferred experiments when far-field evidence fails.
+
+### P2.2 Development-only hydraulic influence graph — ADDED
+
+`src/rtc/hydraulic_influence_v128.py` and `scripts/build_hydraulic_influence_current.py` derive sparse remote actuator-to-node shortcut candidates from Development TrainFit D2 same-prefix SWMM effects only, including graph hops, effect magnitude/sign and first detectable flooding-rate effect time. The artifact is not enabled in full and can never be built from Validation/Final/Formal outcomes.
+
+### P2.3 Continuity/physics loss — DIAGNOSTIC FIRST
+
+EPA SWMM couples conduit St-Venant routing with volume conservation at nodes. Current Step2 state omits some node loss terms and ordinary conduit dynamic flow, so directly enforcing a supposedly exact node mass-balance loss would be scientifically unsafe. `src/rtc/physics_diagnostics_v128.py` therefore implements a clearly labeled continuity proxy for gross-diagnostic use and keeps `training_loss_enabled=false` until the state/data contract contains the required authoritative terms.
+
+### P2.4 H360/rainfall — UNCHANGED UNTIL SPATIAL/ACTION IDENTIFICATION IS DIAGNOSED
+
+Default rainfall remains causal persistence/decay. H360/H120/first-10-min receding control is retained while spatial/ranking/gradient failure modes are resolved. Horizon sensitivity comes later so multiple scientific dimensions are not changed simultaneously.
+
+## P3 — strict artifacts and current surface
+
+Current strict checkpoint contract:
+
+`PROJECT7_V128_STEP2_CHECKPOINT_V6_CURRENT_PROFILE_TRAINING_SOURCE_STRICT`
+
+It requires explicit full-profile evidence, current execution-profile contract, exact model/training-source fingerprints, graph/time/schema identity and development lineage. Smoke/dev artifacts are rejected by runtime. Historical D5 remains valid only for its frozen idealized 0.5-per-10-min decoder space.
+
+Current user surface:
+
+```text
+CODEX_START_HERE.md
 rtc-current-preflight
 scripts/run_step2_current.py
 scripts/run_policy_current.py
 scripts/run_seven_strategies_current.py
 ```
 
-### P0.2 Current contract still selected historical V127 user routes
+Historical/shared V127 files remain only when still required for frozen lineage, reproducibility or a shared audited implementation. Dead current-facing files are deleted rather than left as competing entrypoints.
 
-`configs/step2_current_contract.json` and `configs/project7_execution_registry.json` now select one unversioned current surface. Remaining V127-named files are explicitly archival or audited shared orchestration, not user entrypoints.
+## Promotion evidence
 
-### P0.3 Exact pairwise implementation existed but canonical training did not call it
-
-`src/rtc/step2_train_v128_exact.py` already implemented the two-pass exact first-order pairwise algorithm, while the canonical runner still imported the older detached-memory `src/rtc/step2_train_v128.py`.
-
-Current training now imports only `step2_train_v128_exact`. The obsolete detached-memory module was deleted. Regression tests inspect the real runner source and prohibit the old module from reappearing.
-
-### P0.4 Typed model versus inherited Stage-A teacher forcing
-
-Current `src/rtc/step2_train_v128_hydraulic.py` owns Stage A and uses the same typed endpoint-state/setting/flow/physics/identity action pathway as online rollout.
-
-### P0.5 Checkpoint training-source strictness was incomplete
-
-The previous loader compared model-source SHA but did not compare training-source SHA with current code. Current contract is:
-
-`PROJECT7_V128_STEP2_CHECKPOINT_V5_MODEL_BASE_D5_TRAINING_SOURCE_STRICT`
-
-It fails closed on either model-source or training-source mismatch. The training fingerprint includes base Stage A/B0/B semantics **and** D5-FIT gradient training plus the frozen D5 fraction decoder, because D5 changes the final runtime weights. V127/older-V128 checkpoints are rejected by contract.
-
-### P0.6 Historical D5 decoder space versus current engineering decoder
-
-D5 gradient assets use the historical 0.5-per-10-min fraction decoder. A regression test now proves that this decoder is numerically identical to the V128 decoder **only when** the current engineering envelope is the idealized graph-bounds + exact 0.5-per-10-min envelope. A custom per-actuator envelope therefore requires a new matching D5 experiment; old D5 evidence cannot be relabeled.
-
-## P1 — control-identification and engineering semantics
-
-### P1.1 Large-event action-order deadband
-
-Current V128 uses a fixed 1 m3 SWMM action-effect floor rather than enlarging the training deadband with event TFV.
-
-### P1.2 Actuator aliasing
-
-`src/rtc/step2_differentiable_v128.py` uses typed, direction-aware actuator-to-node messages containing upstream/downstream hydraulic state, target setting, previous/predicted managed flow, responsiveness, actuator physics/type features and actuator identity. Managed-flow injection remains a separate physical pathway.
-
-### P1.3 Engineering envelope and score==execute
-
-`src/rtc/engineering_v128.py` defines ordered/hashable per-actuator min/max/max-delta semantics. `src/rtc/step3_mpc_v128.py` applies them inside the differentiable decoder before scoring. Post-score projection is forbidden. The historical 0.5 default is explicitly idealized, not a field-device claim.
-
-### P1.4 Tracking lag versus command slew
-
-The hard supervisory rate anchor is the previous issued `target_setting`; realised `current_setting` is hydraulic state/tracking diagnostic. RBC warm-start/fallback and current MPC use the same command semantics.
-
-## P2 — exact ranking gradients and workstation efficiency
-
-### P2.1 Full within-state first-order pairwise gradient under 8-GB VRAM
-
-`src/rtc/step2_train_v128_exact.py` uses two passes at one parameter snapshot:
-
-1. no-grad H360 pass caches every candidate smooth-TFV delta;
-2. gradient H360 pass recomputes candidates in small GPU microbatches;
-3. every live candidate is compared with all cached candidates;
-4. every informative unordered pair is visited from both endpoints;
-5. directed terms are normalized by the original unordered-pair denominator.
-
-A pure autograd regression test compares this constructed gradient elementwise with the complete unordered pair-loss gradient. Only one H360 autograd microbatch is resident at a time.
-
-### P2.2 Repeated immutable tensors inside L-BFGS-B
-
-`src/rtc/step3_runtime_v128.py` caches topology, actuator endpoint/physics and static-node tensors by device/dtype without changing scoring equations.
-
-### P2.3 RTX 4060 / 16-GB execution profile
-
-Current execution keeps CPU-group/GPU-microbatch training, AMP off and activation checkpointing off. FP32 matmul `high` is the main workstation profile and `highest` is the frozen numerical/runtime sensitivity comparison. SWMM generation should remain at <=16 workers and one SWMM thread/process.
-
-### P2.4 Real-time acceptance and finite diagnostics
-
-`src/rtc/runtime_controller_guard.py` measures the complete wrapped supervisory callback. `src/rtc/runtime_evidence_v128.py` requires exact 600-s decision spacing, every guarded callback below 600 s, explicit score==execute and continuity evidence. Same-epoch SWMM target write/readback remains a separate authoritative execution audit.
-
-If no valid gradient was evaluated before a deadline/fallback, current V128 records `gradient_evaluated=false` rather than serializing NaN as if it were scientific evidence.
-
-## P3 — current-surface and evidence hygiene
-
-- `CODEX_START_HERE.md` is the only current root guide.
-- `configs/step2_current_contract.json` defines the research/method surface.
-- `configs/project7_execution_registry.json` defines one current routing surface.
-- `configs/v128_control_execution.json` binds the selected exact implementation and workstation contract.
-- `rtc-current-preflight` is the stable user preflight alias.
-- ranking, D2 and D5 evidence must reference one identical final Step2 SHA256.
-- obsolete root Formal guides were removed; Formal implementation/configs remain only as historical/frozen provenance and are not current routes.
-
-## Deliberate non-changes
-
-1. Default rainfall remains one causal persistence/decay scenario; the default method is not robust/stochastic MPC.
-2. Existing D5 evidence applies only to its frozen idealized decoder/envelope space.
-3. Code correctness/CI cannot prove hydraulic control benefit.
-4. Validation, Final, Formal and Policy Lock remain untouched during current development.
-5. Historical configs/internal modules are not mass-deleted when they still carry frozen data lineage, reproducibility or shared audited orchestration.
-
-## Required empirical promotion evidence
-
-Before any Policy-Lock/Final claim, the exact final checkpoint must provide:
-
-- InternalHoldout D2/D3 rank, pairwise, top1 and selected regret;
-- D2 and untouched D5-AUDIT TFV gradient sign/cosine/MAE;
-- H30-H360 hydraulic/managed-flow and TFV-delta error growth;
-- one preselected authoritative development closed loop with every guarded decision <600 s;
-- target write/readback PASS, continuity PASS and score==execute PASS;
-- authoritative seven-strategy TFV/Priority8 PFV/report-only Global Peak comparison;
-- RTX 4060 `high` versus `highest` numerical/runtime sensitivity.
+Before full: smoke/dev must diagnose the intended failure mode with ranking/gradient/spatial evidence and execution telemetry. Before Policy Lock: the selected explicit full checkpoint must then provide same-checkpoint ranking/D2/D5 evidence, H30-H360 behavior, authoritative Development TFV/PFV, score==execute/continuity/readback and every guarded control callback <600 s. Code merge, smoke PASS or dev PASS is never Policy Lock.

@@ -12,6 +12,7 @@ from rtc.checkpoint_v128 import (
     load_step2_v128,
     save_step2_v128,
 )
+from rtc.development_profile_v128 import V128_EXECUTION_PROFILE_CONTRACT
 from rtc.step2_differentiable_v128 import (
     TypedActuatorMessageSurrogateV128,
     V128_STEP2_CONTRACT,
@@ -135,13 +136,19 @@ def test_v128_checkpoint_round_trip_and_contract_isolation(tmp_path) -> None:
         model=model,
         graph=graph,
         input_normalization=normalization,
-        training_report={"contract": "test"},
+        training_report={
+            "contract": "test",
+            "profile": "full",
+            "execution_profile_contract": V128_EXECUTION_PROFILE_CONTRACT,
+            "final_checkpoint_allowed": True,
+        },
         lineage={"swmm_engine_version": "test"},
     )
     loaded, payload = load_step2_v128(path, graph=graph, device="cpu")
     assert isinstance(loaded, TypedActuatorMessageSurrogateV128)
     assert payload["checkpoint_contract"] == V128_CHECKPOINT_CONTRACT
     assert payload["step2_contract"] == V128_STEP2_CONTRACT
+    assert payload["execution_profile"] == "full"
 
     with pytest.raises(ValueError, match="not a current V127"):
         load_step2_v127(path, graph=graph, device="cpu")

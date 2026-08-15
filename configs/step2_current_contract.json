@@ -1,9 +1,10 @@
 {
-  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V1",
+  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V2_DEBUG_FIRST",
   "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
-  "selected_implementation_contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V7_EXACT_PAIRWISE_STRICT_RUNTIME",
+  "selected_implementation_contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_DEBUG_FIRST_EXACT_PAIRWISE",
   "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, use a differentiable action-conditioned hydraulic surrogate to optimize all 109 writable target settings continuously over H120 within an H360 prediction horizon, minimize system-wide cumulative TFV, treat Priority8 PFV as a one-sided soft secondary objective, and execute only the first 10-minute target in authoritative SWMM",
   "authoritative_truth": "SWMM",
+  "development_priority": "debug and reject weak model ideas with smoke/dev evidence before any expensive full training or downstream closed loop",
   "method_identity": {
     "testbed": "IDEALIZED_SWMM_METHODOLOGY_TESTBED_NOT_FIELD_DIGITAL_TWIN",
     "step1": "sparse causal current-state reconstruction",
@@ -46,10 +47,41 @@
     "stage_B0": "H60/H120 autoregressive truncated-rollout curriculum",
     "stage_B": "H360 two-pass exact full within-group pairwise first-order gradient training with memory-safe GPU microbatches",
     "training_pair_threshold": "1 m3 absolute SWMM action-effect floor",
+    "truth_partition": "canonical float32 candidate TFV delta shared by census, reported pair loss and live gradient",
     "objective_module": "src/rtc/step2_train_v128_exact.py",
     "obsolete_objective_module_forbidden": "src/rtc/step2_train_v128.py",
-    "checkpoint": "model-source and exact-training-source fingerprints are both fail-closed",
+    "execution_profiles": ["smoke", "dev", "full"],
+    "profile_required_on_cli": true,
+    "smoke_dev_scientific_claim_allowed": false,
+    "smoke_dev_d5_runtime_allowed": false,
+    "stage_checkpoint_resume": "stage-boundary only: after Stage A, B0 or objective; no mid-epoch resume claim",
+    "stage_checkpoints_nonfinal": true,
+    "lazy_mmap_branch_streaming": "large authoritative target states/flows stay mmap-backed until active microbatch selection",
+    "checkpoint": "V6 model-source and exact-training-source fingerprints are fail-closed; only explicit full profile can create strict base checkpoint",
     "ranking_d2_d5_same_final_step2_sha_required": true
+  },
+  "development_funnel": {
+    "smoke": "very small deterministic Development subset; preserve 109 actuators/H360/exact-pairwise code path; reject wiring, NaN, gradient and obvious spatial failures quickly",
+    "dev": "larger deterministic Development proxy for ranking, gradient, spatial action-effect and architecture comparisons",
+    "full": "canonical 112 D2 + 112 D3 + 33 D4-FIT, four Stage-A epochs, H60/H120 rollout curriculum and three exact H360 objective epochs",
+    "promotion_order": ["unit/preflight", "smoke one-group profiler", "smoke", "smoke ranking+spatial+gradient", "dev", "full", "D5", "development closed loop", "seven-strategy development", "Policy Lock only after gates"]
+  },
+  "spatial_diagnostics": {
+    "step1_distance_audit": "scripts/audit_step1_global_attention_current.py",
+    "step2_action_effect_distance_audit": "scripts/audit_step2_spatial_current.py",
+    "step2_development_gradient_audit": "scripts/audit_step2_gradient_current_dev.py",
+    "distance_bins_hops": ["1-3", "4-6", "7-12", "13+"],
+    "global_attention_ablation": "compare frozen legacy Step1 to separately trained V122 on identical Development validation windows; no hot replacement",
+    "edge_physics_builder": "scripts/build_edge_physics_current.py",
+    "edge_aware_experiment": "scripts/run_step2_edge_aware_dev.py",
+    "hydraulic_influence_builder": "scripts/build_hydraulic_influence_current.py",
+    "influence_graph_role": "Development-only candidate shortcuts; never built from Validation/Final"
+  },
+  "physics_diagnostics": {
+    "ordinary_conduit_flow_supervision_currently_required_for_promotion": false,
+    "do_not_fabricate_missing_link_flow_labels": true,
+    "continuity_proxy_training_loss_enabled": false,
+    "reason": "current Step2 state omits some SWMM node loss terms and ordinary conduit dynamic flow; diagnose before adding physics loss"
   },
   "causality": {
     "training_initial_state": "frozen causal Step1 reconstruction, not future SWMM truth",
@@ -64,7 +96,7 @@
     "targeted_D3": "joint multi-actuator nonlinear response/action generalization",
     "D4_FIT": "local physical-response support",
     "D4_AUDIT_training": false,
-    "D5_FIT": "exact online fraction-space directional-gradient fine-tuning",
+    "D5_FIT": "exact online fraction-space directional-gradient fine-tuning after full only",
     "D5_AUDIT_training": false,
     "InternalHoldout_training": false,
     "D2_development_validation_training": false,
@@ -96,8 +128,11 @@
     "guide": "CODEX_START_HERE.md",
     "preflight": "rtc-current-preflight",
     "existing_data_training": "scripts/run_step2_current.py",
-    "ranking_audit": "scripts/audit_step2_v128_fast.py",
-    "d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
+    "step2_spatial_audit": "scripts/audit_step2_spatial_current.py",
+    "step2_development_gradient_audit": "scripts/audit_step2_gradient_current_dev.py",
+    "step1_attention_ablation": "scripts/audit_step1_global_attention_current.py",
+    "full_ranking_audit": "scripts/audit_step2_v128_fast.py",
+    "full_d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
     "d5_gradient_training": "scripts/run_step2_v128_d5_gradient_fast.py",
     "continuous_evidence": "scripts/build_v128_continuous_evidence.py",
     "runtime": "scripts/run_policy_current.py",
@@ -105,9 +140,10 @@
   },
   "historical_entrypoints": {
     "scripts/run_step2_v127.py": "ARCHIVAL_NONCURRENT",
-    "scripts/run_step2_v127_control_streaming.py": "SHARED_ORCHESTRATION_INTERNAL_NOT_USER_ENTRY",
+    "scripts/run_step2_v127_control_streaming.py": "ARCHIVAL_NONCURRENT",
+    "scripts/run_step2_v128_control_4060.py": "DELETED_OBSOLETE_FULL_ONLY_USER_RUNNER",
     "scripts/run_policy_v127.py": "ARCHIVAL_NONCURRENT",
     "scripts/run_seven_strategies_v127.py": "SHARED_BASELINE_ORCHESTRATION_INTERNAL_NOT_USER_ENTRY"
   },
-  "promotion_rule": "merging the implementation to main does not constitute scientific Policy Lock; authoritative SWMM development evidence must still demonstrate acceptable ranking/gradients, TFV/PFV and sub-600-second runtime before any production/final claim"
+  "promotion_rule": "debug/main merge is not scientific Policy Lock; smoke/dev artifacts are never formal evidence. Full and downstream authoritative SWMM development evidence must demonstrate acceptable ranking, gradients, spatial action effects, TFV/PFV and sub-600-second runtime before production/final claims"
 }
