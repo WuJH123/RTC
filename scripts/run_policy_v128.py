@@ -36,14 +36,14 @@ from rtc.step2_state_store_v127 import (
     semantic_sensor_layout_sha256,
 )
 from rtc.step3_mpc_v127 import Step2GradientEvidenceV127
-from rtc.step3_mpc_v128 import (
-    ContinuousMPCDesignV128,
-    DifferentiableRollingMPCV128,
-    V128_STEP3_CONTRACT,
+from rtc.step3_mpc_v128 import ContinuousMPCDesignV128, V128_STEP3_CONTRACT
+from rtc.step3_runtime_v128 import (
+    CachedDifferentiableRollingMPCV128,
+    V128_RUNTIME_ACCELERATION_CONTRACT,
 )
 
 V128_RUNTIME_CONTRACT = (
-    "PROJECT7_V128_AUTHORITATIVE_10MIN_TYPED_CONTINUOUS_RTC_V1_WRITE_RUNTIME_AUDIT"
+    "PROJECT7_V128_AUTHORITATIVE_10MIN_TYPED_CONTINUOUS_RTC_V2_STATIC_CACHE_WRITE_RUNTIME_AUDIT"
 )
 V128_EVIDENCE_CONTRACT = (
     "PROJECT7_V128_CONTINUOUS_MPC_EVIDENCE_V1_TYPED_SAME_CHECKPOINT"
@@ -154,8 +154,6 @@ def main() -> None:
         if args.engineering_envelope
         else idealized_engineering_envelope_v128(graph)
     )
-    # Existing frozen D5 evidence is in the original 0.5-per-10min decoder space.  A custom
-    # envelope changes the derivative coordinates and therefore requires regenerated D5.
     if not envelope.is_idealized_default and not bool(
         evidence_payload.get("custom_engineering_envelope_supported_by_this_d5_evidence", False)
     ):
@@ -187,8 +185,6 @@ def main() -> None:
         )
 
     controller_cfg = _controller_config(dict(cfg["controller"]), control_block_steps=2)
-    # V128 Step3 owns the complete per-actuator envelope. Do not give the legacy scalar
-    # controller another independent projection/rate contract.
     controller_cfg = replace(
         controller_cfg,
         horizon_steps=72,
@@ -205,7 +201,7 @@ def main() -> None:
         pfv_penalty_weight=float(args.pfv_penalty_weight),
         min_improvement_vs_rbc_m3=float(args.min_improvement_vs_rbc_m3),
     )
-    mpc = DifferentiableRollingMPCV128(
+    mpc = CachedDifferentiableRollingMPCV128(
         model=step2,
         graph=graph,
         priority_indices=priority,
@@ -282,6 +278,7 @@ def main() -> None:
         {
             "strategy": "proposed_v128_typed_continuous_differentiable_mpc",
             "v128_runtime_contract": V128_RUNTIME_CONTRACT,
+            "v128_runtime_acceleration_contract": V128_RUNTIME_ACCELERATION_CONTRACT,
             "v128_controller_contract": V128_CONTROLLER_CONTRACT,
             "v128_step2_contract": V128_STEP2_CONTRACT,
             "v128_checkpoint_contract": V128_CHECKPOINT_CONTRACT,
@@ -334,6 +331,7 @@ def main() -> None:
             {
                 "strategy": metadata["strategy"],
                 "runtime_contract": V128_RUNTIME_CONTRACT,
+                "runtime_acceleration_contract": V128_RUNTIME_ACCELERATION_CONTRACT,
                 "metadata_path": result.metadata_path,
                 "decision_path": result.decision_path,
                 "runtime_acceptance_path": str(acceptance_path),
