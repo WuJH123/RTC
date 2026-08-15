@@ -15,7 +15,7 @@ import torch
 from torch import nn
 
 from .edge_physics_current_v128 import EdgePhysicsArtifactV128
-from .models import HydraulicTransition, Rollout, _inverse_degree
+from .models import HydraulicTransition
 from .step2_differentiable_v128 import TypedActuatorMessageSurrogateV128, V128SurrogateDesign
 
 V128_EDGE_AWARE_CONTRACT = "PROJECT7_V128_EDGE_AWARE_TYPED_SURROGATE_DEVELOPMENT_V1"
