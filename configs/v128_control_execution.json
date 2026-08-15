@@ -1,0 +1,43 @@
+{
+  "contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V7_EXACT_PAIRWISE_STRICT_RUNTIME",
+  "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
+  "time": {"model_step_s": 300, "control_step_s": 600, "horizon_steps": 72, "horizon_min": 360, "free_blocks": 12, "free_min": 120, "execute_min": 10},
+  "objective": {"primary": "TFV", "priority8_pfv": "ONE_SIDED_SOFT_SECONDARY", "global_peak": "REPORT_ONLY"},
+  "step2": {
+    "contract": "PROJECT7_V128_TYPED_PHYSICS_AWARE_ACTUATOR_MESSAGE_SURROGATE_V1",
+    "stage_a": "src/rtc/step2_train_v128_hydraulic.py",
+    "stage_b": "src/rtc/step2_train_v128_exact.py",
+    "pair_threshold_m3": 1.0,
+    "pairwise_gradient": "TWO_PASS_SAME_PARAMETER_SNAPSHOT_EXACT_FIRST_ORDER"
+  },
+  "checkpoint": {
+    "contract": "PROJECT7_V128_STEP2_CHECKPOINT_V5_MODEL_BASE_D5_TRAINING_SOURCE_STRICT",
+    "model_source_must_match": true,
+    "base_and_d5_training_source_must_match": true,
+    "ranking_d2_d5_same_step2_sha": true
+  },
+  "engineering": {
+    "contract": "PROJECT7_V128_PER_ACTUATOR_ENGINEERING_ENVELOPE_V2_SOURCE_SEMANTICS_STRICT",
+    "decoder_before_scoring": true,
+    "post_score_projection": false,
+    "score_equals_execute": true,
+    "default": "IDEALIZED_DEFAULT_0P5_PER_10MIN",
+    "default_is_field_claim": false,
+    "custom_envelope_requires_matching_d5": true,
+    "historical_d5_decoder_equivalence_tested": true
+  },
+  "rainfall": {"forecast": "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92)", "scenario_multipliers": [1.0], "future_truth_online": false, "robust_claim": false},
+  "hardware": {"gpu": "RTX 4060 8GB", "ram_gb": 16, "swmm_workers_max": 16, "swmm_threads_per_process": 1, "matmul_default": "high", "matmul_check": "highest", "amp": false, "activation_checkpointing": false},
+  "entrypoints": {
+    "training": "scripts/run_step2_current.py",
+    "runtime": "scripts/run_policy_current.py",
+    "seven_strategy": "scripts/run_seven_strategies_current.py",
+    "preflight": "rtc-current-preflight",
+    "ranking": "scripts/audit_step2_v128_fast.py",
+    "d2": "scripts/audit_step2_v128_d2_gradients_fast.py",
+    "d5": "scripts/run_step2_v128_d5_gradient_fast.py",
+    "evidence": "scripts/build_v128_continuous_evidence.py"
+  },
+  "boundaries": {"validation": false, "final": false, "formal": false, "policy_lock": false, "future_swmm_state_online": false, "future_realized_rainfall_online": false},
+  "runtime_acceptance": {"decision_period_s": 600, "every_guarded_callback_lt_s": 600, "score_equals_execute_required": true, "target_readback_required": true}
+}
