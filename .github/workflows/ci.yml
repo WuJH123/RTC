@@ -16,5 +16,7 @@ jobs:
           cache: pip
       - name: Install
         run: python -m pip install -e .[dev]
+      - name: Current lint
+        run: python scripts/lint_current_surface.py
       - name: Tests
         run: pytest -q
