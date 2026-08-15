@@ -19,7 +19,23 @@ from rtc.edge_physics_current_v128 import load_edge_physics_artifact_v128
 from rtc.step2_differentiable_v128_edge import V128_EDGE_AWARE_CONTRACT, build_v128_edge_aware_model_from_graph
 from rtc.step2_lazy_stream_v128 import install_v128_lazy_streaming
 
-WRAPPER_CONTRACT = "PROJECT7_V128_EDGE_AWARE_SMOKE_DEV_WRAPPER_V2_LAZY_STREAM"
+WRAPPER_CONTRACT = "PROJECT7_V128_EDGE_AWARE_SMOKE_DEV_WRAPPER_V3_HELP_SAFE_LAZY_STREAM"
+
+
+def _delegate_help() -> None:
+    """Expose the delegated current-runner help without requiring wrapper-only arguments."""
+    print(
+        "Edge-aware Development wrapper option: --edge-physics <EDGE_PHYSICS.npz>. "
+        "Only --profile smoke|dev is permitted; --profile full and --resume-from are forbidden.\n"
+        "Delegated current Step2 options follow:\n",
+        flush=True,
+    )
+    previous = sys.argv
+    try:
+        sys.argv = [previous[0], "--help"]
+        runner.main()
+    finally:
+        sys.argv = previous
 
 
 def _extract_edge_path(argv: list[str]) -> tuple[str, list[str]]:
@@ -38,7 +54,12 @@ def _sha(path: str | Path) -> str:
 
 
 def main() -> None:
-    edge_path, remaining = _extract_edge_path(sys.argv[1:])
+    argv = list(sys.argv[1:])
+    if any(value in {"-h", "--help"} for value in argv):
+        _delegate_help()
+        return
+
+    edge_path, remaining = _extract_edge_path(argv)
     if "--resume-from" in remaining:
         raise ValueError("edge-aware wrapper forbids --resume-from until edge artifact SHA enters stage lineage")
     try:
