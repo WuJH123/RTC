@@ -4,8 +4,11 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from rtc.execution_audit_v127 import audit_target_write_readback_v127
+from rtc.models import SparseStateEstimator
+from rtc.step1_runtime_v127 import load_frozen_step1_v127
 
 
 def _artifacts(tmp_path: Path, *, mismatch: bool) -> Path:
@@ -57,3 +60,48 @@ def test_target_write_audit_rejects_same_epoch_mismatch(tmp_path: Path) -> None:
     assert result["passed"] is False
     assert result["failed_decisions"] == 1
     assert float(result["max_target_write_readback_error"]) > 0.05
+
+
+def test_v127_frozen_step1_loader_does_not_require_current_project_source_hash(
+    tmp_path: Path,
+) -> None:
+    model = SparseStateEstimator(
+        observed_dim=2,
+        static_dim=3,
+        state_dim=4,
+        hidden_dim=8,
+        graph_layers=1,
+        context_dim=1,
+        history_steps=13,
+        model_step_seconds=300,
+        swmm_engine_version="test-engine",
+        context_contract="test-context",
+    )
+    path = tmp_path / "step1.pt"
+    torch.save(
+        {
+            "checkpoint_contract": "RTC_TORCH_CHECKPOINT_V2_CODE_BOUND",
+            "scientific_split": "development",
+            # Deliberately unrelated to the current project implementation contract.
+            "rtc_source_tree_sha256": "0" * 64,
+            "model_config": {
+                "observed_dim": 2,
+                "static_dim": 3,
+                "state_dim": 4,
+                "hidden_dim": 8,
+                "graph_layers": 1,
+                "context_dim": 1,
+                "history_steps": 13,
+                "model_step_seconds": 300,
+                "swmm_engine_version": "test-engine",
+                "context_contract": "test-context",
+                "training_contract_sha256": "training-provenance",
+            },
+            "state_dict": model.state_dict(),
+        },
+        path,
+    )
+    loaded = load_frozen_step1_v127(path, "cpu")
+    assert isinstance(loaded, SparseStateEstimator)
+    assert loaded.runtime_metadata["model_step_seconds"] == 300
+    assert loaded.runtime_metadata["original_rtc_source_tree_sha256"] == "0" * 64
