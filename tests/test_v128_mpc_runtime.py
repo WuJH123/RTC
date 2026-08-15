@@ -59,7 +59,15 @@ def test_v128_decoder_enforces_per_actuator_slew_before_scoring() -> None:
         envelope=envelope,
         design=design,
     )
-    np.testing.assert_allclose(encoded, fractions.numpy(), atol=1e-6)
+    # Once a target reaches a hard bound the feasible interval can have zero width, so the
+    # latent fraction is not unique. The correct invariant is physical sequence identity.
+    round_trip = decode_fractional_targets_v128(
+        torch.as_tensor(encoded, dtype=active.dtype),
+        active_target=active,
+        envelope=envelope,
+        design=design,
+    )
+    torch.testing.assert_close(round_trip, sequence, rtol=0.0, atol=1e-6)
 
 
 def _write_decisions(path: Path, runtimes: list[float]) -> None:
