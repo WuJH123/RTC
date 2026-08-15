@@ -2,8 +2,8 @@
 
 The large memory-safe data/split loop remains single-sourced in
 ``run_step2_v127_control_streaming.py``. V128 substitutes every component whose semantics
-change: typed architecture, typed Stage-A teacher forcing, full within-group ranking,
-strict checkpoint identity and the RTX-4060 execution profile.
+change: typed architecture, typed Stage-A teacher forcing, exact full within-group pairwise
+first-order gradients, strict checkpoint identity and the RTX-4060 execution profile.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from rtc.step2_differentiable_v128 import (
     V128_STEP2_CONTRACT,
     build_v128_model_from_graph,
 )
-from rtc.step2_train_v128 import (
+from rtc.step2_train_v128_exact import (
     V128_OBJECTIVE_TRAINING_CONTRACT,
     train_objective_stage_streaming_v128,
 )
@@ -32,17 +32,18 @@ from rtc.v128_control_profile import (
 )
 
 V128_STREAMING_RUN_CONTRACT = (
-    "PROJECT7_V128_TYPED_ACTUATOR_FULL_RANKING_4060_STREAMING_V4_STAGEA_ALIGNED"
+    "PROJECT7_V128_TYPED_ACTUATOR_EXACT_PAIRWISE_4060_STREAMING_V5_STAGEA_ALIGNED"
 )
 V128_REPORT_FILENAME = "STEP2_V128_CONTROL_BASE_REPORT.json"
 V128_CHECKPOINT_FILENAME = "step2_v128_control_base.pt"
 
 
 def _load_v127_runner() -> ModuleType:
+    """Load the audited streaming orchestration only; user-facing routing never targets V127."""
     path = Path(__file__).with_name("run_step2_v127_control_streaming.py")
-    spec = importlib.util.spec_from_file_location("_rtc_v127_streaming_runner", path)
+    spec = importlib.util.spec_from_file_location("_rtc_shared_streaming_runner", path)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load canonical V127 streaming runner: {path}")
+        raise RuntimeError(f"cannot load shared streaming orchestration: {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -61,6 +62,8 @@ def main() -> None:
     runner = _load_v127_runner()
     out_dir = _cli_out_dir()
 
+    # The shared runner owns only unchanged data/split/memory orchestration. Every semantic
+    # component of current V128 training is replaced explicitly here and regression-tested.
     runner.V127ControlTrainingDesign = build_v128_control_training_design
     runner.build_v127_model_from_graph = build_v128_model_from_graph
     runner.train_hydraulic_stage_streaming_v127 = train_hydraulic_stage_streaming_v128
@@ -85,6 +88,7 @@ def main() -> None:
                 "v128_objective_training_contract": V128_OBJECTIVE_TRAINING_CONTRACT,
                 "typed_action_context_used_in_teacher_forcing": True,
                 "typed_physics_aware_actuator_messages": True,
+                "exact_two_pass_full_pairwise_first_order_gradient": True,
                 "cross_microbatch_candidate_ranking": True,
                 "float32_matmul_precision": execution_profile[
                     "float32_matmul_precision"
@@ -105,7 +109,7 @@ def main() -> None:
     v128_report = out_dir / V128_REPORT_FILENAME
     if not historical_report.is_file():
         raise RuntimeError(
-            "canonical streaming runner did not emit its expected intermediate report"
+            "shared streaming orchestration did not emit its expected intermediate report"
         )
     if v128_report.exists():
         raise RuntimeError(f"refusing to overwrite existing V128 report: {v128_report}")
