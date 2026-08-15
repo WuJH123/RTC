@@ -55,15 +55,12 @@ def v128_step2_source_sha256() -> str:
 
 
 def v128_training_source_sha256() -> str:
-    digest = hashlib.sha256()
-    root = Path(__file__).resolve().parent
-    digest.update(bytes.fromhex(_source_files_sha256(root, _V128_TRAINING_SOURCE_FILES)))
-    runner = root.parents[1] / "scripts" / "run_step2_v128_control_4060.py"
-    if not runner.is_file():
-        raise RuntimeError(f"V128 training runner is missing: {runner}")
-    digest.update(b"scripts/run_step2_v128_control_4060.py")
-    digest.update(hashlib.sha256(runner.read_bytes()).digest())
-    return digest.hexdigest()
+    # Only installable package modules enter this fingerprint. The outer runner has an
+    # explicit V128_STREAMING_RUN_CONTRACT inside the training report, avoiding a fragile
+    # dependency on an uninstalled repository-level scripts/ path.
+    return _source_files_sha256(
+        Path(__file__).resolve().parent, _V128_TRAINING_SOURCE_FILES
+    )
 
 
 def _require_sha256(value: object, *, label: str) -> str:
