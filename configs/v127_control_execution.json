@@ -17,7 +17,9 @@
     "D5_gradient_directions": 268,
     "D5_fit_directions": 201,
     "D5_audit_directions": 67,
-    "D5_fit_audit_rainfall_overlap": 0
+    "D5_fit_audit_rainfall_overlap": 0,
+    "D5_training_label_table": "D5_GRADIENT_LABELS.csv",
+    "D5_label_summary": "D5_GRADIENT_LABELS.json"
   },
   "step2": {
     "base_training": "scripts/run_step2_v127_control.py",
@@ -73,8 +75,8 @@
     "run D3 information audit and 300-s-vs-exact TFV sampling-gap audit",
     "train corrected V127 base Step2 from D2 TrainFit + targeted D3 TrainFit + D4-FIT",
     "run corrected base ranking and horizon audits",
-    "audit D5-AUDIT gradients before D5-FIT training",
-    "fine-tune with D5-FIT only",
+    "audit D5-AUDIT gradients before D5-FIT training using D5_GRADIENT_LABELS.csv",
+    "fine-tune with D5-FIT only using D5_GRADIENT_LABELS.csv",
     "re-run ranking, horizon, D2-gradient and D5-AUDIT evidence on the same final Step2 checkpoint",
     "compile continuous evidence",
     "run limited development closed-loop Proposed diagnostic",
