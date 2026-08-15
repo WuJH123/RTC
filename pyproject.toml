@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.5"]
+dev = ["pytest>=8.0", "ruff>=0.5", "psutil>=5.9"]
 swmm = ["pyswmm>=2.0"]
 
 [project.scripts]
