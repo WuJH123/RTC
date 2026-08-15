@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 from .step2_train_response_v60 import InputNormalizationV60
 
-V127_TRAINING_CONTRACT = "PROJECT7_V127_HYDRAULIC_THEN_DIFFERENTIABLE_COUNTERFACTUAL_FLOOD_OBJECTIVE_V4_LABEL_ALIGNED"
+V127_TRAINING_CONTRACT = "PROJECT7_V127_HYDRAULIC_THEN_COUNTERFACTUAL_FLOOD_OBJECTIVE_V5_EXISTING_DATA_COVERAGE"
 
 
 @dataclass(frozen=True)
@@ -30,14 +30,14 @@ class V127TrainingDesign:
     tfv_weight: float = 1.0
     rollout_state_weight: float = 0.5
     pairwise_weight: float = 0.25
-    rollout_pair_size: int = 2
+    objective_candidates_per_group: int = 7
     seed: int = 42
 
     def validate(self) -> None:
         if self.hydraulic_epochs <= 0 or self.objective_epochs <= 0:
             raise ValueError("V127 training epochs must be positive")
-        if self.teacher_stride <= 0 or self.rollout_pair_size != 2:
-            raise ValueError("V127 teacher stride/rollout pair contract invalid")
+        if self.teacher_stride <= 0 or self.objective_candidates_per_group <= 0:
+            raise ValueError("V127 teacher/objective branch budget is invalid")
         for value in (
             self.learning_rate,
             self.objective_learning_rate,
@@ -64,12 +64,31 @@ def _stable_seed(text: str, base: int) -> int:
 
 
 def _branch_indices(entry: Any) -> list[int]:
-    """Return the only branch order used by V127 tensors and SWMM labels."""
     ref = int(entry.reference_index)
     candidates = [int(i) for i in entry.indices if int(i) != ref]
     if not candidates:
         raise ValueError("V127 counterfactual group has no candidates")
     return [ref, *candidates]
+
+
+def _objective_branch_subset(
+    branch_count: int,
+    *,
+    group_name: str,
+    epoch: int,
+    design: V127TrainingDesign,
+) -> np.ndarray:
+    """Reference + deterministic rotating candidates, using existing labels efficiently."""
+    if branch_count < 2:
+        raise ValueError("V127 objective group needs reference plus candidate")
+    candidates = np.arange(1, branch_count, dtype=np.int64)
+    rng = np.random.default_rng(_stable_seed(group_name, design.seed))
+    candidates = rng.permutation(candidates)
+    take = min(int(design.objective_candidates_per_group), len(candidates))
+    start = ((int(epoch) - 1) * take) % len(candidates)
+    rotated = np.concatenate((candidates[start:], candidates[:start]))
+    selected = rotated[:take]
+    return np.concatenate((np.asarray([0], dtype=np.int64), selected))
 
 
 def _denormalize_group(
@@ -92,15 +111,9 @@ def _denormalize_group(
         batch.previous_actuator_flow * tensor(normalization.flow_std).clamp_min(1e-6)
         + tensor(normalization.flow_mean)
     )
-    states = torch.cat(
-        (batch.true_reference_states, batch.true_candidate_states), dim=1
-    )[0]
-    flows = torch.cat(
-        (batch.true_reference_flows, batch.true_candidate_flows), dim=1
-    )[0]
-    settings = torch.cat(
-        (batch.reference_settings[:, None], batch.candidate_settings), dim=1
-    )[0]
+    states = torch.cat((batch.true_reference_states, batch.true_candidate_states), dim=1)[0]
+    flows = torch.cat((batch.true_reference_flows, batch.true_candidate_flows), dim=1)[0]
+    settings = torch.cat((batch.reference_settings[:, None], batch.candidate_settings), dim=1)[0]
     branches = int(settings.shape[0])
     if states.shape[0] != branches or flows.shape[0] != branches:
         raise RuntimeError("V127 branch tensors disagree on reference/candidate order")
@@ -143,16 +156,10 @@ def configure_model_normalization_v127(
         static_std=torch.as_tensor(static.std(axis=0).clip(min=1e-6), dtype=torch.float32),
         physics_mean=torch.as_tensor(physics.mean(axis=0), dtype=torch.float32),
         physics_std=torch.as_tensor(physics.std(axis=0).clip(min=1e-6), dtype=torch.float32),
-        flow_std=torch.as_tensor(
-            [float(np.mean(normalization.flow_std))], dtype=torch.float32
-        ),
+        flow_std=torch.as_tensor([float(np.mean(normalization.flow_std))], dtype=torch.float32),
     )
-    model.transition.set_delta_state_scale(
-        torch.as_tensor(state_delta_scale, dtype=torch.float32)
-    )
-    model.actuator.set_delta_flow_scale(
-        torch.as_tensor(flow_delta_scale, dtype=torch.float32)
-    )
+    model.transition.set_delta_state_scale(torch.as_tensor(state_delta_scale, dtype=torch.float32))
+    model.actuator.set_delta_flow_scale(torch.as_tensor(flow_delta_scale, dtype=torch.float32))
 
 
 def derive_residual_scales_v127(
@@ -168,15 +175,9 @@ def derive_residual_scales_v127(
                 states = np.asarray(arrays["target_states"][index], dtype=np.float32)
                 initial = np.asarray(arrays["initial_state"][index], dtype=np.float32)
                 previous = np.concatenate((initial[None], states[:-1]), axis=0)
-                state_samples.append(
-                    np.abs(states - previous).reshape(-1, states.shape[-1])
-                )
-                flows = np.asarray(
-                    arrays["target_actuator_flows"][index], dtype=np.float32
-                )
-                f0 = np.asarray(
-                    arrays["previous_actuator_flow"][index], dtype=np.float32
-                )
+                state_samples.append(np.abs(states - previous).reshape(-1, states.shape[-1]))
+                flows = np.asarray(arrays["target_actuator_flows"][index], dtype=np.float32)
+                f0 = np.asarray(arrays["previous_actuator_flow"][index], dtype=np.float32)
                 fprev = np.concatenate((f0[None], flows[:-1]), axis=0)
                 flow_samples.append(np.abs(flows - fprev))
     if not state_samples or not flow_samples:
@@ -237,31 +238,18 @@ def train_hydraulic_stage_v127(
         losses: list[float] = []
         by_source: dict[str, list[float]] = {key: [] for key in source_caches}
         for source, name in _ordered(source_groups, epoch, design.seed):
-            data = _denormalize_group(
-                source_caches[source].batch(name, normalization, device), normalization
-            )
+            data = _denormalize_group(source_caches[source].batch(name, normalization, device), normalization)
             branches, horizon = data["settings"].shape[:2]
-            physics_norm, identity = model.actuator.prepare_static(
-                static["physics"], batch_size=branches
-            )
+            physics_norm, identity = model.actuator.prepare_static(static["physics"], batch_size=branches)
             static_norm, edges, inv = model.transition.prepare_static(
-                static["static"],
-                static["edges"],
-                batch_size=branches,
-                dtype=torch.float32,
+                static["static"], static["edges"], batch_size=branches, dtype=torch.float32
             )
             optimizer.zero_grad(set_to_none=True)
             loss = torch.zeros((), device=device)
             count = 0
-            for k in range(
-                (epoch - 1) % design.teacher_stride,
-                horizon,
-                design.teacher_stride,
-            ):
+            for k in range((epoch - 1) % design.teacher_stride, horizon, design.teacher_stride):
                 prev_state = data["initial"] if k == 0 else data["states"][:, k - 1]
-                prev_flow = (
-                    data["previous_flow"] if k == 0 else data["flows"][:, k - 1]
-                )
+                prev_flow = data["previous_flow"] if k == 0 else data["flows"][:, k - 1]
                 q, _ = model.actuator.forward_prepared(
                     prev_state[:, static["up"]],
                     prev_state[:, static["down"]],
@@ -270,12 +258,10 @@ def train_hydraulic_stage_v127(
                     physics_norm,
                     identity,
                 )
-                injection = torch.zeros(
-                    branches, prev_state.shape[1], 1, device=device
+                injection = torch.zeros(branches, prev_state.shape[1], 1, device=device)
+                injection = injection.index_add(1, static["up"], -q[..., None]).index_add(
+                    1, static["down"], q[..., None]
                 )
-                injection = injection.index_add(
-                    1, static["up"], -q[..., None]
-                ).index_add(1, static["down"], q[..., None])
                 action_context = model._setting_context(
                     data["settings"][:, k],
                     static["up"],
@@ -292,16 +278,10 @@ def train_hydraulic_stage_v127(
                     inv,
                     action_context,
                 )
-                state_error = (
-                    pred_state - data["states"][:, k]
-                ) / model.transition.state_std
-                flow_error = (
-                    q - data["flows"][:, k]
-                ) / model.actuator.flow_std
+                state_error = (pred_state - data["states"][:, k]) / model.transition.state_std
+                flow_error = (q - data["flows"][:, k]) / model.actuator.flow_std
                 loss = loss + F.smooth_l1_loss(
-                    state_error * weights,
-                    torch.zeros_like(state_error),
-                    beta=0.5,
+                    state_error * weights, torch.zeros_like(state_error), beta=0.5
                 )
                 loss = loss + design.flow_weight * F.smooth_l1_loss(
                     flow_error, torch.zeros_like(flow_error), beta=0.5
@@ -327,19 +307,14 @@ def train_hydraulic_stage_v127(
             if values:
                 row[f"loss_{source.lower()}"] = float(np.mean(values))
         history.append(row)
-        print(
-            "[V127_HYDRAULIC] "
-            + " ".join(f"{k}={v}" for k, v in row.items()),
-            flush=True,
-        )
+        print("[V127_HYDRAULIC] " + " ".join(f"{k}={v}" for k, v in row.items()), flush=True)
     return history
 
 
 def _truth_node_volume(cache: Any, name: str) -> np.ndarray:
     entry = cache.entry(name)
-    order = _branch_indices(entry)
     values = np.asarray(
-        entry.arrays["exact_node_flood_volume_m3"][order], dtype=np.float32
+        entry.arrays["exact_node_flood_volume_m3"][_branch_indices(entry)], dtype=np.float32
     )
     if values.ndim != 2 or not np.isfinite(values).all() or np.any(values < -1e-6):
         raise ValueError(f"{name}: authoritative node flood-volume labels are invalid")
@@ -357,51 +332,32 @@ def train_objective_stage_v127(
     flood_rate_index: int,
     design: V127TrainingDesign = V127TrainingDesign(),
 ) -> list[dict[str, float | int | str]]:
-    """Train H360 physical magnitude plus differentiable counterfactual action effects.
-
-    The smooth Softplus flood proxy has a common positive zero-rate offset.  That offset is
-    harmless for action ranking/gradients because every branch in a counterfactual group
-    has the same node/time grid, but it must not be fitted as an absolute SWMM volume.  We
-    therefore fit hard physical TFV to absolute SWMM truth and fit the smooth proxy only to
-    branch-to-branch node-volume/TFV differences.  This preserves useful action gradients
-    without creating an artificial absolute flood-volume target.
-    """
+    """Train absolute hard TFV and reference-anchored differentiable action effects."""
     design.validate()
     static = _static(graph, device)
     model.train().to(device)
     optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=design.objective_learning_rate,
-        weight_decay=design.weight_decay,
+        model.parameters(), lr=design.objective_learning_rate, weight_decay=design.weight_decay
     )
     history: list[dict[str, float | int | str]] = []
     for epoch in range(1, design.objective_epochs + 1):
         records: list[float] = []
+        selected_candidates: list[int] = []
         for source, name in _ordered(source_groups, epoch + 17, design.seed):
-            data = _denormalize_group(
-                source_caches[source].batch(name, normalization, device), normalization
-            )
+            data = _denormalize_group(source_caches[source].batch(name, normalization, device), normalization)
             truth_volume = torch.as_tensor(
-                _truth_node_volume(source_caches[source], name),
-                dtype=torch.float32,
-                device=device,
+                _truth_node_volume(source_caches[source], name), dtype=torch.float32, device=device
             )
             branch_count = int(data["settings"].shape[0])
             if truth_volume.shape[0] != branch_count:
-                raise RuntimeError(
-                    f"{name}: SWMM label count does not match model branch order"
-                )
-            rng = np.random.default_rng(
-                _stable_seed(name, design.seed + epoch * 7919)
+                raise RuntimeError(f"{name}: SWMM label count does not match model branch order")
+            chosen = _objective_branch_subset(
+                branch_count, group_name=name, epoch=epoch, design=design
             )
-            pair = rng.choice(
-                branch_count,
-                size=min(design.rollout_pair_size, branch_count),
-                replace=False,
-            )
-            if len(pair) < 2:
-                continue
-            index = torch.as_tensor(pair, dtype=torch.long, device=device)
+            if chosen[0] != 0 or len(chosen) < 2:
+                raise RuntimeError("V127 objective branch subset lost reference-first semantics")
+            selected_candidates.append(len(chosen) - 1)
+            index = torch.as_tensor(chosen, dtype=torch.long, device=device)
             optimizer.zero_grad(set_to_none=True)
             output = model.objective_rollout(
                 initial_state=data["initial"].index_select(0, index),
@@ -420,48 +376,47 @@ def train_objective_stage_v127(
             target_volume = truth_volume.index_select(0, index)
             true_tfv = target_volume.sum(-1)
             tfv_scale = torch.quantile(true_tfv.detach(), 0.75).clamp_min(100.0)
-            # Absolute magnitude is evaluated in the physical hard-clamp operator.
             hard_tfv_loss = F.smooth_l1_loss(
                 (output.tfv_m3 - true_tfv) / tfv_scale,
                 torch.zeros_like(true_tfv),
                 beta=0.5,
             )
-            # The differentiable proxy is trained on counterfactual effects only; its
-            # Softplus zero-rate offset cancels exactly on the common node/time grid.
-            true_node_delta = target_volume[0] - target_volume[1]
+
+            # Smooth Softplus volume has a common zero-rate offset. Compare every selected
+            # candidate with branch 0 (the explicit reference), so that offset cancels and
+            # the model uses many existing action labels instead of one random pair/group.
+            true_node_delta = target_volume[1:] - target_volume[0:1]
             smooth_node_delta = (
-                output.optimization_node_flood_volume_m3[0]
-                - output.optimization_node_flood_volume_m3[1]
+                output.optimization_node_flood_volume_m3[1:]
+                - output.optimization_node_flood_volume_m3[0:1]
             )
             node_delta_scale = torch.quantile(
-                torch.abs(true_node_delta.detach()), 0.75
+                torch.abs(true_node_delta.detach()).reshape(-1), 0.75
             ).clamp_min(25.0)
             node_effect_loss = F.smooth_l1_loss(
                 smooth_node_delta / node_delta_scale,
                 true_node_delta / node_delta_scale,
                 beta=0.5,
             )
-            true_tfv_delta = (true_tfv[0] - true_tfv[1]).detach()
-            smooth_tfv_delta = (
-                output.optimization_tfv_m3[0] - output.optimization_tfv_m3[1]
-            )
+            true_tfv_delta = (true_tfv[1:] - true_tfv[0]).detach()
+            smooth_tfv_delta = output.optimization_tfv_m3[1:] - output.optimization_tfv_m3[0]
             tfv_effect_loss = F.smooth_l1_loss(
                 smooth_tfv_delta / tfv_scale,
                 true_tfv_delta / tfv_scale,
                 beta=0.5,
             )
-            if abs(float(true_tfv_delta)) > 1e-9:
+            informative = torch.abs(true_tfv_delta) > 1.0e-9
+            if bool(informative.any()):
                 pair_loss = F.softplus(
-                    -torch.sign(true_tfv_delta) * smooth_tfv_delta / tfv_scale
-                )
+                    -torch.sign(true_tfv_delta[informative])
+                    * smooth_tfv_delta[informative]
+                    / tfv_scale
+                ).mean()
             else:
                 pair_loss = smooth_tfv_delta.new_zeros(())
-            retained = torch.as_tensor(
-                [5, 11, 23, 35, 47, 71], dtype=torch.long, device=device
-            )
-            true_states = data["states"].index_select(0, index).index_select(
-                1, retained
-            )
+
+            retained = torch.as_tensor([5, 11, 23, 35, 47, 71], dtype=torch.long, device=device)
+            true_states = data["states"].index_select(0, index).index_select(1, retained)
             pred_states = output.rollout.states.index_select(1, retained)
             state_loss = F.smooth_l1_loss(
                 (pred_states - true_states) / model.transition.state_std,
@@ -481,23 +436,19 @@ def train_objective_stage_v127(
             optimizer.step()
             records.append(float(loss.detach()))
         row: dict[str, float | int | str] = {
-            "stage": "h360_physical_magnitude_plus_differentiable_action_effect",
+            "stage": "h360_reference_anchored_physical_and_differentiable_action_effect",
             "epoch": epoch,
             "loss": float(np.mean(records)) if records else float("nan"),
+            "mean_candidates_per_group": float(np.mean(selected_candidates)) if selected_candidates else 0.0,
         }
         if not math.isfinite(float(row["loss"])):
             raise RuntimeError("V127 H360 objective stage produced no finite loss")
         history.append(row)
-        print(
-            "[V127_OBJECTIVE] "
-            + " ".join(f"{k}={v}" for k, v in row.items()),
-            flush=True,
-        )
+        print("[V127_OBJECTIVE] " + " ".join(f"{k}={v}" for k, v in row.items()), flush=True)
     return history
 
 
 def _rankdata(values: np.ndarray) -> np.ndarray:
-    """Average ranks for ties, matching the statistical definition of Spearman rho."""
     x = np.asarray(values, dtype=np.float64).reshape(-1)
     order = np.argsort(x, kind="mergesort")
     ranks = np.empty(x.size, dtype=np.float64)
@@ -506,8 +457,7 @@ def _rankdata(values: np.ndarray) -> np.ndarray:
         end = start + 1
         while end < x.size and x[order[end]] == x[order[start]]:
             end += 1
-        average = 0.5 * (start + end - 1)
-        ranks[order[start:end]] = average
+        ranks[order[start:end]] = 0.5 * (start + end - 1)
         start = end
     return ranks
 
@@ -538,9 +488,7 @@ def evaluate_objective_groups_v127(
     pairwise: list[float] = []
     with torch.no_grad():
         for name in names:
-            data = _denormalize_group(
-                cache.batch(name, normalization, device), normalization
-            )
+            data = _denormalize_group(cache.batch(name, normalization, device), normalization)
             truth = _truth_node_volume(cache, name).sum(axis=1).astype(float)
             if truth.shape[0] != int(data["settings"].shape[0]):
                 raise RuntimeError(f"{name}: evaluation label/action order mismatch")
@@ -565,9 +513,7 @@ def evaluate_objective_groups_v127(
             rank.append(_spearman(predicted, truth))
             selected = int(np.argmin(predicted))
             optimum_value = float(np.min(truth))
-            optimum_mask = np.isclose(
-                truth, optimum_value, rtol=0.0, atol=1e-9
-            )
+            optimum_mask = np.isclose(truth, optimum_value, rtol=0.0, atol=1e-9)
             top1.append(float(bool(optimum_mask[selected])))
             mae.append(float(np.mean(np.abs(predicted - truth))))
             regret.append(float(truth[selected] - optimum_value))
