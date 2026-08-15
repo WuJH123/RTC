@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V5_MODEL_TRAINING_SOURCE_STRICT",
+  "contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_4060_EXPERIMENT_V6_STRICT_ENVELOPE_GUARDED_RUNTIME",
   "status": "DEVELOPMENT_ONLY_NOT_PRODUCTION_NOT_POLICY_LOCKED",
   "base": {
     "canonical_main_sha_at_branch": "390ab19f59bebf20e62d4a7f49e7e579192bd021",
@@ -44,11 +44,12 @@
     "ranking_d2_d5_same_final_step2_sha_required": true
   },
   "engineering_execution": {
-    "contract": "PROJECT7_V128_PER_ACTUATOR_ENGINEERING_ENVELOPE_V1",
+    "contract": "PROJECT7_V128_PER_ACTUATOR_ENGINEERING_ENVELOPE_V2_SOURCE_SEMANTICS_STRICT",
     "bounds_and_rate_enter_decoder_before_scoring": true,
     "post_score_projection_allowed": false,
     "score_equals_execute_required": true,
     "historical_default_source": "IDEALIZED_DEFAULT_0P5_PER_10MIN",
+    "historical_default_source_must_match_graph_bounds_and_exact_0p5_rate": true,
     "historical_default_is_field_engineering_claim": false,
     "custom_per_actuator_envelope_supported_by_decoder": true,
     "custom_envelope_authoritative_runtime_requires_matching_D5": true,
@@ -67,7 +68,8 @@
     "step2_cpu_group_streaming": true,
     "step2_gpu_microbatch": true,
     "step3_immutable_graph_tensor_cache_used_by_runtime": true,
-    "measured_runtime_acceptance": "every authoritative decision wall-clock must be <600 s"
+    "runtime_acceptance_contract": "PROJECT7_V128_AUTHORITATIVE_600S_RUNTIME_ACCEPTANCE_V2_GUARDED_CALLBACK",
+    "measured_runtime_acceptance": "every complete continuity-guarded supervisory decision callback must be <600 s"
   },
   "rainfall_runtime": {
     "causal_forecast": "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92)",
@@ -114,10 +116,10 @@
       "H30-H360 hydraulic and TFV delta errors",
       "authoritative development TFV/PFV across seven strategies",
       "continuous vs RBC decision counts",
-      "decision runtime p50/p95/max and deadline/fallback counts",
+      "guarded decision runtime p50/p95/max and deadline/fallback counts",
       "target write/readback and score==execute"
     ],
-    "promotion_rule": "do not replace V127 production identity unless the exact final V128 checkpoint improves control-identification evidence without material hydraulic regression and also improves or preserves authoritative closed-loop SWMM performance while measured decision max remains below 600 s"
+    "promotion_rule": "do not replace V127 production identity unless the exact final V128 checkpoint improves control-identification evidence without material hydraulic regression and also improves or preserves authoritative closed-loop SWMM performance while measured guarded decision max remains below 600 s"
   },
   "boundaries": {
     "validation_access": false,
