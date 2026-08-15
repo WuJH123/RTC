@@ -1,0 +1,86 @@
+{
+  "contract": "PROJECT7_V127_CANONICAL_CONTROL_EXECUTION_V1",
+  "research_goal": "every 10 minutes reconstruct causal hydraulic state, optimize all 109 writable target settings continuously over H120 with a differentiable hydraulic surrogate inside H360 prediction, minimize system-wide cumulative TFV, keep Priority8 PFV as a one-sided soft secondary objective, execute only the first 600 s target, and verify outcomes in authoritative SWMM",
+  "authoritative_truth": "SWMM",
+  "canonical_git_requirement": "use the exact merged main SHA reported with this file; do not run historical V120-V126 training entrypoints",
+  "data": {
+    "D2_source_branches": 4800,
+    "D2_trainfit_groups": 112,
+    "D2_internal_holdout_groups": 32,
+    "targeted_D3_branches": 3600,
+    "D3_trainfit_groups": 112,
+    "D3_internal_holdout_groups": 32,
+    "D4_branches": 390,
+    "D4_fit_groups": 33,
+    "D4_audit_groups": 15,
+    "D5_branches": 584,
+    "D5_gradient_directions": 268,
+    "D5_fit_directions": 201,
+    "D5_audit_directions": 67,
+    "D5_fit_audit_rainfall_overlap": 0,
+    "D5_training_label_table": "D5_GRADIENT_LABELS.csv",
+    "D5_label_summary": "D5_GRADIENT_LABELS.json"
+  },
+  "step2": {
+    "base_training": "scripts/run_step2_v127_control.py",
+    "training_module": "src/rtc/step2_train_v127_control.py",
+    "D3_information_audit": "scripts/audit_d3_information_v127.py",
+    "TFV_sampling_gap_audit": "scripts/audit_tfv_sampling_gap_v127.py",
+    "horizon_rollout_audit": "scripts/audit_step2_v127_horizon.py",
+    "ranking_audit": "scripts/audit_step2_v127_control_ranking.py",
+    "D2_gradient_audit": "scripts/audit_step2_v127_d2_gradients.py",
+    "D5_gradient_finetune": "scripts/run_step2_v127_d5_gradient.py",
+    "D5_gradient_labels": "scripts/build_d5_gradient_labels_v127.py",
+    "continuous_evidence": "scripts/build_v127_continuous_gate.py"
+  },
+  "step3": {
+    "runtime": "scripts/run_policy_v127.py",
+    "optimizer": "12x109 bounded L-BFGS-B through PyTorch autograd",
+    "free_control_horizon_minutes": 120,
+    "prediction_horizon_minutes": 360,
+    "execute_minutes": 10,
+    "RBC_role": "warm start and safety fallback only",
+    "score_equals_execute": true,
+    "post_score_projection": false
+  },
+  "evaluation": {
+    "seven_strategy_comparison": "scripts/run_seven_strategies_v127.py",
+    "strategies": [
+      "Proposed V127 continuous differentiable MPC",
+      "No-control",
+      "Internal RTC",
+      "Auto-RBC",
+      "storage-volume EFD",
+      "All-open",
+      "All-closed"
+    ],
+    "global_peak_role": "report only",
+    "target_write_readback_required": true
+  },
+  "development_boundaries": {
+    "train_on_InternalHoldout": false,
+    "train_on_D4_AUDIT": false,
+    "train_on_D5_AUDIT": false,
+    "train_on_D2_development_validation": false,
+    "future_realized_rainfall_online": false,
+    "future_SWMM_state_online": false,
+    "Validation_access": false,
+    "Final_access": false,
+    "Formal_access": false,
+    "Policy_Lock": false
+  },
+  "execution_order": [
+    "verify exact Git SHA and clean worktree",
+    "verify frozen assets and causal state/rainfall lineage",
+    "run D3 information audit and 300-s-vs-exact TFV sampling-gap audit",
+    "train corrected V127 base Step2 from D2 TrainFit + targeted D3 TrainFit + D4-FIT",
+    "run corrected base ranking and horizon audits",
+    "audit D5-AUDIT gradients before D5-FIT training using D5_GRADIENT_LABELS.csv",
+    "fine-tune with D5-FIT only using D5_GRADIENT_LABELS.csv",
+    "re-run ranking, horizon, D2-gradient and D5-AUDIT evidence on the same final Step2 checkpoint",
+    "compile continuous evidence",
+    "run limited development closed-loop Proposed diagnostic",
+    "if runtime/correctness is healthy, run seven-strategy development comparison",
+    "stop before Validation/Final/Formal/Policy Lock"
+  ]
+}
