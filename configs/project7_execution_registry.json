@@ -1,8 +1,8 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_V17_COUNTERFACTUAL_FIRST_ORACLE_ISOLATED",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_V18_STAGE_RANKING_EXECUTABLE",
   "current": {
     "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
-    "research_contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V6_COUNTERFACTUAL_FIRST_ORACLE_ISOLATED_DEV",
+    "research_contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V7_STAGE_RANKING_EXECUTABLE_DEV",
     "implementation_contract": "PROJECT7_V128_COUNTERFACTUAL_FIRST_EDGE_PHYSICS_SURROGATE_DEV_V3",
     "guide": "CODEX_START_HERE.md",
     "step2_training": "scripts/run_step2_current.py",
@@ -17,7 +17,7 @@
     "runtime_enabled": false,
     "seven_strategy_enabled": false,
     "d5_enabled": false,
-    "full_profile_block_reason": "counterfactual-first surrogate must pass direct flow, strict q-only direct hydraulic, B0 trajectory/ranking/spatial, objective-stage ranking/gradient and Development closed-loop gates before explicit production checkpoint promotion",
+    "full_profile_block_reason": "counterfactual-first surrogate must pass direct flow, strict q-only direct hydraulic, B0 stage ranking+horizon+spatial, objective-stage ranking/gradient and Development closed-loop gates before explicit production checkpoint promotion",
     "required_current_training_extra": "--edge-physics <frozen Development edge-physics artifact>",
     "development_profile_mode": "stage-resumable smoke/dev; explicit lazy mmap truth streaming; no raw Chrome trace on the 16-GB workstation"
   },
@@ -46,6 +46,7 @@
     "oracle_flow_isolation": "for direct candidate/reference A1 and audit, both branches share the reference setting inside typed action context; authoritative managed flow is the only branch-varying control signal",
     "stage_a_truth_loading": "large state/flow truth remains mmap-backed; only reference/candidate slices through first divergence materialize",
     "stage_b0": "explicit-lazy autoregressive truncated trajectory training; full network-feedback effects belong here rather than in the local actuator label; feedback flow effects normalize by actuator flow std",
+    "stage_b0_gate": "source-strict nonfinal ranking+horizon and selectable spatial audits run directly on stage_b0.pt before exact H360 objective",
     "stage_b": "exact H360 TFV pairwise objective retained plus low-LR explicit-lazy trajectory anchor; no SWMM action-gradient labels are trained",
     "gradient_role": "diagnostic plus differentiable online solver signal after trajectory/ranking fidelity; not the primary surrogate training target",
     "ordinary_graph": "edge-aware messages with frozen SWMM link descriptors and dynamic head difference/gradient",
@@ -55,6 +56,7 @@
   "development_diagnostics": {
     "step2_direct_action_flow": "scripts/audit_step2_actuator_flow_effect_current.py",
     "step2_direct_hydraulic": "scripts/audit_step2_direct_hydraulic_effect_current.py",
+    "step2_stage_ranking_horizon": "scripts/audit_step2_stage_ranking_current.py",
     "step2_spatial_action_effect": "scripts/audit_step2_spatial_current.py",
     "step2_development_gradient": "scripts/audit_step2_gradient_current_dev.py",
     "step2_gradient_stage_decomposition": "scripts/audit_step2_gradient_stage_current_dev.py",
@@ -70,6 +72,7 @@
     "strict oracle direct hydraulic effect must block branch-varying setting messages so q is the only branch-varying control signal",
     "Stage A, B0 and post-objective trajectory anchor must call explicit V128 lazy mmap helpers rather than depend on imported-alias monkeypatching",
     "evaluate direct same-prefix and actuator-balanced flow metrics; never reject/promote from feedback micro cosine alone",
+    "after B0, run nonfinal stage ranking+horizon plus spatial audit before H360 objective; never use production-only audit_step2_v128_fast.py as a workaround",
     "train hydraulic trajectory/counterfactual response before judging differentiable TFV gradients",
     "do not fabricate SWMM gradient labels, ordinary-conduit flow labels or incomplete continuity losses",
     "stage resume must match edge-physics SHA and enhanced model/training/oracle-isolation source lineage",
