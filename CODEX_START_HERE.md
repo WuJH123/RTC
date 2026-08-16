@@ -247,6 +247,13 @@ python scripts/run_step2_current.py `
   --device cuda
 ```
 
+Expected outputs:
+
+```text
+STEP2_DIRECT_TFV_VALUE_REPORT.json
+step2_direct_tfv_value_dev.pt
+```
+
 Read first:
 
 ```text
@@ -255,6 +262,11 @@ pairwise
 sign
 top1_fraction
 hold_selected_fraction
+oracle_hold_groups
+false_action_when_hold_oracle_fraction
+selected_beneficial_fraction
+selected_harmful_fraction
+selected_true_delta_tfv_m3
 delta_tfv_mae_m3
 selected_regret_m3
 ```
@@ -273,6 +285,13 @@ dev_uses_all_existing_development_groups = true
 complete_reference_sequence_encoded = true
 candidate_reference_antisymmetry_by_construction = true
 selected_group_counts = 112/112/32/32/33/15
+```
+
+Expected outputs remain:
+
+```text
+STEP2_DIRECT_TFV_VALUE_REPORT.json
+step2_direct_tfv_value_dev.pt
 ```
 
 Only after full Development evidence is available should one Development closed loop be wired.
