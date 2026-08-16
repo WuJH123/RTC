@@ -25,28 +25,31 @@ and 12 x 109 = 1308 free MPC variables.
 
 ## Current Development status — counterfactual trajectory first
 
-Recent source-strict smoke diagnostics showed that simply making the surrogate more sensitive was
-not enough. The previous repair recovered full-H72 managed-flow magnitude but the historical
-teacher-forced candidate/reference flow difference mixed direct actuator response with later
-hydraulic feedback and could be dominated by one high-energy actuator. Stage-A TFV autograd
-remained weak in direction.
+PR #77 recovered the magnitude of the historical full-H72 managed-flow effect, but the same
+smoke run showed that this metric mixes local actuator response with later hydraulic feedback and
+can be dominated by one high-energy actuator. Stage-A TFV autograd also remained weak in
+direction. The current Development surface therefore does **not** train toward a larger SWMM
+objective gradient. It first repairs the causal trajectory chain:
 
-The current smoke/dev method therefore separates the causal chain:
+1. **A0 — direct same-prefix setting -> managed flow.** Only the first setting-divergence
+   transition is a local actuator label. Temporal flow variation and direct action-response scales
+   remain separate.
+2. **A1 — managed flow -> hydraulics.** The actuator submodel is frozen and authoritative SWMM
+   managed flow is injected. For direct reference/candidate effects, both branches share the
+   reference setting inside the typed action context; authoritative managed flow is the only
+   branch-varying control signal. This blocks a hidden `setting -> message -> state` bypass.
+3. **A2 — joint direct counterfactual teacher forcing.** Predicted flow and hydraulic transition are
+   trained together with absolute state/flow targets plus response-weighted same-prefix effects.
+4. **B0 — autoregressive network feedback.** Full candidate/reference hydraulic feedback belongs
+   here, not in the local `dq/du` label. Feedback-flow effects use actuator flow standard deviation
+   for normalization rather than the local direct-action scale.
+5. **H360 exact TFV objective downstream.** The source-strict two-pass within-group pairwise TFV
+   objective remains intact. SWMM action-gradient labels are never training targets; autograd is a
+   Development diagnostic and future online optimization signal after trajectory/ranking fidelity.
 
-1. **direct same-prefix action response** — only the first setting-divergence transition is a local
-   `setting -> managed flow` label;
-2. **separate numerical scales** — temporal `q(t)-q(t-1)` scale and direct setting-response scale
-   are distinct; later feedback cannot inflate the local action scale;
-3. **A0 actuator pretraining** — absolute flow plus direct same-prefix magnitude/direction;
-4. **A1 oracle-flow hydraulic pretraining** — actuator frozen, authoritative managed flow injected
-   to teach `managed flow -> next hydraulic state`;
-5. **A2 joint training** — predicted managed flow plus response-weighted direct flow/state effects;
-6. **B0 autoregressive trajectory learning** — later network-feedback effects belong here;
-7. **H360 exact TFV objective downstream** — no SWMM action-gradient labels are trained.
-
-The differentiable TFV gradient is now a **Development diagnostic and eventual online solver
-signal**, not the primary surrogate training target. Candidate-reference trajectory fidelity and
-ranking must be useful first.
+Large authoritative state/flow truth arrays stay mmap-backed. A0/A1/A2, B0 and the post-objective
+trajectory anchor call the V128 lazy helpers explicitly; direct-pair extraction materializes only
+the reference/candidate slices needed through first divergence.
 
 Current implementation:
 
@@ -54,40 +57,20 @@ Current implementation:
 scripts/run_step2_current.py
 scripts/run_step2_action_identifiable_current.py
 src/rtc/step2_counterfactual_first_v128.py
-src/rtc/step2_counterfactual_training_v4.py
-src/rtc/step2_action_identifiable_v128.py
+src/rtc/step2_oracle_isolation_v128.py
+src/rtc/step2_counterfactual_training_v5.py
 src/rtc/step2_differentiable_v128_edge.py
-src/rtc/edge_physics_current_v128.py
 src/rtc/step2_train_v128_exact.py
-```
-
-## Debug-first execution
-
-Only `--profile smoke` and `--profile dev` are currently enabled. `--profile full` intentionally
-fails closed. Smoke/dev checkpoints are NONFINAL and cannot enter D5/runtime/Policy Lock.
-
-```text
-cheap gates + preflight
- -> edge-physics artifact
- -> Stage A only (A0 -> A1 -> A2)
- -> direct same-prefix flow audit
- -> direct normal-vs-oracle hydraulic audit
- -> Stage-A TFV gradient diagnostic
- -> STOP / reject or explicitly resume B0
- -> B0 trajectory/ranking/spatial checks
- -> only then consider H360 exact objective
- -> dev confirmation
- -> future explicit full promotion
 ```
 
 Current Development diagnostics:
 
 ```text
 scripts/audit_step2_actuator_flow_effect_current.py
-    direct same-prefix flow response + separate full-H72 feedback metrics + actuator-balanced macro
+    direct same-prefix + actuator-balanced flow metrics; full-H72 feedback reported separately
 
 scripts/audit_step2_direct_hydraulic_effect_current.py
-    same-prefix normal predicted-flow vs authoritative-oracle-flow one-step hydraulic response
+    normal predicted-flow vs strict q-only authoritative-flow hydraulic isolation
 
 scripts/audit_step2_gradient_stage_current_dev.py
     TFV autograd diagnostic at Stage A/B0/objective
@@ -96,19 +79,56 @@ scripts/audit_step2_spatial_current.py
     held-out action-effect by graph distance after trajectory stages
 ```
 
-Large authoritative truth arrays remain mmap-backed. Direct-pair extraction materializes only the
-two required branches up to the first divergence step.
+## Development funnel
+
+Only `--profile smoke` and `--profile dev` are enabled. `--profile full` intentionally fails
+closed. Smoke/dev checkpoints are NONFINAL.
+
+```text
+cheap gates + preflight
+ -> edge-physics lineage
+ -> smoke Stage A (A0 -> q-only A1 -> A2)
+ -> direct same-prefix/actuator-balanced flow audit
+ -> strict q-only direct hydraulic audit
+ -> Stage-A TFV-gradient diagnostic
+ -> STOP / reject or explicitly resume B0
+ -> B0 trajectory + ranking + spatial audits
+ -> only then exact H360 TFV objective
+ -> same-checkpoint ranking/top1/regret + gradient diagnostic
+ -> deterministic dev confirmation
+ -> Development authoritative closed-loop evidence
+ -> future explicit production checkpoint/loader/runtime promotion
+ -> D5 / runtime / seven-strategy / Policy Lock only after that promotion
+```
+
+A large gradient does not rescue a surrogate with wrong trajectory/ranking. Conversely, weak
+Stage-A gradient alone is not a reason to reject a candidate whose direct chain has improved;
+autoregressive trajectory and ranking evidence are checked before the final gradient decision.
 
 ## Physics and evidence boundary
 
 Current smoke/dev uses frozen SWMM edge descriptors and dynamic head-difference/head-gradient
 messages. Missing ordinary-conduit dynamic-flow labels are not fabricated, and the incomplete
 continuity proxy is not enabled as a training loss. Hydraulic-influence shortcuts/deeper GNNs are
-not promoted because current evidence did not isolate a far-field-only failure.
+not promoted until held-out spatial evidence isolates a distance-dependent failure.
 
 No future realised rainfall, future SWMM state or future Internal trajectory online. No
-Validation/Final/Formal/Policy Lock during Development. A future real-time claim still requires
-every guarded decision below 600 s together with score==execute and target readback.
+Validation/Final/Formal/Policy Lock during Development.
+
+## Production is intentionally fail-closed
+
+The current counterfactual-first model is a Development subclass and has no promoted production
+checkpoint factory/loader yet. Therefore:
+
+```text
+scripts/run_policy_current.py
+scripts/run_seven_strategies_current.py
+```
+
+support `--help` / `--promotion-status` but reject ordinary execution. This prevents an older
+base-V128 checkpoint from silently masquerading as the current Proposed controller. Full, D5,
+runtime and seven-strategy evaluation are enabled only by a later explicit production-promotion
+source change after Development evidence passes.
 
 ## One current user surface
 
@@ -122,14 +142,14 @@ configs/v128_control_execution.json
 configs/project7_current_lint_surface.json
 ```
 
-Stable user entrypoints remain:
+Stable user entrypoints:
 
 ```text
 rtc-current-preflight
 scripts/run_step2_current.py
-scripts/run_policy_current.py
-scripts/run_seven_strategies_current.py
+scripts/run_policy_current.py          # currently fail-closed
+scripts/run_seven_strategies_current.py # currently fail-closed
 ```
 
-Runtime/seven-strategy entrypoints are retained for a future explicitly promoted model but are not
-authorized for the current smoke/dev candidate. See **`CODEX_START_HERE.md`** for exact commands.
+See **`CODEX_START_HERE.md`** for the exact clean-sync, stage-stop, audit and conditional-resume
+commands.
