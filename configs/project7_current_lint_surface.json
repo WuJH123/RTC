@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_CURRENT_LINT_SURFACE_V2_HIGH_SIGNAL_ACTIVE_ONLY",
+  "contract": "PROJECT7_CURRENT_LINT_SURFACE_V3_GRADIENT_STAGE_DECOMPOSITION",
   "purpose": "Fail closed on high-signal Python correctness findings for the actively maintained Project7 execution and Development-diagnostic surface, without turning archival/shared Vxxx style debt into a smoke/dev stop-gate.",
   "full_repository_ruff_is_gate": false,
   "current_surface_ruff_is_gate": true,
@@ -14,6 +14,7 @@
     "scripts/run_seven_strategies_v128.py",
     "scripts/audit_step2_spatial_current.py",
     "scripts/audit_step2_gradient_current_dev.py",
+    "scripts/audit_step2_gradient_stage_current_dev.py",
     "scripts/train_step1_global_attention_dev.py",
     "scripts/audit_step1_global_attention_current.py",
     "scripts/build_edge_physics_current.py",
@@ -63,7 +64,8 @@
     "tests/test_v128_training_objective.py",
     "tests/test_v128_checkpoint_strict.py",
     "tests/test_v128_mpc_runtime.py",
-    "tests/test_v128_development_profiles.py"
+    "tests/test_v128_development_profiles.py",
+    "tests/test_v128_gradient_decomposition.py"
   ],
   "shared_dependency_policy": "Older V60/V123/V125/V127 modules reused internally by the current implementation remain protected by the full pytest suite, source/checkpoint lineage fingerprints and explicit routing tests. Their pre-existing style/refactor findings are not a smoke/dev lint prerequisite unless the file is actively modified for the current change.",
   "non_gate_historical_debt_policy": "Do not run ruff --fix . or mass-format historical/archival code during model debugging. Repository-wide style cleanup is a separate maintenance task and must not alter current scientific behavior or provenance."
