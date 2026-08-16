@@ -1,7 +1,7 @@
 {
-  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V4_COUNTERFACTUAL_FIRST_DEV",
+  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V5_COUNTERFACTUAL_FIRST_LAZY_DEV",
   "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
-  "selected_implementation_contract": "PROJECT7_V128_COUNTERFACTUAL_FIRST_EDGE_PHYSICS_SURROGATE_DEV_V2",
+  "selected_implementation_contract": "PROJECT7_V128_COUNTERFACTUAL_FIRST_EDGE_PHYSICS_SURROGATE_DEV_V3",
   "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, predict action-conditioned network hydraulics with a differentiable surrogate, optimize 109 writable targets continuously over H120 inside H360, minimize system-wide cumulative TFV, protect Priority8 PFV with a one-sided soft secondary term, and execute only the first 10-minute target in authoritative SWMM",
   "authoritative_truth": "SWMM",
   "development_priority": "learn causal candidate-reference hydraulic trajectories first; treat autograd TFV sensitivity as a downstream diagnostic and online solver signal rather than a primary SWMM-labelled training target",
@@ -54,7 +54,7 @@
     "gradient_training_label_used": false,
     "gradient_evaluation_order": "after direct flow, direct hydraulic, trajectory and ranking checks",
     "objective_module": "src/rtc/step2_train_v128_exact.py",
-    "training_amendment_module": "src/rtc/step2_counterfactual_training_v3.py",
+    "training_amendment_module": "src/rtc/step2_counterfactual_training_v4.py",
     "model_and_scale_module": "src/rtc/step2_counterfactual_first_v128.py",
     "edge_physics_module": "src/rtc/step2_differentiable_v128_edge.py",
     "edge_physics_artifact_required": true,
@@ -62,9 +62,12 @@
     "current_enabled_profiles": ["smoke", "dev"],
     "full_current_enabled": false,
     "full_block_reason": "counterfactual-first surrogate must pass same-checkpoint direct flow/hydraulic, trajectory/ranking, gradient-diagnostic and Development closed-loop gates",
+    "strict_full_checkpoint_currently_creatable": false,
+    "strict_full_checkpoint_reason": "Development subclass requires a future explicit production model factory/loader promotion",
     "stage_checkpoint_resume": "stage-boundary; graph/data/edge-physics/source/training-design lineage fail closed",
     "stage_checkpoints_nonfinal": true,
-    "lazy_mmap_branch_streaming": true
+    "lazy_mmap_branch_streaming": true,
+    "direct_pair_materialization": "reference/candidate only, only through first divergence step"
   },
   "diagnostic_evidence_triggering_repair": {
     "pr77_full_horizon_flow_sign_accuracy": 0.851569933396765,
