@@ -1,15 +1,21 @@
 """Development-only D2 TFV-gradient audit for nonfinal V128 stage checkpoints.
 
 For each held-out D2 group the exact reference H360 action sequence is differentiated once to
-obtain full dJ/dU[72,109].  Every authoritative SWMM candidate is then audited along its exact
-reference-to-candidate action-sequence direction.  The D2 cache already freezes those action
+obtain full dJ/dU[72,109]. Every authoritative SWMM candidate is then audited along its exact
+reference-to-candidate action-sequence direction. The D2 cache already freezes those action
 sequences in reference-then-candidate order, so row-level ``actuator_id``, ``base_setting`` and
 ``requested_setting`` metadata are not required and must never be synthesised.
 
 The magnitude diagnostic divides both the authoritative TFV change and the autograd projection
-by the candidate's peak absolute setting displacement.  This is a directional sensitivity along
-the *actual D2 pulse shape*, not a claim that all 72 time steps share one scalar setting.  D2 is
+by the candidate's peak absolute setting displacement. This is a directional sensitivity along
+the *actual D2 pulse shape*, not a claim that all 72 time steps share one scalar setting. D2 is
 contractually single-actuator; zero-change or multi-actuator candidates fail closed.
+
+The audit also records two Development-only decomposition diagnostics. First, predicted/true
+magnitude ratios quantify action-gradient attenuation directly. Second, the smooth-TFV Softplus
+gate ``sigmoid(predicted_flood_rate / scale)`` is summarized on the reference rollout. This
+separates a smooth-objective dead-zone from attenuation earlier in the action-to-hydraulics path;
+it does not change training or the MPC objective.
 """
 from __future__ import annotations
 
@@ -24,8 +30,26 @@ from .step2_train_response_v60 import InputNormalizationV60
 from .step2_train_v127 import _static, _truth_node_volume
 
 V128_DEV_D2_GRADIENT_AUDIT_CONTRACT = (
-    "PROJECT7_V128_DEVELOPMENT_D2_SETTINGS_DERIVED_DIRECTIONAL_GRADIENT_AUDIT_V2"
+    "PROJECT7_V128_DEVELOPMENT_D2_SETTINGS_DERIVED_DIRECTIONAL_GRADIENT_AUDIT_V3_DECOMPOSED"
 )
+
+
+def _finite_tensor_summary(values: torch.Tensor) -> dict[str, float]:
+    flat = values.detach().reshape(-1).float()
+    if flat.numel() <= 0 or not bool(torch.isfinite(flat).all()):
+        raise RuntimeError("V128 development gradient diagnostic received invalid tensor")
+    quantiles = torch.quantile(
+        flat,
+        torch.as_tensor([0.1, 0.5, 0.9], device=flat.device, dtype=flat.dtype),
+    )
+    return {
+        "mean": float(flat.mean().cpu()),
+        "q10": float(quantiles[0].cpu()),
+        "median": float(quantiles[1].cpu()),
+        "q90": float(quantiles[2].cpu()),
+        "min": float(flat.min().cpu()),
+        "max": float(flat.max().cpu()),
+    }
 
 
 def _full_settings_gradient(
@@ -38,7 +62,7 @@ def _full_settings_gradient(
     flow: torch.Tensor,
     base_sequence: np.ndarray,
     flood_rate_index: int,
-) -> np.ndarray:
+) -> tuple[np.ndarray, dict[str, float]]:
     settings = torch.as_tensor(
         base_sequence, dtype=initial.dtype, device=initial.device
     ).requires_grad_(True)
@@ -58,10 +82,38 @@ def _full_settings_gradient(
         priority_indices=None,
         dt_seconds=300.0,
     )
-    gradient = torch.autograd.grad(output.optimization_tfv_m3.sum(), settings)[0]
+    gradient = torch.autograd.grad(
+        output.optimization_tfv_m3.sum(), settings, retain_graph=False
+    )[0]
     if gradient.shape != settings.shape or not bool(torch.isfinite(gradient).all()):
         raise RuntimeError("V128 development D2 audit produced invalid settings gradient")
-    return gradient.detach().cpu().numpy().astype(np.float64, copy=False)
+
+    raw_flood = output.rollout.states[..., int(flood_rate_index)]
+    scale = torch.as_tensor(
+        model.v127_smooth_flood_scale_m3s,
+        dtype=raw_flood.dtype,
+        device=raw_flood.device,
+    ).reshape(()).clamp_min(1.0e-6)
+    gate = torch.sigmoid(raw_flood / scale)
+    raw_summary = _finite_tensor_summary(raw_flood)
+    gate_summary = _finite_tensor_summary(gate)
+    decomposition = {
+        "full_settings_gradient_l2": float(torch.linalg.vector_norm(gradient).detach().cpu()),
+        "full_settings_gradient_max_abs": float(gradient.detach().abs().max().cpu()),
+        "smooth_flood_scale_m3s": float(scale.detach().cpu()),
+        "predicted_flood_rate_mean_m3s": raw_summary["mean"],
+        "predicted_flood_rate_q10_m3s": raw_summary["q10"],
+        "predicted_flood_rate_median_m3s": raw_summary["median"],
+        "predicted_flood_rate_q90_m3s": raw_summary["q90"],
+        "smooth_flood_gate_mean": gate_summary["mean"],
+        "smooth_flood_gate_q10": gate_summary["q10"],
+        "smooth_flood_gate_median": gate_summary["median"],
+        "smooth_flood_gate_q90": gate_summary["q90"],
+        "smooth_flood_gate_fraction_lt_0p01": float((gate < 0.01).float().mean().cpu()),
+        "smooth_flood_gate_fraction_lt_0p10": float((gate < 0.10).float().mean().cpu()),
+        "smooth_flood_gate_fraction_gt_0p50": float((gate > 0.50).float().mean().cpu()),
+    }
+    return gradient.detach().cpu().numpy().astype(np.float64, copy=False), decomposition
 
 
 def _candidate_direction_from_settings(
@@ -71,12 +123,7 @@ def _candidate_direction_from_settings(
     expected_actuator_index: int,
     tolerance: float = 1.0e-7,
 ) -> tuple[np.ndarray, float, int]:
-    """Return exact D2 direction normalised by its peak absolute setting displacement.
-
-    ``direction`` retains the physical sign and full temporal pulse/ramp shape.  Its changed
-    actuator has peak absolute magnitude one.  This construction is lossless with respect to
-    the stored reference/candidate settings and avoids inventing missing scalar provenance.
-    """
+    """Return exact D2 direction normalised by its peak absolute setting displacement."""
     reference = np.asarray(reference_sequence, dtype=np.float64)
     candidate = np.asarray(candidate_sequence, dtype=np.float64)
     if reference.shape != candidate.shape or reference.ndim != 2:
@@ -105,6 +152,46 @@ def _candidate_direction_from_settings(
     return direction, peak_abs, active_steps
 
 
+def _gradient_alignment_summary(rows: Sequence[dict[str, object]]) -> dict[str, object]:
+    truth = np.asarray(
+        [float(row["true_tfv_gradient_m3_per_setting"]) for row in rows], dtype=np.float64
+    )
+    pred = np.asarray(
+        [float(row["predicted_tfv_gradient_m3_per_setting"]) for row in rows], dtype=np.float64
+    )
+    if not truth.size or not np.isfinite(truth).all() or not np.isfinite(pred).all():
+        raise RuntimeError("V128 gradient alignment summary requires finite cases")
+    informative = np.abs(truth) > 1.0e-8
+    denom = float(np.linalg.norm(truth) * np.linalg.norm(pred))
+    cosine = float(np.dot(truth, pred) / denom) if denom > 1.0e-12 else None
+    pearson = None
+    if truth.size >= 2 and np.std(truth) > 1.0e-12 and np.std(pred) > 1.0e-12:
+        pearson = float(np.corrcoef(truth, pred)[0, 1])
+    ratio = np.abs(pred[informative]) / np.abs(truth[informative]) if informative.any() else np.asarray([])
+    truth_norm = float(np.linalg.norm(truth))
+    pred_norm = float(np.linalg.norm(pred))
+    return {
+        "gradient_cases_nonzero_truth": int(informative.sum()),
+        "truth_gradient_negative_cases": int(np.sum(truth < -1.0e-8)),
+        "truth_gradient_zero_cases": int(np.sum(np.abs(truth) <= 1.0e-8)),
+        "truth_gradient_positive_cases": int(np.sum(truth > 1.0e-8)),
+        "predicted_gradient_negative_cases": int(np.sum(pred < -1.0e-8)),
+        "predicted_gradient_zero_cases": int(np.sum(np.abs(pred) <= 1.0e-8)),
+        "predicted_gradient_positive_cases": int(np.sum(pred > 1.0e-8)),
+        "tfv_gradient_global_cosine_similarity": cosine,
+        "tfv_gradient_global_pearson": pearson,
+        "predicted_to_true_gradient_l2_ratio": (
+            pred_norm / truth_norm if truth_norm > 1.0e-12 else None
+        ),
+        "median_abs_predicted_to_true_gradient_ratio": (
+            float(np.median(ratio)) if ratio.size else None
+        ),
+        "q90_abs_predicted_to_true_gradient_ratio": (
+            float(np.quantile(ratio, 0.9)) if ratio.size else None
+        ),
+    }
+
+
 def evaluate_d2_gradient_v128_development(
     model: Any,
     *,
@@ -122,6 +209,7 @@ def evaluate_d2_gradient_v128_development(
     model.eval().to(device)
     static = _static(graph, device)
     rows: list[dict[str, object]] = []
+    decomposition_rows: list[dict[str, float]] = []
     surrogate_rollouts = 0
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
@@ -138,9 +226,6 @@ def evaluate_d2_gradient_v128_development(
         if sequences.shape[0] < 2:
             raise ValueError(f"{name}: D2 gradient audit requires reference plus candidate")
 
-        # Both helpers use the same authoritative reference-first action sequence.  The spatial
-        # audit already relies on this invariant, so gradient screening should not demand a
-        # second, lossy row-level provenance schema that the canonical cache never promised.
         actuator_indices = _changed_actuator_per_candidate(cpu["settings"])
         node_volume = _truth_node_volume(base_cache, name).astype(np.float64, copy=False)
         if node_volume.shape[0] != sequences.shape[0]:
@@ -148,7 +233,7 @@ def evaluate_d2_gradient_v128_development(
         tfv = node_volume.sum(axis=1, dtype=np.float64)
         reference_sequence = sequences[0]
 
-        full_gradient = _full_settings_gradient(
+        full_gradient, decomposition = _full_settings_gradient(
             model,
             graph=graph,
             static=static,
@@ -158,6 +243,7 @@ def evaluate_d2_gradient_v128_development(
             base_sequence=reference_sequence,
             flood_rate_index=int(flood_rate_index),
         )
+        decomposition_rows.append(decomposition)
         surrogate_rollouts += 1
 
         for candidate_position in range(1, sequences.shape[0]):
@@ -202,12 +288,10 @@ def evaluate_d2_gradient_v128_development(
     group_metrics: list[dict[str, float]] = []
     for _, group in sorted(groups.items()):
         truth = np.asarray(
-            [float(row["true_tfv_gradient_m3_per_setting"]) for row in group],
-            dtype=np.float64,
+            [float(row["true_tfv_gradient_m3_per_setting"]) for row in group], dtype=np.float64
         )
         pred = np.asarray(
-            [float(row["predicted_tfv_gradient_m3_per_setting"]) for row in group],
-            dtype=np.float64,
+            [float(row["predicted_tfv_gradient_m3_per_setting"]) for row in group], dtype=np.float64
         )
         informative = np.abs(truth) > 1.0e-8
         sign = (
@@ -230,12 +314,19 @@ def evaluate_d2_gradient_v128_development(
         values = values[np.isfinite(values)]
         return float(values.mean()) if values.size else None
 
+    def decomposition_mean(key: str) -> float:
+        values = np.asarray([row[key] for row in decomposition_rows], dtype=np.float64)
+        if not values.size or not np.isfinite(values).all():
+            raise RuntimeError(f"V128 decomposition metric is invalid: {key}")
+        return float(values.mean())
+
     peak_alloc = peak_reserved = 0.0
     if device.type == "cuda":
         gib = float(1024**3)
         peak_alloc = float(torch.cuda.max_memory_allocated(device) / gib)
         peak_reserved = float(torch.cuda.max_memory_reserved(device) / gib)
     mae = mean("mae")
+    alignment = _gradient_alignment_summary(rows)
     metrics: dict[str, object] = {
         "contract": V128_DEV_D2_GRADIENT_AUDIT_CONTRACT,
         "scientific_split": "development",
@@ -244,10 +335,9 @@ def evaluate_d2_gradient_v128_development(
         "gradient_rainfall_groups": len(groups),
         "tfv_gradient_sign_accuracy": mean("sign"),
         "tfv_gradient_cosine_similarity": mean("cosine"),
-        # Compatibility name retained for existing reporting.  The exact unit/semantics are
-        # made explicit below and are not fabricated from absent requested/base-setting fields.
         "tfv_gradient_mae_m3_per_setting": mae,
         "tfv_gradient_mae_m3_per_peak_setting_step": mae,
+        **alignment,
         "gradient_variable_space": "exact stored H72x109 D2 setting-sequence direction",
         "gradient_magnitude_normalization": (
             "candidate peak absolute setting displacement; direction retains exact temporal shape"
@@ -265,6 +355,34 @@ def evaluate_d2_gradient_v128_development(
             "actuator_id/base_setting/requested_setting metadata"
         ),
         "single_actuator_action_contract_verified": True,
+        "smooth_flood_gate_semantics": (
+            "sigmoid(predicted future flood_rate / frozen smooth_flood_scale); Development "
+            "diagnostic only, not a new objective or gate"
+        ),
+        "smooth_flood_scale_m3s": decomposition_mean("smooth_flood_scale_m3s"),
+        "predicted_flood_rate_mean_m3s": decomposition_mean("predicted_flood_rate_mean_m3s"),
+        "predicted_flood_rate_q10_m3s": decomposition_mean("predicted_flood_rate_q10_m3s"),
+        "predicted_flood_rate_median_m3s": decomposition_mean("predicted_flood_rate_median_m3s"),
+        "predicted_flood_rate_q90_m3s": decomposition_mean("predicted_flood_rate_q90_m3s"),
+        "smooth_flood_gate_mean": decomposition_mean("smooth_flood_gate_mean"),
+        "smooth_flood_gate_q10": decomposition_mean("smooth_flood_gate_q10"),
+        "smooth_flood_gate_median": decomposition_mean("smooth_flood_gate_median"),
+        "smooth_flood_gate_q90": decomposition_mean("smooth_flood_gate_q90"),
+        "smooth_flood_gate_fraction_lt_0p01": decomposition_mean(
+            "smooth_flood_gate_fraction_lt_0p01"
+        ),
+        "smooth_flood_gate_fraction_lt_0p10": decomposition_mean(
+            "smooth_flood_gate_fraction_lt_0p10"
+        ),
+        "smooth_flood_gate_fraction_gt_0p50": decomposition_mean(
+            "smooth_flood_gate_fraction_gt_0p50"
+        ),
+        "mean_reference_full_settings_gradient_l2": decomposition_mean(
+            "full_settings_gradient_l2"
+        ),
+        "mean_reference_full_settings_gradient_max_abs": decomposition_mean(
+            "full_settings_gradient_max_abs"
+        ),
         "causal_step1_state": True,
         "causal_rainfall": True,
         "used_for_training": False,
@@ -279,5 +397,6 @@ def evaluate_d2_gradient_v128_development(
 __all__ = [
     "V128_DEV_D2_GRADIENT_AUDIT_CONTRACT",
     "_candidate_direction_from_settings",
+    "_gradient_alignment_summary",
     "evaluate_d2_gradient_v128_development",
 ]

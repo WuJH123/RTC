@@ -9,17 +9,32 @@ from rtc.step2_gradient_audit_v128_dev import _full_settings_gradient
 
 
 class _LinearObjectiveModel:
+    v127_smooth_flood_scale_m3s = torch.tensor(0.01)
+
     def objective_rollout(self, *, settings, **kwargs):
         del kwargs
-        weights = torch.arange(settings.numel(), device=settings.device, dtype=settings.dtype).reshape_as(settings) + 1.0
+        weights = (
+            torch.arange(settings.numel(), device=settings.device, dtype=settings.dtype)
+            .reshape_as(settings)
+            + 1.0
+        )
         value = (settings * weights).sum(dim=(1, 2))
-        return SimpleNamespace(optimization_tfv_m3=value)
+        # The decomposition diagnostic reads only the flood-rate channel of the rollout.
+        # Keep it exactly zero so the Softplus derivative gate is known and finite while the
+        # optimization objective remains the deliberately linear function under test.
+        rollout = SimpleNamespace(
+            states=torch.zeros(
+                settings.shape[0], settings.shape[1], 2, 1,
+                device=settings.device, dtype=settings.dtype,
+            )
+        )
+        return SimpleNamespace(optimization_tfv_m3=value, rollout=rollout)
 
 
 def test_dev_full_settings_gradient_matches_linear_objective_exactly() -> None:
     graph = SimpleNamespace(actuator_ids=("a0", "a1"))
     base = np.zeros((72, 2), dtype=np.float32)
-    gradient = _full_settings_gradient(
+    gradient, decomposition = _full_settings_gradient(
         _LinearObjectiveModel(),
         graph=graph,
         static={
@@ -37,3 +52,6 @@ def test_dev_full_settings_gradient_matches_linear_objective_exactly() -> None:
     )
     expected = np.arange(72 * 2, dtype=np.float64).reshape(72, 2) + 1.0
     np.testing.assert_array_equal(gradient, expected)
+    assert np.isclose(decomposition["smooth_flood_scale_m3s"], 0.01, rtol=0.0, atol=1.0e-8)
+    assert decomposition["smooth_flood_gate_mean"] == 0.5
+    assert decomposition["smooth_flood_gate_fraction_lt_0p01"] == 0.0
