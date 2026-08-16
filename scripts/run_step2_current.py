@@ -10,7 +10,8 @@ candidate ordering despite authoritative SWMM evidence of physical control lever
 
 Raw Torch Chrome tracing remains fail-closed on the 16-GB Development workstation. The direct
 value runner is substantially smaller, but an unbounded trace is still unnecessary for the core
-scientific test and previously exhausted host memory.
+scientific test and previously exhausted host memory. If resource telemetry is needed, prefer the
+bounded TRAINING_TELEMETRY.jsonl-style low-frequency GPU/host measurements rather than a raw trace.
 """
 from __future__ import annotations
 
@@ -27,8 +28,8 @@ def main() -> None:
     ):
         raise RuntimeError(
             "current Project7 disables raw --torch-profiler trace export on the 16-GB "
-            "Development workstation. Use normal training outputs and low-frequency GPU/host "
-            "telemetry instead."
+            "Development workstation. Use normal training outputs and bounded "
+            "TRAINING_TELEMETRY.jsonl-style low-frequency GPU/host telemetry instead."
         )
     _direct_main()
 
