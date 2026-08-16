@@ -20,14 +20,19 @@ from .step2_counterfactual_first_v128 import (
     DIRECT_ACTION_FLOW_SCALE_CONTRACT,
     build_counterfactual_first_v128_model_from_graph,
 )
-from .step2_counterfactual_training_v4 import (
-    COUNTERFACTUAL_STAGE_A_V4_CONTRACT,
-    DIRECT_FLOW_A0_V4_CONTRACT,
-    JOINT_DIRECT_A2_V4_CONTRACT,
-    ORACLE_HYDRAULIC_A1_V4_CONTRACT,
+from .step2_counterfactual_training_v5 import (
+    COUNTERFACTUAL_B0_V5_CONTRACT,
+    COUNTERFACTUAL_STAGE_A_V5_CONTRACT,
+    DIRECT_FLOW_A0_V5_CONTRACT,
+    JOINT_DIRECT_A2_V5_CONTRACT,
+    ORACLE_HYDRAULIC_A1_V5_CONTRACT,
+    POST_OBJECTIVE_TRAJECTORY_ANCHOR_V5_CONTRACT,
 )
+from .step2_oracle_isolation_v128 import ORACLE_FLOW_ISOLATION_CONTRACT
 
-CURRENT_DEV_CONTEXT_CONTRACT = "PROJECT7_V128_COUNTERFACTUAL_FIRST_DEV_CONTEXT_V5_STAGE_A_V4"
+CURRENT_DEV_CONTEXT_CONTRACT = (
+    "PROJECT7_V128_COUNTERFACTUAL_FIRST_DEV_CONTEXT_V6_STAGE_A_B0_V5_ORACLE_ISOLATED"
+)
 
 
 def sha256_file(path: str | Path) -> str:
@@ -42,7 +47,8 @@ def action_identifiable_source_sha256() -> str:
     digest = hashlib.sha256()
     for module_name in (
         "rtc.step2_counterfactual_first_v128",
-        "rtc.step2_counterfactual_training_v4",
+        "rtc.step2_counterfactual_training_v5",
+        "rtc.step2_oracle_isolation_v128",
         "rtc.step2_action_identifiable_v128",
         "rtc.step2_differentiable_v128_edge",
         "rtc.edge_physics_current_v128",
@@ -68,10 +74,14 @@ def extend_action_identifiable_stage_lineage(
             "counterfactual_first_model_contract": COUNTERFACTUAL_FIRST_MODEL_CONTRACT,
             "counterfactual_first_training_contract": COUNTERFACTUAL_FIRST_TRAINING_CONTRACT,
             "direct_action_flow_scale_contract": DIRECT_ACTION_FLOW_SCALE_CONTRACT,
-            "counterfactual_stage_a_contract": COUNTERFACTUAL_STAGE_A_V4_CONTRACT,
-            "direct_flow_a0_contract": DIRECT_FLOW_A0_V4_CONTRACT,
-            "oracle_hydraulic_a1_contract": ORACLE_HYDRAULIC_A1_V4_CONTRACT,
-            "joint_direct_a2_contract": JOINT_DIRECT_A2_V4_CONTRACT,
+            "oracle_flow_isolation_contract": ORACLE_FLOW_ISOLATION_CONTRACT,
+            "counterfactual_stage_a_contract": COUNTERFACTUAL_STAGE_A_V5_CONTRACT,
+            "direct_flow_a0_contract": DIRECT_FLOW_A0_V5_CONTRACT,
+            "oracle_hydraulic_a1_contract": ORACLE_HYDRAULIC_A1_V5_CONTRACT,
+            "joint_direct_a2_contract": JOINT_DIRECT_A2_V5_CONTRACT,
+            "counterfactual_b0_contract": COUNTERFACTUAL_B0_V5_CONTRACT,
+            "post_objective_trajectory_anchor_contract": POST_OBJECTIVE_TRAJECTORY_ANCHOR_V5_CONTRACT,
+            "explicit_lazy_stage_a_b0_anchor": True,
             "gradient_is_training_target": False,
         }
     )
