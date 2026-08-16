@@ -63,6 +63,60 @@ def test_single_actuator_has_zero_interaction_and_only_one_main_effect() -> None
     torch.testing.assert_close(output.total_delta_tfv_m3, output.facility_main_effect_m3.sum(dim=-1))
 
 
+def test_pairwise_value_is_exactly_antisymmetric_when_reference_and_candidate_swap() -> None:
+    values = _inputs(batch=1)
+    model, state, rainfall, reference, previous_flow, up, down, physics = values
+    candidate = reference.clone()
+    candidate[:, :24, 5] += 0.15
+    candidate[:, 20:50, 17] -= 0.10
+    forward = _forward(
+        model, state, rainfall, reference, candidate, previous_flow, up, down, physics
+    )
+    reverse = _forward(
+        model, state, rainfall, candidate, reference, previous_flow, up, down, physics
+    )
+    torch.testing.assert_close(
+        forward.facility_main_effect_m3,
+        -reverse.facility_main_effect_m3,
+        rtol=0.0,
+        atol=1.0e-5,
+    )
+    torch.testing.assert_close(
+        forward.interaction_residual_m3,
+        -reverse.interaction_residual_m3,
+        rtol=0.0,
+        atol=1.0e-5,
+    )
+    torch.testing.assert_close(
+        forward.total_delta_tfv_m3,
+        -reverse.total_delta_tfv_m3,
+        rtol=0.0,
+        atol=1.0e-5,
+    )
+
+
+def test_complete_reference_sequence_changes_value_of_same_action_delta() -> None:
+    values = _inputs(batch=1)
+    model, state, rainfall, reference, previous_flow, up, down, physics = values
+    reference_a = reference.clone()
+    reference_b = reference.clone()
+    # Keep the first 10-min block identical, but change the later reference trajectory. The old
+    # delta-only model could not see this distinction because it used only the first reference
+    # setting plus candidate-reference. The pairwise model must see the complete reference.
+    reference_b[:, 20:, 5] = 0.65
+    candidate_a = reference_a.clone()
+    candidate_b = reference_b.clone()
+    candidate_a[:, :12, 5] += 0.10
+    candidate_b[:, :12, 5] += 0.10
+    first = _forward(
+        model, state, rainfall, reference_a, candidate_a, previous_flow, up, down, physics
+    )
+    second = _forward(
+        model, state, rainfall, reference_b, candidate_b, previous_flow, up, down, physics
+    )
+    assert not torch.equal(first.facility_main_effect_m3[:, 5], second.facility_main_effect_m3[:, 5])
+
+
 def test_zero_action_value_has_finite_nonzero_action_gradient() -> None:
     values = _inputs(batch=1)
     model, state, rainfall, reference, previous_flow, up, down, physics = values
