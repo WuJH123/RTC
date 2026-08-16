@@ -72,6 +72,8 @@
     "runtime": "scripts/run_policy_current.py (fail-closed until production promotion)",
     "seven_strategy": "scripts/run_seven_strategies_current.py (fail-closed until production promotion)",
     "preflight": "rtc-current-preflight",
+    "full_ranking": "scripts/audit_step2_v128_fast.py",
+    "full_d2": "scripts/audit_step2_v128_d2_gradients_fast.py",
     "production_full_ranking": "scripts/audit_step2_v128_fast.py (blocked until production promotion)",
     "production_full_d2": "scripts/audit_step2_v128_d2_gradients_fast.py (blocked until production promotion)",
     "d5": "BLOCKED_UNTIL_PRODUCTION_PROMOTION",
