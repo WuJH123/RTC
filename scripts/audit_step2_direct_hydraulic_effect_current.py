@@ -1,10 +1,12 @@
 """Development-only same-prefix normal-vs-oracle hydraulic action-effect audit.
 
 Each held-out D2 pair is evaluated only at its first setting-divergence transition. Reference and
-candidate therefore share one authoritative pre-action hydraulic state/managed-flow prefix. The
-normal branch uses predicted managed flow; the oracle branch substitutes the stored authoritative
-SWMM managed flow into the same transition. Rainfall comes from the frozen causal forecast store,
-never from realised future rainfall. This is diagnostic only and never a training/Final source.
+candidate share one authoritative pre-action hydraulic state/managed-flow prefix. The normal
+branch uses the candidate/reference settings and predicted managed flow. The oracle branch blocks
+the branch-varying setting side channel inside the hydraulic transition and substitutes stored
+authoritative SWMM managed flow, so its direct effect is a strict ``managed flow -> hydraulics``
+isolation. Rainfall comes from the frozen causal forecast store, never realised future rainfall.
+This is Development diagnostic evidence only and is never an online/training/Final truth source.
 """
 from __future__ import annotations
 
@@ -21,22 +23,24 @@ from rtc.development_profile_v128 import apply_profile_to_design, get_execution_
 from rtc.production_cli import _load_graph
 from rtc.stage_checkpoint_v128 import load_stage_checkpoint_v128
 from rtc.step2_causal_rainfall_v123 import load_causal_forecast_store_v123
-from rtc.step2_counterfactual_first_v128 import (
-    first_direct_response_spec_numpy,
-    oracle_transition_prediction,
-)
+from rtc.step2_counterfactual_first_v128 import first_direct_response_spec_numpy
 from rtc.step2_current_dev_context_v128 import (
     build_current_action_identifiable_model,
     extend_action_identifiable_stage_lineage,
 )
 from rtc.step2_d4_cache_v125 import D4_SOURCE_KIND
+from rtc.step2_oracle_isolation_v128 import (
+    ORACLE_FLOW_ISOLATION_CONTRACT,
+    oracle_flow_transition_prediction,
+    shared_reference_setting,
+)
 from rtc.step2_state_store_v127 import load_causal_state_store_v127
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
 from rtc.step2_train_v127 import _static
 from rtc.step2_train_v127_streaming import V127StreamingMemoryDesign
 from rtc.v128_control_profile import build_v128_control_training_design, configure_v128_cuda_matmul_precision
 
-CONTRACT = "PROJECT7_CURRENT_DIRECT_SAME_PREFIX_NORMAL_VS_ORACLE_HYDRAULIC_AUDIT_V3"
+CONTRACT = "PROJECT7_CURRENT_DIRECT_SAME_PREFIX_NORMAL_VS_ORACLE_HYDRAULIC_AUDIT_V4_Q_ONLY"
 
 
 def _sha(path: str | Path) -> str:
@@ -295,7 +299,7 @@ def main() -> None:
                     dtype=torch.float32,
                     device=device,
                 )
-                oracle_state = oracle_transition_prediction(
+                oracle_state = oracle_flow_transition_prediction(
                     model,
                     prev_state=prev_state,
                     previous_flow=prev_flow,
@@ -303,6 +307,7 @@ def main() -> None:
                     oracle_flow=true_q,
                     rainfall=rainfall,
                     static=static,
+                    action_context_setting=shared_reference_setting(setting),
                 )
                 truth_state = np.stack(
                     (arrays["target_states"][ref][k], arrays["target_states"][candidate][k])
@@ -324,6 +329,7 @@ def main() -> None:
         raise RuntimeError("direct hydraulic audit found no same-prefix held-out pairs")
     result = {
         "contract": CONTRACT,
+        "oracle_flow_isolation_contract": ORACLE_FLOW_ISOLATION_CONTRACT,
         "profile": profile.name,
         "completed_stage": args.stage,
         "scientific_split": "development",
@@ -333,13 +339,15 @@ def main() -> None:
         "normal_flow_effect": _effect_metrics(true_flow_effect, normal_flow_effect),
         "depth": {
             "normal_vs_swmm": _effect_metrics(true_depth, normal_depth),
-            "oracle_flow_vs_swmm": _effect_metrics(true_depth, oracle_depth),
+            "oracle_flow_only_vs_swmm": _effect_metrics(true_depth, oracle_depth),
         },
         "flood_rate": {
             "normal_vs_swmm": _effect_metrics(true_flood, normal_flood),
-            "oracle_flow_vs_swmm": _effect_metrics(true_flood, oracle_flood),
+            "oracle_flow_only_vs_swmm": _effect_metrics(true_flood, oracle_flood),
         },
-        "oracle_flow_role": "diagnostic isolation only; not used online",
+        "oracle_flow_role": "diagnostic q-to-hydraulics isolation only; not used online",
+        "oracle_direct_pair_setting_bypass_blocked": True,
+        "oracle_branch_varying_control_signal": "authoritative_managed_flow_only",
         "gradient_label_used": False,
         "validation_accessed": False,
         "final_accessed": False,
