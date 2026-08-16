@@ -10,7 +10,7 @@ from rtc.step2_counterfactual_first_v128 import (
     derive_direct_response_scales_v128,
     first_direct_response_spec_numpy,
 )
-from rtc.step2_counterfactual_training_v4 import _direct_specs_lazy, _zero_based_spec_order
+from rtc.step2_counterfactual_training_v5 import _direct_specs_lazy, _zero_based_spec_order
 from rtc.step2_lazy_stream_v128 import LazyBranchArrayV128
 
 
