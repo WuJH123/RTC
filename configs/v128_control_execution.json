@@ -1,30 +1,40 @@
 {
-  "contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_DEBUG_FIRST_EXACT_PAIRWISE",
+  "contract": "PROJECT7_V128_ACTION_IDENTIFIABLE_EDGE_PHYSICS_DEBUG_FIRST_V1",
   "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
   "time": {"model_step_s": 300, "control_step_s": 600, "horizon_steps": 72, "horizon_min": 360, "free_blocks": 12, "free_min": 120, "execute_min": 10},
   "objective": {"primary": "TFV", "priority8_pfv": "ONE_SIDED_SOFT_SECONDARY", "global_peak": "REPORT_ONLY"},
   "step2": {
-    "contract": "PROJECT7_V128_TYPED_PHYSICS_AWARE_ACTUATOR_MESSAGE_SURROGATE_V1",
-    "stage_a": "src/rtc/step2_train_v128_hydraulic.py",
-    "stage_b": "src/rtc/step2_train_v128_exact.py",
+    "contract": "PROJECT7_V128_ACTION_IDENTIFIABLE_EDGE_PHYSICS_SURROGATE_DEV_V1",
+    "base_typed_model": "src/rtc/step2_differentiable_v128.py",
+    "edge_transition": "src/rtc/step2_differentiable_v128_edge.py",
+    "action_identifiable_training": "src/rtc/step2_action_identifiable_v128.py",
+    "exact_h360_objective": "src/rtc/step2_train_v128_exact.py",
+    "flow_scale": "FIT_ONLY_MAX_TEMPORAL_Q995_ACTION_CONDITIONED_Q995",
+    "flow_scale_is_engineering_constraint": false,
+    "stage_a": "absolute teacher-forced state/managed-flow plus candidate-reference state/managed-flow effects",
+    "stage_b0": "autoregressive rollout plus candidate-reference state/managed-flow effects",
+    "stage_b": "exact H360 pairwise TFV objective plus low-LR FIT-only H360 action-effect anchor",
     "pair_threshold_m3": 1.0,
     "pairwise_gradient": "TWO_PASS_SAME_PARAMETER_SNAPSHOT_EXACT_FIRST_ORDER",
     "truth_partition": "CANONICAL_FLOAT32_SWMM_TFV_DELTA_SHARED_BY_CENSUS_REPORT_AND_LIVE_GRADIENT",
     "profiles": ["smoke", "dev", "full"],
+    "enabled_profiles": ["smoke", "dev"],
+    "full_enabled": false,
+    "edge_physics_artifact_required": true,
     "stage_resume": true,
+    "stage_resume_extra_lineage": ["edge_physics_sha256", "action_identifiable_source_sha256"],
     "smoke_dev_final_checkpoint": false
   },
   "checkpoint": {
-    "contract": "PROJECT7_V128_STEP2_CHECKPOINT_V6_CURRENT_PROFILE_TRAINING_SOURCE_STRICT",
-    "model_source_must_match": true,
-    "base_and_d5_training_source_must_match": true,
-    "execution_profile_must_be_full": true,
+    "strict_full_contract": "PROJECT7_V128_STEP2_CHECKPOINT_V6_CURRENT_PROFILE_TRAINING_SOURCE_STRICT",
+    "strict_full_checkpoint_currently_creatable": false,
+    "reason": "current repaired architecture is Development-only until promotion",
     "ranking_d2_d5_same_step2_sha": true
   },
   "debug_funnel": {
-    "default_first_action": "smoke_one_group_profiler",
+    "default_first_action": "smoke_stage_a_then_action_flow_and_gradient_check",
     "full_by_default": false,
-    "promotion": ["smoke", "spatial_action_effect", "development_gradient", "dev", "full"],
+    "promotion": ["preflight", "edge_physics", "smoke_stage_a", "action_flow", "stage_a_gradient", "smoke_objective", "spatial", "final_smoke_gradient", "dev", "explicit_full_promotion"],
     "stage_checkpoints": ["stage_a.pt", "stage_b0.pt", "stage_objective.pt"],
     "telemetry": "TRAINING_TELEMETRY.jsonl"
   },
@@ -34,14 +44,16 @@
     "step2_d2_distance_audit": "scripts/audit_step2_spatial_current.py",
     "step2_development_gradient_audit": "scripts/audit_step2_gradient_current_dev.py",
     "edge_physics_builder": "scripts/build_edge_physics_current.py",
-    "edge_aware_runner": "scripts/run_step2_edge_aware_dev.py",
-    "edge_aware_full_enabled": false,
+    "edge_physics_current_smoke_dev_required": true,
     "hydraulic_influence_builder": "scripts/build_hydraulic_influence_current.py",
-    "hydraulic_influence_full_enabled": false
+    "hydraulic_influence_promoted": false,
+    "reason_no_influence_promotion": "held-out spatial audit did not show a monotonic far-field-only collapse"
   },
   "physics": {
     "continuity_proxy_training_loss": false,
-    "ordinary_conduit_flow_supervision": "GATED_ON_AUTHORITATIVE_LABEL_AVAILABILITY"
+    "ordinary_conduit_flow_supervision": "GATED_ON_AUTHORITATIVE_LABEL_AVAILABILITY",
+    "edge_static_physics_and_head_gradient_allowed": true,
+    "fabricate_missing_link_flow_labels": false
   },
   "engineering": {
     "contract": "PROJECT7_V128_PER_ACTUATOR_ENGINEERING_ENVELOPE_V2_SOURCE_SEMANTICS_STRICT",
@@ -54,9 +66,10 @@
     "historical_d5_decoder_equivalence_tested": true
   },
   "rainfall": {"forecast": "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92)", "scenario_multipliers": [1.0], "future_truth_online": false, "robust_claim": false},
-  "hardware": {"gpu": "RTX 4060 8GB", "ram_gb": 16, "swmm_workers_max": 16, "swmm_threads_per_process": 1, "matmul_default": "high", "matmul_check": "highest", "amp": false, "activation_checkpointing": false},
+  "hardware": {"gpu": "RTX 4060 8GB", "ram_gb": 16, "swmm_workers_max": 16, "swmm_threads_per_process": 1, "matmul_default": "high", "matmul_check": "high", "amp": false, "activation_checkpointing": false},
   "entrypoints": {
     "training": "scripts/run_step2_current.py",
+    "edge_physics_builder": "scripts/build_edge_physics_current.py",
     "spatial_audit": "scripts/audit_step2_spatial_current.py",
     "development_gradient": "scripts/audit_step2_gradient_current_dev.py",
     "step1_attention_training": "scripts/train_step1_global_attention_dev.py",
