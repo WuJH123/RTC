@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wuhan-rtc"
-version = "0.8.0.dev0"
+version = "0.8.1.dev0"
 description = "Sparse-sensing, control-oriented real-time control for large urban drainage networks"
 requires-python = ">=3.10"
 dependencies = [

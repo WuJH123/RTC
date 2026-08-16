@@ -1,12 +1,14 @@
-"""Compare one source-strict nonfinal V128 stage on the frozen smoke/dev held-out D2 groups.
+"""Compare a repaired source-strict V128 stage on frozen smoke/dev held-out D2 groups.
 
-Development diagnostic only. This entrypoint exists to localize where action-gradient collapse
-appears across stage_a -> stage_b0 -> objective. It never trains, never rewrites a checkpoint,
-and never accesses Validation/Final/Formal/Policy Lock.
+Development diagnostic only.  The entrypoint reconstructs the same action-identifiable,
+edge-physics model class and the same extra stage-lineage fingerprints used by
+``run_step2_current.py``. It can therefore screen Stage A before paying for B0/H360 and can
+localize any later sensitivity regression without silently falling back to baseline V128.
 """
 from __future__ import annotations
 
 import argparse
+import csv
 from dataclasses import asdict
 import hashlib
 import json
@@ -19,15 +21,18 @@ from rtc.development_profile_v128 import apply_profile_to_design, get_execution_
 from rtc.production_cli import _load_graph
 from rtc.stage_checkpoint_v128 import load_stage_checkpoint_v128
 from rtc.step2_causal_rainfall_v123 import CausalForecastValueCacheV123, load_causal_forecast_store_v123
+from rtc.step2_current_dev_context_v128 import (
+    build_current_action_identifiable_model,
+    extend_action_identifiable_stage_lineage,
+)
 from rtc.step2_d4_cache_v125 import D4_SOURCE_KIND
-from rtc.step2_differentiable_v128 import build_v128_model_from_graph
 from rtc.step2_gradient_audit_v128_dev import evaluate_d2_gradient_v128_development
 from rtc.step2_state_store_v127 import CausalStep1StateCacheV127, derive_v127_input_normalization, load_causal_state_store_v127
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
 from rtc.step2_train_v127_streaming import V127StreamingMemoryDesign
 from rtc.v128_control_profile import build_v128_control_training_design, configure_v128_cuda_matmul_precision
 
-CONTRACT = "PROJECT7_CURRENT_V128_NONFINAL_STAGE_GRADIENT_DECOMPOSITION_V1"
+CONTRACT = "PROJECT7_CURRENT_ACTION_IDENTIFIABLE_STAGE_GRADIENT_DECOMPOSITION_V2"
 
 
 def _sha(path: str | Path) -> str:
@@ -48,6 +53,7 @@ def main() -> None:
     p.add_argument("--stage", choices=("stage_a", "stage_b0", "objective"), required=True)
     p.add_argument("--stage-checkpoint", required=True)
     p.add_argument("--graph", required=True)
+    p.add_argument("--edge-physics", required=True)
     p.add_argument("--cache-manifest", required=True)
     p.add_argument("--d4-fit-cache", required=True)
     p.add_argument("--d4-audit-cache", required=True)
@@ -107,8 +113,9 @@ def main() -> None:
         fit_names=selected["fit_d2"] + selected["fit_d3"],
     )
     first_state = state_store.state_for(base.entry(selected["fit_d2"][0]))
-    model = build_v128_model_from_graph(
+    model = build_current_action_identifiable_model(
         graph,
+        edge_physics_path=args.edge_physics,
         state_dim=int(first_state.shape[-1]),
         rainfall_dim=int(rain_store.forecast_mmhr.shape[-1]),
         delta_state_scale=np.ones(int(first_state.shape[-1]), dtype=np.float32),
@@ -147,6 +154,9 @@ def main() -> None:
         "causal_rainfall_forecast_contract": str(rain_store.forecast_contract),
         "swmm_engine_version": str(base_manifest["swmm_engine_version"]),
     }
+    lineage = extend_action_identifiable_stage_lineage(
+        lineage, edge_physics_path=args.edge_physics
+    )
     payload = load_stage_checkpoint_v128(
         args.stage_checkpoint,
         model=model,
@@ -175,6 +185,7 @@ def main() -> None:
             "profile": profile.name,
             "completed_stage": actual_stage,
             "stage_checkpoint_sha256": _sha(args.stage_checkpoint),
+            "edge_physics_sha256": _sha(args.edge_physics),
             "selected_holdout_d2_groups": selected["hold_d2"],
             "validation_accessed": False,
             "final_accessed": False,
@@ -183,8 +194,9 @@ def main() -> None:
     )
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    import csv
-    with (out / "D2_DEVELOPMENT_GRADIENT_DETAIL.csv").open("w", newline="", encoding="utf-8") as fh:
+    with (out / "D2_DEVELOPMENT_GRADIENT_DETAIL.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as fh:
         writer = csv.DictWriter(fh, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)

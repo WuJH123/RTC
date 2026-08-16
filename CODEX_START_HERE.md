@@ -1,29 +1,29 @@
 # Project7 current execution guide
 
-This is the **only user/Codex start document** for the current repository. The immediate goal is to debug the Proposed method quickly, identify why TFV control is weak, reject weak ideas with bounded Development evidence, and run the expensive full pipeline only after one variant is clearly worth promoting.
+This is the **only user/Codex start document** for the current repository. GitHub `main` is the code source of truth. The immediate task is not to run an expensive full pipeline: it is to determine, with bounded Development evidence, whether the diagnosed action-identifiability repair actually restores the control sensitivity needed by the Proposed TFV-first MPC.
 
-Versioned implementation files are archival/shared internals unless explicitly named below. Do not infer the current workflow from the highest version number in a filename.
+Do not infer the current workflow from the highest V-number in a filename. Versioned files are shared/archival internals unless this document or the machine contracts explicitly name them.
 
-## 1. Frozen research target
+## 1. Frozen research target — do not redesign it
 
 Project7 is an **idealized EPA-SWMM methodology testbed, not a field digital twin**.
 
 ```text
 causal sparse sensing
-  -> Step1 current full-network hydraulic reconstruction
-  -> typed/physics-aware differentiable Step2 action-conditioned hydraulic surrogate
-  -> continuous 109-actuator MPC
-  -> H360 prediction with 12 x 109 free 10-min target fractions over H120
-  -> engineering envelope inside the differentiable decoder
+  -> Step1 reconstruct current full-network hydraulic state
+  -> Step2 predict action-conditioned future hydraulics / TFV
+  -> continuous 109-actuator receding-horizon MPC
+  -> H360 prediction; 12 x 109 free 10-min target fractions over H120
+  -> engineering envelope inside differentiable decoder
   -> execute only the first 10-min target
-  -> authoritative SWMM target write/readback
-  -> re-observe and solve again after 600 s
+  -> authoritative SWMM write/readback
+  -> re-observe after 600 s and optimize again
 ```
 
-Frozen scientific hierarchy:
+Frozen hierarchy:
 
-- whole-system cumulative **TFV = primary objective**;
-- frozen Priority8 PFV = **one-sided soft secondary deterioration protection**;
+- system-wide cumulative **TFV = primary objective**;
+- Priority8 PFV = **one-sided soft secondary deterioration protection**;
 - Global Peak = **report-only**;
 - SWMM = authoritative truth.
 
@@ -31,17 +31,35 @@ Frozen clock/action contract:
 
 - model/observation step = 300 s;
 - control update = 600 s;
-- H360 prediction = 72 model steps;
-- H120 free control = 12 x 10-min blocks = 24 model steps;
-- all 109 writable actuators remain eligible;
-- continuous decision dimension = 12 x 109 = 1308;
-- execute only the first 10-min target, then re-observe SWMM.
+- prediction horizon = H360 = 72 model steps;
+- free control horizon = H120 = 24 model steps = 12 x 10-min blocks;
+- 109 writable continuous actuators;
+- 1308 free MPC variables;
+- **execute only the first 10-min target**, then re-observe SWMM.
 
-Sparse-RBC is a warm start, safety fallback and engineering comparator. It is **not** the Step2 Value reference and **not** an action-space ceiling.
+Sparse-RBC is a warm start, engineering comparator and fallback. It is not the Step2 value reference and not an action-space ceiling.
 
-## 2. Current machine contracts and stable entrypoints
+## 2. Why the current Step2 changed
 
-Read first:
+The last source-strict Development diagnostics localized a **mixed action-chain failure**:
+
+```text
+setting -> managed actuator flow -> node hydraulics/flooding -> cumulative TFV
+```
+
+The old Stage-A checkpoint showed:
+
+- TFV-gradient L2 ratio ≈ 0.0112;
+- gradient cosine ≈ 0.0062;
+- held-out action->flow sign accuracy ≈ 0.874, but action->flow L2 magnitude ratio ≈ 0.00559;
+- some TrainFit-supported actuators had temporal residual scales more than one order of magnitude below authoritative candidate-reference flow response;
+- substituting authoritative SWMM actuator flows into the old node transition did not repair held-out hydraulic/flood-volume action effects.
+
+Therefore the current smoke/dev candidate repairs **both** halves of the action chain. It does not change the TFV-first research question.
+
+## 3. Current repaired Step2
+
+Read these machine contracts first:
 
 ```text
 configs/step2_current_contract.json
@@ -50,60 +68,79 @@ configs/v128_control_execution.json
 configs/project7_current_lint_surface.json
 ```
 
-Stable user/Codex entrypoints:
+Current model/training surface:
 
 ```text
-rtc-current-preflight
 scripts/run_step2_current.py
-scripts/run_policy_current.py
-scripts/run_seven_strategies_current.py
+scripts/run_step2_action_identifiable_current.py
+src/rtc/step2_action_identifiable_v128.py
+src/rtc/step2_current_dev_context_v128.py
+src/rtc/step2_differentiable_v128_edge.py
+src/rtc/edge_physics_current_v128.py
+src/rtc/step2_train_v128_exact.py
 ```
 
-Current Step2 requires an explicit cost profile:
+The repair does four things:
 
-```text
---profile smoke
---profile dev
---profile full
-```
+1. **FIT-only hybrid actuator residual scale**
+   - lower bound = historical temporal |q(t)-q(t-1)| q99.5;
+   - action scale = TrainFit candidate-reference managed-flow |dq| q99.5 for actuators whose settings actually change;
+   - training scale = max(temporal, action-conditioned), actuator by actuator;
+   - D2 holdout, D4-AUDIT, Validation, Final and Formal outcomes are forbidden from defining this scale;
+   - this scale is a numerical surrogate scale, **not an engineering actuator rate/ramp constraint**.
 
-There is intentionally no default. Ordinary debugging must never silently start a multi-hour full run.
+2. **Explicit setting-conditioned actuator response**
+   - previous flow remains a causal feature;
+   - setting enters an explicit centered linear/quadratic basis;
+   - a learned sigmoid `responsiveness` can no longer multiply the whole flow residual toward zero;
+   - the actuator response is still bounded and differentiable.
 
-## 3. Development boundaries
+3. **Counterfactual hydraulic-effect supervision**
+   - Stage A retains absolute next-state/managed-flow supervision;
+   - additionally supervises candidate-minus-reference state and managed-flow effects;
+   - B0 autoregressive rollout retains the same effect supervision;
+   - this prevents good one-step forecasting from hiding a useless action Jacobian.
 
-Until the selected Proposal passes Development evidence:
+4. **Edge-physics hydraulic propagation**
+   - current smoke/dev uses the frozen graph-edge-aligned SWMM link artifact;
+   - static link descriptors plus current head-difference/head-gradient enter graph messages;
+   - no ordinary-conduit dynamic-flow labels are fabricated;
+   - the incomplete mass-balance proxy remains diagnostic-only, not a training loss.
+
+The H360 exact two-pass within-group pairwise TFV objective is retained. After it, one low-learning-rate FIT-only H360 action-effect rehearsal is applied so the TFV objective cannot silently erase the hydraulic action sensitivity learned earlier.
+
+## 4. Development boundaries
+
+Until this repaired candidate passes Development gates:
 
 - never access Validation, Final, Formal or Policy Lock;
-- never train on InternalHoldout, D4-AUDIT, D5-AUDIT or D2 development-validation outcomes;
-- never use future realised rainfall, future SWMM state/flooding or future Internal trajectory online;
-- smoke/dev are **screening only** and can never create a strict final Step2 checkpoint;
-- smoke/dev stage checkpoints can never enter D5, runtime or Policy Lock;
-- no post-score action projection; the engineering envelope must be inside the differentiable decoder and score must equal execute;
-- do not fabricate ordinary-conduit flow labels;
-- do not enable the incomplete continuity proxy as a physics loss;
-- do not promote global attention, edge-aware propagation or hydraulic-influence shortcuts to full until held-out Development evidence supports them.
+- never train on D4-AUDIT, D5-AUDIT, InternalHoldout or D2 held-out outcomes;
+- never use future realised rainfall, future SWMM hydraulic/flooding truth or future Internal trajectories online;
+- never generate new D2/D3/D4 SWMM data merely because source code changed;
+- never fabricate missing ordinary-conduit flow labels;
+- never enable the incomplete continuity proxy as a physics loss;
+- do not add hydraulic-influence shortcuts yet: current evidence did not identify a monotonic far-field-only failure;
+- smoke/dev stage checkpoints are NONFINAL and cannot enter D5/runtime/Policy Lock.
 
-## 4. Workstation profile
+**`--profile full` is intentionally disabled for the repaired architecture.** If it fails with a Development-only/full-block message, that is expected behavior, not a bug. Full can be enabled only by a later explicit code promotion after held-out Development evidence is convincing.
 
-Current target workstation:
+## 5. Workstation contract
 
 ```text
-GPU: RTX 4060 8 GB
+GPU: RTX 4060 Laptop, ~8 GB VRAM
 RAM: 16 GB
-SWMM workers: <=16; one thread/process
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 RTC_V128_MATMUL_PRECISION=high
-AMP off for current Step2
-activation checkpointing off
+AMP: OFF
+activation checkpointing: OFF
+SWMM workers: <= 16, one thread/process
 ```
 
-The previous full runs showed host-memory paging while CUDA was not always saturated. Current training therefore uses lazy mmap branch streaming. `psutil` is installed in the Development extra so stage telemetry records RSS/VMS/private-or-USS memory, available RAM, swap and CUDA peaks.
+Do not use raw `--torch-profiler` Chrome-trace export. It previously completed training stages but exhausted host memory during trace export. Use `TRAINING_TELEMETRY.jsonl` plus low-frequency external `nvidia-smi` sampling.
 
-A raw Torch Chrome trace across the whole one-group Stage A/B0/objective sequence is **not supported on the current 16-GB workstation**. A real run completed all three training stages but `export_chrome_trace(...)` drove process private memory to tens of GB and exhausted available RAM. The stable current entrypoint therefore rejects raw `--torch-profiler` before expensive work. This is a diagnostic-infrastructure rule, not a scientific-model change.
+## 6. Hard-sync local code from GitHub
 
-## 5. Synchronize local code to GitHub main
-
-GitHub `main` is the code source of truth. If the user explicitly says old local changes are disposable, do not recover, merge or cherry-pick them.
+If old local modifications are disposable, do not recover old patch/stash/repo_legacy content.
 
 ```powershell
 cd E:\RTC_sewer\Project7\repo
@@ -114,270 +151,274 @@ git clean -fd
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/main
-```
-
-The two SHAs must match and the working tree must be clean. Never delete the separate study root or authoritative SWMM/cache assets when resetting the code checkout.
-
-Install the synchronized package:
-
-```powershell
 python -m pip install -e ".[dev,swmm]"
+python -c "import importlib.metadata as m; print(m.version('wuhan-rtc'))"
 ```
 
-## 6. Cheap code gates before any training
+HEAD and origin/main must match; working tree must be clean. The repaired package version is `0.8.1.dev0`.
 
-Run the complete unit/regression suite:
+Never delete or reset the separate `study_v069` data root while cleaning the code checkout.
+
+## 7. Cheap gates before any GPU work
 
 ```powershell
 python -m pytest -q
-```
-
-Then run the **current Project7 lint gate**:
-
-```powershell
 python scripts/lint_current_surface.py
-```
-
-Do **not** use `python -m ruff check .` as a smoke/dev stop-gate. The repository intentionally retains historical/archival Vxxx source for provenance and shared orchestration, and that historical tree contains pre-existing Ruff debt. Current execution/development files are fail-closed through `configs/project7_current_lint_surface.json` and GitHub Actions.
-
-Do not run `ruff --fix .` or mass-format archival files during model debugging. Historical style cleanup is a separate maintenance task and must not alter scientific provenance or consume the current debugging cycle.
-
-Key CLI smoke checks must all exit 0:
-
-```powershell
 python scripts/run_step2_current.py --help
-python scripts/audit_step2_spatial_current.py --help
+python scripts/build_edge_physics_current.py --help
+python scripts/audit_step2_actuator_flow_effect_current.py --help
+python scripts/audit_step2_gradient_stage_current_dev.py --help
 python scripts/audit_step2_gradient_current_dev.py --help
-python scripts/train_step1_global_attention_dev.py --help
-python scripts/audit_step1_global_attention_current.py --help
-python scripts/run_step2_edge_aware_dev.py --help
-python scripts/audit_step2_edge_spatial_current.py --help
-python scripts/run_seven_strategies_current.py --help
+python scripts/audit_step2_spatial_current.py --help
 ```
 
-If pytest, current lint, or a current CLI help fails, stop before expensive work and report the exact failure. Do not substitute full-repository lint debt for a current-code failure.
+Every command must exit 0. Do not replace the maintained-surface lint with repository-wide `ruff check .`.
 
-## 7. Asset admission and preflight
+## 8. Reuse frozen assets
 
-Reuse existing frozen Development assets. Do not regenerate D2/D3/D4 merely because code was synchronized. Prefer the semantic-complete causal state store V2 and verify graph/Step1/sensor/rainfall lineage before training.
+Prefer the already-admitted Project7 assets. Known current locations from the Development study are:
+
+```text
+<FROZEN_GRAPH>
+E:\RTC_sewer\Project7\study_v069\formal_assets\graph_schema.npz
+
+<CANONICAL_D2_D3_CACHE>
+E:\RTC_sewer\Project7\study_v069\step2_v60_control_latent_rebuild\training_cache_v60\CACHE_MANIFEST.json
+
+<D4_FIT_CACHE>
+E:\RTC_sewer\Project7\study_v069\step2_v125_d4_v2_bc04bc7\cache_fit\training_cache\CACHE_MANIFEST.json
+
+<D4_AUDIT_CACHE>
+E:\RTC_sewer\Project7\study_v069\step2_v125_d4_v2_bc04bc7\cache_audit\training_cache\CACHE_MANIFEST.json
+
+<FROZEN_CAUSAL_RAINFALL_STORE>
+E:\RTC_sewer\Project7\study_v069\step2_v123_tfv_pfv_knowledge_guided_mpc\addbbd3\STEP2_V123_CAUSAL_FORECAST_STORE.npz
+
+<FROZEN_CAUSAL_STATE_STORE_V2>
+E:\RTC_sewer\Project7\study_v069\step2_v127_corrected_base_7634cd9\STEP2_V127_CAUSAL_STATE_STORE_V2.npz
+```
+
+Resolve `<FROZEN_INP>` from the frozen Project7 contract/study assets; its semantic identity is `wuhan_method_testbed_v067.inp`. Do not guess another INP and do not regenerate SWMM outcomes.
+
+## 9. Create a fresh DebugRoot and preflight
 
 ```powershell
-$env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
-$env:RTC_V128_MATMUL_PRECISION = "high"
+$env:PATH += ';C:\Users\12480\AppData\Roaming\Python\Python314\Scripts'
+$env:PYTORCH_CUDA_ALLOC_CONF = 'expandable_segments:True'
+$env:RTC_V128_MATMUL_PRECISION = 'high'
+$Stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+$DebugRoot = "E:\RTC_sewer\Project7\study_v069\debug_action_identifiable_$Stamp"
+New-Item -ItemType Directory -Path $DebugRoot -Force | Out-Null
 
 rtc-current-preflight `
   --graph <FROZEN_GRAPH> `
   --device cuda `
-  --out <DEBUG_ROOT>\PREFLIGHT.json
+  --out "$DebugRoot\PREFLIGHT.json"
 ```
 
-Require the current 109-actuator graph/device/engineering contract to pass. Preflight now applies the same V128 matmul-policy function used by training; with the environment above, `hardware.float32_matmul_precision` must be `high`. A preflight report that still says `highest` while `RTC_V128_MATMUL_PRECISION=high` is invalid and must be investigated before training.
+Require CUDA, 109 actuators, correct graph lineage and `float32_matmul_precision=high`.
 
-## 8. First expensive action: one-group low-overhead resource profile
+## 10. Build/reuse the required edge-physics artifact
 
-Do **not** add `--torch-profiler` on the current 16-GB workstation. Run the real one-group smoke path with ordinary stage/resource telemetry:
-
-```powershell
-python scripts/run_step2_current.py `
-  --profile smoke `
-  --profile-one-group `
-  --graph <FROZEN_GRAPH> `
-  --cache-manifest <CANONICAL_D2_D3_CACHE> `
-  --d4-fit-cache <D4_FIT_CACHE> `
-  --d4-audit-cache <D4_AUDIT_CACHE> `
-  --causal-store <FROZEN_CAUSAL_RAINFALL_STORE> `
-  --causal-state-store <FROZEN_CAUSAL_STATE_STORE_V2> `
-  --out-dir <DEBUG_ROOT>\profile_one_group `
-  --device cuda
-```
-
-Inspect `TRAINING_TELEMETRY.jsonl`. Record Stage A/B0/objective/evaluation wall time, process RSS/VMS/private-or-USS memory, available RAM, swap and CUDA allocated/reserved/peak values. If useful, sample `nvidia-smi` externally at low frequency for GPU utilisation/VRAM; do not start a second training process.
-
-This resource profile is **diagnostic, not a scientific stop-gate**. Stop downstream only for a real training/runtime failure such as OOM, non-finite loss/gradient, stage error, lineage/contract mismatch, broken checkpoint, or an unreleased process/resource leak. Failure of an optional profiler/export/sampler after successful stage checkpoints is not evidence that Step2 failed.
-
-Do not increase hidden dimension, chunks or workers merely because host memory is tight. First distinguish model/training memory from diagnostic instrumentation overhead.
-
-## 9. Baseline smoke training
-
-```powershell
-python scripts/run_step2_current.py `
-  --profile smoke `
-  --graph <FROZEN_GRAPH> `
-  --cache-manifest <CANONICAL_D2_D3_CACHE> `
-  --d4-fit-cache <D4_FIT_CACHE> `
-  --d4-audit-cache <D4_AUDIT_CACHE> `
-  --causal-store <FROZEN_CAUSAL_RAINFALL_STORE> `
-  --causal-state-store <FROZEN_CAUSAL_STATE_STORE_V2> `
-  --out-dir <DEBUG_ROOT>\baseline_smoke `
-  --device cuda
-```
-
-Smoke keeps the real V128 typed architecture, 109 actuators, H360 objective and exact two-pass pairwise path. It reduces Development coverage/repetition only and is **not paper evidence**.
-
-The exact objective must share one canonical float32 SWMM candidate TFV delta across pair census, reported pair loss and live gradients. The historical `544/542` float64/float32 pair-coverage mismatch must never reappear.
-
-### Stage checkpoint/resume
-
-The runner writes NONFINAL stage-boundary checkpoints:
-
-```text
-stage_a.pt
-stage_b0.pt
-stage_objective.pt
-```
-
-Use `--stop-after-stage` and `--resume-from` only when profile, graph, data lineage, training design and source fingerprints remain compatible. This is stage-boundary resume, not mid-epoch resume. Smoke/dev stage checkpoints must never enter D5/runtime/Policy Lock.
-
-## 10. Mandatory smoke diagnosis before architecture changes
-
-### 10.1 Ranking/action identification
-
-Read `STEP2_V128_CURRENT_REPORT.json` and report held-out ranking, pairwise, top1, TFV-delta MAE and selected regret. Training loss alone is not a promotion criterion.
-
-### 10.2 Spatial action-effect audit
-
-```powershell
-python scripts/audit_step2_spatial_current.py `
-  --profile smoke `
-  --stage-checkpoint <DEBUG_ROOT>\baseline_smoke\stage_objective.pt `
-  --graph <FROZEN_GRAPH> `
-  --cache-manifest <CANONICAL_D2_D3_CACHE> `
-  --d4-fit-cache <D4_FIT_CACHE> `
-  --d4-audit-cache <D4_AUDIT_CACHE> `
-  --causal-store <FROZEN_CAUSAL_RAINFALL_STORE> `
-  --causal-state-store <FROZEN_CAUSAL_STATE_STORE_V2> `
-  --out <DEBUG_ROOT>\baseline_smoke\SPATIAL_ACTION_EFFECT.json `
-  --device cuda
-```
-
-Report truth/predicted action effect, MAE/relative MAE and sign accuracy for `1-3`, `4-6`, `7-12`, and `13+` actuator-to-node graph hops.
-
-### 10.3 Development D2 gradient audit
-
-```powershell
-python scripts/audit_step2_gradient_current_dev.py `
-  --profile smoke `
-  --stage-checkpoint <DEBUG_ROOT>\baseline_smoke\stage_objective.pt `
-  --graph <FROZEN_GRAPH> `
-  --cache-manifest <CANONICAL_D2_D3_CACHE> `
-  --d4-fit-cache <D4_FIT_CACHE> `
-  --d4-audit-cache <D4_AUDIT_CACHE> `
-  --causal-store <FROZEN_CAUSAL_RAINFALL_STORE> `
-  --causal-state-store <FROZEN_CAUSAL_STATE_STORE_V2> `
-  --out-dir <DEBUG_ROOT>\baseline_smoke\gradient `
-  --device cuda
-```
-
-Report TFV gradient sign accuracy, gradient cosine similarity and gradient MAE. The strict `scripts/audit_step2_v128_d2_gradients_fast.py` is full-checkpoint evidence and must not be used on smoke/dev stage artifacts.
-
-## 11. Failure-mode routing
-
-Use the evidence to decide what to test next:
-
-- ranking + gradient + near/far action effects all poor -> inspect local action identifiability, objective supervision and training coverage first;
-- near-field good but `7-12`/`13+` action effects poor -> test the edge-aware Development path;
-- Step1 error rises strongly with distance to nearest sensor -> test V122 sensor-to-all-node global attention;
-- ranking acceptable but gradient sign/cosine poor -> fix gradient/objective path before Step1 or graph expansion;
-- ranking/spatial/gradient all coherent -> only then investigate H360 autoregressive drift, optimizer/runtime, richer rainfall forecasting or horizon sensitivity.
-
-Do not create a new version number merely because one smoke metric is weak.
-
-## 12. Step1 global-attention ablation
-
-Only when Step1 distance is a plausible blocker, train a separate Development V122 attention model and compare it against the frozen legacy Step1 on identical Development validation windows:
-
-```powershell
-python scripts/train_step1_global_attention_dev.py `
-  --run-index <STEP1_RUN_INDEX> `
-  --graph <FROZEN_GRAPH> `
-  --sensors <FROZEN_SENSORS> `
-  --out <DEBUG_ROOT>\step1_v122_attention.pt `
-  --device cuda `
-  --no-amp
-
-python scripts/audit_step1_global_attention_current.py `
-  --run-index <STEP1_RUN_INDEX> `
-  --graph <FROZEN_GRAPH> `
-  --sensors <FROZEN_SENSORS> `
-  --legacy-model <FROZEN_STEP1> `
-  --attention-model <DEBUG_ROOT>\step1_v122_attention.pt `
-  --out <DEBUG_ROOT>\STEP1_DISTANCE_ABLATION.json `
-  --device cuda
-```
-
-Compare nearest-sensor hop bins. Do not hot-swap Step1. If V122 is promoted, rebuild the causal Step1 state store and retrain Step2 from the beginning.
-
-## 13. Edge-physics ablation
-
-Only if Step2 far-field propagation is implicated:
+The artifact is deterministic from frozen INP + graph and contains no outcome labels.
 
 ```powershell
 python scripts/build_edge_physics_current.py `
   --inp <FROZEN_INP> `
   --graph <FROZEN_GRAPH> `
-  --out-npz <DEBUG_ROOT>\EDGE_PHYSICS.npz `
-  --out-json <DEBUG_ROOT>\EDGE_PHYSICS.json
+  --out-npz "$DebugRoot\EDGE_PHYSICS_CURRENT.npz" `
+  --out-json "$DebugRoot\EDGE_PHYSICS_CURRENT.json"
 
-python scripts/run_step2_edge_aware_dev.py `
-  --edge-physics <DEBUG_ROOT>\EDGE_PHYSICS.npz `
+$Edge = "$DebugRoot\EDGE_PHYSICS_CURRENT.npz"
+```
+
+If an existing artifact is reused, verify both its INP SHA and graph SHA instead of trusting its filename.
+
+## 11. FIRST expensive action: Stage A only
+
+Do **not** run B0 or H360 first. The purpose is to find out cheaply whether the repaired `setting -> flow -> one-step hydraulics` pathway has recovered.
+
+```powershell
+$Run = "$DebugRoot\smoke_repair"
+
+python scripts/run_step2_current.py `
   --profile smoke `
+  --edge-physics $Edge `
   --graph <FROZEN_GRAPH> `
   --cache-manifest <CANONICAL_D2_D3_CACHE> `
   --d4-fit-cache <D4_FIT_CACHE> `
   --d4-audit-cache <D4_AUDIT_CACHE> `
   --causal-store <FROZEN_CAUSAL_RAINFALL_STORE> `
   --causal-state-store <FROZEN_CAUSAL_STATE_STORE_V2> `
-  --out-dir <DEBUG_ROOT>\edge_smoke `
+  --out-dir $Run `
+  --device cuda `
+  --stop-after-stage stage_a
+```
+
+Expected output includes `stage_a.pt` plus telemetry. Because model/training source and edge-artifact lineage changed, an old baseline Stage-A checkpoint must fail if used as `--resume-from`; do not try to bypass that guard.
+
+## 12. Immediately audit Stage A, then STOP
+
+### 12.1 Managed-flow action effect
+
+```powershell
+python scripts/audit_step2_actuator_flow_effect_current.py `
+  --profile smoke `
+  --stage stage_a `
+  --stage-checkpoint "$Run\stage_a.pt" `
+  --graph <FROZEN_GRAPH> `
+  --edge-physics $Edge `
+  --cache-manifest <CANONICAL_D2_D3_CACHE> `
+  --d4-fit-cache <D4_FIT_CACHE> `
+  --d4-audit-cache <D4_AUDIT_CACHE> `
+  --causal-store <FROZEN_CAUSAL_RAINFALL_STORE> `
+  --causal-state-store <FROZEN_CAUSAL_STATE_STORE_V2> `
+  --out-dir "$Run\action_flow_stage_a" `
   --device cuda
 ```
 
-`--profile full` is deliberately forbidden for this experimental architecture until held-out ranking/spatial/gradient evidence supports promotion.
+Report at minimum:
 
-## 14. Influence graph and physics diagnostics
+- flow-effect sign accuracy;
+- cosine;
+- MAE;
+- predicted/true L2 magnitude ratio;
+- median/Q10/Q90 magnitude ratio;
+- the checkpoint delta-flow scale for the changed actuator.
 
-Build a hydraulic-influence artifact only after authoritative Development D2 proves meaningful remote effects that baseline/edge-aware propagation still fails to learn. Use Development TrainFit D2 only; never Validation/Final/Formal data. Building an influence artifact does not promote it into the full model.
+Frozen old baseline for comparison:
 
-Current V128 actuator injection is conservative, but the learned ordinary-network transition is not a full Saint-Venant solver and current training data do not contain all terms required for exact node continuity or authoritative ordinary-conduit flow supervision. Therefore continuity remains a diagnostic proxy, `continuity_proxy_training_loss=false`, and missing conduit-flow labels must never be fabricated.
+```text
+sign accuracy ≈ 0.8740
+cosine ≈ 0.7195
+L2 magnitude ratio ≈ 0.00559
+median magnitude ratio ≈ 0.01732
+```
+
+The goal of this repair is **not** to sacrifice sign accuracy to create arbitrary large gradients. Magnitude must recover materially while direction remains credible.
+
+### 12.2 Stage-A TFV directional gradient
+
+```powershell
+python scripts/audit_step2_gradient_stage_current_dev.py `
+  --profile smoke `
+  --stage stage_a `
+  --stage-checkpoint "$Run\stage_a.pt" `
+  --graph <FROZEN_GRAPH> `
+  --edge-physics $Edge `
+  --cache-manifest <CANONICAL_D2_D3_CACHE> `
+  --d4-fit-cache <D4_FIT_CACHE> `
+  --d4-audit-cache <D4_AUDIT_CACHE> `
+  --causal-store <FROZEN_CAUSAL_RAINFALL_STORE> `
+  --causal-state-store <FROZEN_CAUSAL_STATE_STORE_V2> `
+  --out-dir "$Run\gradient_stage_a" `
+  --device cuda
+```
+
+Frozen old Stage-A comparison:
+
+```text
+TFV gradient L2 ratio ≈ 0.01120
+median magnitude ratio ≈ 0.00390
+cosine ≈ 0.00615
+sign accuracy ≈ 0.4255
+```
+
+After these two audits, **STOP and report the evidence**. Do not automatically continue merely because the commands exited 0. The web/GitHub supervision loop should decide whether this candidate deserves B0.
+
+## 13. Only after explicit approval: resume to B0
+
+Use the exact same graph/data/edge/profile/training-design lineage and the same output directory:
+
+```powershell
+python scripts/run_step2_current.py `
+  --profile smoke `
+  --edge-physics $Edge `
+  --graph <FROZEN_GRAPH> `
+  --cache-manifest <CANONICAL_D2_D3_CACHE> `
+  --d4-fit-cache <D4_FIT_CACHE> `
+  --d4-audit-cache <D4_AUDIT_CACHE> `
+  --causal-store <FROZEN_CAUSAL_RAINFALL_STORE> `
+  --causal-state-store <FROZEN_CAUSAL_STATE_STORE_V2> `
+  --out-dir $Run `
+  --device cuda `
+  --resume-from "$Run\stage_a.pt" `
+  --stop-after-stage stage_b0
+```
+
+Then rerun action-flow and stage-gradient audits with `--stage stage_b0` and `stage_b0.pt`. Stop again if sensitivity regresses.
+
+## 14. Only after B0 approval: resume through H360 objective
+
+```powershell
+python scripts/run_step2_current.py `
+  --profile smoke `
+  --edge-physics $Edge `
+  --graph <FROZEN_GRAPH> `
+  --cache-manifest <CANONICAL_D2_D3_CACHE> `
+  --d4-fit-cache <D4_FIT_CACHE> `
+  --d4-audit-cache <D4_AUDIT_CACHE> `
+  --causal-store <FROZEN_CAUSAL_RAINFALL_STORE> `
+  --causal-state-store <FROZEN_CAUSAL_STATE_STORE_V2> `
+  --out-dir $Run `
+  --device cuda `
+  --resume-from "$Run\stage_b0.pt" `
+  --stop-after-stage objective
+```
+
+The exact two-pass H360 pair census must still report complete directed gradient coverage and canonical float32 truth partitioning. The repaired runner then applies its small FIT-only H360 action-effect anchor before writing `stage_objective.pt`.
+
+After objective:
+
+1. rerun action-flow audit with `--stage objective`;
+2. run `audit_step2_gradient_current_dev.py` with the same `--edge-physics`;
+3. run `audit_step2_spatial_current.py` with the same `--edge-physics`;
+4. read held-out ranking/pairwise/top1/selected-regret from `STEP2_V128_CURRENT_REPORT.json`.
+
+Compare with the frozen old smoke baseline, not with training loss alone:
+
+```text
+D4 audit rank ≈ 0.05595
+D4 audit pairwise ≈ 0.54167
+D4 audit top1 = 0
+D4 selected regret ≈ 1096 m3
+held-out D2 rank ≈ -0.10698
+old objective gradient sign ≈ 0.4043
+old objective gradient cosine ≈ 0.06884
+old objective gradient L2 ratio ≈ 0.03359
+```
+
+A low hydraulic RMSE is never sufficient evidence that Step2 is useful for MPC.
 
 ## 15. Dev promotion
 
-Only smoke variants that improve the intended failure mode progress to explicit `--profile dev`. Repeat ranking, spatial and Development D2 gradient audits and compare H30-H360 drift plus runtime/RAM/swap/CUDA usage.
+Only after the repaired smoke shows coherent improvement in **action-flow magnitude + TFV gradient + ranking + spatial effects** may the same architecture run `--profile dev`.
 
-Promote using evidence, not training loss alone. At minimum compare ranking/pairwise/top1, selected regret, TFV-delta error, D2 gradient sign/cosine/MAE, `1-3`/`4-6`/`7-12`/`13+` hop behavior, H360 drift and resource cost. Reject variants that do not solve their intended failure mode.
+Dev must use a fresh output directory, the same frozen inputs and a graph/INP-matched edge artifact. Repeat the same stage-wise stop/audit logic; do not jump directly to the end.
 
-## 16. Full only after one Development winner
+## 16. Full / D5 / runtime / seven strategies
 
-Do not run `--profile full` merely because the code compiles. The full profile retains the canonical 112 D2 + 112 D3 + 33 D4-FIT census, Stage A four epochs, H60/H120 rollout curriculum and H360 exact objective three epochs. Only an explicit full profile can create the strict V6 base checkpoint.
+Not authorized by the current repaired code.
 
-Only after a full checkpoint passes coherent ranking/horizon, strict D2 gradient and spatial gates may the workflow continue:
+Do not attempt to bypass the full-profile block. Do not use old strict V128 final checkpoints with the repaired model. Do not run D5, MPC runtime, seven strategies, Validation, Final, Formal or Policy Lock yet.
 
-```text
-D5-FIT using frozen D5-FIT only
--> re-run ranking/D2 on the exact D5-final checkpoint
--> compile same-SHA continuous evidence
--> runtime preflight
--> one preselected authoritative Development closed loop
--> seven-strategy authoritative Development comparison
-```
+A later GitHub change must explicitly promote this architecture, update strict checkpoint fingerprints/loaders, and re-enable full only after Development evidence supports it.
 
-Every guarded supervisory callback must be <600 s for a real-time claim; target write/readback, continuity and score==execute are mandatory.
+## 17. What Codex must return after each stage
 
-## 17. Promotion rule
+Always report:
 
-The current development loop is:
+1. exact Git SHA and package version;
+2. working-tree cleanliness;
+3. pytest/current-lint/help results;
+4. asset hashes and edge-artifact hashes;
+5. exact stage checkpoint SHA;
+6. stage wall time, RSS/private/VMS/available RAM/swap/CUDA peaks;
+7. action-flow metrics;
+8. TFV-gradient sign/cosine/L2/median magnitude ratios;
+9. if objective completed: rank/pairwise/top1/regret and spatial bins;
+10. explicit access flags proving Validation/Final/Formal were not touched;
+11. one failure localization;
+12. STOP unless the user explicitly authorizes the next stage.
 
-```text
-idea
- -> pytest + current-surface lint + CLI help
- -> preflight
- -> one-group low-overhead resource profile
- -> smoke
- -> ranking + spatial + gradient diagnosis
- -> dev
- -> reject or promote
- -> full once
- -> D5 / authoritative Development SWMM evidence
- -> Policy Lock only after all gates
-```
-
-Merging code into `main`, passing smoke, or producing a dev checkpoint does **not** constitute Policy Lock. Do not proceed to Validation/Final/Formal/Policy Lock until the selected full model has coherent same-checkpoint ranking/D2/D5 evidence, acceptable spatial/H30-H360 behavior, authoritative Development TFV/PFV benefit and measured real-time execution.
+Code execution success is not scientific success. The current purpose is to restore a trustworthy action-conditioned surrogate cheaply enough that a later full SWMM closed-loop test is worth paying for.
