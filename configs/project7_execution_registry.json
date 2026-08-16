@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_V11_LOW_MEMORY_DEBUG_PROFILE",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_V12_CANONICAL_D2_GRADIENT_PROVENANCE",
   "current": {
     "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
     "research_contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V2_DEBUG_FIRST",
@@ -30,6 +30,7 @@
     "step1_distance_attention_ablation": "scripts/audit_step1_global_attention_current.py",
     "step2_spatial_action_effect": "scripts/audit_step2_spatial_current.py",
     "step2_development_gradient": "scripts/audit_step2_gradient_current_dev.py",
+    "step2_development_gradient_provenance": "reference-first canonical D2 settings sequences; single-actuator change inferred fail-closed; no synthetic row metadata",
     "edge_physics_builder": "scripts/build_edge_physics_current.py",
     "edge_aware_smoke_dev": "scripts/run_step2_edge_aware_dev.py",
     "edge_aware_spatial_audit": "scripts/audit_step2_edge_spatial_current.py",
@@ -56,7 +57,9 @@
     "smoke/dev are Development screening only and cannot create a strict final Step2 checkpoint or enter D5/runtime/Policy Lock",
     "profile the bounded smoke one-group path with TRAINING_TELEMETRY.jsonl and optional low-frequency external GPU sampling; do not use raw --torch-profiler Chrome-trace export on the current 16-GB workstation",
     "profiler/export/sampler failure after successful training checkpoints is not a scientific Step2 failure; stop only on real stage/OOM/nonfinite/lineage/checkpoint/resource-leak failures",
-    "use scripts/audit_step2_gradient_current_dev.py for smoke/dev stage_objective.pt; use scripts/audit_step2_v128_d2_gradients_fast.py only for a strict full checkpoint",
+    "use scripts/audit_step2_gradient_current_dev.py for smoke/dev stage_objective.pt; derive Development D2 action directions only from the frozen reference-first settings sequences and fail closed unless each candidate changes exactly one actuator; never fabricate actuator_id/base_setting/requested_setting metadata",
+    "audit-only source changes outside checkpoint_v128 model/training fingerprint lists do not require retraining an otherwise source-compatible nonfinal stage checkpoint",
+    "use scripts/audit_step2_v128_d2_gradients_fast.py only for a strict full checkpoint",
     "train Step1 global-attention only through scripts/train_step1_global_attention_dev.py and compare it with scripts/audit_step1_global_attention_current.py before any Step1 promotion",
     "if Step1 is promoted, rebuild the causal Step1 state store and retrain Step2 from the beginning; never hot-swap Step1 into an old Step2 lineage",
     "never load V127 checkpoint through V128 loader or V128 checkpoint through V127 loader",
