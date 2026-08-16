@@ -23,6 +23,7 @@ from dataclasses import asdict
 import hashlib
 import json
 from pathlib import Path
+import random
 import time
 
 import numpy as np
@@ -52,6 +53,7 @@ CURRENT_DIRECT_TFV_RUN_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_VALUE_SMOKE_DEV_V
 DIRECT_DEV_PROFILE_CONTRACT = "PROJECT7_DIRECT_TFV_ALL_EXISTING_DEVELOPMENT_GROUPS_V1"
 REPORT_FILENAME = "STEP2_DIRECT_TFV_VALUE_REPORT.json"
 CHECKPOINT_FILENAME = "step2_direct_tfv_value_dev.pt"
+SEED = 42
 
 
 def _sha(path: str | Path) -> str:
@@ -60,6 +62,14 @@ def _sha(path: str | Path) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -93,6 +103,7 @@ def _training_design(profile: str, args: argparse.Namespace) -> DirectTFVTrainin
         interaction_epochs=interaction_epochs,
         learning_rate=float(args.learning_rate),
         interaction_learning_rate=float(args.learning_rate),
+        seed=SEED,
     )
     result.validate()
     return result
@@ -149,6 +160,7 @@ def _finite_metrics(label: str, metrics: dict[str, float | int]) -> None:
 def main() -> None:
     started = time.perf_counter()
     args = _parser().parse_args()
+    _seed_everything(SEED)
     profile_name = str(args.profile)
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
     if device.type == "cuda":
@@ -289,6 +301,7 @@ def main() -> None:
         "direct_dev_profile_contract": DIRECT_DEV_PROFILE_CONTRACT,
         "profile": profile_name,
         "development_only": True,
+        "seed": SEED,
         "model_design": asdict(design),
         "training_design": asdict(training_design),
         "target_scale_m3": float(target_scale),
@@ -318,6 +331,7 @@ def main() -> None:
         "direct_dev_profile_contract": DIRECT_DEV_PROFILE_CONTRACT,
         "profile": profile_name,
         "development_only": True,
+        "seed": SEED,
         "primary_target": "authoritative SWMM exact delta TFV",
         "architecture": "shared pairwise sequence value: V(candidate)-V(reference), 109 facility values + interaction value",
         "complete_reference_sequence_encoded": True,
