@@ -1,14 +1,14 @@
 {
-  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V2_DEBUG_FIRST",
+  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V3_ACTION_IDENTIFIABLE_DEV",
   "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
-  "selected_implementation_contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_DEBUG_FIRST_EXACT_PAIRWISE",
+  "selected_implementation_contract": "PROJECT7_V128_ACTION_IDENTIFIABLE_EDGE_PHYSICS_SURROGATE_DEV_V1",
   "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, use a differentiable action-conditioned hydraulic surrogate to optimize all 109 writable target settings continuously over H120 within an H360 prediction horizon, minimize system-wide cumulative TFV, treat Priority8 PFV as a one-sided soft secondary objective, and execute only the first 10-minute target in authoritative SWMM",
   "authoritative_truth": "SWMM",
-  "development_priority": "debug and reject weak model ideas with smoke/dev evidence before any expensive full training or downstream closed loop",
+  "development_priority": "repair action-to-flow magnitude and flow-to-hydraulics counterfactual sensitivity with smoke/dev evidence before any expensive full training or downstream closed loop",
   "method_identity": {
     "testbed": "IDEALIZED_SWMM_METHODOLOGY_TESTBED_NOT_FIELD_DIGITAL_TWIN",
     "step1": "sparse causal current-state reconstruction",
-    "step2": "typed physics-aware differentiable hydraulic/action surrogate",
+    "step2": "action-identifiable typed actuator response plus edge-physics differentiable hydraulic surrogate",
     "step3": "bounded continuous 109-actuator L-BFGS-B receding-horizon MPC",
     "tfv_role": "PRIMARY_OBJECTIVE",
     "priority8_pfv_role": "ONE_SIDED_SOFT_SECONDARY",
@@ -42,29 +42,48 @@
     "score_equals_execute_required": true
   },
   "step2_current": {
-    "architecture": "typed/physics-aware actuator-to-node messages plus separate managed-flow injection",
-    "stage_A": "typed teacher-forced hydraulic transition and managed-flow learning",
-    "stage_B0": "H60/H120 autoregressive truncated-rollout curriculum",
-    "stage_B": "H360 two-pass exact full within-group pairwise first-order gradient training with memory-safe GPU microbatches",
-    "training_pair_threshold": "1 m3 absolute SWMM action-effect floor",
-    "truth_partition": "canonical float32 candidate TFV delta shared by census, reported pair loss and live gradient",
+    "architecture": "explicit setting-conditioned actuator residual response + typed actuator-to-node messages + managed-flow injection + static SWMM edge physics + dynamic head-difference/head-gradient graph messages",
+    "actuator_response": "previous flow remains a causal feature but no learned responsiveness gate multiplies the entire action delta; low-order centered setting basis provides an explicit action pathway",
+    "flow_scale": "max(temporal 0.995 residual scale, TrainFit-only candidate-minus-reference flow-response 0.995 scale) per actuator; this is a numerical surrogate scale, never an engineering rate constraint",
+    "flow_scale_holdout_used": false,
+    "stage_A": "teacher-forced absolute hydraulic fit plus TrainFit candidate-minus-reference state/managed-flow effect loss",
+    "stage_B0": "autoregressive truncated rollout plus candidate-minus-reference state/managed-flow effect loss",
+    "stage_B": "unchanged exact H360 two-pass full within-group TFV pairwise training followed by one low-learning-rate TrainFit H360 action-effect anchor to prevent sensitivity forgetting",
+    "training_pair_threshold": "1 m3 absolute SWMM action-effect floor for the exact TFV ranking objective",
+    "truth_partition": "canonical float32 candidate TFV delta shared by census, reported pair loss and live exact-gradient terms",
     "objective_module": "src/rtc/step2_train_v128_exact.py",
+    "training_amendment_module": "src/rtc/step2_action_identifiable_v128.py",
+    "edge_physics_module": "src/rtc/step2_differentiable_v128_edge.py",
+    "edge_physics_artifact_required": true,
     "obsolete_objective_module_forbidden": "src/rtc/step2_train_v128.py",
     "execution_profiles": ["smoke", "dev", "full"],
+    "current_enabled_profiles": ["smoke", "dev"],
+    "full_current_enabled": false,
+    "full_block_reason": "the diagnostic-driven architecture/training repair must pass held-out Development action-flow, gradient, ranking, spatial and closed-loop gates before promotion",
     "profile_required_on_cli": true,
     "smoke_dev_scientific_claim_allowed": false,
     "smoke_dev_d5_runtime_allowed": false,
-    "stage_checkpoint_resume": "stage-boundary only: after Stage A, B0 or objective; no mid-epoch resume claim",
+    "stage_checkpoint_resume": "stage-boundary only; edge-physics SHA plus enhanced source SHA are injected into stage lineage so stale architecture/artifact resume fails closed",
     "stage_checkpoints_nonfinal": true,
     "lazy_mmap_branch_streaming": "large authoritative target states/flows stay mmap-backed until active microbatch selection",
-    "checkpoint": "V6 model-source and exact-training-source fingerprints are fail-closed; only explicit full profile can create strict base checkpoint",
     "ranking_d2_d5_same_final_step2_sha_required": true
   },
+  "diagnostic_evidence_triggering_repair": {
+    "stage_a_gradient_l2_ratio": 0.011197531360474222,
+    "stage_a_gradient_cosine": 0.006154343062526728,
+    "stage_objective_gradient_sign_accuracy": 0.40425531914893614,
+    "heldout_action_to_flow_sign_accuracy": 0.8740353662950916,
+    "heldout_action_to_flow_cosine": 0.7195183680132229,
+    "heldout_action_to_flow_l2_magnitude_ratio": 0.005588448460730085,
+    "heldout_action_to_flow_median_magnitude_ratio": 0.017321887002288226,
+    "oracle_swmm_flow_repairs_node_hydraulic_effect": false,
+    "failure_localization": "MIXED_ACTION_CHAIN_FAILURE"
+  },
   "development_funnel": {
-    "smoke": "very small deterministic Development subset; preserve 109 actuators/H360/exact-pairwise code path; reject wiring, NaN, gradient and obvious spatial failures quickly",
-    "dev": "larger deterministic Development proxy for ranking, gradient, spatial action-effect and architecture comparisons",
-    "full": "canonical 112 D2 + 112 D3 + 33 D4-FIT, four Stage-A epochs, H60/H120 rollout curriculum and three exact H360 objective epochs",
-    "promotion_order": ["unit/preflight", "smoke one-group profiler", "smoke", "smoke ranking+spatial+gradient", "dev", "full", "D5", "development closed loop", "seven-strategy development", "Policy Lock only after gates"]
+    "smoke": "small deterministic Development subset; preserve 109 actuators/H360/exact pairwise path and use the repaired action-identifiable architecture to reject wiring, NaN, magnitude-collapse and transition failures quickly",
+    "dev": "larger deterministic Development proxy for action-flow, ranking, gradient, spatial action-effect and architecture confirmation",
+    "full": "disabled for the repaired current architecture until explicit Development promotion",
+    "promotion_order": ["unit/preflight", "edge-physics artifact admission", "smoke Stage A", "Stage A action-flow+gradient audit", "smoke B0/objective", "smoke ranking+spatial+gradient", "dev", "explicit full promotion", "full", "D5", "development closed loop", "seven-strategy development", "Policy Lock only after gates"]
   },
   "spatial_diagnostics": {
     "step1_attention_trainer": "scripts/train_step1_global_attention_dev.py",
@@ -72,17 +91,17 @@
     "step2_action_effect_distance_audit": "scripts/audit_step2_spatial_current.py",
     "step2_development_gradient_audit": "scripts/audit_step2_gradient_current_dev.py",
     "distance_bins_hops": ["1-3", "4-6", "7-12", "13+"],
-    "global_attention_ablation": "train a separate V122 checkpoint, compare frozen legacy Step1 to V122 on identical Development validation windows, and never hot replace the frozen Step1",
+    "far_field_is_current_primary_failure": false,
     "edge_physics_builder": "scripts/build_edge_physics_current.py",
-    "edge_aware_experiment": "scripts/run_step2_edge_aware_dev.py",
+    "edge_physics_role": "required by the current repaired smoke/dev model; built only from frozen INP+graph, not outcome labels",
     "hydraulic_influence_builder": "scripts/build_hydraulic_influence_current.py",
-    "influence_graph_role": "Development-only candidate shortcuts; never built from Validation/Final"
+    "influence_graph_role": "not promoted by this repair; Development-only candidate shortcut because current evidence does not show a monotonic far-field-only collapse"
   },
   "physics_diagnostics": {
     "ordinary_conduit_flow_supervision_currently_required_for_promotion": false,
     "do_not_fabricate_missing_link_flow_labels": true,
     "continuity_proxy_training_loss_enabled": false,
-    "reason": "current Step2 state omits some SWMM node loss terms and ordinary conduit dynamic flow; diagnose before adding physics loss"
+    "reason": "current Step2 state omits some SWMM node loss terms and ordinary conduit dynamic flow; edge physics and counterfactual node/managed-flow supervision are used without inventing unavailable labels"
   },
   "causality": {
     "training_initial_state": "frozen causal Step1 reconstruction, not future SWMM truth",
@@ -96,8 +115,9 @@
     "D2": "single-actuator hydraulic sensitivity/local Jacobian support",
     "targeted_D3": "joint multi-actuator nonlinear response/action generalization",
     "D4_FIT": "local physical-response support",
+    "action_conditioned_flow_scale_sources": ["TrainFit D2", "TrainFit targeted D3", "D4_FIT"],
     "D4_AUDIT_training": false,
-    "D5_FIT": "exact online fraction-space directional-gradient fine-tuning after full only",
+    "D5_FIT": "only after full is explicitly promoted and completed",
     "D5_AUDIT_training": false,
     "InternalHoldout_training": false,
     "D2_development_validation_training": false,
@@ -128,6 +148,7 @@
   "canonical_entrypoints": {
     "guide": "CODEX_START_HERE.md",
     "preflight": "rtc-current-preflight",
+    "edge_physics_builder": "scripts/build_edge_physics_current.py",
     "existing_data_training": "scripts/run_step2_current.py",
     "step2_spatial_audit": "scripts/audit_step2_spatial_current.py",
     "step2_development_gradient_audit": "scripts/audit_step2_gradient_current_dev.py",
@@ -141,11 +162,12 @@
     "seven_strategy_comparison": "scripts/run_seven_strategies_current.py"
   },
   "historical_entrypoints": {
+    "scripts/run_step2_edge_aware_dev.py": "SUPERSEDED_STANDALONE_ABLATION; edge physics is now part of the current repaired smoke/dev model",
     "scripts/run_step2_v127.py": "ARCHIVAL_NONCURRENT",
     "scripts/run_step2_v127_control_streaming.py": "ARCHIVAL_NONCURRENT",
     "scripts/run_step2_v128_control_4060.py": "DELETED_OBSOLETE_FULL_ONLY_USER_RUNNER",
     "scripts/run_policy_v127.py": "ARCHIVAL_NONCURRENT",
     "scripts/run_seven_strategies_v127.py": "SHARED_BASELINE_ORCHESTRATION_INTERNAL_NOT_USER_ENTRY"
   },
-  "promotion_rule": "debug/main merge is not scientific Policy Lock; smoke/dev artifacts are never formal evidence. Full and downstream authoritative SWMM development evidence must demonstrate acceptable ranking, gradients, spatial action effects, TFV/PFV and sub-600-second runtime before production/final claims"
+  "promotion_rule": "merge is not scientific promotion. The repaired current architecture is smoke/dev only until same-checkpoint Development evidence materially improves action-flow magnitude, Stage-A and final gradients, held-out TFV ranking/top1/regret and spatial action effects without causality or runtime regressions. Only then may full be explicitly enabled."
 }
