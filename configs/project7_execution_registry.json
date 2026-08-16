@@ -1,9 +1,9 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_V13_GRADIENT_STAGE_DECOMPOSITION",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_V14_ACTION_IDENTIFIABLE_HYDRAULIC_REPAIR",
   "current": {
     "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
-    "research_contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V2_DEBUG_FIRST",
-    "implementation_contract": "PROJECT7_V128_TYPED_CONTROL_IDENTIFIABILITY_DEBUG_FIRST_EXACT_PAIRWISE",
+    "research_contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V3_ACTION_IDENTIFIABLE_DEV",
+    "implementation_contract": "PROJECT7_V128_ACTION_IDENTIFIABLE_EDGE_PHYSICS_SURROGATE_DEV_V1",
     "guide": "CODEX_START_HERE.md",
     "step2_training": "scripts/run_step2_current.py",
     "runtime": "scripts/run_policy_current.py",
@@ -12,12 +12,17 @@
     "lint_gate": "python scripts/lint_current_surface.py",
     "lint_surface_contract": "configs/project7_current_lint_surface.json",
     "required_step2_profiles": ["smoke", "dev", "full"],
-    "development_profile_mode": "profile-one-group telemetry only; raw torch Chrome trace disabled on current 16-GB workstation"
+    "enabled_step2_profiles": ["smoke", "dev"],
+    "full_profile_enabled": false,
+    "full_profile_block_reason": "the action-identifiable repair must pass same-checkpoint held-out Development action-flow, gradient, ranking, spatial and closed-loop gates before explicit promotion",
+    "required_current_training_extra": "--edge-physics <frozen Development edge-physics artifact>",
+    "development_profile_mode": "stage-resumable smoke/dev telemetry; raw torch Chrome trace disabled on current 16-GB workstation"
   },
   "selected_internal_implementation": {
-    "step2_model": "src/rtc/step2_differentiable_v128.py",
-    "step2_stage_a": "src/rtc/step2_train_v128_hydraulic.py",
-    "step2_stage_b_exact": "src/rtc/step2_train_v128_exact.py",
+    "step2_base_model": "src/rtc/step2_differentiable_v128.py",
+    "step2_edge_transition": "src/rtc/step2_differentiable_v128_edge.py",
+    "step2_action_identifiable_model_and_training": "src/rtc/step2_action_identifiable_v128.py",
+    "step2_exact_h360_objective": "src/rtc/step2_train_v128_exact.py",
     "step2_profile_contract": "src/rtc/development_profile_v128.py",
     "step2_stage_checkpoint": "src/rtc/stage_checkpoint_v128.py",
     "checkpoint": "src/rtc/checkpoint_v128.py",
@@ -25,17 +30,26 @@
     "controller": "src/rtc/controller_v128.py",
     "runtime_evidence": "src/rtc/runtime_evidence_v128.py"
   },
+  "current_repair_semantics": {
+    "failure_localization": "MIXED_ACTION_CHAIN_FAILURE",
+    "flow_scale": "FIT-only max(temporal residual q99.5, candidate-reference action-flow q99.5) per actuator",
+    "flow_scale_is_engineering_constraint": false,
+    "actuator_model": "previous flow remains causal context; explicit centered linear/quadratic setting basis controls a bounded residual; diagnostic responsiveness no longer gates the entire flow delta",
+    "stage_a": "absolute state/managed-flow fit plus candidate-reference state/flow effect supervision",
+    "stage_b0": "autoregressive rollout plus candidate-reference state/flow effect supervision",
+    "stage_b": "unchanged exact H360 TFV pairwise objective then a low-LR FIT-only H360 action-effect anchor",
+    "ordinary_graph": "edge-aware message passing with frozen SWMM link descriptors plus current head-difference/head-gradient dynamic features",
+    "ordinary_conduit_flow_labels_fabricated": false,
+    "incomplete_mass_balance_loss_enabled": false
+  },
   "development_diagnostics": {
     "step1_attention_trainer": "scripts/train_step1_global_attention_dev.py",
     "step1_distance_attention_ablation": "scripts/audit_step1_global_attention_current.py",
     "step2_spatial_action_effect": "scripts/audit_step2_spatial_current.py",
     "step2_development_gradient": "scripts/audit_step2_gradient_current_dev.py",
     "step2_gradient_stage_decomposition": "scripts/audit_step2_gradient_stage_current_dev.py",
-    "step2_gradient_stage_decomposition_purpose": "read-only source-strict stage_a/stage_b0/objective comparison plus predicted/true magnitude ratio and smooth-flood Softplus-gate diagnostics",
-    "step2_development_gradient_provenance": "reference-first canonical D2 settings sequences; single-actuator change inferred fail-closed; no synthetic row metadata",
     "edge_physics_builder": "scripts/build_edge_physics_current.py",
-    "edge_aware_smoke_dev": "scripts/run_step2_edge_aware_dev.py",
-    "edge_aware_spatial_audit": "scripts/audit_step2_edge_spatial_current.py",
+    "legacy_edge_aware_ablation": "scripts/run_step2_edge_aware_dev.py",
     "hydraulic_influence_builder": "scripts/build_hydraulic_influence_current.py",
     "physics_readiness": "src/rtc/physics_diagnostics_v128.py"
   },
@@ -46,6 +60,7 @@
     "continuous_evidence": "scripts/build_v128_continuous_evidence.py"
   },
   "historical_and_shared": {
+    "scripts/run_step2_edge_aware_dev.py": "SUPERSEDED_STANDALONE_ABLATION; retained as Development provenance while edge physics is part of current repaired smoke/dev",
     "scripts/run_step2_v127.py": "ARCHIVAL_NONCURRENT",
     "scripts/run_step2_v127_control_streaming.py": "SHARED_STREAMING_IMPLEMENTATION_INTERNAL_ONLY",
     "scripts/run_step2_v128_control_4060.py": "DELETED_OBSOLETE_FULL_ONLY_USER_RUNNER",
@@ -54,31 +69,23 @@
     "src/rtc/step2_train_v128.py": "DELETED_OBSOLETE_DETACHED_PAIRWISE_OBJECTIVE"
   },
   "hard_rules": [
-    "user and Codex Step2 workflows must enter through scripts/run_step2_current.py and explicitly choose smoke/dev/full",
-    "run python scripts/lint_current_surface.py as the lint stop-gate; do not use full-repository ruff check . as a smoke/dev prerequisite while archival Ruff debt remains",
-    "smoke/dev are Development screening only and cannot create a strict final Step2 checkpoint or enter D5/runtime/Policy Lock",
-    "profile the bounded smoke one-group path with TRAINING_TELEMETRY.jsonl and optional low-frequency external GPU sampling; do not use raw --torch-profiler Chrome-trace export on the current 16-GB workstation",
-    "profiler/export/sampler failure after successful training checkpoints is not a scientific Step2 failure; stop only on real stage/OOM/nonfinite/lineage/checkpoint/resource-leak failures",
-    "use scripts/audit_step2_gradient_current_dev.py for smoke/dev stage_objective.pt; derive Development D2 action directions only from the frozen reference-first settings sequences and fail closed unless each candidate changes exactly one actuator; never fabricate actuator_id/base_setting/requested_setting metadata",
-    "when stage_objective gradients collapse, use scripts/audit_step2_gradient_stage_current_dev.py read-only on the existing stage_a/stage_b0/objective checkpoints before changing architecture or starting dev/full",
-    "treat smooth-flood Softplus-gate statistics as Development failure-localization diagnostics only; do not change the frozen objective from those statistics without a separate evidence-backed code change",
-    "audit-only source changes outside checkpoint_v128 model/training fingerprint lists do not require retraining an otherwise source-compatible nonfinal stage checkpoint",
-    "use scripts/audit_step2_v128_d2_gradients_fast.py only for a strict full checkpoint",
-    "train Step1 global-attention only through scripts/train_step1_global_attention_dev.py and compare it with scripts/audit_step1_global_attention_current.py before any Step1 promotion",
-    "if Step1 is promoted, rebuild the causal Step1 state store and retrain Step2 from the beginning; never hot-swap Step1 into an old Step2 lineage",
-    "never load V127 checkpoint through V128 loader or V128 checkpoint through V127 loader",
-    "never load a V128 checkpoint after either its model-source or exact-training-source fingerprint changes",
+    "user and Codex Step2 workflows must enter through scripts/run_step2_current.py",
+    "current repaired Step2 requires --edge-physics and only smoke/dev are enabled until explicit promotion",
+    "run python scripts/lint_current_surface.py as the lint stop-gate; do not use full-repository ruff check . as a smoke/dev prerequisite",
+    "smoke/dev are Development screening only and cannot enter D5/runtime/Policy Lock",
+    "hybrid action-flow scale may use TrainFit D2/targeted-D3/D4-FIT only; never holdout, D4-AUDIT, Validation, Final or Formal outcomes",
+    "the hybrid action-flow scale is a numerical surrogate residual scale, never an engineering actuator-rate constraint",
+    "stage resume must match edge-physics SHA and enhanced architecture/training source SHA in addition to existing graph/data/training-design lineage",
+    "do not use raw --torch-profiler Chrome-trace export on the current 16-GB workstation",
+    "do not fabricate ordinary-conduit flow labels or enable the incomplete continuity proxy as a physics loss",
+    "do not promote hydraulic-influence shortcuts merely because edge physics is enabled; current evidence did not identify a monotonic far-field-only failure",
+    "never load V127 checkpoint through V128 loader or mix stage checkpoints across source/lineage changes",
     "never route current training to the deleted detached-memory src/rtc/step2_train_v128.py objective",
     "never reintroduce NumPy-float64 pair census; exact pair census/report/live gradient share canonical float32 SWMM truth deltas",
     "never combine ranking, D2 and D5 reports from different Step2 SHA256 values",
     "never project a scored current command after MPC; engineering envelope must be inside the differentiable decoder",
-    "never let a custom engineering envelope masquerade as IDEALIZED_DEFAULT_0P5_PER_10MIN",
-    "never claim edge-aware or hydraulic-influence development experiments are the full model until held-out spatial/ranking evidence promotes them",
-    "never construct hydraulic-influence shortcuts from Validation/Final/Formal data",
-    "never fabricate ordinary-conduit flow labels or enable incomplete continuity proxy as a physics loss",
-    "never call a measured authoritative run real-time unless every guarded supervisory callback is below 600 seconds and score==execute plus continuity are explicitly true",
     "never use future realized rainfall, future SWMM state, or future Internal trajectory online",
     "never access Validation/Final/Formal/Policy Lock while the current implementation remains development-only"
   ],
-  "merge_semantics": "merging debug/development infrastructure to main removes routing ambiguity and accelerates model selection; it does not itself constitute scientific promotion, Policy Lock or Final evidence"
+  "merge_semantics": "merging this repair makes the diagnosed Development candidate reproducible; it does not itself prove improved TFV control, enable full, constitute Policy Lock or create Final evidence"
 }
