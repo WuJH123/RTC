@@ -1,34 +1,18 @@
 """Current Project7 Step2 runner with balanced Stage-A direct supervision.
 
 This wrapper keeps the existing counterfactual-first V128 model, B0/objective code, data
-boundaries and fail-closed production gates.  It replaces only Stage A with the balanced
-FIT-only direct-pair curriculum from ``rtc.step2_stagea_balanced_v128`` and extends source
-lineage so old stage checkpoints cannot be resumed as if they used the new supervision.
+boundaries and fail-closed production gates. It replaces only Stage A with the balanced FIT-only
+direct-pair curriculum and uses the same source-lineage helper as the Development audits.
 """
 from __future__ import annotations
 
-import hashlib
-from pathlib import Path
-
 import run_step2_action_identifiable_current as current
 import rtc.step2_stagea_balanced_v128 as balanced
+from rtc.step2_current_dev_context_v128 import action_identifiable_source_sha256
 
 CURRENT_BALANCED_RUN_CONTRACT = (
     "PROJECT7_V128_CURRENT_COUNTERFACTUAL_FIRST_BALANCED_STAGE_A_DEV_V1"
 )
-_BASE_SOURCE_SHA256 = current._enhanced_source_sha256
-
-
-def _balanced_source_sha256() -> str:
-    base = _BASE_SOURCE_SHA256()
-    raw = getattr(balanced, "__file__", None)
-    if raw is None:
-        raise RuntimeError("cannot fingerprint balanced Stage-A source module")
-    digest = hashlib.sha256()
-    digest.update(base.encode("utf-8"))
-    digest.update(hashlib.sha256(Path(raw).read_bytes()).digest())
-    digest.update(hashlib.sha256(Path(__file__).read_bytes()).digest())
-    return digest.hexdigest()
 
 
 def main() -> None:
@@ -40,7 +24,7 @@ def main() -> None:
     original_a1_contract = current.ORACLE_HYDRAULIC_A1_V5_CONTRACT
     original_a2_contract = current.JOINT_DIRECT_A2_V5_CONTRACT
     try:
-        current._enhanced_source_sha256 = _balanced_source_sha256
+        current._enhanced_source_sha256 = action_identifiable_source_sha256
         current.train_counterfactual_first_stage_a_v5 = (
             balanced.train_counterfactual_first_stage_a_balanced_v128
         )
