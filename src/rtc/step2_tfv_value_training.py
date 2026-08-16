@@ -3,11 +3,11 @@
 The curriculum mirrors the information content of the existing SWMM data instead of the old
 hydraulic-surrogate implementation stages:
 
-1. MAIN: exact same-prefix single-actuator branches teach the 109 facility main effects.
-2. JOINT: main-effect parameters are frozen and multi-actuator branches teach only the residual
-   interaction term.
+1. MAIN: exact same-prefix single-actuator branches teach the 109 facility main-value differences.
+2. JOINT: main/context parameters are frozen and multi-actuator branches teach only the residual
+   interaction value difference.
 
-The authoritative target is always exact SWMM delta TFV.  The historical 1%-of-reference
+The authoritative target is always exact SWMM delta TFV. The historical 1%-of-reference
 "meaningful" threshold is a reporting convention and is intentionally not used to erase or
 binarize continuous training labels. HOLD/reference is an explicit zero-delta option in ranking
 losses and selection metrics because real-time control must learn when doing nothing is better.
@@ -27,7 +27,7 @@ from .step2_tfv_value import DirectFacilityTFVValueModel
 from .step2_train_response_v60 import InputNormalizationV60
 
 
-DIRECT_TFV_TRAINING_CONTRACT = "PROJECT7_DIRECT_TFV_MAIN_THEN_INTERACTION_TRAINING_V1"
+DIRECT_TFV_TRAINING_CONTRACT = "PROJECT7_DIRECT_TFV_MAIN_THEN_INTERACTION_TRAINING_V2"
 
 
 @dataclass(frozen=True)
@@ -199,8 +199,6 @@ def derive_direct_tfv_target_scale_m3(
     positive = absolute[absolute > 1.0e-6]
     if positive.size == 0:
         raise ValueError("TrainFit exact delta TFV is identically zero")
-    # Q75 gives large but not extreme action effects O(1) normalized magnitude and is much more
-    # stable than scaling by the multi-million-m3 absolute event TFV.
     return max(100.0, float(np.quantile(positive, 0.75)))
 
 
@@ -215,7 +213,7 @@ def _set_trainable(model: DirectFacilityTFVValueModel, *, interaction_only: bool
 def _epoch_group_order(
     source_groups: Mapping[str, Sequence[str]], *, epoch: int, seed: int
 ) -> list[tuple[str, str]]:
-    """Interleave sources so the numerous D2 branches do not erase D3 temporal diversity."""
+    """Interleave sources so the numerous D2 branches do not erase D3/D4 diversity."""
     shuffled: dict[str, list[str]] = {}
     for source, names in source_groups.items():
         order = list(names)
@@ -383,13 +381,16 @@ def evaluate_direct_tfv_value_model(
     graph: Any,
     device: torch.device,
 ) -> dict[str, float | int]:
+    """Evaluate ranking *and* whether the selected action is actually better than HOLD."""
     static = _graph_tensors(graph, device)
     ranks: list[float] = []
     pairwise: list[float] = []
     mae: list[float] = []
     sign: list[float] = []
     regrets: list[float] = []
+    selected_truth: list[float] = []
     top1 = hold_selected = groups = branches = 0
+    oracle_hold = false_action_when_hold = selected_beneficial = selected_harmful = 0
     model.eval()
     with torch.no_grad():
         for name in names:
@@ -421,9 +422,15 @@ def evaluate_direct_tfv_value_model(
                 )
             selected = int(np.argmin(prediction))
             oracle = int(np.argmin(truth))
+            selected_delta = float(truth[selected])
             hold_selected += int(selected == 0)
+            oracle_hold += int(oracle == 0)
+            false_action_when_hold += int(oracle == 0 and selected != 0)
+            selected_beneficial += int(selected_delta < -1.0)
+            selected_harmful += int(selected_delta > 1.0)
             top1 += int(selected == oracle)
-            regrets.append(float(truth[selected] - truth[oracle]))
+            selected_truth.append(selected_delta)
+            regrets.append(float(selected_delta - truth[oracle]))
 
     def finite_mean(values: Sequence[float]) -> float:
         x = np.asarray(values, dtype=np.float64)
@@ -440,6 +447,14 @@ def evaluate_direct_tfv_value_model(
         "sign": finite_mean(sign),
         "top1_fraction": float(top1 / groups),
         "hold_selected_fraction": float(hold_selected / groups),
+        "oracle_hold_groups": int(oracle_hold),
+        "false_action_when_hold_oracle_count": int(false_action_when_hold),
+        "false_action_when_hold_oracle_fraction": (
+            float(false_action_when_hold / oracle_hold) if oracle_hold else 0.0
+        ),
+        "selected_beneficial_fraction": float(selected_beneficial / groups),
+        "selected_harmful_fraction": float(selected_harmful / groups),
+        "selected_true_delta_tfv_m3": finite_mean(selected_truth),
         "delta_tfv_mae_m3": finite_mean(mae),
         "selected_regret_m3": finite_mean(regrets),
     }
