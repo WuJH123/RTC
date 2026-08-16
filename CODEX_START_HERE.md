@@ -3,28 +3,28 @@
 This is the **only user/Codex start document** for the current repository. GitHub `main` is the
 code source of truth. Do not infer the active method from the highest V-number in a filename.
 
-The immediate task is Development failure elimination, not Formal evidence. The Step2 surrogate
-must first learn the causal counterfactual hydraulic trajectory and candidate ordering needed by
-continuous MPC. Autograd TFV sensitivity is assessed downstream as a solver signal; it is not a
-SWMM-labelled primary training target.
+The immediate task is Development failure elimination, not Formal evidence. Step2 must first learn
+the causal counterfactual hydraulic trajectory and candidate ordering required by continuous MPC.
+Autograd TFV sensitivity is evaluated downstream as a solver signal; it is not a SWMM-labelled
+primary training target.
 
-## 1. Frozen research problem — never redesign while debugging
+## 1. Frozen research problem
 
 Project7 is an **idealized EPA-SWMM methodology testbed, not a field digital twin**.
 
 ```text
 causal sparse sensing
-  -> Step1 current full-network state reconstruction
-  -> Step2 action-conditioned differentiable hydraulic trajectory
-  -> continuous 109-actuator receding-horizon MPC
-  -> H360 prediction / H120 free targets
-  -> engineering envelope before scoring
-  -> execute first 10 minutes only
-  -> authoritative SWMM write/readback
-  -> re-observe after 600 s and optimize again
+ -> Step1 current full-network state reconstruction
+ -> Step2 differentiable action-conditioned hydraulic trajectory
+ -> 109-actuator continuous receding-horizon MPC
+ -> H360 prediction / H120 free targets
+ -> engineering envelope before scoring
+ -> execute first 10 minutes only
+ -> authoritative SWMM write/readback
+ -> re-observe after 600 s and optimize again
 ```
 
-Frozen hierarchy:
+Never change this hierarchy while debugging:
 
 - system-wide cumulative **TFV = primary**;
 - Priority8 PFV = **one-sided soft secondary deterioration protection**;
@@ -33,14 +33,10 @@ Frozen hierarchy:
 
 Frozen clock/action contract: 300 s model step, 600 s control update, H360=72 model steps,
 H120=24 model steps=12 ten-minute target blocks, 109 writable continuous actuators, 1308 free
-MPC variables, execute first 10 minutes only.
+MPC variables, execute first 10 minutes only. RBC is warm start/fallback/comparator, not a value
+reference or action-space ceiling.
 
-RBC is a warm start, fallback and engineering comparator. It is not the Step2 value reference and
-not an action-space ceiling.
-
-## 2. What the latest smoke actually proved
-
-The PR #77 Stage-A smoke did **not** justify continuing B0. It showed:
+## 2. What the last smoke actually showed
 
 ```text
 historical full-H72 flow sign                 ~0.8516
@@ -52,56 +48,52 @@ Stage-A TFV-gradient cosine                    ~0.1751
 Stage-A TFV-gradient L2 ratio                  ~1.5568
 ```
 
-The important diagnosis is that the historical H72 flow comparison was not a clean local actuator
-metric. After candidate/reference hydraulic states have diverged, the flow difference contains
-network feedback. One high-energy actuator can dominate a global cosine. Therefore full-H72 flow
-response is a **trajectory-feedback quantity**, not a local same-state `setting -> flow` label.
+The historical H72 flow metric mixed direct actuator response with later hydraulic feedback, and a
+single high-energy actuator could dominate the global cosine. Therefore later H72 flow difference
+is a **network-feedback trajectory quantity**, not local same-state `dq/du`.
 
-A second code audit found two hidden P0 issues:
+The source audit then found two additional P0s:
 
-1. the old oracle-flow transition still passed branch-varying candidate setting into the typed
-   action message, so `setting -> message -> state` could bypass authoritative managed flow;
-2. the older Stage-A/B0 modules imported `_cpu_group` / `_select_to_device` by value before lazy
-   streaming was installed, so later monkey-patching did not guarantee mmap-backed truth loading.
+1. oracle-flow hydraulics still admitted a branch-varying `setting -> typed message -> state` side
+   channel;
+2. older Stage-A/B0 code imported streaming functions by value before lazy mmap hooks were
+   installed, so host-memory laziness was not guaranteed.
 
-Both are fixed in the current Development surface.
+Both are corrected in the current surface.
 
-## 3. Current scientific correction — counterfactual trajectory first
+## 3. Current correction — counterfactual trajectory first
 
 ### A0 — direct same-prefix setting -> managed flow
 
-Use only the **first setting divergence** for a local actuator effect. Reference and candidate must
-share one authoritative pre-action state and previous managed flow. Temporal `q(t)-q(t-1)` scale
-and direct action-response scale are separate. Later feedback cannot inflate the local scale.
+Only the first setting divergence is a local actuator label. Reference/candidate must share one
+authoritative pre-action state and previous managed flow. Temporal flow scale and direct setting
+response scale are separate.
 
 ### A1 — strict managed-flow-only -> hydraulics
 
-Freeze actuator parameters and inject authoritative SWMM managed flow. Absolute teacher-forced A1
-may use each branch's causal setting, but the **direct reference/candidate isolation** shares the
-reference setting inside the typed action context. Thus authoritative managed flow is the only
-branch-varying control signal reaching the transition. If this q-only oracle cannot reproduce the
-direct hydraulic effect, the problem is downstream of the actuator model.
+Freeze actuator parameters and inject authoritative SWMM managed flow. In the direct pair, both
+branches share the reference setting inside the typed action context, so authoritative managed
+flow is the only branch-varying control signal reaching the hydraulic transition.
 
 ### A2 — joint direct counterfactual teacher forcing
 
-Unfreeze the full model. Train absolute next-state/managed-flow prediction plus response-weighted
-same-prefix flow and state effects using predicted managed flow.
+Unfreeze the model and train absolute state/flow plus response-weighted same-prefix flow/state
+effects using predicted managed flow.
 
 ### B0 — autoregressive network feedback
 
-Only after Stage A passes, learn multi-step candidate/reference network feedback. B0 flow-effect
-normalization uses actuator flow standard deviation, not the local direct-action scale. Full-H72
-feedback belongs here.
+Only after Stage A passes, train multi-step candidate/reference network feedback. Full feedback
+flow effects are normalized by actuator flow standard deviation, not the direct-action scale.
 
 ### H360 exact TFV objective
 
-Only after B0 trajectory/ranking/spatial evidence is coherent, run the existing source-strict
-H360 two-pass within-group pairwise TFV objective. Follow it with one low-LR trajectory rehearsal.
-No SWMM action-gradient labels are trained.
+Only after B0 ranking/horizon/spatial evidence is coherent, run the source-strict H360 two-pass
+within-group pairwise TFV objective and one low-LR trajectory rehearsal. SWMM action gradients are
+never training labels.
 
 ## 4. Active code surface
 
-Read these machine contracts first:
+Machine contracts:
 
 ```text
 configs/step2_current_contract.json
@@ -110,7 +102,7 @@ configs/v128_control_execution.json
 configs/project7_current_lint_surface.json
 ```
 
-Active Step2 implementation:
+Active implementation/diagnostics:
 
 ```text
 scripts/run_step2_current.py
@@ -122,38 +114,34 @@ src/rtc/step2_differentiable_v128_edge.py
 src/rtc/step2_train_v128_exact.py
 src/rtc/step2_current_dev_context_v128.py
 src/rtc/step2_lazy_stream_v128.py
-```
-
-Current Development diagnostics:
-
-```text
 scripts/audit_step2_actuator_flow_effect_current.py
 scripts/audit_step2_direct_hydraulic_effect_current.py
+scripts/audit_step2_stage_ranking_current.py
+scripts/audit_step2_spatial_current.py
 scripts/audit_step2_gradient_stage_current_dev.py
 scripts/audit_step2_gradient_current_dev.py
-scripts/audit_step2_spatial_current.py
 ```
 
-The active Stage A/B0/post-objective trajectory code calls the V128 lazy mmap helpers explicitly.
-Do not replace it with superseded V3/V4 training modules.
+Superseded V3/V4 counterfactual Stage-A files are not current execution surfaces. The V4 file
+created during this PR was deleted before merge.
 
 ## 5. Development boundaries
 
 Until explicit production promotion:
 
 - no Validation, Final, Formal or Policy Lock;
-- no D4-AUDIT, D5-AUDIT, InternalHoldout or D2 held-out outcomes in training/scale fitting;
-- no future realised rainfall, future SWMM hydraulic truth or future Internal trajectory online;
-- no new D2/D3/D4 SWMM outcomes merely because source code changed;
+- no D4-AUDIT/D5-AUDIT/InternalHoldout/D2-holdout outcomes in training or scale fitting;
+- no future realised rainfall or future SWMM hydraulic truth online;
+- no new D2/D3/D4 SWMM outcomes merely because code changed;
 - no fabricated ordinary-conduit dynamic-flow labels;
 - incomplete continuity proxy remains diagnostic-only;
-- no influence graph/deeper-GNN promotion unless held-out spatial evidence isolates a distance
+- no deeper-GNN/influence-graph promotion unless held-out spatial evidence isolates a distance
   bottleneck;
-- smoke/dev checkpoints are NONFINAL;
+- smoke/dev stage checkpoints are NONFINAL;
 - `--profile full`, D5, runtime and seven-strategy Proposed evaluation stay blocked until a future
   production checkpoint factory/loader/runtime is explicitly implemented.
 
-Do not bypass a fail-closed error by routing an older base-V128 checkpoint as the current Proposal.
+Do not route an older base-V128 checkpoint as the current Proposal to bypass a fail-closed error.
 
 ## 6. Workstation contract
 
@@ -170,7 +158,7 @@ SWMM workers<=16; one thread/process
 Do not use raw Torch Chrome-trace export. Use `TRAINING_TELEMETRY.jsonl` and low-frequency
 `nvidia-smi` sampling.
 
-## 7. Hard-sync local code from GitHub
+## 7. Hard-sync local code
 
 ```powershell
 cd E:\RTC_sewer\Project7\repo
@@ -185,8 +173,8 @@ python -m pip install -e ".[dev,swmm]"
 python -c "import importlib.metadata as m; print(m.version('wuhan-rtc'))"
 ```
 
-Require HEAD == origin/main, clean working tree and package `0.8.2.dev0`. Never reset/delete the
-separate `study_v069` data root.
+Require HEAD == origin/main, clean tree and package `0.8.2.dev0`. Never reset/delete the separate
+`study_v069` data root.
 
 ## 8. Cheap gates — all must pass before GPU training
 
@@ -197,19 +185,19 @@ python scripts/run_step2_current.py --help
 python scripts/build_edge_physics_current.py --help
 python scripts/audit_step2_actuator_flow_effect_current.py --help
 python scripts/audit_step2_direct_hydraulic_effect_current.py --help
+python scripts/audit_step2_stage_ranking_current.py --help
+python scripts/audit_step2_spatial_current.py --help
 python scripts/audit_step2_gradient_stage_current_dev.py --help
 python scripts/audit_step2_gradient_current_dev.py --help
-python scripts/audit_step2_spatial_current.py --help
 python scripts/run_policy_current.py --help
 python scripts/run_seven_strategies_current.py --help
 python scripts/run_policy_current.py --promotion-status
 python scripts/run_seven_strategies_current.py --promotion-status
 ```
 
-The last two must report `runtime_enabled=false` / `seven_strategy_enabled=false`. Do not use
-repository-wide `ruff check .` as the Development smoke gate.
+The last two must report `runtime_enabled=false` and `seven_strategy_enabled=false`.
 
-## 9. Reuse frozen Development assets
+## 9. Frozen Development assets
 
 ```text
 <GRAPH>
@@ -231,10 +219,9 @@ E:\RTC_sewer\Project7\study_v069\step2_v123_tfv_pfv_knowledge_guided_mpc\addbbd3
 E:\RTC_sewer\Project7\study_v069\step2_v127_corrected_base_7634cd9\STEP2_V127_CAUSAL_STATE_STORE_V2.npz
 ```
 
-Resolve the frozen `wuhan_method_testbed_v067.inp` from the study contract. Do not guess another
-INP. Reuse an existing edge artifact only after validating both frozen INP SHA and graph SHA.
+Resolve frozen `wuhan_method_testbed_v067.inp` from the study contract. Do not guess another INP.
 
-## 10. Preflight and edge artifact
+## 10. Preflight and deterministic edge artifact
 
 ```powershell
 $env:PATH += ';C:\Users\12480\AppData\Roaming\Python\Python314\Scripts'
@@ -261,10 +248,10 @@ $Edge="$DebugRoot\EDGE_PHYSICS_CURRENT.npz"
 Require frozen graph/INP lineage, 109 actuators, CUDA, matmul `high`, AMP false and no outcome
 labels in the edge artifact.
 
-## 11. FIRST expensive action — Stage A only, then STOP
+## 11. FIRST expensive action — Stage A only
 
 ```powershell
-$Run="$DebugRoot\smoke_stage_a"
+$Run="$DebugRoot\smoke"
 python scripts/run_step2_current.py `
   --profile smoke `
   --edge-physics $Edge `
@@ -279,26 +266,21 @@ python scripts/run_step2_current.py `
   --stop-after-stage stage_a
 ```
 
-Require a new `stage_a.pt` and Stage-A log rows with the V5 contracts:
+Require a new `stage_a.pt` and:
 
 ```text
 A0 PROJECT7_V128_DIRECT_SAME_PREFIX_FLOW_A0_V5_EXPLICIT_LAZY
 A1 PROJECT7_V128_ORACLE_FLOW_ONLY_HYDRAULIC_A1_V5_SETTING_BYPASS_BLOCKED
 A2 PROJECT7_V128_JOINT_DIRECT_HYDRAULIC_A2_V5_EXPLICIT_LAZY
-```
-
-Also require:
-
-```text
 explicit_lazy_mmap_helpers=true
 A1 direct_pair_setting_bypass_blocked=true
 A1 oracle_isolation_contract=PROJECT7_V128_ORACLE_MANAGED_FLOW_ONLY_HYDRAULIC_ISOLATION_V1
 gradient_label_used=false
 ```
 
-Any PR #77/V4 stage checkpoint must fail source/lineage resume. Do not weaken that guard.
+Any older PR #77/V4 stage checkpoint must fail source/lineage resume.
 
-## 12. Stage-A audit 1 — direct and feedback managed-flow effects
+## 12. Stage-A direct-flow audit
 
 ```powershell
 python scripts/audit_step2_actuator_flow_effect_current.py `
@@ -312,24 +294,14 @@ python scripts/audit_step2_actuator_flow_effect_current.py `
   --d4-audit-cache <D4_AUDIT> `
   --causal-store <RAIN> `
   --causal-state-store <STATE_V2> `
-  --out-dir "$Run\direct_flow" `
+  --out-dir "$Run\direct_flow_stage_a" `
   --device cuda
 ```
 
-Primary gate:
+Primary gate: same-prefix direct micro metrics, actuator-balanced macro metrics, informative actuator
+coverage and top truth-L2 contributors. Full-H72 feedback micro metrics are secondary only.
 
-- same-prefix direct micro sign/cosine/MAE/L2 ratio;
-- actuator-balanced macro sign/cosine/magnitude;
-- informative pair and actuator coverage;
-- top truth-L2 contributors.
-
-Secondary diagnostic only:
-
-- historical full-H72 feedback micro metrics.
-
-Never reject/promote solely from full-H72 global cosine.
-
-## 13. Stage-A audit 2 — strict q-only hydraulic isolation
+## 13. Stage-A strict q-only hydraulic audit
 
 ```powershell
 python scripts/audit_step2_direct_hydraulic_effect_current.py `
@@ -343,17 +315,15 @@ python scripts/audit_step2_direct_hydraulic_effect_current.py `
   --d4-audit-cache <D4_AUDIT> `
   --causal-store <RAIN> `
   --causal-state-store <STATE_V2> `
-  --out "$Run\DIRECT_HYDRAULIC_EFFECT.json" `
+  --out "$Run\DIRECT_HYDRAULIC_STAGE_A.json" `
   --device cuda
 ```
 
-Require output fields:
+Require:
 
 ```text
-oracle_flow_isolation_contract
 oracle_direct_pair_setting_bypass_blocked=true
 oracle_branch_varying_control_signal=authoritative_managed_flow_only
-normal_flow_effect
 depth.normal_vs_swmm
 depth.oracle_flow_only_vs_swmm
 flood_rate.normal_vs_swmm
@@ -363,14 +333,11 @@ flood_rate.oracle_flow_only_vs_swmm
 Interpretation:
 
 - direct flow poor -> actuator submodel/scale failure;
-- direct flow good, q-only oracle hydraulics poor -> hydraulic transition / missing hydraulic state
-  failure; STOP before B0;
-- q-only oracle good, normal hydraulics poor -> setting-to-flow submodel remains the bottleneck;
-- both direct flow and q-only hydraulics credible -> Stage A is eligible for B0 review.
+- direct flow good but q-only oracle hydraulics poor -> hydraulic transition/missing-state failure;
+- q-only oracle good but normal hydraulics poor -> setting-to-flow remains bottleneck;
+- both credible -> eligible for B0 review.
 
-## 14. Stage-A audit 3 — TFV gradient is diagnostic
-
-Run the same-checkpoint Development gradient audit:
+## 14. Stage-A TFV gradient diagnostic
 
 ```powershell
 python scripts/audit_step2_gradient_stage_current_dev.py `
@@ -388,15 +355,10 @@ python scripts/audit_step2_gradient_stage_current_dev.py `
   --device cuda
 ```
 
-Do not demand a large gradient before the autoregressive world model exists. Do reject nonfinite,
-pathologically unstable or causally impossible sensitivity. A large gradient cannot rescue wrong
-direct effects.
-
-**STOP after the three Stage-A audits.** Return the evidence for review before B0.
+A large gradient cannot rescue wrong direct effects. Weak Stage-A gradient alone does not reject a
+candidate whose direct chain is credible. **STOP here and review evidence before B0.**
 
 ## 15. Conditional B0 — only after Stage-A approval
-
-Resume the exact V5 Stage-A checkpoint rather than retraining another model:
 
 ```powershell
 python scripts/run_step2_current.py `
@@ -417,21 +379,63 @@ python scripts/run_step2_current.py `
 Require `PROJECT7_V128_COUNTERFACTUAL_AUTOREGRESSIVE_B0_V5_EXPLICIT_LAZY_FEEDBACK` and
 `explicit_lazy_mmap_helpers=true`.
 
-Before H360 objective, run same-checkpoint:
+### 15.1 B0 source-strict ranking + H30-H360 trajectory audit
 
-- action-flow audit at `stage_b0`;
-- direct q-only hydraulic audit at `stage_b0`;
-- trajectory/ranking audit using the current ranking script;
-- `scripts/audit_step2_spatial_current.py` by graph-distance bins;
-- stage-B0 gradient diagnostic.
+```powershell
+python scripts/audit_step2_stage_ranking_current.py `
+  --profile smoke `
+  --stage stage_b0 `
+  --stage-checkpoint "$Run\stage_b0.pt" `
+  --graph <GRAPH> `
+  --edge-physics $Edge `
+  --cache-manifest <BASE_CACHE> `
+  --d4-fit-cache <D4_FIT> `
+  --d4-audit-cache <D4_AUDIT> `
+  --causal-store <RAIN> `
+  --causal-state-store <STATE_V2> `
+  --ranking-out "$Run\B0_RANKING.json" `
+  --horizon-out "$Run\B0_HORIZON.json" `
+  --telemetry-out "$Run\B0_RANKING_TELEMETRY.json" `
+  --device cuda
+```
 
-If near-field is good but distant action effects collapse monotonically, then and only then open a
-separate Development architecture change for edge depth/influence graph. Do not blindly add many
-message-passing layers: depth alone is not a guaranteed cure for long-range graph sensitivity.
+This audit accepts NONFINAL stage checkpoints; do **not** call production-only
+`audit_step2_v128_fast.py` as a workaround.
 
-## 16. Conditional H360 exact objective
+### 15.2 B0 spatial action-effect audit
 
-Only a B0 candidate with useful trajectory/ranking/spatial evidence may continue:
+```powershell
+python scripts/audit_step2_spatial_current.py `
+  --profile smoke `
+  --stage stage_b0 `
+  --stage-checkpoint "$Run\stage_b0.pt" `
+  --graph <GRAPH> `
+  --edge-physics $Edge `
+  --cache-manifest <BASE_CACHE> `
+  --d4-fit-cache <D4_FIT> `
+  --d4-audit-cache <D4_AUDIT> `
+  --causal-store <RAIN> `
+  --causal-state-store <STATE_V2> `
+  --out "$Run\B0_SPATIAL.json" `
+  --device cuda
+```
+
+### 15.3 Repeat direct flow / q-only hydraulics / gradient on `stage_b0`
+
+Use the Stage-A commands above with:
+
+```text
+--stage stage_b0
+--stage-checkpoint "$Run\stage_b0.pt"
+```
+
+Only proceed if B0 improves useful ranking/trajectory without destroying direct-flow/q-only
+hydraulic behavior. If near-field is good but distant effects collapse monotonically, then open a
+separate Development edge-depth/influence-graph ablation. Do not blindly stack GNN layers.
+
+## 16. Conditional exact H360 TFV objective
+
+Only a B0 winner may continue:
 
 ```powershell
 python scripts/run_step2_current.py `
@@ -449,55 +453,90 @@ python scripts/run_step2_current.py `
   --stop-after-stage objective
 ```
 
-After `stage_objective.pt`, require on the **same checkpoint**:
+Then repeat:
 
-- TFV candidate sign/ranking quality;
-- top-1 selection accuracy and regret;
-- trajectory/action-effect fidelity not destroyed by objective training;
-- spatial bins remain coherent;
-- H360 TFV gradient sign/cosine/magnitude as a solver diagnostic;
-- no nonfinite/OOM/source-lineage mismatch.
+```powershell
+python scripts/audit_step2_stage_ranking_current.py `
+  --profile smoke `
+  --stage objective `
+  --stage-checkpoint "$Run\stage_objective.pt" `
+  --graph <GRAPH> `
+  --edge-physics $Edge `
+  --cache-manifest <BASE_CACHE> `
+  --d4-fit-cache <D4_FIT> `
+  --d4-audit-cache <D4_AUDIT> `
+  --causal-store <RAIN> `
+  --causal-state-store <STATE_V2> `
+  --ranking-out "$Run\OBJECTIVE_RANKING.json" `
+  --horizon-out "$Run\OBJECTIVE_HORIZON.json" `
+  --telemetry-out "$Run\OBJECTIVE_RANKING_TELEMETRY.json" `
+  --device cuda
 
-Gradient is not a standalone promotion gate.
+python scripts/audit_step2_spatial_current.py `
+  --profile smoke `
+  --stage objective `
+  --stage-checkpoint "$Run\stage_objective.pt" `
+  --graph <GRAPH> `
+  --edge-physics $Edge `
+  --cache-manifest <BASE_CACHE> `
+  --d4-fit-cache <D4_FIT> `
+  --d4-audit-cache <D4_AUDIT> `
+  --causal-store <RAIN> `
+  --causal-state-store <STATE_V2> `
+  --out "$Run\OBJECTIVE_SPATIAL.json" `
+  --device cuda
+
+python scripts/audit_step2_gradient_current_dev.py `
+  --profile smoke `
+  --stage-checkpoint "$Run\stage_objective.pt" `
+  --graph <GRAPH> `
+  --edge-physics $Edge `
+  --cache-manifest <BASE_CACHE> `
+  --d4-fit-cache <D4_FIT> `
+  --d4-audit-cache <D4_AUDIT> `
+  --causal-store <RAIN> `
+  --causal-state-store <STATE_V2> `
+  --out-dir "$Run\OBJECTIVE_GRADIENT" `
+  --device cuda
+```
+
+Also repeat direct-flow and q-only hydraulic audits with `--stage objective`. Require useful TFV
+candidate ranking/top-1/regret, acceptable horizon error growth, preserved action effects and a
+nonpathological solver gradient. Gradient is not a standalone promotion gate.
 
 ## 17. Conditional deterministic `dev` confirmation
 
-Only a smoke winner should be repeated under `--profile dev`. Repeat Stage A -> B0 -> objective
-with the same frozen assets and contracts, preserving all stop gates. Do not touch Validation,
-Final, Formal or Policy Lock.
+Only a smoke winner should be repeated under `--profile dev`, preserving Stage A -> STOP -> B0 ->
+STOP -> objective stop gates and the same frozen assets. Do not access Validation/Final/Formal or
+Policy Lock.
 
-The next scientific evidence after a dev winner is **Development authoritative closed-loop SWMM**,
-but the current production wrappers remain fail-closed until an explicit production model loader
-exists. Do not bypass that by calling archival V128 runtime scripts manually.
+## 18. Future production-promotion PR — mandatory before D5/runtime/seven strategies
 
-## 18. Future production-promotion PR — required before D5/runtime/seven strategies
-
-After Development evidence passes, a separate source change must implement all of the following as
-one atomic promotion:
+After Development evidence passes, a separate atomic source change must:
 
 1. freeze the exact counterfactual-first model/training/source contract;
 2. implement a production checkpoint saver **and loader for the exact promoted model class**;
-3. bind edge artifact, graph, state/rainfall stores, engineering decoder and source hashes;
-4. enable full profile explicitly and create a strict promoted checkpoint;
+3. bind graph/edge/state/rainfall/engineering/source hashes;
+4. explicitly enable `--profile full` and create a strict promoted checkpoint;
 5. run D5-FIT only first; keep D5-AUDIT untouched;
-6. verify candidate ranking and continuous-control gradient on the exact final checkpoint;
-7. enable `run_policy_current.py` for authoritative Development SWMM only after loader verification;
-8. verify decision latency <600 s, score==execute, target write/readback and first-10-min execution;
+6. verify ranking and continuous-control sensitivity on the exact final checkpoint;
+7. enable `run_policy_current.py` only after loader verification;
+8. verify latency <600 s, score==execute, target write/readback and first-10-min execution;
 9. enable seven-strategy Development comparison;
-10. only after all pre-lock gates pass may Policy Lock / untouched Validation/Final be discussed.
+10. only after all pre-lock gates pass discuss Policy Lock / untouched Validation/Final.
 
-Until that PR exists, the following normal executions must fail closed:
+Until then these normal invocations must fail:
 
 ```powershell
 python scripts/run_policy_current.py
 python scripts/run_seven_strategies_current.py
 ```
 
-That failure is correct behavior, not a missing feature.
+That is correct fail-closed behavior.
 
-## 19. Stage-A return format
+## 19. Return format after the next local run
 
-After the next local run, return only:
+After Stage A, return only:
 
 1. exact Git SHA/package version and cheap gates;
 2. graph/INP/edge/data lineage;
@@ -505,7 +544,7 @@ After the next local run, return only:
 4. temporal vs direct action-scale telemetry;
 5. direct same-prefix flow micro + actuator-balanced macro + top truth-L2 contributors;
 6. full-H72 feedback flow metrics separately;
-7. strict q-only oracle depth/flood-rate metrics and normal-vs-oracle comparison;
+7. strict q-only oracle depth/flood metrics and normal-vs-oracle comparison;
 8. Stage-A TFV gradient diagnostic;
 9. wall time/RAM/swap/VRAM and nonfinite/OOM status;
 10. exactly one classification:
