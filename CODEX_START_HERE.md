@@ -18,9 +18,8 @@ sparse causal sensors
  -> observe again and repeat
 ```
 
-The primary objective is **system-wide cumulative TFV minimization**. SWMM remains authoritative
-truth for offline labels and final evaluation, but it must not be called repeatedly inside online
-candidate search.
+Primary objective: **system-wide cumulative TFV minimization**. SWMM is authoritative truth for
+offline labels and final evaluation, but is not the online candidate evaluator.
 
 Frozen clock/action contract:
 
@@ -32,91 +31,129 @@ Frozen clock/action contract:
 - decision variables = 12 x 109 = 1308;
 - execute first 10 minutes only.
 
-## 2. What Step1, Step2 and Step3 are responsible for
+## 2. Step responsibilities
 
-### Step1 — see the current system cheaply
+### Step1 — reconstruct the current state
 
-Step1 reconstructs the current full-network hydraulic state from sparse causal observations.
-It replaces the impossible assumption that every node is measured online. Step1 does **not** choose
-control actions and does not predict TFV value by itself.
+Step1 estimates the current full-network hydraulic state from sparse causal observations. It does
+not choose actions and does not learn future TFV by itself.
 
-### Step2 — learn control value directly
+### Step2 — learn pairwise TFV control value
 
-Step2 receives:
+The current model receives:
 
 ```text
 causal Step1 current state
 + causal rainfall forecast
-+ current/reference actuator settings and managed flow
-+ candidate H360 sequence for 109 facilities
++ previous managed flow
++ complete H360 reference sequence
++ complete H360 candidate sequence
 ```
 
 and predicts:
 
 ```text
-delta TFV = TFV(candidate) - TFV(reference)
+delta TFV = V(candidate) - V(reference)
 ```
 
-The current direct model decomposes this into:
+The shared value network is decomposed into:
 
 ```text
-sum(109 facility main effects) + multi-facility interaction residual
+sum(109 facility value differences) + multi-facility interaction value difference
 ```
 
-Single-actuator same-prefix SWMM counterfactuals supervise facility main effects. Multi-actuator
-counterfactuals supervise only the residual interaction term after the main-effect stage.
+This V2 pairwise representation is deliberate. Development data contain several valid reference
+families:
 
-Full H360 hydraulic trajectory prediction is now an **auxiliary diagnostic/ablation**, not a
-prerequisite for learning the TFV control objective.
+```text
+D2      base-action/single-actuator counterfactual reference
+D3      HOLD reference
+D4 FIT  causal Sparse-RBC anchor reference
+D4 AUDIT causal Sparse-RBC anchor reference
+future Step3 HOLD reference
+```
+
+The previous V1 direct model encoded the candidate-reference sequence difference but only the first
+reference setting explicitly. Smoke improved D2/D3 strongly over legacy V128 but D4 remained weak.
+V2 therefore encodes the **complete reference and complete candidate H360 sequences with the same
+network**. Candidate==reference is exactly zero, and swapping candidate/reference negates the
+prediction exactly.
+
+Single-actuator branches supervise facility main-value differences. Multi-actuator branches train
+only the interaction value difference after the main stage. The historical 1% practical-effect
+threshold remains reporting-only and never zeroes continuous exact delta-TFV labels.
+
+Full H360 hydraulic trajectory prediction remains an auxiliary diagnostic/ablation, not a
+prerequisite for the TFV control objective.
 
 ### Step3 — optimize the learned value
 
-Step3 directly minimizes Step2 predicted delta TFV over the same 12 x 109 bounded targets that
-would be executed. The existing differentiable engineering decoder preserves min/max and update
-bounds. If no finite predicted improvement is found, Development Step3 returns HOLD.
+Step3 minimizes predicted delta TFV over the bounded 12 x 109 decision tensor. It uses HOLD as the
+online reference and returns HOLD when no finite predicted improvement is found. Production runtime
+remains fail-closed until full Development evidence supports the V2 pairwise model.
 
-## 3. Why the architecture changed
+## 3. Evidence that motivated V2
 
-The authoritative facility audit established physical controllability from existing data:
+The authoritative facility audit established physical controllability:
 
 - 109/109 facilities have exact same-prefix single-actuator evidence;
 - all 18 rainfall x 109 facility cells are tested;
-- 82 facilities show at least one meaningful TFV influence;
+- 82 facilities show at least one meaningful TFV influence under the reporting threshold;
 - 37 facilities have sampled beneficial evidence;
-- delayed H60/H120/H360 benefits exist;
-- multi-actuator candidates can have large joint TFV effects.
+- 26 facilities have delayed beneficial evidence;
+- multi-actuator candidates show additional joint leverage.
 
-At the same time the legacy V128 B0 world-model path executed successfully but did not learn useful
-TFV ordering: D2 was near random and D3/D4 ranking was worse. Therefore the bottleneck is no longer
-"prove the full hydraulic rollout can run". The immediate task is **learn the SWMM-labelled action
-value that Step3 actually optimizes**.
+The first Direct-TFV smoke (V1) produced clear D2/D3 improvement over the legacy V128 indirect
+hydraulic-world-model path:
 
-Do not interpret this change as saying hydraulics are irrelevant. Current hydraulic state remains a
-critical conditioning input. The change removes an unnecessary requirement that thousands of
-future node states must all be predicted accurately before a candidate can be ranked by TFV.
+```text
+D2 holdout rank      0.056 -> 0.403
+D2 pairwise          0.518 -> 0.646
+D3 holdout rank     -0.160 -> 0.301
+D3 pairwise          0.443 -> 0.602
+D4 FIT rank         -0.411 -> 0.012
+D4 AUDIT rank       -0.476 -> -0.106
+```
 
-## 4. Data roles
+This supports direct exact-delta-TFV learning, but the remaining bottleneck is local first-move /
+reference-family robustness. Smoke was also not facility-complete: only 81/109 facilities had
+single-actuator training coverage.
+
+## 4. Current data roles
 
 ```text
 D0  baseline hydraulic/flood opportunity context; not facility attribution
 D1  broad state/action coverage; not direct facility credit assignment
-D2  primary long-duration single-facility main-effect supervision
-D3  temporally diverse single-facility supervision + multi-facility interactions
-D4 FIT  local/first-move operating-region supervision
-D4 AUDIT untouched Development audit; NEVER training
+D2  primary long-duration single-facility supervision
+D3  HOLD-reference temporal single-facility + multi-facility supervision
+D4 FIT  Sparse-RBC-reference first-move/local-operating-region supervision
+D4 AUDIT untouched Sparse-RBC-reference Development audit; NEVER training
 D5  optional later solver-sensitivity diagnostic; not a prerequisite
 ```
 
-The historical `1% of reference TFV` practical threshold is **reporting only**. Do not convert
-continuous exact delta-TFV labels to zero during training. Many physically informative effects are
-smaller than 1% of a multi-million-m3 event total.
+## 5. Direct Development profiles
 
-## 5. Current code surface
+`smoke` remains a deterministic fast signal check and is **not facility-complete**.
 
-Canonical current implementation:
+`dev` no longer reuses the small legacy V128 Development subset. It must consume **all admitted
+existing Development groups** after the frozen rainfall split:
+
+```text
+112 D2 FIT
+112 D3 FIT
+32 D2 held-out
+32 D3 held-out
+33 D4 FIT
+15 D4 AUDIT
+```
+
+No new SWMM data are generated merely to run this Development profile.
+
+## 6. Current code surface
 
 ```text
 configs/step2_current_contract.json
+configs/project7_execution_registry.json
 scripts/run_step2_current.py
 scripts/run_step2_tfv_value_current.py
 src/rtc/step2_tfv_value.py
@@ -125,7 +162,7 @@ src/rtc/step3_tfv_value_mpc.py
 scripts/audit_facility_tfv_influence_current.py
 ```
 
-Legacy V128 world-model files remain in the repository for ablation/history, including:
+Legacy V128 files remain for ablation/history only, including:
 
 ```text
 scripts/run_step2_action_identifiable_current.py
@@ -134,21 +171,21 @@ src/rtc/step2_counterfactual_training_v5.py
 src/rtc/step2_differentiable_v128_edge.py
 ```
 
-They are **not** the canonical current Step2 entrypoint.
+## 7. Scientific boundaries
 
-## 6. Scientific boundaries
-
-Until explicit direct-value promotion:
+Until explicit production promotion:
 
 - no Validation, Final, Formal or Policy Lock;
 - no D4-AUDIT outcomes in training or target-scale fitting;
 - no future realised rainfall online;
 - no future SWMM state/flood truth online;
 - no new SWMM data merely because architecture changed;
-- no runtime/seven-strategy promotion before direct-value held-out ranking is useful;
-- do not return to gradient tuning if TFV candidate ordering is poor.
+- no legacy A0/A1/A2/B0 rerun by default;
+- no gradient audit as the primary gate;
+- no runtime/seven-strategy promotion before V2 full Development evidence;
+- do not interpret smoke as proof that all 109 facilities are learned.
 
-## 7. Frozen Development assets
+## 8. Frozen Development assets
 
 ```text
 <GRAPH>
@@ -170,7 +207,7 @@ E:\RTC_sewer\Project7\study_v069\step2_v123_tfv_pfv_knowledge_guided_mpc\addbbd3
 E:\RTC_sewer\Project7\study_v069\step2_v127_corrected_base_7634cd9\STEP2_V127_CAUSAL_STATE_STORE_V2.npz
 ```
 
-## 8. Hard-sync and cheap gates
+## 9. Hard-sync and cheap gates
 
 ```powershell
 cd E:\RTC_sewer\Project7\repo
@@ -183,17 +220,20 @@ python -m pytest -q
 python scripts/lint_current_surface.py
 python scripts/run_step2_current.py --help
 python scripts/audit_facility_tfv_influence_current.py --help
+python scripts/run_policy_current.py --promotion-status
+python scripts/run_seven_strategies_current.py --promotion-status
 ```
 
-Do not build the legacy edge-physics artifact for the direct-value run. It is not an input to the
-current Step2 model.
+Runtime and seven-strategy execution must remain disabled.
 
-## 9. First expensive action — direct-value smoke
+## 10. V2 smoke before full Development
+
+Because the pairwise representation changed, first rerun one smoke to reject regressions cheaply:
 
 ```powershell
 $Study="E:\RTC_sewer\Project7\study_v069"
 $Stamp=Get-Date -Format 'yyyyMMdd_HHmmss'
-$Run="$Study\direct_tfv_value_smoke_$Stamp"
+$Run="$Study\direct_tfv_pairwise_v2_smoke_$Stamp"
 
 python scripts/run_step2_current.py `
   --profile smoke `
@@ -214,68 +254,46 @@ STEP2_DIRECT_TFV_VALUE_REPORT.json
 step2_direct_tfv_value_dev.pt
 ```
 
-## 10. What decides whether the new Step2 is working
-
-Read these metrics first:
+Read first:
 
 ```text
 rank
 pairwise
+sign
 top1_fraction
+hold_selected_fraction
+oracle_hold_groups
+false_action_when_hold_oracle_fraction
+selected_beneficial_fraction
+selected_harmful_fraction
+selected_true_delta_tfv_m3
 delta_tfv_mae_m3
 selected_regret_m3
 ```
 
-for:
+for D2/D3 holdout and D4 FIT/AUDIT. Do not promote V2 merely because training loss falls.
+
+If V2 smoke preserves the clear D2/D3 improvement and does not materially worsen D4, proceed to
+`--profile dev`. If V2 materially improves D4 while preserving D2/D3, that is stronger evidence.
+
+## 11. Full Development gate
+
+The full Direct-TFV Development run must use all admitted existing groups. The report must state:
 
 ```text
-trainfit_d2
-trainfit_d3
-internal_holdout_d2
-internal_holdout_d3
-d4_fit
-d4_audit
+dev_uses_all_existing_development_groups = true
+complete_reference_sequence_encoded = true
+candidate_reference_antisymmetry_by_construction = true
+selected_group_counts = 112/112/32/32/33/15
 ```
 
-The immediate comparison is the failed legacy B0 Development evidence, approximately:
+Expected outputs remain:
 
 ```text
-D2 rank       0.056, pairwise 0.518
-D3 rank      -0.160, pairwise 0.443
-D4 FIT rank  -0.411, pairwise 0.327
-D4 AUDIT     -0.476, pairwise 0.319
+STEP2_DIRECT_TFV_VALUE_REPORT.json
+step2_direct_tfv_value_dev.pt
 ```
 
-Do not invent a universal hard score such as rank > 0.8. The first question is whether direct SWMM
-value supervision produces a clear, reproducible improvement in candidate ordering and selected
-regret over the old indirect trajectory path.
-
-If smoke improves materially, run the same command with `--profile dev`.
-
-If direct-value holdout ranking remains random, inspect **state/action representation and temporal
-coverage**. Do not return to the old A0/A1/A2/B0 hydraulic curriculum by default.
-
-## 11. Step3 status
-
-`src/rtc/step3_tfv_value_mpc.py` already implements the minimal direct-value optimization surface:
-
-```text
-Step1 state + causal rain + HOLD reference
- -> bounded 12 x 109 candidate
- -> Step2 predicted delta TFV
- -> L-BFGS-B
- -> accept only predicted improvement, otherwise HOLD
-```
-
-This is not yet production-promoted. First prove Step2 held-out value ordering. Then wire one
-Development closed loop, log the actual 10-min target vectors, and compare authoritative SWMM TFV.
-
-## 12. Current priority
-
-Do not overcomplicate the project. Work in this order:
-
-1. prove direct Step2 learns exact SWMM action -> delta-TFV ordering;
-2. run one causal Development 10-min closed loop with direct Step3;
-3. verify multiple facilities change and authoritative SWMM TFV improves;
-4. only then improve robustness, PFV soft protection, uncertainty, gradient efficiency and formal
-   publication evidence.
+Only after full Development evidence is available should one Development closed loop be wired.
+The next question is then operational: can Step3 produce bounded multi-facility 10-min targets that
+improve authoritative SWMM TFV relative to HOLD without online SWMM candidate search?

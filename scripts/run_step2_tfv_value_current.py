@@ -1,14 +1,18 @@
 """Current Project7 Step2: learn 109-facility action value directly from exact SWMM delta TFV.
 
-This runner is intentionally smaller than the legacy V128 hydraulic-world-model curriculum.
-It preserves the online causal inputs (Step1 reconstructed current state and causal rainfall
-forecast) but trains the primary control surrogate on the quantity Step3 actually needs:
-state/action-conditioned delta TFV.
-
 Development flow:
-  MAIN  = single-actuator exact counterfactuals -> per-facility main effects
-  JOINT = multi-actuator exact counterfactuals -> interaction residual only
+  MAIN  = exact single-actuator counterfactuals -> per-facility pairwise value differences
+  JOINT = multi-actuator counterfactuals -> interaction value difference only
   EVAL  = held-out rainfall groups + untouched D4 audit ranking/regret
+
+The direct model evaluates complete reference and candidate H360 sequences with one shared value
+encoder and predicts V(candidate)-V(reference). This is important because existing Development data
+contain D2 base-action, D3 HOLD and D4 causal Sparse-RBC reference families, while future Step3 uses
+HOLD.
+
+``smoke`` remains a tiny deterministic learning-signal check. ``dev`` deliberately uses every
+existing Development FIT/HOLDOUT/D4 group admitted by the frozen rainfall split. A 109-facility
+claim must not be based on the old V128-style 24/24/12 Development subset.
 
 No SWMM is launched here. Validation/Final/Formal/Policy-Lock are not accessed.
 """
@@ -19,6 +23,8 @@ from dataclasses import asdict
 import hashlib
 import json
 from pathlib import Path
+import random
+import time
 
 import numpy as np
 import torch
@@ -43,9 +49,11 @@ from rtc.step2_tfv_value_training import (
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
 
 
-CURRENT_DIRECT_TFV_RUN_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_VALUE_SMOKE_DEV_V1"
+CURRENT_DIRECT_TFV_RUN_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_VALUE_SMOKE_DEV_V2"
+DIRECT_DEV_PROFILE_CONTRACT = "PROJECT7_DIRECT_TFV_ALL_EXISTING_DEVELOPMENT_GROUPS_V1"
 REPORT_FILENAME = "STEP2_DIRECT_TFV_VALUE_REPORT.json"
 CHECKPOINT_FILENAME = "step2_direct_tfv_value_dev.pt"
+SEED = 42
 
 
 def _sha(path: str | Path) -> str:
@@ -54,6 +62,14 @@ def _sha(path: str | Path) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -87,24 +103,68 @@ def _training_design(profile: str, args: argparse.Namespace) -> DirectTFVTrainin
         interaction_epochs=interaction_epochs,
         learning_rate=float(args.learning_rate),
         interaction_learning_rate=float(args.learning_rate),
+        seed=SEED,
     )
     result.validate()
     return result
 
 
+def _select_groups(
+    profile: str,
+    *,
+    fit_d2: list[str],
+    fit_d3: list[str],
+    hold_d2: list[str],
+    hold_d3: list[str],
+    d4_fit: list[str],
+    d4_audit: list[str],
+) -> dict[str, list[str]]:
+    if profile == "smoke":
+        return profile_groups(
+            get_execution_profile("smoke"),
+            fit_d2=fit_d2,
+            fit_d3=fit_d3,
+            hold_d2=hold_d2,
+            hold_d3=hold_d3,
+            d4_fit=d4_fit,
+            d4_audit=d4_audit,
+            one_group=False,
+        )
+    if profile != "dev":
+        raise ValueError(f"unsupported direct TFV Development profile: {profile!r}")
+    return {
+        "fit_d2": sorted(fit_d2),
+        "fit_d3": sorted(fit_d3),
+        "hold_d2": sorted(hold_d2),
+        "hold_d3": sorted(hold_d3),
+        "d4_fit": sorted(d4_fit),
+        "d4_audit": sorted(d4_audit),
+    }
+
+
 def _finite_metrics(label: str, metrics: dict[str, float | int]) -> None:
-    required = ("rank", "pairwise", "sign", "top1_fraction", "delta_tfv_mae_m3", "selected_regret_m3")
+    required = (
+        "rank",
+        "pairwise",
+        "sign",
+        "top1_fraction",
+        "hold_selected_fraction",
+        "delta_tfv_mae_m3",
+        "selected_regret_m3",
+    )
     bad = [name for name in required if name not in metrics or not np.isfinite(float(metrics[name]))]
     if bad:
         raise RuntimeError(f"{label}: direct TFV evaluation is non-finite for {bad}")
 
 
 def main() -> None:
+    started = time.perf_counter()
     args = _parser().parse_args()
-    profile = get_execution_profile(str(args.profile))
-    if profile.name not in {"smoke", "dev"}:
-        raise ValueError("direct TFV current runner is Development-only until ranking promotion")
+    _seed_everything(SEED)
+    profile_name = str(args.profile)
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -132,21 +192,27 @@ def main() -> None:
     hold_d3 = [name for name in holdout if name.startswith("D3::")]
     d4_fit_names = d4_fit_raw.names(D4_SOURCE_KIND)
     d4_audit_names = d4_audit_raw.names(D4_SOURCE_KIND)
-    if tuple(map(len, (fit_d2, fit_d3, hold_d2, hold_d3))) != (112, 112, 32, 32):
-        raise ValueError("canonical direct TFV D2/D3 split differs from 112/112/32/32")
-    if (len(d4_fit_names), len(d4_audit_names)) != (33, 15):
-        raise ValueError("canonical direct TFV D4 FIT/AUDIT census differs from 33/15")
+    canonical_counts = tuple(map(len, (fit_d2, fit_d3, hold_d2, hold_d3, d4_fit_names, d4_audit_names)))
+    if canonical_counts != (112, 112, 32, 32, 33, 15):
+        raise ValueError(
+            "canonical direct TFV split differs from 112/112/32/32/33/15: "
+            f"got {canonical_counts}"
+        )
 
-    selected = profile_groups(
-        profile,
+    selected = _select_groups(
+        profile_name,
         fit_d2=fit_d2,
         fit_d3=fit_d3,
         hold_d2=hold_d2,
         hold_d3=hold_d3,
         d4_fit=d4_fit_names,
         d4_audit=d4_audit_names,
-        one_group=False,
     )
+    if profile_name == "dev" and tuple(len(selected[key]) for key in (
+        "fit_d2", "fit_d3", "hold_d2", "hold_d3", "d4_fit", "d4_audit"
+    )) != canonical_counts:
+        raise RuntimeError("direct TFV dev must use every admitted existing Development group")
+
     base_online = CausalStep1StateCacheV127(CausalForecastValueCacheV123(base, rain_store), state_store)
     d4_fit_online = CausalStep1StateCacheV127(D4CausalForecastValueCacheV125(d4_fit_raw, rain_store), state_store)
     d4_audit_online = CausalStep1StateCacheV127(D4CausalForecastValueCacheV125(d4_audit_raw, rain_store), state_store)
@@ -173,7 +239,7 @@ def main() -> None:
         target_scale_m3=target_scale,
         design=design,
     ).to(device)
-    training_design = _training_design(profile.name, args)
+    training_design = _training_design(profile_name, args)
     online_train_caches = {"D2": base_online, "D3": base_online, "D4": d4_fit_online}
     history = train_direct_tfv_value_model(
         model,
@@ -219,12 +285,23 @@ def main() -> None:
         "sensor_layout_semantic_sha256": str(state_store.sensor_layout_semantic_sha256),
         "causal_rainfall_forecast_contract": str(rain_store.forecast_contract),
     }
+    elapsed_seconds = float(time.perf_counter() - started)
+    peak_cuda_allocated_gb = (
+        float(torch.cuda.max_memory_allocated(device) / (1024**3)) if device.type == "cuda" else 0.0
+    )
+    resource_summary = {
+        "wall_seconds": elapsed_seconds,
+        "device": str(device),
+        "peak_cuda_allocated_gb": peak_cuda_allocated_gb,
+    }
     checkpoint = {
         "contract": DIRECT_TFV_VALUE_CONTRACT,
         "training_contract": DIRECT_TFV_TRAINING_CONTRACT,
         "run_contract": CURRENT_DIRECT_TFV_RUN_CONTRACT,
-        "profile": profile.name,
+        "direct_dev_profile_contract": DIRECT_DEV_PROFILE_CONTRACT,
+        "profile": profile_name,
         "development_only": True,
+        "seed": SEED,
         "model_design": asdict(design),
         "training_design": asdict(training_design),
         "target_scale_m3": float(target_scale),
@@ -240,8 +317,10 @@ def main() -> None:
             "flow_std": normalization.flow_std,
         },
         "lineage": lineage,
+        "selected_group_counts": {key: len(value) for key, value in selected.items()},
         "model_state_dict": model.state_dict(),
         "evaluations": evaluations,
+        "resources": resource_summary,
     }
     checkpoint_path = out / CHECKPOINT_FILENAME
     torch.save(checkpoint, checkpoint_path)
@@ -249,21 +328,35 @@ def main() -> None:
         "contract": CURRENT_DIRECT_TFV_RUN_CONTRACT,
         "step2_contract": DIRECT_TFV_VALUE_CONTRACT,
         "training_contract": DIRECT_TFV_TRAINING_CONTRACT,
-        "profile": profile.name,
+        "direct_dev_profile_contract": DIRECT_DEV_PROFILE_CONTRACT,
+        "profile": profile_name,
         "development_only": True,
+        "seed": SEED,
         "primary_target": "authoritative SWMM exact delta TFV",
-        "architecture": "109 facility main effects + multi-actuator interaction residual",
+        "architecture": "shared pairwise sequence value: V(candidate)-V(reference), 109 facility values + interaction value",
+        "complete_reference_sequence_encoded": True,
+        "candidate_reference_antisymmetry_by_construction": True,
+        "dev_uses_all_existing_development_groups": profile_name == "dev",
         "hydraulic_trajectory_primary_target": False,
         "gradient_label_used": False,
         "meaningful_1pct_threshold_used_for_training": False,
         "target_scale_m3": float(target_scale),
+        "canonical_group_counts": {
+            "fit_d2": 112,
+            "fit_d3": 112,
+            "hold_d2": 32,
+            "hold_d3": 32,
+            "d4_fit": 33,
+            "d4_audit": 15,
+        },
         "selected_group_counts": {key: len(value) for key, value in selected.items()},
         "history": history,
         "evaluations": evaluations,
         "lineage": lineage,
+        "resources": resource_summary,
         "checkpoint": str(checkpoint_path.resolve()),
         "runtime_promoted": False,
-        "next_gate": "held-out delta-TFV ranking/top1/regret before Step3 runtime promotion",
+        "next_gate": "full Development held-out ranking/top1/regret and D4 reference-family robustness before Step3 closed-loop wiring",
     }
     (out / REPORT_FILENAME).write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",

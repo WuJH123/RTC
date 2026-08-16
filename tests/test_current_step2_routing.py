@@ -30,31 +30,36 @@ def _help(path: Path) -> str:
     return result.stdout
 
 
-def test_current_contract_is_direct_tfv_first() -> None:
+def test_current_contract_is_pairwise_direct_tfv_v2() -> None:
     payload = json.loads(CURRENT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V1"
+    assert payload["contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V2"
     assert payload["status"] == "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED"
-    assert payload["selected_implementation_contract"] == "PROJECT7_DIRECT_109ACT_ACTION_TO_DELTA_TFV_VALUE_V1"
+    assert payload["selected_implementation_contract"] == "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2"
     assert payload["core_pipeline"]["step1"].startswith("reconstruct the current")
-    assert "delta TFV" in payload["core_pipeline"]["step2"]
+    assert "pairwise action value" in payload["core_pipeline"]["step2"]
+    assert "complete reference sequence" in payload["core_pipeline"]["step2"]
     assert "minimize Step2 predicted delta TFV" in payload["core_pipeline"]["step3"]
-    assert payload["step2_current"]["hydraulic_trajectory_primary_target"] is False
-    assert payload["step2_current"]["gradient_label_used"] is False
-    assert payload["step2_current"]["zero_action_contract"].endswith("exactly zero")
+    step2 = payload["step2_current"]
+    assert step2["hydraulic_trajectory_primary_target"] is False
+    assert step2["gradient_label_used"] is False
+    assert step2["zero_action_contract"].endswith("exactly zero")
+    assert "complete H360 reference" in step2["reference_representation"]
+    assert "swapping candidate and reference negates" in step2["antisymmetry_contract"]
+    assert "112 D2 FIT" in step2["development_profile"]
     assert payload["scientific_boundaries"]["D4_AUDIT_training"] is False
     assert payload["scientific_boundaries"]["runtime_current_enabled"] is False
 
 
-def test_execution_registry_routes_current_training_to_direct_value_surface() -> None:
+def test_execution_registry_routes_current_training_to_pairwise_value_surface() -> None:
     payload = json.loads(REGISTRY.read_text(encoding="utf-8"))
     current = payload["current"]
-    assert current["research_contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V1"
-    assert current["implementation_contract"] == "PROJECT7_DIRECT_109ACT_ACTION_TO_DELTA_TFV_VALUE_V1"
+    assert current["research_contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V2"
+    assert current["implementation_contract"] == "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2"
     assert current["step2_training"] == "scripts/run_step2_current.py"
     assert current["enabled_step2_profiles"] == ["smoke", "dev"]
     assert current["runtime_enabled"] is False
     selected = payload["selected_internal_implementation"]
-    assert selected["step2_value_model"] == "src/rtc/step2_tfv_value.py"
+    assert "V(candidate)-V(reference)" in selected["step2_value_model"]
     assert selected["step2_training"] == "src/rtc/step2_tfv_value_training.py"
     assert selected["step3_development"] == "src/rtc/step3_tfv_value_mpc.py"
     assert payload["legacy_v128"]["status"].startswith("retained")
@@ -69,6 +74,13 @@ def test_current_step2_wrapper_routes_to_direct_runner() -> None:
     assert "evaluate_direct_tfv_value_model" in direct
     assert "load_causal_state_store_v127" in direct
     assert "load_causal_forecast_store_v123" in direct
+    assert "DIRECT_DEV_PROFILE_CONTRACT" in direct
+    assert 'if profile == "smoke"' in direct
+    assert 'if profile != "dev"' in direct
+    assert '"fit_d2": sorted(fit_d2)' in direct
+    assert "dev_uses_all_existing_development_groups" in direct
+    assert "complete_reference_sequence_encoded" in direct
+    assert "candidate_reference_antisymmetry_by_construction" in direct
 
 
 def test_current_step2_help_is_small_and_does_not_require_edge_physics() -> None:
@@ -105,11 +117,15 @@ def test_current_lint_surface_tracks_direct_path_not_legacy_v128_curriculum() ->
     assert all((ROOT / path).is_file() for path in paths)
 
 
-def test_guide_states_the_three_core_steps_and_direct_smoke_command() -> None:
+def test_guide_states_pairwise_v2_and_full_direct_dev() -> None:
     text = GUIDE.read_text(encoding="utf-8")
     assert "Step1 reconstruct CURRENT full-network hydraulic state" in text
     assert "Step2 learn 109-facility ACTION -> future delta TFV" in text
     assert "Step3 choose lower-TFV 109-facility action sequence every 10 min" in text
+    assert "V(candidate) - V(reference)" in text
+    assert "complete reference and complete candidate H360 sequences" in text
+    assert "112 D2 FIT" in text
+    assert "33 D4 FIT" in text
     assert "--profile smoke" in text
     assert "--edge-physics" not in text
     assert "STEP2_DIRECT_TFV_VALUE_REPORT.json" in text

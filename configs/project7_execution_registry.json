@@ -1,9 +1,9 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V1",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V2",
   "current": {
     "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
-    "research_contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V1",
-    "implementation_contract": "PROJECT7_DIRECT_109ACT_ACTION_TO_DELTA_TFV_VALUE_V1",
+    "research_contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V2",
+    "implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
     "guide": "CODEX_START_HERE.md",
     "step2_training": "scripts/run_step2_current.py",
     "runtime": "scripts/run_policy_current.py (fail-closed until direct-value production promotion)",
@@ -17,11 +17,11 @@
     "runtime_enabled": false,
     "seven_strategy_enabled": false,
     "d5_enabled": false,
-    "development_profile_mode": "existing-data direct exact-delta-TFV training; no SWMM generation"
+    "development_profile_mode": "smoke is a small deterministic signal check; dev consumes all admitted existing Development D2/D3/D4 groups without launching SWMM"
   },
   "selected_internal_implementation": {
     "step1_state": "src/rtc/step2_state_store_v127.py causal Step1 reconstruction surface",
-    "step2_value_model": "src/rtc/step2_tfv_value.py",
+    "step2_value_model": "src/rtc/step2_tfv_value.py shared pairwise V(candidate)-V(reference)",
     "step2_training": "src/rtc/step2_tfv_value_training.py",
     "step2_runner": "scripts/run_step2_tfv_value_current.py",
     "step3_development": "src/rtc/step3_tfv_value_mpc.py",
@@ -37,13 +37,15 @@
   "hard_rules": [
     "enter current Step2 through scripts/run_step2_current.py and explicitly select smoke or dev",
     "primary Step2 label is same-prefix authoritative SWMM exact delta TFV",
+    "encode the complete H360 reference and candidate sequences with one shared value network and predict V(candidate)-V(reference)",
     "D4 AUDIT is evaluation only and cannot enter training or target-scale fitting",
-    "single-actuator branches teach per-facility main effects; multi-actuator branches teach only joint residual after the main stage",
+    "single-actuator branches teach per-facility main-value differences; multi-actuator branches teach only joint interaction value difference after the main stage",
     "the 1-percent practical-effect threshold is reporting-only and cannot zero continuous training labels",
     "Step1 reconstructed state and causal rainfall forecast are the online-equivalent Step2 inputs",
+    "smoke is not facility-complete; direct dev must use all admitted existing Development groups",
     "do not require full hydraulic trajectory prediction before testing TFV action ordering",
     "do not use SWMM action-gradient labels",
-    "runtime/seven-strategy/D5 remain fail-closed until direct-value held-out ranking/top1/regret are useful and a matching production loader is promoted",
+    "runtime/seven-strategy/D5 remain fail-closed until full Development D2/D3 gains are preserved and the D4 first-move/reference-family gap is reduced",
     "never use future realised rainfall, future SWMM state or future Internal trajectory online",
     "never access Validation/Final/Formal/Policy Lock during Development"
   ],
@@ -52,5 +54,5 @@
     "training_entrypoint": "scripts/run_step2_action_identifiable_current.py",
     "reason_not_current": "B0 ran successfully but did not learn useful TFV candidate ordering on D2/D3/D4"
   },
-  "merge_semantics": "merging the direct-value Development implementation makes the simpler hypothesis test reproducible; it does not by itself enable production runtime or prove final control benefit"
+  "merge_semantics": "the V2 Development change addresses the observed local first-move/reference-family bottleneck without changing the frozen research objective; it does not enable production runtime or prove final control benefit"
 }
