@@ -1,6 +1,6 @@
 {
-  "contract": "PROJECT7_CURRENT_LINT_SURFACE_V5_COUNTERFACTUAL_FIRST_LAZY_ACTIVE_ONLY",
-  "purpose": "Fail closed on high-signal Python correctness findings for actively maintained Project7 counterfactual-first execution and Development diagnostics without making archival style debt a smoke/dev stop-gate.",
+  "contract": "PROJECT7_CURRENT_LINT_SURFACE_V6_COUNTERFACTUAL_FIRST_ORACLE_ISOLATED_ACTIVE_ONLY",
+  "purpose": "Fail closed on high-signal Python correctness findings for the actively maintained Project7 counterfactual-first execution, explicit-lazy training stages and Development diagnostics without making archival style debt a smoke/dev stop-gate.",
   "full_repository_ruff_is_gate": false,
   "current_surface_ruff_is_gate": true,
   "rule_select": ["E4", "E7", "E9", "F"],
@@ -40,7 +40,8 @@
     "src/rtc/step2_differentiable_v128.py",
     "src/rtc/step2_action_identifiable_v128.py",
     "src/rtc/step2_counterfactual_first_v128.py",
-    "src/rtc/step2_counterfactual_training_v4.py",
+    "src/rtc/step2_counterfactual_training_v5.py",
+    "src/rtc/step2_oracle_isolation_v128.py",
     "src/rtc/step2_current_dev_context_v128.py",
     "src/rtc/step2_lazy_stream_v128.py",
     "src/rtc/step2_train_v128_exact.py",
@@ -70,12 +71,13 @@
     "tests/test_current_step2_routing.py",
     "tests/test_v128_action_identifiable.py",
     "tests/test_v128_counterfactual_first.py",
+    "tests/test_v128_oracle_isolation.py",
     "tests/test_v128_training_objective.py",
     "tests/test_v128_checkpoint_strict.py",
     "tests/test_v128_mpc_runtime.py",
     "tests/test_v128_development_profiles.py",
     "tests/test_v128_gradient_decomposition.py"
   ],
-  "shared_dependency_policy": "Older V60/V123/V125/V127 modules reused internally remain protected by full pytest, source/checkpoint lineage and routing tests. Their pre-existing style debt is not a smoke/dev lint prerequisite unless actively changed.",
+  "shared_dependency_policy": "Older V60/V123/V125/V127 and superseded Development modules reused internally remain protected by full pytest, source/checkpoint lineage and routing tests. Their pre-existing style debt is not a smoke/dev lint prerequisite unless actively selected above.",
   "non_gate_historical_debt_policy": "Do not run ruff --fix . or mass-format archival code during model debugging. Repository-wide cleanup is separate maintenance and must not alter scientific behavior/provenance."
 }
