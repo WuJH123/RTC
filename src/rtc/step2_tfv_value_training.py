@@ -9,7 +9,8 @@ hydraulic-surrogate implementation stages:
 
 The authoritative target is always exact SWMM delta TFV.  The historical 1%-of-reference
 "meaningful" threshold is a reporting convention and is intentionally not used to erase or
-binarize continuous training labels.
+binarize continuous training labels. HOLD/reference is an explicit zero-delta option in ranking
+losses and selection metrics because real-time control must learn when doing nothing is better.
 """
 from __future__ import annotations
 
@@ -132,6 +133,10 @@ def _pairwise_ranking_loss(
     return F.softplus(-margin).mean()
 
 
+def _with_hold_zero(value: torch.Tensor) -> torch.Tensor:
+    return torch.cat((value.new_zeros((1,)), value.reshape(-1)))
+
+
 def _group_loss(
     model: DirectFacilityTFVValueModel,
     batch: Any,
@@ -148,7 +153,11 @@ def _group_loss(
     truth = batch.true_delta_tfv_m3[0].index_select(0, indices)
     scale = model.target_scale_m3.to(truth)
     regression = F.smooth_l1_loss(output.total_delta_tfv_m3 / scale, truth / scale)
-    ranking = _pairwise_ranking_loss(output.total_delta_tfv_m3, truth, scale_m3=scale)
+    ranking = _pairwise_ranking_loss(
+        _with_hold_zero(output.total_delta_tfv_m3),
+        _with_hold_zero(truth),
+        scale_m3=scale,
+    )
     interaction_reg = torch.mean(torch.abs(output.interaction_residual_m3 / scale))
     loss = regression + float(rank_weight) * ranking
     if mode == "joint":
@@ -380,7 +389,7 @@ def evaluate_direct_tfv_value_model(
     mae: list[float] = []
     sign: list[float] = []
     regrets: list[float] = []
-    top1 = groups = branches = 0
+    top1 = hold_selected = groups = branches = 0
     model.eval()
     with torch.no_grad():
         for name in names:
@@ -389,18 +398,30 @@ def evaluate_direct_tfv_value_model(
             if int(indices.numel()) == 0:
                 continue
             output = _forward_candidates(model, batch, indices, graph_tensors=static)
-            truth = batch.true_delta_tfv_m3[0].index_select(0, indices).detach().cpu().numpy()
-            prediction = output.total_delta_tfv_m3.detach().cpu().numpy()
+            candidate_truth = batch.true_delta_tfv_m3[0].index_select(0, indices).detach().cpu().numpy()
+            candidate_prediction = output.total_delta_tfv_m3.detach().cpu().numpy()
+            truth = np.concatenate((np.zeros(1, dtype=np.float64), candidate_truth.astype(np.float64)))
+            prediction = np.concatenate(
+                (np.zeros(1, dtype=np.float64), candidate_prediction.astype(np.float64))
+            )
             groups += 1
-            branches += len(truth)
+            branches += len(candidate_truth)
             ranks.append(_spearman(truth, prediction))
             pairwise.append(_pairwise_accuracy(truth, prediction))
-            mae.append(float(np.mean(np.abs(prediction - truth))))
-            informative = np.abs(truth) > 1.0
+            mae.append(float(np.mean(np.abs(candidate_prediction - candidate_truth))))
+            informative = np.abs(candidate_truth) > 1.0
             if np.any(informative):
-                sign.append(float(np.mean(np.sign(prediction[informative]) == np.sign(truth[informative]))))
+                sign.append(
+                    float(
+                        np.mean(
+                            np.sign(candidate_prediction[informative])
+                            == np.sign(candidate_truth[informative])
+                        )
+                    )
+                )
             selected = int(np.argmin(prediction))
             oracle = int(np.argmin(truth))
+            hold_selected += int(selected == 0)
             top1 += int(selected == oracle)
             regrets.append(float(truth[selected] - truth[oracle]))
 
@@ -418,6 +439,7 @@ def evaluate_direct_tfv_value_model(
         "pairwise": finite_mean(pairwise),
         "sign": finite_mean(sign),
         "top1_fraction": float(top1 / groups),
+        "hold_selected_fraction": float(hold_selected / groups),
         "delta_tfv_mae_m3": finite_mean(mae),
         "selected_regret_m3": finite_mean(regrets),
     }
