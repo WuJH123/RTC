@@ -25,11 +25,11 @@ and 12 x 109 = 1308 free MPC variables.
 
 ## Current Development status — counterfactual trajectory first
 
-PR #77 recovered the magnitude of the historical full-H72 managed-flow effect, but the same
-smoke run showed that this metric mixes local actuator response with later hydraulic feedback and
-can be dominated by one high-energy actuator. Stage-A TFV autograd also remained weak in
-direction. The current Development surface therefore does **not** train toward a larger SWMM
-objective gradient. It first repairs the causal trajectory chain:
+PR #77 recovered the magnitude of the historical full-H72 managed-flow effect, but that metric
+mixes local actuator response with later hydraulic feedback and can be dominated by one high-energy
+actuator. Stage-A TFV autograd also remained weak in direction. The current Development surface
+does **not** train toward a larger SWMM objective gradient. It first repairs the causal trajectory
+chain:
 
 1. **A0 — direct same-prefix setting -> managed flow.** Only the first setting-divergence
    transition is a local actuator label. Temporal flow variation and direct action-response scales
@@ -43,7 +43,9 @@ objective gradient. It first repairs the causal trajectory chain:
 4. **B0 — autoregressive network feedback.** Full candidate/reference hydraulic feedback belongs
    here, not in the local `dq/du` label. Feedback-flow effects use actuator flow standard deviation
    for normalization rather than the local direct-action scale.
-5. **H360 exact TFV objective downstream.** The source-strict two-pass within-group pairwise TFV
+5. **B0 evidence before H360.** A source-strict nonfinal ranking+horizon audit and a selectable B0
+   spatial audit run directly on `stage_b0.pt`; no production checkpoint is required.
+6. **H360 exact TFV objective downstream.** The source-strict two-pass within-group pairwise TFV
    objective remains intact. SWMM action-gradient labels are never training targets; autograd is a
    Development diagnostic and future online optimization signal after trajectory/ranking fidelity.
 
@@ -72,11 +74,14 @@ scripts/audit_step2_actuator_flow_effect_current.py
 scripts/audit_step2_direct_hydraulic_effect_current.py
     normal predicted-flow vs strict q-only authoritative-flow hydraulic isolation
 
-scripts/audit_step2_gradient_stage_current_dev.py
-    TFV autograd diagnostic at Stage A/B0/objective
+scripts/audit_step2_stage_ranking_current.py
+    source-strict ranking + H30-H360 trajectory audit for stage_b0 or objective checkpoints
 
 scripts/audit_step2_spatial_current.py
-    held-out action-effect by graph distance after trajectory stages
+    source-strict held-out action effect by graph distance for stage_b0 or objective checkpoints
+
+scripts/audit_step2_gradient_stage_current_dev.py
+    TFV autograd diagnostic at Stage A/B0/objective
 ```
 
 ## Development funnel
@@ -92,11 +97,10 @@ cheap gates + preflight
  -> strict q-only direct hydraulic audit
  -> Stage-A TFV-gradient diagnostic
  -> STOP / reject or explicitly resume B0
- -> B0 trajectory + ranking + spatial audits
+ -> B0 source-strict ranking+horizon + spatial + gradient audits
  -> only then exact H360 TFV objective
- -> same-checkpoint ranking/top1/regret + gradient diagnostic
+ -> repeat same-checkpoint ranking+horizon + spatial + gradient diagnostics
  -> deterministic dev confirmation
- -> Development authoritative closed-loop evidence
  -> future explicit production checkpoint/loader/runtime promotion
  -> D5 / runtime / seven-strategy / Policy Lock only after that promotion
 ```
@@ -147,7 +151,8 @@ Stable user entrypoints:
 ```text
 rtc-current-preflight
 scripts/run_step2_current.py
-scripts/run_policy_current.py          # currently fail-closed
+scripts/audit_step2_stage_ranking_current.py
+scripts/run_policy_current.py           # currently fail-closed
 scripts/run_seven_strategies_current.py # currently fail-closed
 ```
 
