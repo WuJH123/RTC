@@ -24,6 +24,7 @@ CURRENT_SEVEN = ROOT / "scripts" / "run_seven_strategies_current.py"
 STEP1_ATTENTION_TRAINER = ROOT / "scripts" / "train_step1_global_attention_dev.py"
 STEP1_ATTENTION_AUDIT = ROOT / "scripts" / "audit_step1_global_attention_current.py"
 STEP2_SPATIAL_AUDIT = ROOT / "scripts" / "audit_step2_spatial_current.py"
+STEP2_STAGE_RANKING_AUDIT = ROOT / "scripts" / "audit_step2_stage_ranking_current.py"
 STEP2_DEV_GRADIENT_AUDIT = ROOT / "scripts" / "audit_step2_gradient_current_dev.py"
 STEP2_STAGE_GRADIENT_AUDIT = ROOT / "scripts" / "audit_step2_gradient_stage_current_dev.py"
 STEP2_ACTION_FLOW_AUDIT = ROOT / "scripts" / "audit_step2_actuator_flow_effect_current.py"
@@ -59,6 +60,7 @@ def test_current_contract_routes_only_user_entrypoints_to_unversioned_surface() 
     assert entrypoints["guide"] == "CODEX_START_HERE.md"
     assert entrypoints["preflight"] == "rtc-current-preflight"
     assert entrypoints["existing_data_training"] == "scripts/run_step2_current.py"
+    assert entrypoints["step2_stage_ranking_horizon_audit"] == "scripts/audit_step2_stage_ranking_current.py"
     assert entrypoints["step2_spatial_audit"] == "scripts/audit_step2_spatial_current.py"
     assert entrypoints["step2_development_gradient_audit"] == "scripts/audit_step2_gradient_current_dev.py"
     assert entrypoints["step2_direct_flow_audit"] == "scripts/audit_step2_actuator_flow_effect_current.py"
@@ -78,6 +80,8 @@ def test_current_contract_routes_only_user_entrypoints_to_unversioned_surface() 
     assert step2["gradient_training_label_used"] is False
     assert step2["oracle_direct_pair_setting_bypass_blocked"] is True
     assert step2["stage_a_b0_post_objective_use_explicit_lazy_helpers"] is True
+    assert step2["b0_ranking_horizon_gate_executable"] is True
+    assert step2["b0_spatial_gate_executable"] is True
     promotion = payload["promotion_and_runtime"]
     assert promotion["runtime_current_enabled"] is False
     assert promotion["seven_strategy_current_enabled"] is False
@@ -106,6 +110,7 @@ def test_project7_registry_has_one_current_user_surface_and_complete_dev_diagnos
     diagnostics = payload["development_diagnostics"]
     assert diagnostics["step1_attention_trainer"] == "scripts/train_step1_global_attention_dev.py"
     assert diagnostics["step1_distance_attention_ablation"] == "scripts/audit_step1_global_attention_current.py"
+    assert diagnostics["step2_stage_ranking_horizon"] == "scripts/audit_step2_stage_ranking_current.py"
     assert diagnostics["step2_spatial_action_effect"] == "scripts/audit_step2_spatial_current.py"
     assert diagnostics["step2_development_gradient"] == "scripts/audit_step2_gradient_current_dev.py"
     assert diagnostics["step2_direct_action_flow"] == "scripts/audit_step2_actuator_flow_effect_current.py"
@@ -114,9 +119,7 @@ def test_project7_registry_has_one_current_user_surface_and_complete_dev_diagnos
 
 def test_current_lint_surface_is_high_signal_and_excludes_archival_style_debt() -> None:
     payload = json.loads(CURRENT_LINT.read_text(encoding="utf-8"))
-    assert payload["contract"] == (
-        "PROJECT7_CURRENT_LINT_SURFACE_V6_COUNTERFACTUAL_FIRST_ORACLE_ISOLATED_ACTIVE_ONLY"
-    )
+    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_V7_STAGE_RANKING_ACTIVE_ONLY"
     assert payload["full_repository_ruff_is_gate"] is False
     assert payload["current_surface_ruff_is_gate"] is True
     assert payload["rule_select"] == ["E4", "E7", "E9", "F"]
@@ -128,6 +131,7 @@ def test_current_lint_surface_is_high_signal_and_excludes_archival_style_debt() 
         "scripts/run_step2_action_identifiable_current.py",
         "scripts/audit_step2_actuator_flow_effect_current.py",
         "scripts/audit_step2_direct_hydraulic_effect_current.py",
+        "scripts/audit_step2_stage_ranking_current.py",
         "scripts/audit_step2_gradient_stage_current_dev.py",
         "scripts/audit_step2_spatial_current.py",
         "scripts/audit_step2_gradient_current_dev.py",
@@ -210,6 +214,7 @@ def test_current_development_diagnostic_clis_have_help() -> None:
         STEP1_ATTENTION_AUDIT,
         STEP2_ACTION_FLOW_AUDIT,
         STEP2_DIRECT_HYDRAULIC_AUDIT,
+        STEP2_STAGE_RANKING_AUDIT,
         STEP2_STAGE_GRADIENT_AUDIT,
         STEP2_SPATIAL_AUDIT,
         STEP2_DEV_GRADIENT_AUDIT,
@@ -217,6 +222,17 @@ def test_current_development_diagnostic_clis_have_help() -> None:
         EDGE_SPATIAL,
     ):
         _script_help(path)
+
+
+def test_stage_ranking_and_spatial_audits_are_executable_before_objective() -> None:
+    ranking_help = _script_help(STEP2_STAGE_RANKING_AUDIT)
+    spatial_help = _script_help(STEP2_SPATIAL_AUDIT)
+    assert "--stage {stage_b0,objective}" in ranking_help
+    assert "--stage-checkpoint" in ranking_help
+    assert "--ranking-out" in ranking_help
+    assert "--horizon-out" in ranking_help
+    assert "--stage {stage_b0,objective}" in spatial_help
+    assert "--stage-checkpoint" in spatial_help
 
 
 def test_current_profile_runner_uses_typed_stage_a_exact_objective_and_nonfinal_stages() -> None:
