@@ -1,4 +1,10 @@
-"""Contract-strict checkpoints for Project7 V128 typed actuator-message Step2."""
+"""Contract-strict checkpoints for the promoted Project7 V128 production Step2.
+
+Development surrogate subclasses (edge-aware/counterfactual-first) are deliberately rejected by
+the strict saver until a future explicit promotion defines a matching production checkpoint
+factory/loader.  This prevents a Development subclass from being serialised under the historical
+base V128 contract and then reconstructed as the wrong model class at runtime.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -22,7 +28,7 @@ from .step2_differentiable_v128 import (
 from .step2_train_response_v60 import InputNormalizationV60
 
 V128_CHECKPOINT_CONTRACT = (
-    "PROJECT7_V128_STEP2_CHECKPOINT_V6_CURRENT_PROFILE_TRAINING_SOURCE_STRICT"
+    "PROJECT7_V128_STEP2_CHECKPOINT_V7_BASE_MODEL_EXACT_CLASS_FULL_ONLY"
 )
 _V128_MODEL_SOURCE_FILES = (
     "models.py",
@@ -81,8 +87,14 @@ def save_step2_v128(
     training_report: dict[str, Any],
     lineage: dict[str, Any],
 ) -> Path:
-    if not isinstance(model, TypedActuatorMessageSurrogateV128):
-        raise TypeError("V128 checkpoint saver requires TypedActuatorMessageSurrogateV128")
+    # Exact-class check is intentional. A Development edge/counterfactual model may inherit from
+    # TypedActuatorMessageSurrogateV128 but it has different modules/buffers and requires a future
+    # explicit production loader. Never let inheritance masquerade as production compatibility.
+    if type(model) is not TypedActuatorMessageSurrogateV128:
+        raise TypeError(
+            "strict V128 checkpoint accepts only the promoted base TypedActuatorMessageSurrogateV128; "
+            "Development subclasses require an explicit full-promotion checkpoint contract"
+        )
     if str(training_report.get("profile", "")).lower() != "full":
         raise ValueError("strict V128 checkpoint saver accepts only explicit --profile full")
     if training_report.get("execution_profile_contract") != V128_EXECUTION_PROFILE_CONTRACT:
@@ -133,7 +145,7 @@ def load_step2_v128(
     device: torch.device | str,
 ) -> tuple[TypedActuatorMessageSurrogateV128, dict[str, Any]]:
     target = torch.device(device)
-    payload = torch.load(path, map_location=target)
+    payload = torch.load(path, map_location=target, weights_only=False)
     if not isinstance(payload, dict):
         raise ValueError("V128 Step2 checkpoint must contain a dictionary")
     if payload.get("checkpoint_contract") != V128_CHECKPOINT_CONTRACT:
