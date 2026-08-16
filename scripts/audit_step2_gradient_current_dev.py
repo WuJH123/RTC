@@ -3,6 +3,10 @@
 This is Development screening only. It reconstructs the same deterministic profile/data/design,
 loads the source-strict NONFINAL ``stage_objective.pt``, and evaluates only that profile's
 held-out D2 groups. No strict full checkpoint, D5, runtime, Validation or Final is required.
+
+Gradient provenance comes from the canonical D2 reference/candidate ``settings`` sequences
+rather than optional row-level actuator/base/requested-setting metadata.  The inner auditor
+fails closed unless each candidate changes exactly one actuator.
 """
 from __future__ import annotations
 
@@ -27,7 +31,7 @@ from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_s
 from rtc.step2_train_v127_streaming import V127StreamingMemoryDesign
 from rtc.v128_control_profile import build_v128_control_training_design, configure_v128_cuda_matmul_precision
 
-CONTRACT = "PROJECT7_CURRENT_SMOKE_DEV_D2_GRADIENT_AUDIT_V1"
+CONTRACT = "PROJECT7_CURRENT_SMOKE_DEV_D2_GRADIENT_AUDIT_V2_SETTINGS_DERIVED"
 
 
 def _sha(path: str | Path) -> str:

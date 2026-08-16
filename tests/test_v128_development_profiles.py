@@ -23,6 +23,7 @@ from rtc.stage_checkpoint_v128 import (
     load_stage_checkpoint_v128,
     save_stage_checkpoint_v128,
 )
+from rtc.step2_gradient_audit_v128_dev import _candidate_direction_from_settings
 from rtc.v128_control_profile import build_v128_control_training_design
 
 
@@ -151,6 +152,40 @@ def test_action_effect_distance_metrics_use_actuator_endpoints() -> None:
     )
     assert metrics["1-3"]["informative_sign_total"] >= 2
     assert metrics["1-3"]["effect_sign_accuracy"] < 1.0
+
+
+def test_settings_derived_gradient_direction_preserves_exact_d2_pulse() -> None:
+    reference = np.full((6, 3), 0.5, dtype=np.float32)
+    candidate = reference.copy()
+    candidate[2:5, 1] = np.asarray([0.4, 0.3, 0.4], dtype=np.float32)
+    direction, peak_step, active_steps = _candidate_direction_from_settings(
+        reference,
+        candidate,
+        expected_actuator_index=1,
+    )
+    assert peak_step == pytest.approx(0.2)
+    assert active_steps == 3
+    np.testing.assert_allclose(direction[:, 0], 0.0)
+    np.testing.assert_allclose(direction[:, 2], 0.0)
+    np.testing.assert_allclose(
+        direction[:, 1],
+        np.asarray([0.0, 0.0, -0.5, -1.0, -0.5, 0.0]),
+        rtol=0.0,
+        atol=2.0e-7,
+    )
+
+
+def test_settings_derived_gradient_direction_rejects_multi_actuator_candidate() -> None:
+    reference = np.zeros((4, 3), dtype=np.float32)
+    candidate = reference.copy()
+    candidate[1:3, 0] = 0.2
+    candidate[2, 2] = -0.1
+    with pytest.raises(ValueError, match="changes 2 actuators"):
+        _candidate_direction_from_settings(
+            reference,
+            candidate,
+            expected_actuator_index=0,
+        )
 
 
 def test_preflight_applies_requested_v128_matmul_policy(
