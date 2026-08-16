@@ -65,14 +65,23 @@ def test_current_contract_routes_only_user_entrypoints_to_unversioned_surface() 
     assert entrypoints["step2_direct_hydraulic_audit"] == "scripts/audit_step2_direct_hydraulic_effect_current.py"
     assert entrypoints["step1_attention_trainer"] == "scripts/train_step1_global_attention_dev.py"
     assert entrypoints["step1_attention_ablation"] == "scripts/audit_step1_global_attention_current.py"
-    assert entrypoints["runtime"] == "scripts/run_policy_current.py"
-    assert entrypoints["seven_strategy_comparison"] == "scripts/run_seven_strategies_current.py"
-    assert payload["step2_current"]["objective_module"] == "src/rtc/step2_train_v128_exact.py"
-    assert payload["step2_current"]["execution_profiles"] == ["smoke", "dev", "full"]
-    assert payload["step2_current"]["current_enabled_profiles"] == ["smoke", "dev"]
-    assert payload["step2_current"]["full_current_enabled"] is False
-    assert payload["step2_current"]["gradient_is_primary_training_target"] is False
-    assert payload["step2_current"]["gradient_training_label_used"] is False
+    assert entrypoints["runtime"].startswith("scripts/run_policy_current.py")
+    assert entrypoints["seven_strategy_comparison"].startswith("scripts/run_seven_strategies_current.py")
+    step2 = payload["step2_current"]
+    assert step2["objective_module"] == "src/rtc/step2_train_v128_exact.py"
+    assert step2["training_curriculum_module"] == "src/rtc/step2_counterfactual_training_v5.py"
+    assert step2["oracle_flow_isolation_module"] == "src/rtc/step2_oracle_isolation_v128.py"
+    assert step2["execution_profiles"] == ["smoke", "dev", "full"]
+    assert step2["current_enabled_profiles"] == ["smoke", "dev"]
+    assert step2["full_current_enabled"] is False
+    assert step2["gradient_is_primary_training_target"] is False
+    assert step2["gradient_training_label_used"] is False
+    assert step2["oracle_direct_pair_setting_bypass_blocked"] is True
+    assert step2["stage_a_b0_post_objective_use_explicit_lazy_helpers"] is True
+    promotion = payload["promotion_and_runtime"]
+    assert promotion["runtime_current_enabled"] is False
+    assert promotion["seven_strategy_current_enabled"] is False
+    assert promotion["d5_current_enabled"] is False
 
 
 def test_project7_registry_has_one_current_user_surface_and_complete_dev_diagnostics() -> None:
@@ -81,13 +90,19 @@ def test_project7_registry_has_one_current_user_surface_and_complete_dev_diagnos
     assert current["guide"] == "CODEX_START_HERE.md"
     assert current["preflight"] == "rtc-current-preflight"
     assert current["step2_training"] == "scripts/run_step2_current.py"
-    assert current["runtime"] == "scripts/run_policy_current.py"
-    assert current["seven_strategy"] == "scripts/run_seven_strategies_current.py"
+    assert current["runtime"].startswith("scripts/run_policy_current.py")
+    assert current["seven_strategy"].startswith("scripts/run_seven_strategies_current.py")
     assert current["lint_gate"] == "python scripts/lint_current_surface.py"
     assert current["lint_surface_contract"] == "configs/project7_current_lint_surface.json"
     assert current["status"] == "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED"
     assert current["enabled_step2_profiles"] == ["smoke", "dev"]
     assert current["full_profile_enabled"] is False
+    assert current["runtime_enabled"] is False
+    assert current["seven_strategy_enabled"] is False
+    assert current["d5_enabled"] is False
+    selected = payload["selected_internal_implementation"]
+    assert selected["step2_training_curriculum"] == "src/rtc/step2_counterfactual_training_v5.py"
+    assert selected["step2_oracle_flow_isolation"] == "src/rtc/step2_oracle_isolation_v128.py"
     diagnostics = payload["development_diagnostics"]
     assert diagnostics["step1_attention_trainer"] == "scripts/train_step1_global_attention_dev.py"
     assert diagnostics["step1_distance_attention_ablation"] == "scripts/audit_step1_global_attention_current.py"
@@ -99,7 +114,9 @@ def test_project7_registry_has_one_current_user_surface_and_complete_dev_diagnos
 
 def test_current_lint_surface_is_high_signal_and_excludes_archival_style_debt() -> None:
     payload = json.loads(CURRENT_LINT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_V5_COUNTERFACTUAL_FIRST_LAZY_ACTIVE_ONLY"
+    assert payload["contract"] == (
+        "PROJECT7_CURRENT_LINT_SURFACE_V6_COUNTERFACTUAL_FIRST_ORACLE_ISOLATED_ACTIVE_ONLY"
+    )
     assert payload["full_repository_ruff_is_gate"] is False
     assert payload["current_surface_ruff_is_gate"] is True
     assert payload["rule_select"] == ["E4", "E7", "E9", "F"]
@@ -118,7 +135,8 @@ def test_current_lint_surface_is_high_signal_and_excludes_archival_style_debt() 
         "scripts/run_seven_strategies_current.py",
         "src/rtc/step2_action_identifiable_v128.py",
         "src/rtc/step2_counterfactual_first_v128.py",
-        "src/rtc/step2_counterfactual_training_v4.py",
+        "src/rtc/step2_counterfactual_training_v5.py",
+        "src/rtc/step2_oracle_isolation_v128.py",
         "src/rtc/step2_current_dev_context_v128.py",
         "src/rtc/step2_train_v128_exact.py",
         "src/rtc/step3_mpc_v128.py",
@@ -127,9 +145,11 @@ def test_current_lint_surface_is_high_signal_and_excludes_archival_style_debt() 
         "src/rtc/step2_spatial_audit_v128.py",
         "src/rtc/step2_gradient_audit_v128_dev.py",
         "tests/test_v128_counterfactual_first.py",
+        "tests/test_v128_oracle_isolation.py",
     }
     assert required.issubset(paths)
     assert "src/rtc/step2_counterfactual_training_v3.py" not in paths
+    assert "src/rtc/step2_counterfactual_training_v4.py" not in paths
     assert all((ROOT / path).is_file() for path in paths)
 
 
@@ -156,13 +176,18 @@ def test_current_wrappers_pin_the_selected_counterfactual_implementation() -> No
     assert "run_step2_action_identifiable_current import main" in current_text
     assert "run_step2_v128_current_profiles as runner" in enhanced_text
     assert "derive_direct_response_scales_v128" in enhanced_text
-    assert "train_counterfactual_first_stage_a_v4" in enhanced_text
-    assert "train_action_identifiable_rollout_stage_v128" in enhanced_text
-    assert "train_action_identifiable_objective_stage_v128" in enhanced_text
-    assert '"counterfactual_stage_a_contract"' in enhanced_text
+    assert "train_counterfactual_first_stage_a_v5" in enhanced_text
+    assert "train_counterfactual_rollout_b0_v5" in enhanced_text
+    assert "train_counterfactual_objective_stage_v5" in enhanced_text
+    assert '"oracle_flow_isolation_contract"' in enhanced_text
+    assert '"explicit_lazy_stage_a_b0_anchor": True' in enhanced_text
     assert '"gradient_is_training_target": False' in enhanced_text
-    assert "run_policy_v128 import main" in CURRENT_POLICY.read_text(encoding="utf-8")
-    assert "run_seven_strategies_v128 import main" in CURRENT_SEVEN.read_text(encoding="utf-8")
+    policy_text = CURRENT_POLICY.read_text(encoding="utf-8")
+    seven_text = CURRENT_SEVEN.read_text(encoding="utf-8")
+    assert "CURRENT_RUNTIME_BLOCK_CONTRACT" in policy_text
+    assert "run_policy_v128 import main" not in policy_text
+    assert "CURRENT_SEVEN_STRATEGY_BLOCK_CONTRACT" in seven_text
+    assert "run_seven_strategies_v128 import main" not in seven_text
 
 
 def test_current_step2_help_requires_explicit_cost_profile_and_edge_physics() -> None:
@@ -213,14 +238,32 @@ def test_counterfactual_current_runner_blocks_full_before_promotion() -> None:
     assert '"edge_physics_sha256"' in text
     assert '"action_identifiable_source_sha256"' in text
     assert '"direct_action_flow_scale_contract"' in text
+    assert '"oracle_flow_isolation_contract"' in text
     assert '"oracle_hydraulic_a1_contract"' in text
+    assert '"counterfactual_b0_contract"' in text
 
 
-def test_current_seven_strategy_help_exposes_current_evidence_contract() -> None:
-    help_text = _script_help(CURRENT_SEVEN)
-    assert "--continuous-evidence" in help_text
-    assert "--continuous-gate" not in help_text
-    assert "--engineering-envelope" in help_text
+def test_current_runtime_and_seven_strategy_help_expose_promotion_block() -> None:
+    policy_help = _script_help(CURRENT_POLICY)
+    seven_help = _script_help(CURRENT_SEVEN)
+    assert "--promotion-status" in policy_help
+    assert "production" in policy_help.lower()
+    assert "--promotion-status" in seven_help
+    assert "production" in seven_help.lower()
+
+
+def test_current_runtime_and_seven_strategy_fail_closed_without_promotion() -> None:
+    for path in (CURRENT_POLICY, CURRENT_SEVEN):
+        result = subprocess.run(
+            [sys.executable, str(path)],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode != 0
+        assert "production" in result.stderr.lower()
+        assert "nonfinal" in result.stderr.lower()
 
 
 def test_v128_seven_strategy_translates_current_evidence_only_inside_shared_boundary() -> None:
