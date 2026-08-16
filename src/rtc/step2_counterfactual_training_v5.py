@@ -160,6 +160,18 @@ def _direct_pair_cpu(cpu: dict[str, Any], spec: dict[str, Any]) -> dict[str, tor
     }
 
 
+def _direct_rainfall_batch(
+    pair: dict[str, torch.Tensor], *, branches: int, device: torch.device
+) -> torch.Tensor:
+    """Expand one common-prefix direct-pair rainfall frame across candidate branches."""
+    rainfall = pair["rainfall"]
+    if rainfall.ndim != 2:
+        raise ValueError("direct-pair rainfall must be [node, rainfall_feature]")
+    if int(branches) <= 0:
+        raise ValueError("direct-pair rainfall batch requires a positive branch count")
+    return rainfall.unsqueeze(0).expand(int(branches), -1, -1).to(device)
+
+
 def _predict_direct_flow(
     model: Any,
     *,
@@ -409,7 +421,7 @@ def train_oracle_hydraulic_a1_v5(
                     prev_flow = pair["prefix_flow"][None].repeat(2, 1).to(device)
                     setting = pair["setting"].to(device)
                     oracle_flow = pair["target_flow"].to(device)
-                    rainfall = pair["rainfall"][None].repeat(2, 1).to(device)
+                    rainfall = _direct_rainfall_batch(pair, branches=2, device=device)
                     pred = oracle_flow_transition_prediction(
                         model,
                         prev_state=prev_state,
@@ -598,7 +610,7 @@ def train_joint_direct_a2_v5(
                         physics_norm=physics_norm,
                         identity_embedding=identity,
                     )
-                    rainfall = pair["rainfall"][None].repeat(2, 1).to(device)
+                    rainfall = _direct_rainfall_batch(pair, branches=2, device=device)
                     pred_state = model.transition.forward_prepared(
                         prev_state,
                         rainfall,
