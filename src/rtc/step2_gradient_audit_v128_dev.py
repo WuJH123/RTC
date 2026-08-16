@@ -1,9 +1,15 @@
 """Development-only D2 TFV-gradient audit for nonfinal V128 stage checkpoints.
 
-For each D2 group the exact reference H360 action sequence is differentiated once to obtain
-full dJ/dU[72,109].  The gradient is projected along every authoritative SWMM finite-difference
-action direction in that group.  This preserves the fast full-gradient-reuse idea of the
-strict audit while allowing smoke/dev model screening before an expensive full checkpoint.
+For each held-out D2 group the exact reference H360 action sequence is differentiated once to
+obtain full dJ/dU[72,109].  Every authoritative SWMM candidate is then audited along its exact
+reference-to-candidate action-sequence direction.  The D2 cache already freezes those action
+sequences in reference-then-candidate order, so row-level ``actuator_id``, ``base_setting`` and
+``requested_setting`` metadata are not required and must never be synthesised.
+
+The magnitude diagnostic divides both the authoritative TFV change and the autograd projection
+by the candidate's peak absolute setting displacement.  This is a directional sensitivity along
+the *actual D2 pulse shape*, not a claim that all 72 time steps share one scalar setting.  D2 is
+contractually single-actuator; zero-change or multi-actuator candidates fail closed.
 """
 from __future__ import annotations
 
@@ -13,11 +19,12 @@ import numpy as np
 import torch
 
 from .step2_lazy_stream_v128 import cpu_group_v128_lazy
+from .step2_spatial_audit_v128 import _changed_actuator_per_candidate
 from .step2_train_response_v60 import InputNormalizationV60
-from .step2_train_v127 import _static
+from .step2_train_v127 import _static, _truth_node_volume
 
 V128_DEV_D2_GRADIENT_AUDIT_CONTRACT = (
-    "PROJECT7_V128_DEVELOPMENT_D2_GROUP_LOCAL_GRADIENT_AUDIT_V1_FULL_GRADIENT_REUSE"
+    "PROJECT7_V128_DEVELOPMENT_D2_SETTINGS_DERIVED_DIRECTIONAL_GRADIENT_AUDIT_V2"
 )
 
 
@@ -57,6 +64,47 @@ def _full_settings_gradient(
     return gradient.detach().cpu().numpy().astype(np.float64, copy=False)
 
 
+def _candidate_direction_from_settings(
+    reference_sequence: np.ndarray,
+    candidate_sequence: np.ndarray,
+    *,
+    expected_actuator_index: int,
+    tolerance: float = 1.0e-7,
+) -> tuple[np.ndarray, float, int]:
+    """Return exact D2 direction normalised by its peak absolute setting displacement.
+
+    ``direction`` retains the physical sign and full temporal pulse/ramp shape.  Its changed
+    actuator has peak absolute magnitude one.  This construction is lossless with respect to
+    the stored reference/candidate settings and avoids inventing missing scalar provenance.
+    """
+    reference = np.asarray(reference_sequence, dtype=np.float64)
+    candidate = np.asarray(candidate_sequence, dtype=np.float64)
+    if reference.shape != candidate.shape or reference.ndim != 2:
+        raise ValueError("D2 gradient direction requires matching [H,actuator] settings")
+    delta = candidate - reference
+    if not np.isfinite(delta).all():
+        raise ValueError("D2 gradient direction contains non-finite settings")
+    changed = np.flatnonzero(np.max(np.abs(delta), axis=0) > float(tolerance))
+    if changed.size != 1:
+        raise ValueError(
+            f"D2 gradient candidate changes {changed.size} actuators; expected exactly one"
+        )
+    actuator_index = int(changed[0])
+    if actuator_index != int(expected_actuator_index):
+        raise RuntimeError("D2 changed-actuator inference disagrees across audit helpers")
+    trace = delta[:, actuator_index]
+    peak_abs = float(np.max(np.abs(trace)))
+    if not np.isfinite(peak_abs) or peak_abs <= float(tolerance):
+        raise ValueError("D2 gradient candidate has no finite nonzero setting displacement")
+    active_steps = int(np.count_nonzero(np.abs(trace) > float(tolerance)))
+    if active_steps <= 0:
+        raise ValueError("D2 gradient candidate has no active perturbation steps")
+    direction = delta / peak_abs
+    if not np.isfinite(direction).all():
+        raise ValueError("D2 normalised gradient direction is non-finite")
+    return direction, peak_abs, active_steps
+
+
 def evaluate_d2_gradient_v128_development(
     model: Any,
     *,
@@ -73,7 +121,6 @@ def evaluate_d2_gradient_v128_development(
         raise ValueError("development gradient audit requires non-empty held-out D2 groups")
     model.eval().to(device)
     static = _static(graph, device)
-    actuator_index = {aid: i for i, aid in enumerate(graph.actuator_ids)}
     rows: list[dict[str, object]] = []
     surrogate_rollouts = 0
     if device.type == "cuda":
@@ -81,39 +128,25 @@ def evaluate_d2_gradient_v128_development(
 
     for name in selected:
         entry = base_cache.entry(name)
-        arrays = entry.arrays
-        required = {
-            "actuator_id",
-            "requested_setting",
-            "base_setting",
-            "exact_node_flood_volume_m3",
-            "settings",
-        }
-        missing = sorted(required - set(arrays))
-        if missing:
-            raise ValueError(f"{name}: D2 cache lacks gradient provenance {missing}")
-
         cpu = cpu_group_v128_lazy(online_cache, name, normalization)
         initial = cpu["initial"].to(device)
         rainfall_t = cpu["rainfall"].to(device)
         flow = cpu["previous_flow"].to(device)
-
-        group_indices = np.asarray(entry.indices, dtype=np.int64)
-        reference_positions = np.flatnonzero(group_indices == int(entry.reference_index))
-        if reference_positions.size != 1:
-            raise RuntimeError(f"{name}: reference row is not unique inside D2 group")
-        reference_position = int(reference_positions[0])
-        node_volume = np.asarray(
-            arrays["exact_node_flood_volume_m3"][group_indices], dtype=np.float64
-        )
-        tfv = node_volume.sum(axis=1, dtype=np.float64)
-        aids = np.asarray(arrays["actuator_id"])[group_indices].astype(str)
-        requested = np.asarray(arrays["requested_setting"][group_indices], dtype=np.float64)
-        base_setting = np.asarray(arrays["base_setting"][group_indices], dtype=np.float64)
-        sequences = np.asarray(arrays["settings"][group_indices], dtype=np.float32)
-        reference_sequence = sequences[reference_position]
-        if sequences.shape[1:] != (72, len(graph.actuator_ids)):
+        sequences = np.asarray(cpu["settings"], dtype=np.float32)
+        if sequences.ndim != 3 or sequences.shape[1:] != (72, len(graph.actuator_ids)):
             raise ValueError(f"{name}: D2 action-sequence shape mismatch")
+        if sequences.shape[0] < 2:
+            raise ValueError(f"{name}: D2 gradient audit requires reference plus candidate")
+
+        # Both helpers use the same authoritative reference-first action sequence.  The spatial
+        # audit already relies on this invariant, so gradient screening should not demand a
+        # second, lossy row-level provenance schema that the canonical cache never promised.
+        actuator_indices = _changed_actuator_per_candidate(cpu["settings"])
+        node_volume = _truth_node_volume(base_cache, name).astype(np.float64, copy=False)
+        if node_volume.shape[0] != sequences.shape[0]:
+            raise RuntimeError(f"{name}: D2 gradient truth/action branch order mismatch")
+        tfv = node_volume.sum(axis=1, dtype=np.float64)
+        reference_sequence = sequences[0]
 
         full_gradient = _full_settings_gradient(
             model,
@@ -127,62 +160,34 @@ def evaluate_d2_gradient_v128_development(
         )
         surrogate_rollouts += 1
 
-        for aid in sorted(set(aids.tolist()) - {""}):
-            if aid not in actuator_index:
-                raise ValueError(f"{name}: D2 actuator {aid} absent from graph")
-            positions = np.flatnonzero(aids == aid)
-            if not positions.size:
-                continue
-            b_values = base_setting[positions]
-            if not np.isfinite(b_values).all():
-                raise ValueError(f"{name}/{aid}: D2 base setting is non-finite")
-            b = float(b_values[0])
-            if not np.allclose(b_values, b, rtol=0.0, atol=1.0e-10):
-                raise ValueError(f"{name}/{aid}: D2 base setting drift within group")
-            below = positions[requested[positions] < b - 1.0e-10]
-            above = positions[requested[positions] > b + 1.0e-10]
-            if below.size and above.size:
-                lo = int(below[np.argmax(requested[below])])
-                hi = int(above[np.argmin(requested[above])])
-                du = float(requested[hi] - requested[lo])
-                truth = float((tfv[hi] - tfv[lo]) / du)
-                direction = (sequences[hi] - sequences[lo]) / du
-                method = "central_group_local"
-            elif above.size:
-                hi = int(above[np.argmin(requested[above])])
-                du = float(requested[hi] - b)
-                truth = float((tfv[hi] - tfv[reference_position]) / du)
-                direction = (sequences[hi] - reference_sequence) / du
-                method = "forward_bound_group_local"
-            elif below.size:
-                lo = int(below[np.argmax(requested[below])])
-                du = float(b - requested[lo])
-                truth = float((tfv[reference_position] - tfv[lo]) / du)
-                direction = (reference_sequence - sequences[lo]) / du
-                method = "backward_bound_group_local"
-            else:
-                continue
-            if du <= 1.0e-12 or not np.isfinite(direction).all():
-                continue
-            direction_norm = float(np.linalg.norm(direction))
-            if direction_norm <= 1.0e-10:
-                continue
-            changed = np.flatnonzero(np.max(np.abs(direction), axis=0) > 1.0e-8)
-            if set(changed.tolist()) - {actuator_index[aid]}:
-                raise ValueError(
-                    f"{name}/{aid}: D2 branch changes other actuators; not a single-actuator finite difference"
-                )
+        for candidate_position in range(1, sequences.shape[0]):
+            actuator_idx = int(actuator_indices[candidate_position - 1])
+            if actuator_idx < 0 or actuator_idx >= len(graph.actuator_ids):
+                raise RuntimeError(f"{name}: inferred D2 actuator index is outside graph")
+            direction, peak_step, active_steps = _candidate_direction_from_settings(
+                reference_sequence,
+                sequences[candidate_position],
+                expected_actuator_index=actuator_idx,
+            )
+            true_delta = float(tfv[candidate_position] - tfv[0])
+            truth = true_delta / peak_step
             predicted = float(np.sum(full_gradient * direction, dtype=np.float64))
+            if not np.isfinite(truth) or not np.isfinite(predicted):
+                raise RuntimeError(f"{name}: D2 directional-gradient case is non-finite")
             rows.append(
                 {
                     "group": name,
                     "rainfall_group": str(entry.rainfall_group),
                     "event_id": str(entry.event_id),
                     "checkpoint_id": str(entry.checkpoint_id),
-                    "actuator_id": aid,
-                    "base_setting": b,
-                    "finite_difference_method": method,
-                    "direction_sequence_l2_per_setting": direction_norm,
+                    "candidate_position": int(candidate_position),
+                    "actuator_index": actuator_idx,
+                    "actuator_id": str(graph.actuator_ids[actuator_idx]),
+                    "finite_difference_method": "reference_to_candidate_exact_sequence_direction",
+                    "peak_setting_step_abs": peak_step,
+                    "active_perturbation_model_steps": active_steps,
+                    "direction_sequence_l2_per_peak_setting": float(np.linalg.norm(direction)),
+                    "true_tfv_delta_m3": true_delta,
                     "true_tfv_gradient_m3_per_setting": truth,
                     "predicted_tfv_gradient_m3_per_setting": predicted,
                 }
@@ -196,8 +201,14 @@ def evaluate_d2_gradient_v128_development(
         groups.setdefault(str(row["rainfall_group"]), []).append(row)
     group_metrics: list[dict[str, float]] = []
     for _, group in sorted(groups.items()):
-        truth = np.asarray([float(row["true_tfv_gradient_m3_per_setting"]) for row in group])
-        pred = np.asarray([float(row["predicted_tfv_gradient_m3_per_setting"]) for row in group])
+        truth = np.asarray(
+            [float(row["true_tfv_gradient_m3_per_setting"]) for row in group],
+            dtype=np.float64,
+        )
+        pred = np.asarray(
+            [float(row["predicted_tfv_gradient_m3_per_setting"]) for row in group],
+            dtype=np.float64,
+        )
         informative = np.abs(truth) > 1.0e-8
         sign = (
             float(np.mean(np.sign(pred[informative]) == np.sign(truth[informative])))
@@ -224,6 +235,7 @@ def evaluate_d2_gradient_v128_development(
         gib = float(1024**3)
         peak_alloc = float(torch.cuda.max_memory_allocated(device) / gib)
         peak_reserved = float(torch.cuda.max_memory_reserved(device) / gib)
+    mae = mean("mae")
     metrics: dict[str, object] = {
         "contract": V128_DEV_D2_GRADIENT_AUDIT_CONTRACT,
         "scientific_split": "development",
@@ -232,11 +244,27 @@ def evaluate_d2_gradient_v128_development(
         "gradient_rainfall_groups": len(groups),
         "tfv_gradient_sign_accuracy": mean("sign"),
         "tfv_gradient_cosine_similarity": mean("cosine"),
-        "tfv_gradient_mae_m3_per_setting": mean("mae"),
-        "predicted_gradient_semantics": (
-            "smooth V128 optimization TFV full dJ/dU projected along exact D2 action direction"
+        # Compatibility name retained for existing reporting.  The exact unit/semantics are
+        # made explicit below and are not fabricated from absent requested/base-setting fields.
+        "tfv_gradient_mae_m3_per_setting": mae,
+        "tfv_gradient_mae_m3_per_peak_setting_step": mae,
+        "gradient_variable_space": "exact stored H72x109 D2 setting-sequence direction",
+        "gradient_magnitude_normalization": (
+            "candidate peak absolute setting displacement; direction retains exact temporal shape"
         ),
-        "truth_gradient_semantics": "authoritative SWMM cumulative TFV group-local finite difference",
+        "predicted_gradient_semantics": (
+            "smooth V128 optimization TFV full dJ/dU projected along exact stored D2 "
+            "reference-to-candidate action direction"
+        ),
+        "truth_gradient_semantics": (
+            "authoritative SWMM cumulative TFV reference-to-candidate finite difference "
+            "per peak absolute setting displacement"
+        ),
+        "gradient_provenance": (
+            "losslessly derived from canonical reference-first settings sequences; no synthetic "
+            "actuator_id/base_setting/requested_setting metadata"
+        ),
+        "single_actuator_action_contract_verified": True,
         "causal_step1_state": True,
         "causal_rainfall": True,
         "used_for_training": False,
@@ -250,5 +278,6 @@ def evaluate_d2_gradient_v128_development(
 
 __all__ = [
     "V128_DEV_D2_GRADIENT_AUDIT_CONTRACT",
+    "_candidate_direction_from_settings",
     "evaluate_d2_gradient_v128_development",
 ]
