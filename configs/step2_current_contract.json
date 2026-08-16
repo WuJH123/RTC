@@ -1,12 +1,12 @@
 {
-  "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V1",
+  "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V2",
   "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
-  "selected_implementation_contract": "PROJECT7_DIRECT_109ACT_ACTION_TO_DELTA_TFV_VALUE_V1",
+  "selected_implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
   "authoritative_truth": "SWMM",
   "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, estimate how candidate actions of 109 writable facilities change future system-wide cumulative TFV, choose a lower-TFV H120 control sequence inside an H360 evaluation horizon, execute only the first 10-minute target, and repeat",
   "core_pipeline": {
     "step1": "reconstruct the current full-network hydraulic state from sparse causal observations so online control does not require a fresh full SWMM state simulation",
-    "step2": "learn state-conditioned action value directly: causal current state + causal rainfall forecast + current actuator state + candidate 109-facility sequence -> delta TFV",
+    "step2": "learn state-conditioned pairwise action value directly: causal current state + causal rainfall forecast + complete reference sequence + complete candidate 109-facility sequence -> delta TFV",
     "step3": "minimize Step2 predicted delta TFV over 12 x 109 bounded continuous control variables, execute the first 10-minute target, then re-observe",
     "swmm": "authoritative offline label generator and final evaluation truth; not the online candidate evaluator"
   },
@@ -30,17 +30,21 @@
   },
   "step2_current": {
     "primary_target": "authoritative exact SWMM delta TFV relative to the same-prefix reference action",
-    "model": "per-facility main effects plus one multi-actuator interaction residual",
-    "single_actuator_supervision": "same-prefix D2/D3/D4 single-facility counterfactuals teach facility main effects",
-    "joint_supervision": "multi-facility D3/D4 counterfactuals teach only the interaction residual after main-effect training",
+    "model": "shared pairwise sequence-value encoder: V(candidate)-V(reference), decomposed into 109 facility value differences plus one multi-actuator interaction value difference",
+    "reference_representation": "encode the complete H360 reference and candidate sequences with the same network; never reduce the reference to only its first setting",
+    "reference_families": "D2 base-action, D3 HOLD and D4 causal Sparse-RBC anchor are all valid Development pairwise references; future Step3 uses HOLD",
+    "antisymmetry_contract": "swapping candidate and reference negates predicted delta TFV exactly under the same causal prefix",
+    "single_actuator_supervision": "same-prefix D2/D3/D4 single-facility counterfactuals teach facility main-value differences",
+    "joint_supervision": "multi-facility D3/D4 counterfactuals teach only the interaction value difference after main-effect training",
     "state_conditioning": "causal Step1 reconstructed state, including each facility upstream/downstream local state plus a compact global hydraulic context",
     "rainfall_conditioning": "causal rainfall forecast only",
-    "temporal_action_encoding": "full H360 action-difference sequence compressed to 36 ten-minute blocks so delayed effects remain learnable",
+    "temporal_action_encoding": "complete reference and candidate H360 sequences are each compressed to 36 ten-minute blocks so delayed and reference-family effects remain learnable",
     "zero_action_contract": "candidate equals reference -> predicted delta TFV exactly zero",
     "single_action_interaction_contract": "interaction residual exactly zero when fewer than two facilities change",
     "training_loss": "continuous normalized exact delta-TFV regression plus within-group pairwise ordering; the historical 1-percent practical-effect threshold is reporting-only and never converts labels to zero",
-    "main_effect_stage": "source-interleaved single-actuator training so D2 volume does not erase D3 temporal diversity",
-    "interaction_stage": "freeze learned main effects and fit joint residual from multi-actuator candidates",
+    "main_effect_stage": "source-interleaved single-actuator training",
+    "interaction_stage": "freeze learned facility/context representation and fit joint interaction value difference from multi-actuator candidates",
+    "development_profile": "smoke remains a small deterministic signal check; dev uses all admitted existing Development groups: 112 D2 FIT, 112 D3 FIT, 33 D4 FIT, 32 D2 holdout, 32 D3 holdout and all 15 untouched D4 AUDIT groups",
     "hydraulic_trajectory_primary_target": false,
     "hydraulic_trajectory_role": "auxiliary diagnostic/ablation only",
     "gradient_label_used": false,
@@ -53,9 +57,9 @@
     "D0": "baseline hydraulic-state/flood opportunity context; not direct facility attribution",
     "D1": "state/action coverage; not direct facility credit assignment",
     "D2": "primary long-duration single-facility main-effect supervision",
-    "D3": "temporal single-facility supervision plus multi-facility interaction supervision",
-    "D4_FIT": "first-move/local-operating-region supervision",
-    "D4_AUDIT": "untouched Development audit only",
+    "D3": "HOLD-reference temporal single-facility supervision plus multi-facility interaction supervision",
+    "D4_FIT": "causal Sparse-RBC-reference first-move/local-operating-region supervision",
+    "D4_AUDIT": "untouched causal Sparse-RBC-reference Development audit only",
     "D5": "optional later solver-sensitivity diagnostic, not a prerequisite for learning TFV value"
   },
   "step3_current": {
@@ -64,7 +68,7 @@
     "optimizer": "bounded L-BFGS-B through the direct differentiable value model",
     "fallback": "HOLD when no finite predicted TFV improvement is found",
     "runtime_promoted": false,
-    "promotion_requires": "direct Step2 held-out rainfall ranking, pairwise ordering, top1 selection and regret materially better than the failed V128 Development baseline"
+    "promotion_requires": "full direct-value Development evaluation must preserve the D2/D3 improvement and materially reduce the D4 first-move/reference-family gap before wiring an authoritative Development closed loop"
   },
   "legacy_v128": {
     "status": "retained for ablation/history, not the canonical current Step2",
@@ -88,5 +92,5 @@
     "direct_value_step3": "src/rtc/step3_tfv_value_mpc.py",
     "legacy_v128_training": "scripts/run_step2_action_identifiable_current.py"
   },
-  "promotion_rule": "first prove that the direct value model learns useful held-out action ordering from existing SWMM labels; only then wire a Development closed loop. Do not require perfect H360 full-state trajectory prediction before testing TFV control value."
+  "promotion_rule": "first prove on the full Development split that the pairwise direct-value model preserves D2/D3 ordering gains and improves D4 first-move/reference-family robustness; only then wire one authoritative Development closed loop."
 }
