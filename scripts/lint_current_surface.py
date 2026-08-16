@@ -1,9 +1,8 @@
 """Run the high-signal Ruff gate for the maintained Project7 surface.
 
-The repository intentionally retains historical/shared implementation files for provenance and
-reproducibility. Their pre-existing style/refactor debt must not block smoke/dev debugging.
-This gate therefore checks explicit maintained paths using correctness-oriented Ruff rule
-families only; the full pytest suite remains the broader behavioral regression gate.
+The repository retains legacy implementation files for provenance and ablation. Their historical
+style debt must not block the current direct-TFV Development path, so this gate checks only the
+explicit maintained Python surface with correctness-oriented Ruff rules.
 """
 from __future__ import annotations
 
@@ -15,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "configs" / "project7_current_lint_surface.json"
-EXPECTED_CONTRACT = "PROJECT7_CURRENT_LINT_SURFACE_V7_STAGE_RANKING_ACTIVE_ONLY"
+EXPECTED_CONTRACT = "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V1"
 EXPECTED_RULES = ("E4", "E7", "E9", "F")
 
 
