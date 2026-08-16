@@ -1,12 +1,14 @@
-"""Audit managed-flow action effects for a current repaired smoke/dev stage checkpoint.
+"""Audit direct and feedback managed-flow action effects for current Project7 Step2.
 
-This is a cheap Development gate intended immediately after Stage A.  For the deterministic
-held-out D2 groups it teacher-forces each reference/candidate branch with its own authoritative
-previous hydraulic state/managed flow, predicts the next managed flow with the checkpoint
-actuator submodel, and compares candidate-minus-reference flow effects with authoritative SWMM.
+The primary Development gate is now the *direct same-prefix* action response: reference and
+candidate settings are evaluated from one common authoritative pre-action hydraulic state and
+managed flow at the first setting-divergence transition.  This isolates setting -> managed flow.
 
-The audit is read-only.  It never changes the FIT-only hybrid flow scale, never trains, and
-never accesses Validation/Final/Formal/Policy Lock.
+A secondary feedback diagnostic retains the historical all-H72 teacher-forced comparison where
+each branch uses its own authoritative previous state/flow.  That quantity measures the combined
+network-feedback trajectory and must not be interpreted as a local actuator derivative.  Both
+micro/global and actuator-balanced macro summaries are reported so a single high-flow asset
+cannot silently determine architecture promotion/rejection.
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ from rtc.development_profile_v128 import apply_profile_to_design, get_execution_
 from rtc.production_cli import _load_graph
 from rtc.stage_checkpoint_v128 import load_stage_checkpoint_v128
 from rtc.step2_causal_rainfall_v123 import load_causal_forecast_store_v123
+from rtc.step2_counterfactual_first_v128 import _first_direct_response_spec_numpy
 from rtc.step2_current_dev_context_v128 import (
     build_current_action_identifiable_model,
     extend_action_identifiable_stage_lineage,
@@ -36,7 +39,7 @@ from rtc.step2_train_v127 import _static
 from rtc.step2_train_v127_streaming import V127StreamingMemoryDesign
 from rtc.v128_control_profile import build_v128_control_training_design, configure_v128_cuda_matmul_precision
 
-CONTRACT = "PROJECT7_CURRENT_ACTION_IDENTIFIABLE_ACTUATOR_FLOW_EFFECT_AUDIT_V2"
+CONTRACT = "PROJECT7_CURRENT_COUNTERFACTUAL_FIRST_ACTUATOR_FLOW_EFFECT_AUDIT_V3"
 
 
 def _sha(path: str | Path) -> str:
@@ -76,6 +79,67 @@ def _metrics(truth: np.ndarray, pred: np.ndarray) -> dict[str, float | int]:
         "q10_abs_predicted_to_true_flow_effect_ratio": float(np.quantile(ratios, 0.10)),
         "q90_abs_predicted_to_true_flow_effect_ratio": float(np.quantile(ratios, 0.90)),
     }
+
+
+def _macro_by_actuator(rows: list[dict[str, object]]) -> tuple[dict[str, float | int], list[dict[str, object]]]:
+    grouped: dict[str, list[dict[str, object]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row["actuator_id"]), []).append(row)
+    per: list[dict[str, object]] = []
+    truth_energy: dict[str, float] = {}
+    for actuator, values in sorted(grouped.items()):
+        t = np.asarray([float(row["true_flow_effect_m3s"]) for row in values], dtype=np.float64)
+        p = np.asarray([float(row["predicted_flow_effect_m3s"]) for row in values], dtype=np.float64)
+        mask = np.abs(t) > 1.0e-8
+        if not mask.any():
+            continue
+        metrics = _metrics(t, p)
+        energy = float(np.dot(t[mask], t[mask]))
+        truth_energy[actuator] = energy
+        per.append({"actuator_id": actuator, "truth_l2": float(np.sqrt(energy)), **metrics})
+    if not per:
+        raise RuntimeError("action-to-flow audit produced no actuator-level metrics")
+    cosines = np.asarray([float(row["flow_effect_cosine"]) for row in per], dtype=np.float64)
+    signs = np.asarray([float(row["flow_effect_sign_accuracy"]) for row in per], dtype=np.float64)
+    ratios = np.asarray(
+        [float(row["predicted_to_true_flow_effect_l2_ratio"]) for row in per], dtype=np.float64
+    )
+    total_energy = float(sum(truth_energy.values()))
+    ranked = sorted(per, key=lambda row: float(row["truth_l2"]), reverse=True)
+    for row in ranked:
+        energy = truth_energy[str(row["actuator_id"])]
+        row["truth_l2_energy_fraction"] = energy / total_energy if total_energy > 0 else 0.0
+    macro = {
+        "informative_actuators": len(per),
+        "mean_actuator_cosine": float(np.nanmean(cosines)),
+        "median_actuator_cosine": float(np.nanmedian(cosines)),
+        "mean_actuator_sign_accuracy": float(np.nanmean(signs)),
+        "median_actuator_sign_accuracy": float(np.nanmedian(signs)),
+        "mean_actuator_l2_ratio": float(np.nanmean(ratios)),
+        "median_actuator_l2_ratio": float(np.nanmedian(ratios)),
+        "largest_actuator_truth_l2_energy_fraction": float(ranked[0]["truth_l2_energy_fraction"]),
+    }
+    return macro, ranked[:10]
+
+
+def _predict_flow(
+    model,
+    *,
+    state: np.ndarray,
+    previous_flow: np.ndarray,
+    settings: np.ndarray,
+    static: dict[str, torch.Tensor],
+    device: torch.device,
+) -> torch.Tensor:
+    state_t = torch.as_tensor(state, dtype=torch.float32, device=device)
+    flow_t = torch.as_tensor(previous_flow, dtype=torch.float32, device=device)
+    settings_t = torch.as_tensor(settings, dtype=torch.float32, device=device)
+    physics_norm, identity = model.actuator.prepare_static(static["physics"], batch_size=int(state_t.shape[0]))
+    q, _ = model.actuator.forward_prepared(
+        state_t[:, static["up"]], state_t[:, static["down"]], settings_t,
+        flow_t, physics_norm, identity
+    )
+    return q
 
 
 def main() -> None:
@@ -143,6 +207,7 @@ def main() -> None:
         rainfall_dim=int(rain_store.forecast_mmhr.shape[-1]),
         delta_state_scale=np.ones(int(first_state.shape[-1]), dtype=np.float32),
         delta_flow_scale=np.ones(len(graph.actuator_ids), dtype=np.float32),
+        direct_action_flow_scale=np.ones(len(graph.actuator_ids), dtype=np.float32),
     )
     memory = V127StreamingMemoryDesign(
         hydraulic_branch_chunk=4,
@@ -176,9 +241,7 @@ def main() -> None:
         "causal_rainfall_forecast_contract": str(rain_store.forecast_contract),
         "swmm_engine_version": str(manifest["swmm_engine_version"]),
     }
-    lineage = extend_action_identifiable_stage_lineage(
-        lineage, edge_physics_path=args.edge_physics
-    )
+    lineage = extend_action_identifiable_stage_lineage(lineage, edge_physics_path=args.edge_physics)
     payload = load_stage_checkpoint_v128(
         args.stage_checkpoint,
         model=model,
@@ -188,15 +251,12 @@ def main() -> None:
         expected_training_design=asdict(design),
     )
     if str(payload.get("completed_stage")) != args.stage:
-        raise ValueError(
-            f"requested {args.stage} but checkpoint contains {payload.get('completed_stage')}"
-        )
+        raise ValueError(f"requested {args.stage} but checkpoint contains {payload.get('completed_stage')}")
 
     model = model.to(device).eval()
     static = _static(graph, device)
-    truth_values: list[float] = []
-    pred_values: list[float] = []
-    rows: list[dict[str, object]] = []
+    direct_rows: list[dict[str, object]] = []
+    feedback_rows: list[dict[str, object]] = []
     with torch.inference_mode():
         for name in selected["hold_d2"]:
             entry = base.entry(name)
@@ -208,78 +268,103 @@ def main() -> None:
             ref_initial = np.asarray(arrays["initial_state"][ref], dtype=np.float32)
             ref_prev_flow0 = np.asarray(arrays["previous_actuator_flow"][ref], dtype=np.float32)
             for candidate_index in entry.indices:
-                if int(candidate_index) == ref:
+                candidate = int(candidate_index)
+                if candidate == ref:
                     continue
-                cand_setting = np.asarray(arrays["settings"][candidate_index], dtype=np.float32)
+                cand_setting = np.asarray(arrays["settings"][candidate], dtype=np.float32)
                 changed = np.flatnonzero(np.any(np.abs(cand_setting - ref_setting) > 1.0e-6, axis=0))
                 if changed.size != 1:
-                    raise ValueError(
-                        f"{name}: held-out D2 candidate must change exactly one actuator, got {changed.size}"
+                    raise ValueError(f"{name}: held-out D2 candidate must change exactly one actuator")
+                actuator = int(changed[0])
+                cand_states = np.asarray(arrays["target_states"][candidate], dtype=np.float32)
+                cand_flows = np.asarray(arrays["target_actuator_flows"][candidate], dtype=np.float32)
+                cand_initial = np.asarray(arrays["initial_state"][candidate], dtype=np.float32)
+                cand_prev_flow0 = np.asarray(arrays["previous_actuator_flow"][candidate], dtype=np.float32)
+
+                spec = _first_direct_response_spec_numpy(
+                    arrays, reference=ref, candidate=candidate, require_single_actuator=True
+                )
+                if spec is not None:
+                    k = int(spec["step"])
+                    if k == 0:
+                        prefix_state = ref_initial
+                        prefix_flow = ref_prev_flow0
+                    else:
+                        prefix_state = ref_states[k - 1]
+                        prefix_flow = ref_flows[k - 1]
+                    q = _predict_flow(
+                        model,
+                        state=np.stack((prefix_state, prefix_state)),
+                        previous_flow=np.stack((prefix_flow, prefix_flow)),
+                        settings=np.stack((ref_setting[k], cand_setting[k])),
+                        static=static,
+                        device=device,
                     )
-                actuator_index = int(changed[0])
-                cand_states = np.asarray(arrays["target_states"][candidate_index], dtype=np.float32)
-                cand_flows = np.asarray(arrays["target_actuator_flows"][candidate_index], dtype=np.float32)
-                cand_initial = np.asarray(arrays["initial_state"][candidate_index], dtype=np.float32)
-                cand_prev_flow0 = np.asarray(
-                    arrays["previous_actuator_flow"][candidate_index], dtype=np.float32
-                )
+                    truth = float(cand_flows[k, actuator] - ref_flows[k, actuator])
+                    pred = float(q[1, actuator] - q[0, actuator])
+                    direct_rows.append(
+                        {
+                            "group": name,
+                            "candidate_index": candidate,
+                            "step": k,
+                            "actuator_index": actuator,
+                            "actuator_id": str(graph.actuator_ids[actuator]),
+                            "setting_delta": float(cand_setting[k, actuator] - ref_setting[k, actuator]),
+                            "true_flow_effect_m3s": truth,
+                            "predicted_flow_effect_m3s": pred,
+                            "temporal_flow_scale_m3s": float(model.actuator.delta_flow_scale[actuator].cpu()),
+                            "direct_action_flow_scale_m3s": float(model.actuator.direct_action_flow_scale[actuator].cpu()),
+                            "prefix_state_max_abs": float(spec["prefix_state_max_abs"]),
+                            "prefix_flow_max_abs": float(spec["prefix_flow_max_abs"]),
+                        }
+                    )
+
+                # Historical full-horizon teacher-forced diagnostic retained under its correct
+                # semantics: branch-specific previous states/flows include hydraulic feedback.
                 horizon = int(ref_setting.shape[0])
-                physics_norm, identity = model.actuator.prepare_static(
-                    static["physics"], batch_size=2
-                )
+                physics_norm, identity = model.actuator.prepare_static(static["physics"], batch_size=2)
                 for k in range(horizon):
                     ref_prev_state = ref_initial if k == 0 else ref_states[k - 1]
                     cand_prev_state = cand_initial if k == 0 else cand_states[k - 1]
                     ref_prev_flow = ref_prev_flow0 if k == 0 else ref_flows[k - 1]
                     cand_prev_flow = cand_prev_flow0 if k == 0 else cand_flows[k - 1]
-                    branch_state = torch.as_tensor(
-                        np.stack((ref_prev_state, cand_prev_state)),
-                        dtype=torch.float32,
-                        device=device,
+                    state = torch.as_tensor(
+                        np.stack((ref_prev_state, cand_prev_state)), dtype=torch.float32, device=device
                     )
-                    branch_flow = torch.as_tensor(
-                        np.stack((ref_prev_flow, cand_prev_flow)),
-                        dtype=torch.float32,
-                        device=device,
+                    prev_flow = torch.as_tensor(
+                        np.stack((ref_prev_flow, cand_prev_flow)), dtype=torch.float32, device=device
                     )
-                    branch_setting = torch.as_tensor(
-                        np.stack((ref_setting[k], cand_setting[k])),
-                        dtype=torch.float32,
-                        device=device,
+                    setting = torch.as_tensor(
+                        np.stack((ref_setting[k], cand_setting[k])), dtype=torch.float32, device=device
                     )
                     q, _ = model.actuator.forward_prepared(
-                        branch_state[:, static["up"]],
-                        branch_state[:, static["down"]],
-                        branch_setting,
-                        branch_flow,
-                        physics_norm,
-                        identity,
+                        state[:, static["up"]], state[:, static["down"]], setting,
+                        prev_flow, physics_norm, identity
                     )
-                    truth = float(cand_flows[k, actuator_index] - ref_flows[k, actuator_index])
-                    pred = float(q[1, actuator_index] - q[0, actuator_index])
-                    truth_values.append(truth)
-                    pred_values.append(pred)
-                    rows.append(
+                    feedback_rows.append(
                         {
                             "group": name,
-                            "candidate_index": int(candidate_index),
+                            "candidate_index": candidate,
                             "step": k,
-                            "actuator_index": actuator_index,
-                            "actuator_id": str(graph.actuator_ids[actuator_index]),
-                            "setting_delta": float(
-                                cand_setting[k, actuator_index] - ref_setting[k, actuator_index]
-                            ),
-                            "true_flow_effect_m3s": truth,
-                            "predicted_flow_effect_m3s": pred,
-                            "delta_flow_scale_m3s": float(
-                                model.actuator.delta_flow_scale[actuator_index].detach().cpu()
-                            ),
+                            "actuator_index": actuator,
+                            "actuator_id": str(graph.actuator_ids[actuator]),
+                            "setting_delta": float(cand_setting[k, actuator] - ref_setting[k, actuator]),
+                            "true_flow_effect_m3s": float(cand_flows[k, actuator] - ref_flows[k, actuator]),
+                            "predicted_flow_effect_m3s": float(q[1, actuator] - q[0, actuator]),
                         }
                     )
 
-    truth_array = np.asarray(truth_values, dtype=np.float64)
-    pred_array = np.asarray(pred_values, dtype=np.float64)
-    metrics = _metrics(truth_array, pred_array)
+    if not direct_rows or not feedback_rows:
+        raise RuntimeError("current flow audit produced no direct or feedback rows")
+    direct_truth = np.asarray([float(r["true_flow_effect_m3s"]) for r in direct_rows])
+    direct_pred = np.asarray([float(r["predicted_flow_effect_m3s"]) for r in direct_rows])
+    feedback_truth = np.asarray([float(r["true_flow_effect_m3s"]) for r in feedback_rows])
+    feedback_pred = np.asarray([float(r["predicted_flow_effect_m3s"]) for r in feedback_rows])
+    direct_metrics = _metrics(direct_truth, direct_pred)
+    feedback_metrics = _metrics(feedback_truth, feedback_pred)
+    direct_macro, direct_top = _macro_by_actuator(direct_rows)
+    feedback_macro, feedback_top = _macro_by_actuator(feedback_rows)
+
     result = {
         "contract": CONTRACT,
         "profile": profile.name,
@@ -290,25 +375,42 @@ def main() -> None:
         "edge_physics_sha256": _sha(args.edge_physics),
         "selected_holdout_d2_groups": selected["hold_d2"],
         "single_actuator_action_contract_verified": True,
-        "teacher_forced_authoritative_previous_state_and_flow": True,
+        "direct_same_prefix_semantics": (
+            "first setting-divergence only; identical authoritative previous state/flow supplied to ref and candidate"
+        ),
+        "feedback_full_horizon_semantics": (
+            "branch-specific authoritative previous state/flow; includes hydraulic feedback and is not a local dq/du"
+        ),
+        "flow_effect_metrics": direct_metrics,
+        "direct_same_prefix_metrics": direct_metrics,
+        "direct_actuator_balanced_metrics": direct_macro,
+        "direct_top_truth_l2_contributors": direct_top,
+        "feedback_full_horizon_metrics": feedback_metrics,
+        "feedback_actuator_balanced_metrics": feedback_macro,
+        "feedback_top_truth_l2_contributors": feedback_top,
+        "promotion_metric": "direct_same_prefix + actuator-balanced macro; never feedback micro cosine alone",
         "used_for_training": False,
         "validation_accessed": False,
         "final_accessed": False,
         "formal_accessed": False,
-        "flow_effect_metrics": metrics,
     }
-    for value in metrics.values():
-        if isinstance(value, float) and not math.isfinite(value):
-            raise RuntimeError("action-to-flow audit produced a non-finite metric")
+    for section in (direct_metrics, feedback_metrics, direct_macro, feedback_macro):
+        for value in section.values():
+            if isinstance(value, float) and not math.isfinite(value):
+                raise RuntimeError("action-to-flow audit produced a non-finite metric")
+
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    with (out / "ACTION_TO_FLOW_DETAIL.csv").open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
+    for filename, rows in (
+        ("ACTION_TO_FLOW_DIRECT_DETAIL.csv", direct_rows),
+        ("ACTION_TO_FLOW_FEEDBACK_DETAIL.csv", feedback_rows),
+    ):
+        with (out / filename).open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
     (out / "ACTION_TO_FLOW_METRICS.json").write_text(
-        json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n",
-        encoding="utf-8",
+        json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8"
     )
     print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
 
