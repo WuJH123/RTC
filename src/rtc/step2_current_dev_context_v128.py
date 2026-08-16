@@ -34,9 +34,9 @@ def sha256_file(path: str | Path) -> str:
 
 
 def action_identifiable_source_sha256() -> str:
+    """Match the training wrapper's enhanced-source fingerprint exactly."""
     digest = hashlib.sha256()
     for module_name in (
-        "rtc.step2_current_dev_context_v128",
         "rtc.step2_action_identifiable_v128",
         "rtc.step2_differentiable_v128_edge",
         "rtc.edge_physics_current_v128",
@@ -57,7 +57,6 @@ def extend_action_identifiable_stage_lineage(
     result = dict(lineage)
     result.update(
         {
-            "current_dev_context_contract": CURRENT_DEV_CONTEXT_CONTRACT,
             "edge_physics_sha256": sha256_file(edge_physics_path),
             "action_identifiable_source_sha256": action_identifiable_source_sha256(),
             "action_identifiable_model_contract": ACTION_IDENTIFIABLE_MODEL_CONTRACT,
