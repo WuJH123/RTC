@@ -1,6 +1,6 @@
 {
-  "contract": "PROJECT7_CURRENT_LINT_SURFACE_V4_COUNTERFACTUAL_FIRST_ACTIVE_ONLY",
-  "purpose": "Fail closed on high-signal Python correctness findings for the actively maintained Project7 counterfactual-first Step2 execution and Development diagnostics without making archival style debt a smoke/dev stop-gate.",
+  "contract": "PROJECT7_CURRENT_LINT_SURFACE_V5_COUNTERFACTUAL_FIRST_LAZY_ACTIVE_ONLY",
+  "purpose": "Fail closed on high-signal Python correctness findings for actively maintained Project7 counterfactual-first execution and Development diagnostics without making archival style debt a smoke/dev stop-gate.",
   "full_repository_ruff_is_gate": false,
   "current_surface_ruff_is_gate": true,
   "rule_select": ["E4", "E7", "E9", "F"],
@@ -40,7 +40,7 @@
     "src/rtc/step2_differentiable_v128.py",
     "src/rtc/step2_action_identifiable_v128.py",
     "src/rtc/step2_counterfactual_first_v128.py",
-    "src/rtc/step2_counterfactual_training_v3.py",
+    "src/rtc/step2_counterfactual_training_v4.py",
     "src/rtc/step2_current_dev_context_v128.py",
     "src/rtc/step2_lazy_stream_v128.py",
     "src/rtc/step2_train_v128_exact.py",
