@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_CURRENT_LINT_SURFACE_V3_GRADIENT_STAGE_DECOMPOSITION",
+  "contract": "PROJECT7_CURRENT_LINT_SURFACE_V2_HIGH_SIGNAL_ACTIVE_ONLY",
   "purpose": "Fail closed on high-signal Python correctness findings for the actively maintained Project7 execution and Development-diagnostic surface, without turning archival/shared Vxxx style debt into a smoke/dev stop-gate.",
   "full_repository_ruff_is_gate": false,
   "current_surface_ruff_is_gate": true,
