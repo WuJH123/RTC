@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V6_COUNTERFACTUAL_FIRST_ORACLE_ISOLATED_DEV",
+  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V7_STAGE_RANKING_EXECUTABLE_DEV",
   "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
   "selected_implementation_contract": "PROJECT7_V128_COUNTERFACTUAL_FIRST_EDGE_PHYSICS_SURROGATE_DEV_V3",
   "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, predict action-conditioned network hydraulics with a differentiable surrogate, optimize 109 writable targets continuously over H120 inside H360, minimize system-wide cumulative TFV, protect Priority8 PFV with a one-sided soft secondary term, and execute only the first 10-minute target in authoritative SWMM",
@@ -70,7 +70,9 @@
     "lazy_mmap_branch_streaming": true,
     "stage_a_b0_post_objective_use_explicit_lazy_helpers": true,
     "direct_pair_materialization": "reference/candidate only, only through first divergence step",
-    "oracle_direct_pair_setting_bypass_blocked": true
+    "oracle_direct_pair_setting_bypass_blocked": true,
+    "b0_ranking_horizon_gate_executable": true,
+    "b0_spatial_gate_executable": true
   },
   "diagnostic_evidence_triggering_repair": {
     "pr77_full_horizon_flow_sign_accuracy": 0.851569933396765,
@@ -93,8 +95,8 @@
       "Stage-A TFV gradient diagnostic"
     ],
     "resume_b0_only_if": "direct flow direction/magnitude and strict q-only direct hydraulic response materially improve without nonfinite/resource/causality regressions",
-    "after_b0": "trajectory/ranking/spatial audits before H360 objective",
-    "after_objective": "ranking/top1/regret plus gradient diagnostic; gradient is not a stand-alone promotion gate if trajectory/ranking are poor",
+    "after_b0": "source-strict nonfinal ranking+horizon audit and selectable B0 spatial audit before H360 objective",
+    "after_objective": "repeat source-strict ranking+horizon/spatial plus top1/regret and gradient diagnostic; gradient is not a stand-alone promotion gate if trajectory/ranking are poor",
     "dev": "larger deterministic Development confirmation only for a smoke winner",
     "full": "disabled until explicit Development promotion"
   },
@@ -133,12 +135,13 @@
     "existing_data_training": "scripts/run_step2_current.py",
     "step2_direct_flow_audit": "scripts/audit_step2_actuator_flow_effect_current.py",
     "step2_direct_hydraulic_audit": "scripts/audit_step2_direct_hydraulic_effect_current.py",
+    "step2_stage_ranking_horizon_audit": "scripts/audit_step2_stage_ranking_current.py",
     "step2_spatial_audit": "scripts/audit_step2_spatial_current.py",
     "step2_development_gradient_audit": "scripts/audit_step2_gradient_current_dev.py",
     "step1_attention_trainer": "scripts/train_step1_global_attention_dev.py",
     "step1_attention_ablation": "scripts/audit_step1_global_attention_current.py",
-    "full_ranking_audit": "scripts/audit_step2_v128_fast.py",
-    "full_d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
+    "production_full_ranking_audit": "scripts/audit_step2_v128_fast.py (blocked until production promotion)",
+    "production_full_d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py (blocked until production promotion)",
     "d5_gradient_training": "BLOCKED_UNTIL_PRODUCTION_PROMOTION",
     "continuous_evidence": "BLOCKED_UNTIL_PRODUCTION_PROMOTION",
     "runtime": "scripts/run_policy_current.py (fail-closed until production promotion)",
