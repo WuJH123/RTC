@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_V12_CANONICAL_D2_GRADIENT_PROVENANCE",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_V13_GRADIENT_STAGE_DECOMPOSITION",
   "current": {
     "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
     "research_contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V2_DEBUG_FIRST",
@@ -30,6 +30,8 @@
     "step1_distance_attention_ablation": "scripts/audit_step1_global_attention_current.py",
     "step2_spatial_action_effect": "scripts/audit_step2_spatial_current.py",
     "step2_development_gradient": "scripts/audit_step2_gradient_current_dev.py",
+    "step2_gradient_stage_decomposition": "scripts/audit_step2_gradient_stage_current_dev.py",
+    "step2_gradient_stage_decomposition_purpose": "read-only source-strict stage_a/stage_b0/objective comparison plus predicted/true magnitude ratio and smooth-flood Softplus-gate diagnostics",
     "step2_development_gradient_provenance": "reference-first canonical D2 settings sequences; single-actuator change inferred fail-closed; no synthetic row metadata",
     "edge_physics_builder": "scripts/build_edge_physics_current.py",
     "edge_aware_smoke_dev": "scripts/run_step2_edge_aware_dev.py",
@@ -58,6 +60,8 @@
     "profile the bounded smoke one-group path with TRAINING_TELEMETRY.jsonl and optional low-frequency external GPU sampling; do not use raw --torch-profiler Chrome-trace export on the current 16-GB workstation",
     "profiler/export/sampler failure after successful training checkpoints is not a scientific Step2 failure; stop only on real stage/OOM/nonfinite/lineage/checkpoint/resource-leak failures",
     "use scripts/audit_step2_gradient_current_dev.py for smoke/dev stage_objective.pt; derive Development D2 action directions only from the frozen reference-first settings sequences and fail closed unless each candidate changes exactly one actuator; never fabricate actuator_id/base_setting/requested_setting metadata",
+    "when stage_objective gradients collapse, use scripts/audit_step2_gradient_stage_current_dev.py read-only on the existing stage_a/stage_b0/objective checkpoints before changing architecture or starting dev/full",
+    "treat smooth-flood Softplus-gate statistics as Development failure-localization diagnostics only; do not change the frozen objective from those statistics without a separate evidence-backed code change",
     "audit-only source changes outside checkpoint_v128 model/training fingerprint lists do not require retraining an otherwise source-compatible nonfinal stage checkpoint",
     "use scripts/audit_step2_v128_d2_gradients_fast.py only for a strict full checkpoint",
     "train Step1 global-attention only through scripts/train_step1_global_attention_dev.py and compare it with scripts/audit_step1_global_attention_current.py before any Step1 promotion",
