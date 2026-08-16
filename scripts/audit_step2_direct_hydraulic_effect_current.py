@@ -1,13 +1,10 @@
-"""Development-only direct hydraulic action-effect audit for current Project7 Step2.
+"""Development-only same-prefix normal-vs-oracle hydraulic action-effect audit.
 
-For the same held-out D2 first-divergence pairs used by the direct actuator audit, compare:
-
-* normal model: predicted managed flow -> transition;
-* oracle-flow model: authoritative SWMM managed flow -> the same transition.
-
-Both branches start from one common authoritative hydraulic prefix.  This isolates whether a
-remaining action-effect error originates mainly in setting->managed flow or managed flow->node
-hydraulics.  It is a one-step causal diagnostic, not a new training target and not Final evidence.
+Each held-out D2 pair is evaluated only at its first setting-divergence transition. Reference and
+candidate therefore share one authoritative pre-action hydraulic state/managed-flow prefix. The
+normal branch uses predicted managed flow; the oracle branch substitutes the stored authoritative
+SWMM managed flow into the same transition. Rainfall comes from the frozen causal forecast store,
+never from realised future rainfall. This is diagnostic only and never a training/Final source.
 """
 from __future__ import annotations
 
@@ -15,7 +12,6 @@ import argparse
 from dataclasses import asdict
 import hashlib
 import json
-import math
 from pathlib import Path
 
 import numpy as np
@@ -40,7 +36,7 @@ from rtc.step2_train_v127 import _static
 from rtc.step2_train_v127_streaming import V127StreamingMemoryDesign
 from rtc.v128_control_profile import build_v128_control_training_design, configure_v128_cuda_matmul_precision
 
-CONTRACT = "PROJECT7_CURRENT_DIRECT_SAME_PREFIX_NORMAL_VS_ORACLE_HYDRAULIC_AUDIT_V1"
+CONTRACT = "PROJECT7_CURRENT_DIRECT_SAME_PREFIX_NORMAL_VS_ORACLE_HYDRAULIC_AUDIT_V2_CAUSAL_RAIN"
 
 
 def _sha(path: str | Path) -> str:
@@ -51,23 +47,17 @@ def _sha(path: str | Path) -> str:
     return h.hexdigest()
 
 
-def _rain(cache: V60TrainCache, names: list[str]) -> set[str]:
+def _rain_groups(cache: V60TrainCache, names: list[str]) -> set[str]:
     return {str(cache.entry(name).rainfall_group) for name in names}
 
 
-def _metrics(truth: np.ndarray, pred: np.ndarray) -> dict[str, float | int]:
-    truth = np.asarray(truth, dtype=np.float64).reshape(-1)
-    pred = np.asarray(pred, dtype=np.float64).reshape(-1)
-    mask = np.isfinite(truth) & np.isfinite(pred) & (np.abs(truth) > 1.0e-8)
-    t, p = truth[mask], pred[mask]
+def _effect_metrics(truth: list[np.ndarray] | list[float], pred: list[np.ndarray] | list[float]) -> dict[str, float | int]:
+    t = np.asarray(truth, dtype=np.float64).reshape(-1)
+    p = np.asarray(pred, dtype=np.float64).reshape(-1)
+    mask = np.isfinite(t) & np.isfinite(p) & (np.abs(t) > 1.0e-8)
+    t, p = t[mask], p[mask]
     if t.size == 0:
-        return {
-            "informative_count": 0,
-            "sign_accuracy": 0.0,
-            "effect_mae": 0.0,
-            "relative_mae": 0.0,
-            "cosine": 0.0,
-        }
+        return {"informative_count": 0, "sign_accuracy": 0.0, "effect_mae": 0.0, "relative_mae": 0.0, "cosine": 0.0}
     denom = float(np.linalg.norm(t) * np.linalg.norm(p))
     return {
         "informative_count": int(t.size),
@@ -78,15 +68,7 @@ def _metrics(truth: np.ndarray, pred: np.ndarray) -> dict[str, float | int]:
     }
 
 
-def _normal_transition(
-    model,
-    *,
-    prev_state: torch.Tensor,
-    prev_flow: torch.Tensor,
-    setting: torch.Tensor,
-    rainfall: torch.Tensor,
-    static: dict[str, torch.Tensor],
-) -> tuple[torch.Tensor, torch.Tensor]:
+def _normal_transition(model, *, prev_state, prev_flow, setting, rainfall, static):
     batch = int(prev_state.shape[0])
     physics_norm, identity = model.actuator.prepare_static(static["physics"], batch_size=batch)
     static_norm, edges, inv = model.transition.prepare_static(
@@ -133,11 +115,17 @@ def main() -> None:
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
     profile = get_execution_profile(args.profile)
     graph = _load_graph(args.graph)
+    if len(graph.actuator_ids) != 109:
+        raise ValueError("direct hydraulic audit requires the frozen 109-actuator graph")
     base = V60TrainCache(args.cache_manifest)
     d4_fit = V60TrainCache(args.d4_fit_cache)
     d4_audit = V60TrainCache(args.d4_audit_cache)
     rain_store = load_causal_forecast_store_v123(args.causal_store)
     state_store = load_causal_state_store_v127(args.causal_state_store)
+    rain_store.validate()
+    state_store.validate()
+    rain_index = rain_store.index()
+
     fit, holdout = deterministic_rainfall_split_v60(
         base, names=sorted(base.names("D2") + base.targeted_d3_names()), holdout_fraction=0.20
     )
@@ -151,7 +139,7 @@ def main() -> None:
         raise ValueError("canonical D2/D3 split differs from 112/112/32/32")
     if (len(d4_fit_names), len(d4_audit_names)) != (33, 15):
         raise ValueError("canonical D4 FIT/AUDIT census differs from 33/15")
-    if _rain(d4_fit, d4_fit_names) & _rain(d4_audit, d4_audit_names):
+    if _rain_groups(d4_fit, d4_fit_names) & _rain_groups(d4_audit, d4_audit_names):
         raise ValueError("D4 FIT/AUDIT rainfall leakage")
     selected = profile_groups(
         profile, fit_d2=fit_d2, fit_d3=fit_d3, hold_d2=hold_d2, hold_d3=hold_d3,
@@ -181,12 +169,9 @@ def main() -> None:
     manifest = json.loads(Path(args.cache_manifest).read_text(encoding="utf-8"))
     lineage = extend_action_identifiable_stage_lineage(
         {
-            "graph_sha256": _sha(args.graph),
-            "base_cache_sha256": _sha(args.cache_manifest),
-            "d4_fit_cache_sha256": _sha(args.d4_fit_cache),
-            "d4_audit_cache_sha256": _sha(args.d4_audit_cache),
-            "causal_rainfall_sha256": _sha(args.causal_store),
-            "causal_state_store_sha256": _sha(args.causal_state_store),
+            "graph_sha256": _sha(args.graph), "base_cache_sha256": _sha(args.cache_manifest),
+            "d4_fit_cache_sha256": _sha(args.d4_fit_cache), "d4_audit_cache_sha256": _sha(args.d4_audit_cache),
+            "causal_rainfall_sha256": _sha(args.causal_store), "causal_state_store_sha256": _sha(args.causal_state_store),
             "causal_state_step1_file_sha256": str(state_store.step1_sha256),
             "causal_state_sensor_file_sha256": str(state_store.sensor_sha256),
             "causal_state_graph_file_sha256": str(state_store.graph_sha256),
@@ -194,8 +179,7 @@ def main() -> None:
             "causal_state_sensor_layout_semantic_sha256": str(state_store.sensor_layout_semantic_sha256),
             "causal_rainfall_forecast_contract": str(rain_store.forecast_contract),
             "swmm_engine_version": str(manifest["swmm_engine_version"]),
-        },
-        edge_physics_path=args.edge_physics,
+        }, edge_physics_path=args.edge_physics
     )
     payload = load_stage_checkpoint_v128(
         args.stage_checkpoint, model=model, expected_profile=profile.name, graph_path=args.graph,
@@ -212,25 +196,23 @@ def main() -> None:
     true_flood: list[np.ndarray] = []
     normal_flood: list[np.ndarray] = []
     oracle_flood: list[np.ndarray] = []
-    flow_true: list[float] = []
-    flow_normal: list[float] = []
+    true_flow_effect: list[float] = []
+    normal_flow_effect: list[float] = []
     pairs = 0
+
     with torch.inference_mode():
         for name in selected["hold_d2"]:
             entry = base.entry(name)
             arrays = entry.arrays
             ref = int(entry.reference_index)
-            for candidate_index in entry.indices:
-                candidate = int(candidate_index)
+            for candidate_raw in entry.indices:
+                candidate = int(candidate_raw)
                 if candidate == ref:
                     continue
-                spec = _first_direct_response_spec_numpy(
-                    arrays, reference=ref, candidate=candidate, require_single_actuator=True
-                )
+                spec = _first_direct_response_spec_numpy(arrays, reference=ref, candidate=candidate)
                 if spec is None:
                     continue
-                k = int(spec["step"])
-                actuator = int(spec["actuator_index"])
+                k, actuator = int(spec["step"]), int(spec["actuator_index"])
                 if k == 0:
                     prefix_state = np.asarray(arrays["initial_state"][ref], dtype=np.float32)
                     prefix_flow = np.asarray(arrays["previous_actuator_flow"][ref], dtype=np.float32)
@@ -243,14 +225,8 @@ def main() -> None:
                     np.stack((arrays["settings"][ref][k], arrays["settings"][candidate][k])),
                     dtype=torch.float32, device=device
                 )
-                rainfall = torch.as_tensor(
-                    np.stack((rain_store.forecast_mmhr[0, k] if False else np.zeros(len(graph.node_ids), dtype=np.float32),) * 2),
-                    dtype=torch.float32, device=device
-                )
-                # Training cache rainfall is authoritative for this offline diagnostic; use the
-                # group cache value rather than inventing future realised rainfall.  The causal
-                # store/lineage was already validated by the stage checkpoint.
-                rainfall.zero_()
+                causal_rain = np.asarray(rain_store.forecast_mmhr[rain_index[name], k], dtype=np.float32)
+                rainfall = torch.as_tensor(np.stack((causal_rain, causal_rain)), dtype=torch.float32, device=device)
                 normal_state, normal_q = _normal_transition(
                     model, prev_state=prev_state, prev_flow=prev_flow, setting=setting,
                     rainfall=rainfall, static=static
@@ -267,46 +243,32 @@ def main() -> None:
                 truth_delta = truth_state[1] - truth_state[0]
                 normal_delta = (normal_state[1] - normal_state[0]).cpu().numpy()
                 oracle_delta = (oracle_state[1] - oracle_state[0]).cpu().numpy()
-                true_depth.append(truth_delta[:, args.depth_index])
-                normal_depth.append(normal_delta[:, args.depth_index])
-                oracle_depth.append(oracle_delta[:, args.depth_index])
-                true_flood.append(truth_delta[:, args.flood_rate_index])
-                normal_flood.append(normal_delta[:, args.flood_rate_index])
-                oracle_flood.append(oracle_delta[:, args.flood_rate_index])
-                flow_true.append(float(true_q[1, actuator] - true_q[0, actuator]))
-                flow_normal.append(float(normal_q[1, actuator] - normal_q[0, actuator]))
+                true_depth.append(truth_delta[:, args.depth_index]); normal_depth.append(normal_delta[:, args.depth_index]); oracle_depth.append(oracle_delta[:, args.depth_index])
+                true_flood.append(truth_delta[:, args.flood_rate_index]); normal_flood.append(normal_delta[:, args.flood_rate_index]); oracle_flood.append(oracle_delta[:, args.flood_rate_index])
+                true_flow_effect.append(float(true_q[1, actuator] - true_q[0, actuator]))
+                normal_flow_effect.append(float(normal_q[1, actuator] - normal_q[0, actuator]))
                 pairs += 1
 
     if pairs == 0:
         raise RuntimeError("direct hydraulic audit found no same-prefix held-out pairs")
     result = {
-        "contract": CONTRACT,
-        "profile": profile.name,
-        "completed_stage": args.stage,
-        "scientific_split": "development",
-        "scientific_claim_allowed": False,
-        "same_prefix_pairs": int(pairs),
-        "normal_flow_effect": _metrics(np.asarray(flow_true), np.asarray(flow_normal)),
+        "contract": CONTRACT, "profile": profile.name, "completed_stage": args.stage,
+        "scientific_split": "development", "scientific_claim_allowed": False,
+        "same_prefix_pairs": int(pairs), "causal_rainfall": True,
+        "normal_flow_effect": _effect_metrics(true_flow_effect, normal_flow_effect),
         "depth": {
-            "normal_vs_swmm": _metrics(np.concatenate(true_depth), np.concatenate(normal_depth)),
-            "oracle_flow_vs_swmm": _metrics(np.concatenate(true_depth), np.concatenate(oracle_depth)),
+            "normal_vs_swmm": _effect_metrics(true_depth, normal_depth),
+            "oracle_flow_vs_swmm": _effect_metrics(true_depth, oracle_depth),
         },
         "flood_rate": {
-            "normal_vs_swmm": _metrics(np.concatenate(true_flood), np.concatenate(normal_flood)),
-            "oracle_flow_vs_swmm": _metrics(np.concatenate(true_flood), np.concatenate(oracle_flood)),
+            "normal_vs_swmm": _effect_metrics(true_flood, normal_flood),
+            "oracle_flow_vs_swmm": _effect_metrics(true_flood, oracle_flood),
         },
         "oracle_flow_role": "diagnostic isolation only; not used online",
-        "gradient_label_used": False,
-        "validation_accessed": False,
-        "final_accessed": False,
-        "formal_accessed": False,
+        "gradient_label_used": False, "validation_accessed": False,
+        "final_accessed": False, "formal_accessed": False,
     }
-    for value in json.dumps(result, allow_nan=False),:
-        if not value:
-            raise RuntimeError("empty direct hydraulic audit")
-    Path(args.out).write_text(
-        json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8"
-    )
+    Path(args.out).write_text(json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
 
 
