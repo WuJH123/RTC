@@ -1,19 +1,20 @@
 """Current Project7 action-identifiable Step2 Development orchestration.
 
 This wrapper promotes the diagnostic-driven V128 action/hydraulic repair to the *current
-smoke/dev* surface while deliberately blocking ``--profile full`` until the new model passes
-the existing held-out Development ranking, gradient, spatial and closed-loop gates.
+smoke/dev* surface while deliberately blocking ``--profile full`` until held-out Development
+action-flow, gradient, ranking, spatial and closed-loop evidence supports promotion.
 
-It preserves the canonical current profile runner and monkey-patches only four scientific
+It preserves the canonical current profile runner and replaces only the diagnosed scientific
 components for this Development candidate:
 
 1. FIT-only hybrid temporal/action-conditioned actuator flow scales;
-2. action-identifiable actuator response + frozen edge-physics transition;
-3. counterfactual Stage A and B0 hydraulic-effect supervision;
-4. exact H360 objective followed by a small FIT-only action-effect anchor.
+2. explicit action-identifiable actuator response + frozen edge-physics transition;
+3. actuator-only action-flow warm-up before joint hydraulic Stage A;
+4. counterfactual Stage A and B0 hydraulic-effect supervision;
+5. exact H360 objective followed by a small FIT-only action-effect anchor.
 
-Stage checkpoint/resume remains supported.  The frozen edge artifact SHA and the enhanced
-architecture/training source SHA are injected into stage lineage so a changed artifact/source
+Stage checkpoint/resume remains supported. The frozen edge-artifact SHA and enhanced
+architecture/training source SHA are injected into stage lineage so changed code/artifacts
 cannot be silently restored into an old checkpoint.
 """
 from __future__ import annotations
@@ -27,20 +28,23 @@ import sys
 
 import run_step2_v128_current_profiles as runner
 from rtc.edge_physics_current_v128 import load_edge_physics_artifact_v128
+from rtc.step2_action_flow_warmup_v128 import (
+    ACTION_FLOW_WARMUP_CONTRACT,
+    train_hydraulic_stage_with_flow_warmup_v128,
+)
 from rtc.step2_action_identifiable_v128 import (
     ACTION_CONDITIONED_FLOW_SCALE_CONTRACT,
     ACTION_IDENTIFIABLE_MODEL_CONTRACT,
     ACTION_IDENTIFIABLE_TRAINING_CONTRACT,
     build_action_identifiable_v128_model_from_graph,
     derive_action_conditioned_residual_scales_v128,
-    train_action_identifiable_hydraulic_stage_v128,
     train_action_identifiable_objective_stage_v128,
     train_action_identifiable_rollout_stage_v128,
 )
 from rtc.step2_lazy_stream_v128 import install_v128_lazy_streaming
 
 CURRENT_ACTION_IDENTIFIABLE_RUN_CONTRACT = (
-    "PROJECT7_V128_CURRENT_ACTION_IDENTIFIABLE_EDGE_PHYSICS_SMOKE_DEV_V1"
+    "PROJECT7_V128_CURRENT_ACTION_IDENTIFIABLE_EDGE_PHYSICS_SMOKE_DEV_V2_FLOW_WARMUP"
 )
 
 
@@ -56,6 +60,7 @@ def _enhanced_source_sha256() -> str:
     digest = hashlib.sha256()
     for module_name in (
         "rtc.step2_action_identifiable_v128",
+        "rtc.step2_action_flow_warmup_v128",
         "rtc.step2_differentiable_v128_edge",
         "rtc.edge_physics_current_v128",
     ):
@@ -142,6 +147,7 @@ def main() -> None:
                 "action_identifiable_source_sha256": source_sha,
                 "action_identifiable_model_contract": ACTION_IDENTIFIABLE_MODEL_CONTRACT,
                 "action_identifiable_training_contract": ACTION_IDENTIFIABLE_TRAINING_CONTRACT,
+                "action_flow_warmup_contract": ACTION_FLOW_WARMUP_CONTRACT,
                 "flow_scale_contract": ACTION_CONDITIONED_FLOW_SCALE_CONTRACT,
             }
         )
@@ -156,6 +162,7 @@ def main() -> None:
                 "action_identifiable_source_sha256": source_sha,
                 "action_identifiable_model_contract": ACTION_IDENTIFIABLE_MODEL_CONTRACT,
                 "action_identifiable_training_contract": ACTION_IDENTIFIABLE_TRAINING_CONTRACT,
+                "action_flow_warmup_contract": ACTION_FLOW_WARMUP_CONTRACT,
                 "flow_scale_contract": ACTION_CONDITIONED_FLOW_SCALE_CONTRACT,
             }
         )
@@ -164,7 +171,7 @@ def main() -> None:
 
     runner.build_v128_model_from_graph = enhanced_builder
     runner.derive_residual_scales_streaming_v127 = derive_action_conditioned_residual_scales_v128
-    runner.train_hydraulic_stage_streaming_v128 = train_action_identifiable_hydraulic_stage_v128
+    runner.train_hydraulic_stage_streaming_v128 = train_hydraulic_stage_with_flow_warmup_v128
     runner.train_truncated_rollout_stage_streaming_v127 = train_action_identifiable_rollout_stage_v128
     runner.train_objective_stage_streaming_v128 = train_action_identifiable_objective_stage_v128
     runner.save_stage_checkpoint_v128 = enhanced_save_stage
@@ -195,6 +202,7 @@ def main() -> None:
                 {
                     "architecture": ACTION_IDENTIFIABLE_MODEL_CONTRACT,
                     "training_amendment": ACTION_IDENTIFIABLE_TRAINING_CONTRACT,
+                    "action_flow_warmup_contract": ACTION_FLOW_WARMUP_CONTRACT,
                     "flow_scale_contract": ACTION_CONDITIONED_FLOW_SCALE_CONTRACT,
                     "edge_physics_sha256": edge_sha,
                     "action_identifiable_source_sha256": source_sha,
