@@ -27,6 +27,7 @@ STEP2_SPATIAL_AUDIT = ROOT / "scripts" / "audit_step2_spatial_current.py"
 STEP2_DEV_GRADIENT_AUDIT = ROOT / "scripts" / "audit_step2_gradient_current_dev.py"
 STEP2_STAGE_GRADIENT_AUDIT = ROOT / "scripts" / "audit_step2_gradient_stage_current_dev.py"
 STEP2_ACTION_FLOW_AUDIT = ROOT / "scripts" / "audit_step2_actuator_flow_effect_current.py"
+STEP2_DIRECT_HYDRAULIC_AUDIT = ROOT / "scripts" / "audit_step2_direct_hydraulic_effect_current.py"
 EDGE_DEV = ROOT / "scripts" / "run_step2_edge_aware_dev.py"
 EDGE_SPATIAL = ROOT / "scripts" / "audit_step2_edge_spatial_current.py"
 OBSOLETE_OBJECTIVE = ROOT / "src" / "rtc" / "step2_train_v128.py"
@@ -63,6 +64,8 @@ def test_current_contract_routes_only_user_entrypoints_to_unversioned_surface() 
     assert entrypoints["existing_data_training"] == "scripts/run_step2_current.py"
     assert entrypoints["step2_spatial_audit"] == "scripts/audit_step2_spatial_current.py"
     assert entrypoints["step2_development_gradient_audit"] == "scripts/audit_step2_gradient_current_dev.py"
+    assert entrypoints["step2_direct_flow_audit"] == "scripts/audit_step2_actuator_flow_effect_current.py"
+    assert entrypoints["step2_direct_hydraulic_audit"] == "scripts/audit_step2_direct_hydraulic_effect_current.py"
     assert entrypoints["step1_attention_trainer"] == "scripts/train_step1_global_attention_dev.py"
     assert entrypoints["step1_attention_ablation"] == "scripts/audit_step1_global_attention_current.py"
     assert entrypoints["runtime"] == "scripts/run_policy_current.py"
@@ -71,6 +74,7 @@ def test_current_contract_routes_only_user_entrypoints_to_unversioned_surface() 
     assert payload["step2_current"]["execution_profiles"] == ["smoke", "dev", "full"]
     assert payload["step2_current"]["current_enabled_profiles"] == ["smoke", "dev"]
     assert payload["step2_current"]["full_current_enabled"] is False
+    assert payload["step2_current"]["gradient_is_primary_training_target"] is False
 
 
 def test_project7_registry_has_one_current_user_surface_and_complete_dev_diagnostics() -> None:
@@ -91,11 +95,13 @@ def test_project7_registry_has_one_current_user_surface_and_complete_dev_diagnos
     assert diagnostics["step1_distance_attention_ablation"] == "scripts/audit_step1_global_attention_current.py"
     assert diagnostics["step2_spatial_action_effect"] == "scripts/audit_step2_spatial_current.py"
     assert diagnostics["step2_development_gradient"] == "scripts/audit_step2_gradient_current_dev.py"
+    assert diagnostics["step2_direct_action_flow"] == "scripts/audit_step2_actuator_flow_effect_current.py"
+    assert diagnostics["step2_direct_hydraulic"] == "scripts/audit_step2_direct_hydraulic_effect_current.py"
 
 
 def test_current_lint_surface_is_high_signal_and_excludes_archival_style_debt() -> None:
     payload = json.loads(CURRENT_LINT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_V3_ACTION_IDENTIFIABLE_ACTIVE_ONLY"
+    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_V4_COUNTERFACTUAL_FIRST_ACTIVE_ONLY"
     assert payload["full_repository_ruff_is_gate"] is False
     assert payload["current_surface_ruff_is_gate"] is True
     assert payload["rule_select"] == ["E4", "E7", "E9", "F"]
@@ -106,13 +112,15 @@ def test_current_lint_surface_is_high_signal_and_excludes_archival_style_debt() 
         "scripts/run_step2_current.py",
         "scripts/run_step2_action_identifiable_current.py",
         "scripts/audit_step2_actuator_flow_effect_current.py",
+        "scripts/audit_step2_direct_hydraulic_effect_current.py",
         "scripts/audit_step2_gradient_stage_current_dev.py",
         "scripts/audit_step2_spatial_current.py",
         "scripts/audit_step2_gradient_current_dev.py",
         "scripts/run_policy_current.py",
         "scripts/run_seven_strategies_current.py",
         "src/rtc/step2_action_identifiable_v128.py",
-        "src/rtc/step2_action_flow_warmup_v128.py",
+        "src/rtc/step2_counterfactual_first_v128.py",
+        "src/rtc/step2_counterfactual_training_v3.py",
         "src/rtc/step2_current_dev_context_v128.py",
         "src/rtc/step2_train_v128_exact.py",
         "src/rtc/step3_mpc_v128.py",
@@ -120,7 +128,7 @@ def test_current_lint_surface_is_high_signal_and_excludes_archival_style_debt() 
         "src/rtc/spatial_diagnostics_v128.py",
         "src/rtc/step2_spatial_audit_v128.py",
         "src/rtc/step2_gradient_audit_v128_dev.py",
-        "tests/test_v128_action_identifiable.py",
+        "tests/test_v128_counterfactual_first.py",
     }
     assert required.issubset(paths)
     historical_shared = {
@@ -145,7 +153,7 @@ def test_v128_execution_config_distinguishes_dev_and_full_gradient_surfaces() ->
 
 def test_current_preflight_alias_and_development_version_are_installed() -> None:
     text = PYPROJECT.read_text(encoding="utf-8")
-    assert 'version = "0.8.1.dev0"' in text
+    assert 'version = "0.8.2.dev0"' in text
     assert 'rtc-current-preflight = "rtc.v128_preflight:main"' in text
 
 
@@ -154,11 +162,12 @@ def test_current_wrappers_pin_the_selected_v128_implementation() -> None:
     enhanced_text = ACTION_IDENTIFIABLE_RUNNER.read_text(encoding="utf-8")
     assert "run_step2_action_identifiable_current import main" in current_text
     assert "run_step2_v128_current_profiles as runner" in enhanced_text
-    assert "derive_action_conditioned_residual_scales_v128" in enhanced_text
-    assert "train_hydraulic_stage_with_flow_warmup_v128" in enhanced_text
+    assert "derive_direct_response_scales_v128" in enhanced_text
+    assert "train_counterfactual_first_stage_a_v3" in enhanced_text
     assert "train_action_identifiable_rollout_stage_v128" in enhanced_text
     assert "train_action_identifiable_objective_stage_v128" in enhanced_text
-    assert '"action_flow_warmup_contract"' in enhanced_text
+    assert '"counterfactual_stage_a_contract"' in enhanced_text
+    assert '"gradient_is_training_target": False' in enhanced_text
     assert "run_policy_v128 import main" in CURRENT_POLICY.read_text(encoding="utf-8")
     assert "run_seven_strategies_v128 import main" in CURRENT_SEVEN.read_text(encoding="utf-8")
 
@@ -182,6 +191,7 @@ def test_current_development_diagnostic_clis_have_help() -> None:
         STEP1_ATTENTION_TRAINER,
         STEP1_ATTENTION_AUDIT,
         STEP2_ACTION_FLOW_AUDIT,
+        STEP2_DIRECT_HYDRAULIC_AUDIT,
         STEP2_STAGE_GRADIENT_AUDIT,
         STEP2_SPATIAL_AUDIT,
         STEP2_DEV_GRADIENT_AUDIT,
@@ -203,13 +213,14 @@ def test_current_profile_runner_uses_typed_stage_a_exact_objective_and_nonfinal_
     assert "if profile.final_checkpoint_allowed:" in text
 
 
-def test_action_identifiable_current_runner_blocks_full_before_promotion() -> None:
+def test_counterfactual_current_runner_blocks_full_before_promotion() -> None:
     text = ACTION_IDENTIFIABLE_RUNNER.read_text(encoding="utf-8")
     assert 'profile not in {"smoke", "dev"}' in text
     assert "--profile full is blocked" in text
     assert '"edge_physics_sha256"' in text
     assert '"action_identifiable_source_sha256"' in text
-    assert '"action_flow_warmup_contract"' in text
+    assert '"direct_action_flow_scale_contract"' in text
+    assert '"oracle_hydraulic_a1_contract"' in text
 
 
 def test_current_seven_strategy_help_exposes_current_evidence_contract() -> None:
