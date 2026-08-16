@@ -1,16 +1,16 @@
 """Current Project7 counterfactual-first Step2 Development orchestration.
 
-The stable smoke/dev candidate separates direct setting response from later hydraulic feedback.
+The smoke/dev candidate separates direct setting response from later hydraulic feedback.
 Stage A is a three-part causal curriculum:
 
 A0 direct same-prefix setting -> managed-flow warm-up;
 A1 authoritative managed-flow -> next-state hydraulic transition pretraining;
 A2 joint predicted-flow teacher forcing with direct same-prefix flow/state effects.
 
-Later B0 is the autoregressive trajectory stage, where full network-feedback effects belong.  The
-exact H360 TFV objective is retained.  TFV action gradients are audited downstream and are not
-used as SWMM training labels. ``--profile full`` remains blocked until Development evidence
-supports explicit promotion.
+Later B0 is the autoregressive trajectory stage, where full network-feedback effects belong. The
+exact H360 TFV objective remains available after B0 evidence. TFV action gradients are audited
+downstream and are not SWMM training labels. ``--profile full`` remains blocked until explicit
+Development promotion.
 """
 from __future__ import annotations
 
@@ -34,17 +34,17 @@ from rtc.step2_counterfactual_first_v128 import (
     build_counterfactual_first_v128_model_from_graph,
     derive_direct_response_scales_v128,
 )
-from rtc.step2_counterfactual_training_v3 import (
-    COUNTERFACTUAL_STAGE_A_V3_CONTRACT,
-    DIRECT_FLOW_A0_V3_CONTRACT,
-    JOINT_DIRECT_A2_V3_CONTRACT,
-    ORACLE_HYDRAULIC_A1_V3_CONTRACT,
-    train_counterfactual_first_stage_a_v3,
+from rtc.step2_counterfactual_training_v4 import (
+    COUNTERFACTUAL_STAGE_A_V4_CONTRACT,
+    DIRECT_FLOW_A0_V4_CONTRACT,
+    JOINT_DIRECT_A2_V4_CONTRACT,
+    ORACLE_HYDRAULIC_A1_V4_CONTRACT,
+    train_counterfactual_first_stage_a_v4,
 )
 from rtc.step2_lazy_stream_v128 import install_v128_lazy_streaming
 
 CURRENT_ACTION_IDENTIFIABLE_RUN_CONTRACT = (
-    "PROJECT7_V128_CURRENT_COUNTERFACTUAL_FIRST_EDGE_PHYSICS_SMOKE_DEV_V4_STAGE_A_V3"
+    "PROJECT7_V128_CURRENT_COUNTERFACTUAL_FIRST_EDGE_PHYSICS_SMOKE_DEV_V5_STAGE_A_V4"
 )
 
 
@@ -60,9 +60,8 @@ def _enhanced_source_sha256() -> str:
     digest = hashlib.sha256()
     for module_name in (
         "rtc.step2_counterfactual_first_v128",
-        "rtc.step2_counterfactual_training_v3",
+        "rtc.step2_counterfactual_training_v4",
         "rtc.step2_action_identifiable_v128",
-        "rtc.step2_action_flow_warmup_v128",
         "rtc.step2_differentiable_v128_edge",
         "rtc.edge_physics_current_v128",
     ):
@@ -161,10 +160,10 @@ def main() -> None:
             "counterfactual_first_model_contract": COUNTERFACTUAL_FIRST_MODEL_CONTRACT,
             "counterfactual_first_training_contract": COUNTERFACTUAL_FIRST_TRAINING_CONTRACT,
             "direct_action_flow_scale_contract": DIRECT_ACTION_FLOW_SCALE_CONTRACT,
-            "counterfactual_stage_a_contract": COUNTERFACTUAL_STAGE_A_V3_CONTRACT,
-            "direct_flow_a0_contract": DIRECT_FLOW_A0_V3_CONTRACT,
-            "oracle_hydraulic_a1_contract": ORACLE_HYDRAULIC_A1_V3_CONTRACT,
-            "joint_direct_a2_contract": JOINT_DIRECT_A2_V3_CONTRACT,
+            "counterfactual_stage_a_contract": COUNTERFACTUAL_STAGE_A_V4_CONTRACT,
+            "direct_flow_a0_contract": DIRECT_FLOW_A0_V4_CONTRACT,
+            "oracle_hydraulic_a1_contract": ORACLE_HYDRAULIC_A1_V4_CONTRACT,
+            "joint_direct_a2_contract": JOINT_DIRECT_A2_V4_CONTRACT,
             "gradient_is_training_target": False,
         }
 
@@ -182,7 +181,7 @@ def main() -> None:
 
     runner.build_v128_model_from_graph = enhanced_builder
     runner.derive_residual_scales_streaming_v127 = enhanced_scale
-    runner.train_hydraulic_stage_streaming_v128 = train_counterfactual_first_stage_a_v3
+    runner.train_hydraulic_stage_streaming_v128 = train_counterfactual_first_stage_a_v4
     runner.train_truncated_rollout_stage_streaming_v127 = train_action_identifiable_rollout_stage_v128
     runner.train_objective_stage_streaming_v128 = train_action_identifiable_objective_stage_v128
     runner.save_stage_checkpoint_v128 = enhanced_save_stage
@@ -213,11 +212,11 @@ def main() -> None:
                 {
                     "architecture": COUNTERFACTUAL_FIRST_MODEL_CONTRACT,
                     "training_amendment": COUNTERFACTUAL_FIRST_TRAINING_CONTRACT,
-                    "counterfactual_stage_a_contract": COUNTERFACTUAL_STAGE_A_V3_CONTRACT,
+                    "counterfactual_stage_a_contract": COUNTERFACTUAL_STAGE_A_V4_CONTRACT,
                     "direct_action_flow_scale_contract": DIRECT_ACTION_FLOW_SCALE_CONTRACT,
-                    "direct_flow_a0_contract": DIRECT_FLOW_A0_V3_CONTRACT,
-                    "oracle_hydraulic_a1_contract": ORACLE_HYDRAULIC_A1_V3_CONTRACT,
-                    "joint_direct_a2_contract": JOINT_DIRECT_A2_V3_CONTRACT,
+                    "direct_flow_a0_contract": DIRECT_FLOW_A0_V4_CONTRACT,
+                    "oracle_hydraulic_a1_contract": ORACLE_HYDRAULIC_A1_V4_CONTRACT,
+                    "joint_direct_a2_contract": JOINT_DIRECT_A2_V4_CONTRACT,
                     "edge_physics_sha256": edge_sha,
                     "action_identifiable_source_sha256": source_sha,
                     "gradient_is_training_target": False,
@@ -239,7 +238,7 @@ def main() -> None:
             payload.update(
                 {
                     "architecture": COUNTERFACTUAL_FIRST_MODEL_CONTRACT,
-                    "counterfactual_stage_a_contract": COUNTERFACTUAL_STAGE_A_V3_CONTRACT,
+                    "counterfactual_stage_a_contract": COUNTERFACTUAL_STAGE_A_V4_CONTRACT,
                     "edge_physics_sha256": edge_sha,
                     "gradient_is_training_target": False,
                     "scientific_claim_allowed": False,
