@@ -1,17 +1,15 @@
-"""Fast D2 TFV-gradient audit for a smoke/dev V128 objective-stage checkpoint.
+"""Fast D2 TFV-gradient audit for the current smoke/dev action-identifiable checkpoint.
 
-This is Development screening only. It reconstructs the same deterministic profile/data/design,
-loads the source-strict NONFINAL ``stage_objective.pt``, and evaluates only that profile's
-held-out D2 groups. No strict full checkpoint, D5, runtime, Validation or Final is required.
-
-Gradient provenance comes from the canonical D2 reference/candidate ``settings`` sequences
-rather than optional row-level actuator/base/requested-setting metadata.  The inner auditor
-fails closed unless each candidate changes exactly one actuator.
+This Development-only audit reconstructs the *same* edge-physics/action-identifiable model
+class used by ``run_step2_current.py`` and extends stage lineage with the identical edge artifact
+and enhanced-source SHA.  It therefore fails closed instead of silently loading a repaired
+checkpoint into the older baseline V128 architecture.
 """
 from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+import csv
 import hashlib
 import json
 from pathlib import Path
@@ -23,15 +21,18 @@ from rtc.development_profile_v128 import apply_profile_to_design, get_execution_
 from rtc.production_cli import _load_graph
 from rtc.stage_checkpoint_v128 import load_stage_checkpoint_v128
 from rtc.step2_causal_rainfall_v123 import CausalForecastValueCacheV123, load_causal_forecast_store_v123
+from rtc.step2_current_dev_context_v128 import (
+    build_current_action_identifiable_model,
+    extend_action_identifiable_stage_lineage,
+)
 from rtc.step2_d4_cache_v125 import D4_SOURCE_KIND
-from rtc.step2_differentiable_v128 import build_v128_model_from_graph
 from rtc.step2_gradient_audit_v128_dev import evaluate_d2_gradient_v128_development
 from rtc.step2_state_store_v127 import CausalStep1StateCacheV127, derive_v127_input_normalization, load_causal_state_store_v127
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
 from rtc.step2_train_v127_streaming import V127StreamingMemoryDesign
 from rtc.v128_control_profile import build_v128_control_training_design, configure_v128_cuda_matmul_precision
 
-CONTRACT = "PROJECT7_CURRENT_SMOKE_DEV_D2_GRADIENT_AUDIT_V2_SETTINGS_DERIVED"
+CONTRACT = "PROJECT7_CURRENT_ACTION_IDENTIFIABLE_SMOKE_DEV_D2_GRADIENT_AUDIT_V1"
 
 
 def _sha(path: str | Path) -> str:
@@ -51,6 +52,7 @@ def main() -> None:
     p.add_argument("--profile", choices=("smoke", "dev"), required=True)
     p.add_argument("--stage-checkpoint", required=True)
     p.add_argument("--graph", required=True)
+    p.add_argument("--edge-physics", required=True)
     p.add_argument("--cache-manifest", required=True)
     p.add_argument("--d4-fit-cache", required=True)
     p.add_argument("--d4-audit-cache", required=True)
@@ -117,8 +119,9 @@ def main() -> None:
     )
 
     first_state = state_store.state_for(base.entry(selected["fit_d2"][0]))
-    model = build_v128_model_from_graph(
+    model = build_current_action_identifiable_model(
         graph,
+        edge_physics_path=args.edge_physics,
         state_dim=int(first_state.shape[-1]),
         rainfall_dim=int(rain_store.forecast_mmhr.shape[-1]),
         delta_state_scale=np.ones(int(first_state.shape[-1]), dtype=np.float32),
@@ -155,6 +158,9 @@ def main() -> None:
         "causal_rainfall_forecast_contract": str(rain_store.forecast_contract),
         "swmm_engine_version": str(base_manifest["swmm_engine_version"]),
     }
+    lineage = extend_action_identifiable_stage_lineage(
+        lineage, edge_physics_path=args.edge_physics
+    )
     stage = load_stage_checkpoint_v128(
         args.stage_checkpoint,
         model=model,
@@ -181,6 +187,7 @@ def main() -> None:
             "outer_contract": CONTRACT,
             "profile": profile.name,
             "stage_checkpoint_sha256": _sha(args.stage_checkpoint),
+            "edge_physics_sha256": _sha(args.edge_physics),
             "selected_holdout_d2_groups": selected["hold_d2"],
             "validation_accessed": False,
             "final_accessed": False,
@@ -191,7 +198,6 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     detail = out / "D2_DEVELOPMENT_GRADIENT_DETAIL.csv"
     columns = list(rows[0])
-    import csv
     with detail.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=columns)
         writer.writeheader()
