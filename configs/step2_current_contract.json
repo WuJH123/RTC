@@ -1,15 +1,15 @@
 {
-  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V5_COUNTERFACTUAL_FIRST_LAZY_DEV",
+  "contract": "PROJECT7_CURRENT_TFV_FIRST_109ACT_CONTINUOUS_MPC_V6_COUNTERFACTUAL_FIRST_ORACLE_ISOLATED_DEV",
   "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
   "selected_implementation_contract": "PROJECT7_V128_COUNTERFACTUAL_FIRST_EDGE_PHYSICS_SURROGATE_DEV_V3",
   "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, predict action-conditioned network hydraulics with a differentiable surrogate, optimize 109 writable targets continuously over H120 inside H360, minimize system-wide cumulative TFV, protect Priority8 PFV with a one-sided soft secondary term, and execute only the first 10-minute target in authoritative SWMM",
   "authoritative_truth": "SWMM",
-  "development_priority": "learn causal candidate-reference hydraulic trajectories first; treat autograd TFV sensitivity as a downstream diagnostic and online solver signal rather than a primary SWMM-labelled training target",
+  "development_priority": "learn causal counterfactual hydraulic trajectories and action ranking first; treat autograd TFV sensitivity as a downstream diagnostic and online solver signal rather than a primary SWMM-labelled training target",
   "method_identity": {
     "testbed": "IDEALIZED_SWMM_METHODOLOGY_TESTBED_NOT_FIELD_DIGITAL_TWIN",
     "step1": "sparse causal current-state reconstruction",
     "step2": "counterfactual-first typed actuator response plus edge-physics differentiable hydraulic surrogate",
-    "step3": "bounded continuous 109-actuator receding-horizon MPC",
+    "step3": "bounded continuous 109-actuator receding-horizon MPC after explicit surrogate promotion",
     "tfv_role": "PRIMARY_OBJECTIVE",
     "priority8_pfv_role": "ONE_SIDED_SOFT_SECONDARY",
     "global_peak_role": "REPORT_ONLY",
@@ -37,7 +37,7 @@
     "slew_anchor": "previous supervisory target_setting",
     "production_optimizer": "multi-start scipy L-BFGS-B with PyTorch autograd after surrogate promotion",
     "gradient_required_for_continuous_mpc_mathematically": false,
-    "gradient_current_role": "online efficiency mechanism and Development diagnostic",
+    "gradient_current_role": "Development diagnostic; future online efficiency mechanism after trajectory/ranking promotion",
     "post_score_projection_allowed": false,
     "score_equals_execute_required": true
   },
@@ -45,29 +45,32 @@
     "architecture": "separate temporal-flow dynamics and direct setting-response scales + typed actuator-to-node messages + managed-flow injection + static SWMM edge physics + dynamic head-difference/head-gradient graph messages",
     "flow_scale": "temporal q(t)-q(t-1) residual scale is separate from TrainFit first-setting-divergence same-prefix action-flow scale; later network-feedback flow differences cannot define the local setting scale",
     "flow_scale_holdout_used": false,
-    "stage_A0": "actuator-only absolute flow fit plus direct same-prefix setting-to-flow magnitude and direction loss",
-    "stage_A1": "authoritative managed-flow injection pretrains flow-to-next-state hydraulic transition; actuator parameters frozen",
+    "stage_A0": "actuator-only absolute managed-flow fit plus direct same-prefix setting-to-flow magnitude and direction loss",
+    "stage_A1": "authoritative managed-flow injection pretrains flow-to-next-state hydraulics with actuator frozen; direct candidate/reference pair shares reference setting inside typed action context so q is the only branch-varying control signal",
     "stage_A2": "joint teacher forcing with absolute hydraulic fit plus response-weighted direct same-prefix flow/state effects",
-    "stage_B0": "autoregressive truncated trajectory training where full hydraulic feedback effects are permitted",
-    "stage_B": "exact H360 two-pass full within-group TFV pairwise training; no SWMM action-gradient labels",
+    "stage_B0": "explicit-lazy autoregressive trajectory training where full hydraulic feedback effects are permitted and flow-effect normalization uses actuator flow standard deviation rather than direct-action scale",
+    "stage_B": "exact H360 two-pass full within-group TFV pairwise training followed by one low-LR explicit-lazy trajectory anchor; no SWMM action-gradient labels",
     "gradient_is_primary_training_target": false,
     "gradient_training_label_used": false,
-    "gradient_evaluation_order": "after direct flow, direct hydraulic, trajectory and ranking checks",
-    "objective_module": "src/rtc/step2_train_v128_exact.py",
-    "training_amendment_module": "src/rtc/step2_counterfactual_training_v4.py",
+    "gradient_evaluation_order": "after direct flow, strict q-only direct hydraulic, trajectory and ranking checks",
     "model_and_scale_module": "src/rtc/step2_counterfactual_first_v128.py",
+    "training_curriculum_module": "src/rtc/step2_counterfactual_training_v5.py",
+    "oracle_flow_isolation_module": "src/rtc/step2_oracle_isolation_v128.py",
+    "objective_module": "src/rtc/step2_train_v128_exact.py",
     "edge_physics_module": "src/rtc/step2_differentiable_v128_edge.py",
     "edge_physics_artifact_required": true,
     "execution_profiles": ["smoke", "dev", "full"],
     "current_enabled_profiles": ["smoke", "dev"],
     "full_current_enabled": false,
-    "full_block_reason": "counterfactual-first surrogate must pass same-checkpoint direct flow/hydraulic, trajectory/ranking, gradient-diagnostic and Development closed-loop gates",
+    "full_block_reason": "counterfactual-first surrogate must pass same-checkpoint direct flow, strict q-only direct hydraulic, B0 trajectory/ranking/spatial, objective-stage ranking/gradient and Development closed-loop gates",
     "strict_full_checkpoint_currently_creatable": false,
     "strict_full_checkpoint_reason": "Development subclass requires a future explicit production model factory/loader promotion",
-    "stage_checkpoint_resume": "stage-boundary; graph/data/edge-physics/source/training-design lineage fail closed",
+    "stage_checkpoint_resume": "stage-boundary; graph/data/edge-physics/source/training-design/oracle-isolation lineage fail closed",
     "stage_checkpoints_nonfinal": true,
     "lazy_mmap_branch_streaming": true,
-    "direct_pair_materialization": "reference/candidate only, only through first divergence step"
+    "stage_a_b0_post_objective_use_explicit_lazy_helpers": true,
+    "direct_pair_materialization": "reference/candidate only, only through first divergence step",
+    "oracle_direct_pair_setting_bypass_blocked": true
   },
   "diagnostic_evidence_triggering_repair": {
     "pr77_full_horizon_flow_sign_accuracy": 0.851569933396765,
@@ -77,19 +80,19 @@
     "pr77_stage_a_gradient_sign_accuracy": 0.46808510638297873,
     "pr77_stage_a_gradient_cosine": 0.17514081478676707,
     "pr77_stage_a_gradient_l2_ratio": 1.5568053815523346,
-    "new_interpretation": "full-horizon teacher-forced flow effect mixes local setting response with branch-specific hydraulic feedback; promotion must use first-divergence common-prefix response plus actuator-balanced summaries"
+    "new_interpretation": "full-horizon teacher-forced flow effect mixes local setting response with branch-specific hydraulic feedback; promotion must use first-divergence common-prefix response plus actuator-balanced summaries, and oracle hydraulics must block a direct setting-message bypass"
   },
   "development_funnel": {
     "stage_a_stop": [
       "preflight and edge-artifact lineage",
-      "A0 direct action-flow warm-up",
-      "A1 oracle-flow hydraulic transition",
+      "A0 direct same-prefix action-flow warm-up",
+      "A1 strict managed-flow-only hydraulic transition",
       "A2 joint direct counterfactual teacher forcing",
-      "direct same-prefix action-flow audit",
-      "normal-vs-oracle direct hydraulic audit",
+      "direct same-prefix actuator-balanced action-flow audit",
+      "normal-vs-strict-oracle direct hydraulic audit",
       "Stage-A TFV gradient diagnostic"
     ],
-    "resume_b0_only_if": "direct flow direction/magnitude and direct hydraulic response materially improve without nonfinite/resource/causality regressions",
+    "resume_b0_only_if": "direct flow direction/magnitude and strict q-only direct hydraulic response materially improve without nonfinite/resource/causality regressions",
     "after_b0": "trajectory/ranking/spatial audits before H360 objective",
     "after_objective": "ranking/top1/regret plus gradient diagnostic; gradient is not a stand-alone promotion gate if trajectory/ranking are poor",
     "dev": "larger deterministic Development confirmation only for a smoke winner",
@@ -116,6 +119,13 @@
     "deeper_gnn_promoted": false,
     "reason": "current evidence does not isolate a far-field-only failure and full ordinary-conduit dynamic truth is not available"
   },
+  "promotion_and_runtime": {
+    "runtime_current_enabled": false,
+    "seven_strategy_current_enabled": false,
+    "d5_current_enabled": false,
+    "reason": "no production checkpoint factory/loader exists for the current Development subclass; old base-V128 runtime must not silently masquerade as the current Proposal",
+    "promotion_requires": "Development evidence plus explicit production checkpoint/loader/runtime contract in a later source change"
+  },
   "canonical_entrypoints": {
     "guide": "CODEX_START_HERE.md",
     "preflight": "rtc-current-preflight",
@@ -129,10 +139,10 @@
     "step1_attention_ablation": "scripts/audit_step1_global_attention_current.py",
     "full_ranking_audit": "scripts/audit_step2_v128_fast.py",
     "full_d2_gradient_audit": "scripts/audit_step2_v128_d2_gradients_fast.py",
-    "d5_gradient_training": "scripts/run_step2_v128_d5_gradient_fast.py",
-    "continuous_evidence": "scripts/build_v128_continuous_evidence.py",
-    "runtime": "scripts/run_policy_current.py",
-    "seven_strategy_comparison": "scripts/run_seven_strategies_current.py"
+    "d5_gradient_training": "BLOCKED_UNTIL_PRODUCTION_PROMOTION",
+    "continuous_evidence": "BLOCKED_UNTIL_PRODUCTION_PROMOTION",
+    "runtime": "scripts/run_policy_current.py (fail-closed until production promotion)",
+    "seven_strategy_comparison": "scripts/run_seven_strategies_current.py (fail-closed until production promotion)"
   },
-  "promotion_rule": "merge is not scientific promotion. Smoke/dev must first prove causal counterfactual trajectory fidelity and useful ranking; differentiable TFV gradients are then assessed for online solver suitability. Full/D5/runtime/Policy Lock remain disabled until explicit promotion."
+  "promotion_rule": "merge is not scientific promotion. Smoke/dev must first prove causal counterfactual trajectory fidelity and useful ranking; differentiable TFV gradients are then assessed for online solver suitability. Full/D5/runtime/Policy Lock remain disabled until an explicit production model checkpoint/loader/runtime promotion."
 }
