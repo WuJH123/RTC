@@ -27,6 +27,7 @@ def _balanced_source_sha256() -> str:
     digest = hashlib.sha256()
     digest.update(base.encode("utf-8"))
     digest.update(hashlib.sha256(Path(raw).read_bytes()).digest())
+    digest.update(hashlib.sha256(Path(__file__).read_bytes()).digest())
     return digest.hexdigest()
 
 
