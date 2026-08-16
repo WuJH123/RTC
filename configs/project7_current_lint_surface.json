@@ -16,6 +16,7 @@
     "scripts/audit_step2_spatial_current.py",
     "scripts/audit_step2_gradient_current_dev.py",
     "scripts/audit_step2_gradient_stage_current_dev.py",
+    "scripts/audit_step2_actuator_flow_effect_current.py",
     "scripts/train_step1_global_attention_dev.py",
     "scripts/audit_step1_global_attention_current.py",
     "scripts/build_edge_physics_current.py",
