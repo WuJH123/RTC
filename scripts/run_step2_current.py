@@ -1,38 +1,16 @@
 """Stable current Project7 Step2 entrypoint.
 
-The current smoke/dev surface is the diagnostic-driven action-identifiable V128 repair.  It
-requires a frozen edge-physics artifact and combines FIT-only action-conditioned flow scaling,
-explicit actuator-setting response, edge-aware hydraulic propagation and counterfactual
-action-effect training.  ``--profile full`` is intentionally blocked until this Development
-candidate passes the existing held-out ranking/gradient/spatial/closed-loop gates.
+The primary research target is now explicit: learn how the 109 writable facility actions change
+system-wide cumulative TFV, conditioned on the causal Step1 reconstructed state and causal rainfall
+forecast.  The current entrypoint therefore trains the direct delta-TFV value model.
 
-Raw Torch Chrome tracing remains disabled on the 16-GB Windows workstation because its trace
-export can consume tens of GB of virtual/private memory after successful training.  Use normal
-TRAINING_TELEMETRY.jsonl and external low-frequency GPU sampling instead.
+The previous V128 hydraulic-world-model curriculum is retained in its versioned scripts for
+ablation/history, but it is no longer the canonical path because Development B0 showed poor TFV
+candidate ordering despite authoritative SWMM evidence of physical control leverage.
 """
 from __future__ import annotations
 
-import sys
-
-from rtc.step2_lazy_stream_v128 import install_v128_lazy_streaming
-
-install_v128_lazy_streaming()
-
-from run_step2_action_identifiable_current import main as _current_main  # noqa: E402
-
-
-def main() -> None:
-    if (
-        "--torch-profiler" in sys.argv[1:]
-        and "--help" not in sys.argv[1:]
-        and "-h" not in sys.argv[1:]
-    ):
-        raise RuntimeError(
-            "current Project7 disables raw --torch-profiler trace export on the 16-GB "
-            "workstation because it can exhaust host memory after successful training. "
-            "Use TRAINING_TELEMETRY.jsonl plus external low-frequency GPU sampling."
-        )
-    _current_main()
+from run_step2_tfv_value_current import main
 
 
 if __name__ == "__main__":
