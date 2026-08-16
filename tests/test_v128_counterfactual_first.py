@@ -7,10 +7,11 @@ import torch
 
 from rtc.step2_counterfactual_first_v128 import (
     CounterfactualFirstActuatorFlowModelV128,
-    _first_direct_response_spec_numpy,
     derive_direct_response_scales_v128,
+    first_direct_response_spec_numpy,
 )
-from rtc.step2_counterfactual_training_v3 import _zero_based_spec_order
+from rtc.step2_counterfactual_training_v4 import _direct_specs_lazy, _zero_based_spec_order
+from rtc.step2_lazy_stream_v128 import LazyBranchArrayV128
 
 
 @dataclass
@@ -33,15 +34,12 @@ def _arrays(*, prefix_mismatch: bool = False) -> dict[str, np.ndarray]:
     settings = np.zeros((2, 4, 2), dtype=np.float32)
     settings[1, 1:, 0] = 1.0
     flows = np.zeros((2, 4, 2), dtype=np.float32)
-    # Direct response at first setting divergence is 0.5.  Later branch differences are huge and
-    # represent network feedback; they must not define the local action scale.
     flows[0, :, 0] = np.asarray([1.0, 1.1, 1.2, 1.3], dtype=np.float32)
     flows[1, :, 0] = np.asarray([1.0, 1.6, 80.0, -70.0], dtype=np.float32)
     states = np.zeros((2, 4, 1, 2), dtype=np.float32)
     initial = np.zeros((2, 1, 2), dtype=np.float32)
     previous = np.zeros((2, 2), dtype=np.float32)
     if prefix_mismatch:
-        # First divergence is k=1, so state at k=0 is the prefix and must agree.
         states[1, 0, 0, 0] = 0.1
     return {
         "settings": settings,
@@ -54,15 +52,14 @@ def _arrays(*, prefix_mismatch: bool = False) -> dict[str, np.ndarray]:
 
 def test_first_direct_response_uses_only_same_prefix_first_divergence() -> None:
     arrays = _arrays()
-    spec = _first_direct_response_spec_numpy(arrays, reference=0, candidate=1)
+    spec = first_direct_response_spec_numpy(arrays, reference=0, candidate=1)
     assert spec is not None
     assert spec["step"] == 1
     assert spec["actuator_index"] == 0
     assert np.isclose(spec["true_flow_delta"], 0.5)
     assert spec["prefix_state_max_abs"] == 0.0
     assert spec["prefix_flow_max_abs"] == 0.0
-
-    assert _first_direct_response_spec_numpy(
+    assert first_direct_response_spec_numpy(
         _arrays(prefix_mismatch=True), reference=0, candidate=1
     ) is None
 
@@ -78,8 +75,7 @@ def test_direct_action_scale_excludes_later_feedback(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "rtc.step2_counterfactual_first_v128.derive_residual_scales_streaming_v127",
-        temporal,
+        "rtc.step2_counterfactual_first_v128.derive_residual_scales_streaming_v127", temporal
     )
     state, temporal_scale, direct_scale, telemetry = derive_direct_response_scales_v128(
         ((cache, ["FIT"]),), sample_rows=16
@@ -117,11 +113,26 @@ def test_counterfactual_actuator_separates_temporal_and_setting_scales() -> None
     q1, _ = model.forward_prepared(
         state, state, torch.ones(1, 1), previous, physics_norm, identity
     )
-    # The 100 m3/s temporal scale cannot amplify the direct setting contrast; it is bounded by
-    # twice the separate 0.5 direct-action scale.
     assert 0.9 < float(q1 - q0) <= 1.0
 
 
 def test_direct_spec_permutation_is_zero_based_and_complete() -> None:
     order = _zero_based_spec_order(8, group_name="G", epoch=1, seed=42)
     assert sorted(order.tolist()) == list(range(8))
+
+
+def test_direct_specs_support_lazy_mmap_truth_without_full_tensor_materialization() -> None:
+    arrays = _arrays()
+    order = np.asarray([0, 1], dtype=np.int64)
+    cpu = {
+        "settings": torch.as_tensor(arrays["settings"], dtype=torch.float32),
+        "initial": torch.as_tensor(arrays["initial_state"][:1], dtype=torch.float32),
+        "previous_flow": torch.as_tensor(arrays["previous_actuator_flow"][:1], dtype=torch.float32),
+        "states": LazyBranchArrayV128(arrays["target_states"], order),
+        "flows": LazyBranchArrayV128(arrays["target_actuator_flows"], order),
+    }
+    specs = _direct_specs_lazy(cpu)
+    assert len(specs) == 1
+    assert specs[0]["candidate_position"] == 1
+    assert specs[0]["step"] == 1
+    assert np.isclose(specs[0]["true_flow_delta"], 0.5)
