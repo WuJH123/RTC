@@ -1,8 +1,9 @@
-"""Shared construction/lineage helpers for the current action-identifiable V128 Development model.
+"""Shared construction/lineage helpers for the current counterfactual-first V128 Development model.
 
-Training and every smoke/dev audit must reconstruct the same model class and must include the
-same edge-physics artifact/source fingerprints in stage-checkpoint lineage. Keeping this logic
-in one module prevents training from advancing while audits silently rebuild an older model.
+Training and every smoke/dev audit must rebuild the same model class and bind the same frozen
+edge artifact plus source contracts.  Audit construction may use unit placeholder numerical
+scales because source-strict stage loading immediately restores the trained temporal/direct
+scale buffers from the checkpoint.
 """
 from __future__ import annotations
 
@@ -14,15 +15,17 @@ from typing import Any, Mapping
 import numpy as np
 
 from .edge_physics_current_v128 import load_edge_physics_artifact_v128
-from .step2_action_flow_warmup_v128 import ACTION_FLOW_WARMUP_CONTRACT
-from .step2_action_identifiable_v128 import (
-    ACTION_CONDITIONED_FLOW_SCALE_CONTRACT,
-    ACTION_IDENTIFIABLE_MODEL_CONTRACT,
-    ACTION_IDENTIFIABLE_TRAINING_CONTRACT,
-    build_action_identifiable_v128_model_from_graph,
+from .step2_counterfactual_first_v128 import (
+    COUNTERFACTUAL_FIRST_MODEL_CONTRACT,
+    COUNTERFACTUAL_FIRST_TRAINING_CONTRACT,
+    DIRECT_ACTION_FLOW_SCALE_CONTRACT,
+    DIRECT_ACTION_FLOW_WARMUP_CONTRACT,
+    JOINT_DIRECT_STAGE_CONTRACT,
+    ORACLE_FLOW_TRANSITION_CONTRACT,
+    build_counterfactual_first_v128_model_from_graph,
 )
 
-CURRENT_DEV_CONTEXT_CONTRACT = "PROJECT7_V128_ACTION_IDENTIFIABLE_DEV_CONTEXT_V2_FLOW_WARMUP"
+CURRENT_DEV_CONTEXT_CONTRACT = "PROJECT7_V128_COUNTERFACTUAL_FIRST_DEV_CONTEXT_V3"
 
 
 def sha256_file(path: str | Path) -> str:
@@ -34,9 +37,10 @@ def sha256_file(path: str | Path) -> str:
 
 
 def action_identifiable_source_sha256() -> str:
-    """Match the training wrapper's enhanced-source fingerprint exactly."""
+    """Match the current training wrapper's enhanced-source fingerprint exactly."""
     digest = hashlib.sha256()
     for module_name in (
+        "rtc.step2_counterfactual_first_v128",
         "rtc.step2_action_identifiable_v128",
         "rtc.step2_action_flow_warmup_v128",
         "rtc.step2_differentiable_v128_edge",
@@ -60,10 +64,13 @@ def extend_action_identifiable_stage_lineage(
         {
             "edge_physics_sha256": sha256_file(edge_physics_path),
             "action_identifiable_source_sha256": action_identifiable_source_sha256(),
-            "action_identifiable_model_contract": ACTION_IDENTIFIABLE_MODEL_CONTRACT,
-            "action_identifiable_training_contract": ACTION_IDENTIFIABLE_TRAINING_CONTRACT,
-            "action_flow_warmup_contract": ACTION_FLOW_WARMUP_CONTRACT,
-            "flow_scale_contract": ACTION_CONDITIONED_FLOW_SCALE_CONTRACT,
+            "counterfactual_first_model_contract": COUNTERFACTUAL_FIRST_MODEL_CONTRACT,
+            "counterfactual_first_training_contract": COUNTERFACTUAL_FIRST_TRAINING_CONTRACT,
+            "direct_action_flow_scale_contract": DIRECT_ACTION_FLOW_SCALE_CONTRACT,
+            "direct_action_flow_warmup_contract": DIRECT_ACTION_FLOW_WARMUP_CONTRACT,
+            "oracle_flow_transition_contract": ORACLE_FLOW_TRANSITION_CONTRACT,
+            "joint_direct_stage_contract": JOINT_DIRECT_STAGE_CONTRACT,
+            "gradient_is_training_target": False,
         }
     )
     return result
@@ -77,19 +84,26 @@ def build_current_action_identifiable_model(
     rainfall_dim: int,
     delta_state_scale: np.ndarray,
     delta_flow_scale: np.ndarray,
+    direct_action_flow_scale: np.ndarray | None = None,
     design: Any = None,
 ):
     artifact = load_edge_physics_artifact_v128(str(edge_physics_path), graph)
+    direct = (
+        np.ones(len(graph.actuator_ids), dtype=np.float32)
+        if direct_action_flow_scale is None
+        else np.asarray(direct_action_flow_scale, dtype=np.float32)
+    )
     kwargs = {
         "edge_artifact": artifact,
         "state_dim": int(state_dim),
         "rainfall_dim": int(rainfall_dim),
         "delta_state_scale": np.asarray(delta_state_scale, dtype=np.float32),
         "delta_flow_scale": np.asarray(delta_flow_scale, dtype=np.float32),
+        "direct_action_flow_scale": direct,
     }
     if design is not None:
         kwargs["design"] = design
-    return build_action_identifiable_v128_model_from_graph(graph, **kwargs)
+    return build_counterfactual_first_v128_model_from_graph(graph, **kwargs)
 
 
 __all__ = [
