@@ -37,6 +37,7 @@
     "src/rtc/stage_checkpoint_v128.py",
     "src/rtc/step2_differentiable_v128.py",
     "src/rtc/step2_action_identifiable_v128.py",
+    "src/rtc/step2_current_dev_context_v128.py",
     "src/rtc/step2_lazy_stream_v128.py",
     "src/rtc/step2_train_v128_exact.py",
     "src/rtc/step2_train_v128_hydraulic.py",
