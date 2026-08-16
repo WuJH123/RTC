@@ -38,8 +38,8 @@ def _normalization() -> InputNormalizationV60:
     )
 
 
-def _model() -> TypedActuatorMessageSurrogateV128:
-    return TypedActuatorMessageSurrogateV128(
+def _model(model_type=TypedActuatorMessageSurrogateV128) -> TypedActuatorMessageSurrogateV128:
+    return model_type(
         state_dim=3,
         rainfall_dim=1,
         node_static_dim=1,
@@ -82,6 +82,25 @@ def test_v128_strict_saver_rejects_smoke_or_dev_artifacts(tmp_path) -> None:
                 "profile": "smoke",
                 "execution_profile_contract": V128_EXECUTION_PROFILE_CONTRACT,
                 "final_checkpoint_allowed": False,
+            },
+            lineage={},
+        )
+
+
+def test_v128_strict_saver_rejects_unpromoted_development_subclass(tmp_path) -> None:
+    class DevelopmentSubclass(TypedActuatorMessageSurrogateV128):
+        pass
+
+    with pytest.raises(TypeError, match="Development subclasses require an explicit full-promotion"):
+        save_step2_v128(
+            tmp_path / "dev_subclass.pt",
+            model=_model(DevelopmentSubclass),
+            graph=_graph(),
+            input_normalization=_normalization(),
+            training_report={
+                "profile": "full",
+                "execution_profile_contract": V128_EXECUTION_PROFILE_CONTRACT,
+                "final_checkpoint_allowed": True,
             },
             lineage={},
         )

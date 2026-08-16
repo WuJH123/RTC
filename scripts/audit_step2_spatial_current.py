@@ -1,8 +1,9 @@
-"""Audit current action-identifiable V128 Step2 effects by actuator-to-node graph distance.
+"""Audit current counterfactual-first Step2 effects by actuator-to-node graph distance.
 
-The audit reconstructs the same edge-physics/action-identifiable model and stage lineage as
-``run_step2_current.py``.  It remains Development-only and evaluates held-out D2 same-prefix
-SWMM action effects without touching Validation/Final/Formal.
+The audit reconstructs the same edge-physics/counterfactual model class and enhanced stage lineage
+as ``run_step2_current.py``. It is Development-only and supports both B0 (the pre-objective spatial
+gate) and objective-stage confirmation. Numerical scale buffers are restored source-strictly from
+the requested stage checkpoint; this script does not recompute an obsolete hybrid scale.
 """
 from __future__ import annotations
 
@@ -12,12 +13,12 @@ import hashlib
 import json
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from rtc.development_profile_v128 import apply_profile_to_design, get_execution_profile, profile_groups
 from rtc.production_cli import _load_graph
 from rtc.stage_checkpoint_v128 import load_stage_checkpoint_v128
-from rtc.step2_action_identifiable_v128 import derive_action_conditioned_residual_scales_v128
 from rtc.step2_causal_rainfall_v123 import CausalForecastValueCacheV123, load_causal_forecast_store_v123
 from rtc.step2_current_dev_context_v128 import (
     build_current_action_identifiable_model,
@@ -27,11 +28,10 @@ from rtc.step2_d4_cache_v125 import D4_SOURCE_KIND
 from rtc.step2_spatial_audit_v128 import evaluate_d2_spatial_action_effect_v128
 from rtc.step2_state_store_v127 import CausalStep1StateCacheV127, derive_v127_input_normalization, load_causal_state_store_v127
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
-from rtc.step2_train_v127 import configure_model_normalization_v127
 from rtc.step2_train_v127_streaming import V127StreamingMemoryDesign
 from rtc.v128_control_profile import build_v128_control_training_design, configure_v128_cuda_matmul_precision
 
-CONTRACT = "PROJECT7_CURRENT_ACTION_IDENTIFIABLE_SPATIAL_ACTION_EFFECT_AUDIT_V1"
+CONTRACT = "PROJECT7_CURRENT_COUNTERFACTUAL_SPATIAL_ACTION_EFFECT_AUDIT_V2_STAGE_SELECTABLE"
 
 
 def _sha(path: str | Path) -> str:
@@ -49,6 +49,7 @@ def _rain(cache: V60TrainCache, names: list[str]) -> set[str]:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--profile", choices=("smoke", "dev"), required=True)
+    p.add_argument("--stage", choices=("stage_b0", "objective"), required=True)
     p.add_argument("--stage-checkpoint", required=True)
     p.add_argument("--graph", required=True)
     p.add_argument("--edge-physics", required=True)
@@ -81,6 +82,7 @@ def main() -> None:
     state_store = load_causal_state_store_v127(args.causal_state_store)
     rain_store.validate()
     state_store.validate()
+
     fit, holdout = deterministic_rainfall_split_v60(
         base,
         names=sorted(base.names("D2") + base.targeted_d3_names()),
@@ -108,36 +110,25 @@ def main() -> None:
         d4_audit=d4_audit_names,
     )
 
-    base_online = CausalStep1StateCacheV127(CausalForecastValueCacheV123(base, rain_store), state_store)
+    base_online = CausalStep1StateCacheV127(
+        CausalForecastValueCacheV123(base, rain_store), state_store
+    )
     normalization = derive_v127_input_normalization(
         base_cache=base,
         causal_rainfall=rain_store,
         causal_state=state_store,
         fit_names=selected["fit_d2"] + selected["fit_d3"],
     )
-    sample_rows = min(int(args.residual_sample_rows), 8192 if profile.name == "smoke" else 32768)
-    state_scale, flow_scale, _ = derive_action_conditioned_residual_scales_v128(
-        (
-            (base, selected["fit_d2"] + selected["fit_d3"]),
-            (d4_fit_raw, selected["d4_fit"]),
-        ),
-        sample_rows=sample_rows,
-    )
     first_state = state_store.state_for(base.entry(selected["fit_d2"][0]))
+    state_dim = int(first_state.shape[-1])
     model = build_current_action_identifiable_model(
         graph,
         edge_physics_path=args.edge_physics,
-        state_dim=int(first_state.shape[-1]),
+        state_dim=state_dim,
         rainfall_dim=int(rain_store.forecast_mmhr.shape[-1]),
-        delta_state_scale=state_scale,
-        delta_flow_scale=flow_scale,
-    )
-    configure_model_normalization_v127(
-        model,
-        normalization=normalization,
-        graph=graph,
-        state_delta_scale=state_scale,
-        flow_delta_scale=flow_scale,
+        delta_state_scale=np.ones(state_dim, dtype=np.float32),
+        delta_flow_scale=np.ones(len(graph.actuator_ids), dtype=np.float32),
+        direct_action_flow_scale=np.ones(len(graph.actuator_ids), dtype=np.float32),
     )
 
     memory = V127StreamingMemoryDesign(
@@ -148,13 +139,15 @@ def main() -> None:
         residual_sample_rows=int(args.residual_sample_rows),
     )
     memory.validate()
-    design = build_v128_control_training_design(
-        hydraulic_branch_chunk=memory.hydraulic_branch_chunk,
-        rollout_candidates_per_group=memory.rollout_candidates_per_group,
-        objective_candidate_chunk=memory.objective_candidate_chunk,
-        evaluation_branch_chunk=memory.evaluation_branch_chunk,
+    design = apply_profile_to_design(
+        build_v128_control_training_design(
+            hydraulic_branch_chunk=memory.hydraulic_branch_chunk,
+            rollout_candidates_per_group=memory.rollout_candidates_per_group,
+            objective_candidate_chunk=memory.objective_candidate_chunk,
+            evaluation_branch_chunk=memory.evaluation_branch_chunk,
+        ),
+        profile,
     )
-    design = apply_profile_to_design(design, profile)
     lineage = {
         "graph_sha256": _sha(args.graph),
         "base_cache_sha256": _sha(args.cache_manifest),
@@ -183,8 +176,11 @@ def main() -> None:
         expected_lineage=lineage,
         expected_training_design=asdict(design),
     )
-    if str(stage.get("completed_stage")) != "objective":
-        raise ValueError("spatial action-effect audit requires the completed objective stage checkpoint")
+    if str(stage.get("completed_stage")) != args.stage:
+        raise ValueError(
+            f"spatial audit requested {args.stage} but checkpoint contains "
+            f"{stage.get('completed_stage')}"
+        )
 
     audit = evaluate_d2_spatial_action_effect_v128(
         model,
@@ -208,11 +204,12 @@ def main() -> None:
         "edge_physics_sha256": _sha(args.edge_physics),
         "stage_completed": stage["completed_stage"],
         "selected_holdout_d2_groups": selected["hold_d2"],
+        "scale_source": "restored_strictly_from_stage_checkpoint",
         "audit": audit,
         "promotion_rule": (
-            "Use this report together with action-flow/ranking/gradient evidence. Edge physics "
-            "is not sufficient for promotion unless held-out effects improve without near-field "
-            "or TFV-ranking regression."
+            "Use this report with direct-flow, q-only hydraulic, trajectory/ranking and gradient "
+            "evidence. A distance-dependent architecture change is justified only when held-out "
+            "effects show a coherent far-field degradation not explained by a global failure."
         ),
     }
     out = Path(args.out)

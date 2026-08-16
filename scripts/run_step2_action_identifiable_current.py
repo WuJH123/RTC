@@ -1,21 +1,17 @@
-"""Current Project7 action-identifiable Step2 Development orchestration.
+"""Current Project7 counterfactual-first Step2 Development orchestration.
 
-This wrapper promotes the diagnostic-driven V128 action/hydraulic repair to the *current
-smoke/dev* surface while deliberately blocking ``--profile full`` until held-out Development
-action-flow, gradient, ranking, spatial and closed-loop evidence supports promotion.
+The smoke/dev candidate separates direct setting response from later hydraulic feedback.
+Stage A is a three-part causal curriculum:
 
-It preserves the canonical current profile runner and replaces only the diagnosed scientific
-components for this Development candidate:
+A0 direct same-prefix setting -> managed-flow warm-up;
+A1 authoritative managed-flow -> next-state hydraulic transition pretraining with direct-pair
+   setting bypass blocked;
+A2 joint predicted-flow teacher forcing with direct same-prefix flow/state effects.
 
-1. FIT-only hybrid temporal/action-conditioned actuator flow scales;
-2. explicit action-identifiable actuator response + frozen edge-physics transition;
-3. actuator-only action-flow warm-up before joint hydraulic Stage A;
-4. counterfactual Stage A and B0 hydraulic-effect supervision;
-5. exact H360 objective followed by a small FIT-only action-effect anchor.
-
-Stage checkpoint/resume remains supported. The frozen edge-artifact SHA and enhanced
-architecture/training source SHA are injected into stage lineage so changed code/artifacts
-cannot be silently restored into an old checkpoint.
+B0 is the explicit-lazy autoregressive trajectory stage where full network feedback belongs. The
+exact H360 TFV objective remains downstream and is followed only by a low-LR trajectory anchor.
+TFV action gradients are audited downstream and are not SWMM training labels. ``--profile full``
+remains blocked until explicit Development promotion.
 """
 from __future__ import annotations
 
@@ -28,23 +24,29 @@ import sys
 
 import run_step2_v128_current_profiles as runner
 from rtc.edge_physics_current_v128 import load_edge_physics_artifact_v128
-from rtc.step2_action_flow_warmup_v128 import (
-    ACTION_FLOW_WARMUP_CONTRACT,
-    train_hydraulic_stage_with_flow_warmup_v128,
+from rtc.step2_counterfactual_first_v128 import (
+    COUNTERFACTUAL_FIRST_MODEL_CONTRACT,
+    COUNTERFACTUAL_FIRST_TRAINING_CONTRACT,
+    DIRECT_ACTION_FLOW_SCALE_CONTRACT,
+    build_counterfactual_first_v128_model_from_graph,
+    derive_direct_response_scales_v128,
 )
-from rtc.step2_action_identifiable_v128 import (
-    ACTION_CONDITIONED_FLOW_SCALE_CONTRACT,
-    ACTION_IDENTIFIABLE_MODEL_CONTRACT,
-    ACTION_IDENTIFIABLE_TRAINING_CONTRACT,
-    build_action_identifiable_v128_model_from_graph,
-    derive_action_conditioned_residual_scales_v128,
-    train_action_identifiable_objective_stage_v128,
-    train_action_identifiable_rollout_stage_v128,
+from rtc.step2_counterfactual_training_v5 import (
+    COUNTERFACTUAL_B0_V5_CONTRACT,
+    COUNTERFACTUAL_STAGE_A_V5_CONTRACT,
+    DIRECT_FLOW_A0_V5_CONTRACT,
+    JOINT_DIRECT_A2_V5_CONTRACT,
+    ORACLE_HYDRAULIC_A1_V5_CONTRACT,
+    POST_OBJECTIVE_TRAJECTORY_ANCHOR_V5_CONTRACT,
+    train_counterfactual_first_stage_a_v5,
+    train_counterfactual_objective_stage_v5,
+    train_counterfactual_rollout_b0_v5,
 )
 from rtc.step2_lazy_stream_v128 import install_v128_lazy_streaming
+from rtc.step2_oracle_isolation_v128 import ORACLE_FLOW_ISOLATION_CONTRACT
 
 CURRENT_ACTION_IDENTIFIABLE_RUN_CONTRACT = (
-    "PROJECT7_V128_CURRENT_ACTION_IDENTIFIABLE_EDGE_PHYSICS_SMOKE_DEV_V2_FLOW_WARMUP"
+    "PROJECT7_V128_CURRENT_COUNTERFACTUAL_FIRST_EDGE_PHYSICS_SMOKE_DEV_V6_STAGE_A_B0_V5"
 )
 
 
@@ -59,8 +61,10 @@ def _sha(path: str | Path) -> str:
 def _enhanced_source_sha256() -> str:
     digest = hashlib.sha256()
     for module_name in (
+        "rtc.step2_counterfactual_first_v128",
+        "rtc.step2_counterfactual_training_v5",
+        "rtc.step2_oracle_isolation_v128",
         "rtc.step2_action_identifiable_v128",
-        "rtc.step2_action_flow_warmup_v128",
         "rtc.step2_differentiable_v128_edge",
         "rtc.edge_physics_current_v128",
     ):
@@ -76,8 +80,8 @@ def _enhanced_source_sha256() -> str:
 
 def _delegate_help() -> None:
     print(
-        "Current action-identifiable Step2 requires --edge-physics <EDGE_PHYSICS.npz>. "
-        "Only --profile smoke|dev is enabled while this repair is under Development gates; "
+        "Current counterfactual-first Step2 requires --edge-physics <EDGE_PHYSICS.npz>. "
+        "Only --profile smoke|dev is enabled while this candidate is under Development gates; "
         "--profile full fails closed until explicit promotion.\n\n"
         "Delegated current profile options follow:\n",
         flush=True,
@@ -115,11 +119,14 @@ def main() -> None:
     profile = _requested_profile(remaining)
     if profile not in {"smoke", "dev"}:
         raise ValueError(
-            "current action-identifiable V128 is Development-only. --profile full is blocked "
-            "until held-out action-flow, gradient, ranking and closed-loop Development gates pass."
+            "current counterfactual-first V128 is Development-only. --profile full is blocked "
+            "until held-out direct-flow/direct-hydraulic/trajectory/ranking/gradient and "
+            "closed-loop Development gates pass."
         )
     edge_sha = _sha(edge_path)
     source_sha = _enhanced_source_sha256()
+    # Exact H360 training still owns imported streaming globals. Install its audited lazy helpers;
+    # Stage A/B0/post-objective V5 call lazy helpers directly and do not depend on this mutation.
     install_v128_lazy_streaming()
 
     original_builder = runner.build_v128_model_from_graph
@@ -131,49 +138,62 @@ def main() -> None:
     original_load_stage = runner.load_stage_checkpoint_v128
     original_contract = runner.CURRENT_RUN_CONTRACT
 
+    scale_context: dict[str, object] = {}
+
+    def enhanced_scale(caches_and_names, *, sample_rows=131_072):
+        state, temporal, direct, telemetry = derive_direct_response_scales_v128(
+            caches_and_names, sample_rows=sample_rows
+        )
+        scale_context["direct_action_flow_scale"] = direct
+        return state, temporal, telemetry
+
     def enhanced_builder(graph, **kwargs):
         artifact = load_edge_physics_artifact_v128(edge_path, graph)
-        return build_action_identifiable_v128_model_from_graph(
+        direct = scale_context.get("direct_action_flow_scale")
+        if direct is None:
+            raise RuntimeError("direct action-flow scale was not derived before model construction")
+        return build_counterfactual_first_v128_model_from_graph(
             graph,
             edge_artifact=artifact,
+            direct_action_flow_scale=direct,
             **kwargs,
         )
 
+    def _lineage_fields() -> dict[str, object]:
+        return {
+            "edge_physics_sha256": edge_sha,
+            "action_identifiable_source_sha256": source_sha,
+            "counterfactual_first_model_contract": COUNTERFACTUAL_FIRST_MODEL_CONTRACT,
+            "counterfactual_first_training_contract": COUNTERFACTUAL_FIRST_TRAINING_CONTRACT,
+            "direct_action_flow_scale_contract": DIRECT_ACTION_FLOW_SCALE_CONTRACT,
+            "oracle_flow_isolation_contract": ORACLE_FLOW_ISOLATION_CONTRACT,
+            "counterfactual_stage_a_contract": COUNTERFACTUAL_STAGE_A_V5_CONTRACT,
+            "direct_flow_a0_contract": DIRECT_FLOW_A0_V5_CONTRACT,
+            "oracle_hydraulic_a1_contract": ORACLE_HYDRAULIC_A1_V5_CONTRACT,
+            "joint_direct_a2_contract": JOINT_DIRECT_A2_V5_CONTRACT,
+            "counterfactual_b0_contract": COUNTERFACTUAL_B0_V5_CONTRACT,
+            "post_objective_trajectory_anchor_contract": POST_OBJECTIVE_TRAJECTORY_ANCHOR_V5_CONTRACT,
+            "gradient_is_training_target": False,
+            "explicit_lazy_stage_a_b0_anchor": True,
+        }
+
     def enhanced_save_stage(path, **kwargs):
         lineage = dict(kwargs["lineage"])
-        lineage.update(
-            {
-                "edge_physics_sha256": edge_sha,
-                "action_identifiable_source_sha256": source_sha,
-                "action_identifiable_model_contract": ACTION_IDENTIFIABLE_MODEL_CONTRACT,
-                "action_identifiable_training_contract": ACTION_IDENTIFIABLE_TRAINING_CONTRACT,
-                "action_flow_warmup_contract": ACTION_FLOW_WARMUP_CONTRACT,
-                "flow_scale_contract": ACTION_CONDITIONED_FLOW_SCALE_CONTRACT,
-            }
-        )
+        lineage.update(_lineage_fields())
         kwargs["lineage"] = lineage
         return original_save_stage(path, **kwargs)
 
     def enhanced_load_stage(path, **kwargs):
         lineage = dict(kwargs["expected_lineage"])
-        lineage.update(
-            {
-                "edge_physics_sha256": edge_sha,
-                "action_identifiable_source_sha256": source_sha,
-                "action_identifiable_model_contract": ACTION_IDENTIFIABLE_MODEL_CONTRACT,
-                "action_identifiable_training_contract": ACTION_IDENTIFIABLE_TRAINING_CONTRACT,
-                "action_flow_warmup_contract": ACTION_FLOW_WARMUP_CONTRACT,
-                "flow_scale_contract": ACTION_CONDITIONED_FLOW_SCALE_CONTRACT,
-            }
-        )
+        lineage.update(_lineage_fields())
         kwargs["expected_lineage"] = lineage
         return original_load_stage(path, **kwargs)
 
     runner.build_v128_model_from_graph = enhanced_builder
-    runner.derive_residual_scales_streaming_v127 = derive_action_conditioned_residual_scales_v128
-    runner.train_hydraulic_stage_streaming_v128 = train_hydraulic_stage_with_flow_warmup_v128
-    runner.train_truncated_rollout_stage_streaming_v127 = train_action_identifiable_rollout_stage_v128
-    runner.train_objective_stage_streaming_v128 = train_action_identifiable_objective_stage_v128
+    runner.derive_residual_scales_streaming_v127 = enhanced_scale
+    runner.train_hydraulic_stage_streaming_v128 = train_counterfactual_first_stage_a_v5
+    runner.train_truncated_rollout_stage_streaming_v127 = train_counterfactual_rollout_b0_v5
+    runner.train_objective_stage_streaming_v128 = train_counterfactual_objective_stage_v5
     runner.save_stage_checkpoint_v128 = enhanced_save_stage
     runner.load_stage_checkpoint_v128 = enhanced_load_stage
     runner.CURRENT_RUN_CONTRACT = CURRENT_ACTION_IDENTIFIABLE_RUN_CONTRACT
@@ -200,12 +220,21 @@ def main() -> None:
             payload = json.loads(report.read_text(encoding="utf-8"))
             payload.update(
                 {
-                    "architecture": ACTION_IDENTIFIABLE_MODEL_CONTRACT,
-                    "training_amendment": ACTION_IDENTIFIABLE_TRAINING_CONTRACT,
-                    "action_flow_warmup_contract": ACTION_FLOW_WARMUP_CONTRACT,
-                    "flow_scale_contract": ACTION_CONDITIONED_FLOW_SCALE_CONTRACT,
+                    "architecture": COUNTERFACTUAL_FIRST_MODEL_CONTRACT,
+                    "training_amendment": COUNTERFACTUAL_FIRST_TRAINING_CONTRACT,
+                    "counterfactual_stage_a_contract": COUNTERFACTUAL_STAGE_A_V5_CONTRACT,
+                    "direct_action_flow_scale_contract": DIRECT_ACTION_FLOW_SCALE_CONTRACT,
+                    "oracle_flow_isolation_contract": ORACLE_FLOW_ISOLATION_CONTRACT,
+                    "direct_flow_a0_contract": DIRECT_FLOW_A0_V5_CONTRACT,
+                    "oracle_hydraulic_a1_contract": ORACLE_HYDRAULIC_A1_V5_CONTRACT,
+                    "joint_direct_a2_contract": JOINT_DIRECT_A2_V5_CONTRACT,
+                    "counterfactual_b0_contract": COUNTERFACTUAL_B0_V5_CONTRACT,
+                    "post_objective_trajectory_anchor_contract": POST_OBJECTIVE_TRAJECTORY_ANCHOR_V5_CONTRACT,
                     "edge_physics_sha256": edge_sha,
                     "action_identifiable_source_sha256": source_sha,
+                    "explicit_lazy_stage_a_b0_anchor": True,
+                    "gradient_is_training_target": False,
+                    "gradient_role": "downstream diagnostic and online differentiable solver signal",
                     "development_only": True,
                     "scientific_claim_allowed": False,
                     "final_checkpoint_allowed": False,
@@ -214,6 +243,24 @@ def main() -> None:
                 }
             )
             report.write_text(
+                json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
+                encoding="utf-8",
+            )
+        pause = out / "PAUSED_RUN.json"
+        if pause.is_file():
+            payload = json.loads(pause.read_text(encoding="utf-8"))
+            payload.update(
+                {
+                    "architecture": COUNTERFACTUAL_FIRST_MODEL_CONTRACT,
+                    "counterfactual_stage_a_contract": COUNTERFACTUAL_STAGE_A_V5_CONTRACT,
+                    "oracle_flow_isolation_contract": ORACLE_FLOW_ISOLATION_CONTRACT,
+                    "edge_physics_sha256": edge_sha,
+                    "explicit_lazy_stage_a_b0_anchor": True,
+                    "gradient_is_training_target": False,
+                    "scientific_claim_allowed": False,
+                }
+            )
+            pause.write_text(
                 json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
                 encoding="utf-8",
             )
