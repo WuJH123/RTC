@@ -1,7 +1,7 @@
 """Shared construction/lineage helpers for the current counterfactual-first V128 Development model.
 
 Training and every smoke/dev audit must rebuild the same model class and bind the same frozen
-edge artifact plus source contracts.  Audit construction may use unit placeholder numerical
+edge artifact plus source contracts. Audit construction may use unit placeholder numerical
 scales because source-strict stage loading immediately restores the trained temporal/direct
 scale buffers from the checkpoint.
 """
@@ -19,13 +19,16 @@ from .step2_counterfactual_first_v128 import (
     COUNTERFACTUAL_FIRST_MODEL_CONTRACT,
     COUNTERFACTUAL_FIRST_TRAINING_CONTRACT,
     DIRECT_ACTION_FLOW_SCALE_CONTRACT,
-    DIRECT_ACTION_FLOW_WARMUP_CONTRACT,
-    JOINT_DIRECT_STAGE_CONTRACT,
-    ORACLE_FLOW_TRANSITION_CONTRACT,
     build_counterfactual_first_v128_model_from_graph,
 )
+from .step2_counterfactual_training_v3 import (
+    COUNTERFACTUAL_STAGE_A_V3_CONTRACT,
+    DIRECT_FLOW_A0_V3_CONTRACT,
+    JOINT_DIRECT_A2_V3_CONTRACT,
+    ORACLE_HYDRAULIC_A1_V3_CONTRACT,
+)
 
-CURRENT_DEV_CONTEXT_CONTRACT = "PROJECT7_V128_COUNTERFACTUAL_FIRST_DEV_CONTEXT_V3"
+CURRENT_DEV_CONTEXT_CONTRACT = "PROJECT7_V128_COUNTERFACTUAL_FIRST_DEV_CONTEXT_V4_STAGE_A_V3"
 
 
 def sha256_file(path: str | Path) -> str:
@@ -41,6 +44,7 @@ def action_identifiable_source_sha256() -> str:
     digest = hashlib.sha256()
     for module_name in (
         "rtc.step2_counterfactual_first_v128",
+        "rtc.step2_counterfactual_training_v3",
         "rtc.step2_action_identifiable_v128",
         "rtc.step2_action_flow_warmup_v128",
         "rtc.step2_differentiable_v128_edge",
@@ -67,9 +71,10 @@ def extend_action_identifiable_stage_lineage(
             "counterfactual_first_model_contract": COUNTERFACTUAL_FIRST_MODEL_CONTRACT,
             "counterfactual_first_training_contract": COUNTERFACTUAL_FIRST_TRAINING_CONTRACT,
             "direct_action_flow_scale_contract": DIRECT_ACTION_FLOW_SCALE_CONTRACT,
-            "direct_action_flow_warmup_contract": DIRECT_ACTION_FLOW_WARMUP_CONTRACT,
-            "oracle_flow_transition_contract": ORACLE_FLOW_TRANSITION_CONTRACT,
-            "joint_direct_stage_contract": JOINT_DIRECT_STAGE_CONTRACT,
+            "counterfactual_stage_a_contract": COUNTERFACTUAL_STAGE_A_V3_CONTRACT,
+            "direct_flow_a0_contract": DIRECT_FLOW_A0_V3_CONTRACT,
+            "oracle_hydraulic_a1_contract": ORACLE_HYDRAULIC_A1_V3_CONTRACT,
+            "joint_direct_a2_contract": JOINT_DIRECT_A2_V3_CONTRACT,
             "gradient_is_training_target": False,
         }
     )
