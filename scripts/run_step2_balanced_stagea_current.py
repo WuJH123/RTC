@@ -16,10 +16,11 @@ import rtc.step2_stagea_balanced_v128 as balanced
 CURRENT_BALANCED_RUN_CONTRACT = (
     "PROJECT7_V128_CURRENT_COUNTERFACTUAL_FIRST_BALANCED_STAGE_A_DEV_V1"
 )
+_BASE_SOURCE_SHA256 = current._enhanced_source_sha256
 
 
 def _balanced_source_sha256() -> str:
-    base = current._enhanced_source_sha256()
+    base = _BASE_SOURCE_SHA256()
     raw = getattr(balanced, "__file__", None)
     if raw is None:
         raise RuntimeError("cannot fingerprint balanced Stage-A source module")
