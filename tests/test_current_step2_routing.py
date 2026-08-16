@@ -15,6 +15,7 @@ CURRENT_LINT = ROOT / "configs" / "project7_current_lint_surface.json"
 CURRENT_LINT_RUNNER = ROOT / "scripts" / "lint_current_surface.py"
 PYPROJECT = ROOT / "pyproject.toml"
 PROFILE_RUNNER = ROOT / "scripts" / "run_step2_v128_current_profiles.py"
+CURRENT_BALANCED_RUNNER = ROOT / "scripts" / "run_step2_balanced_stagea_current.py"
 CURRENT_INTERNAL_RUNNER = ROOT / "scripts" / "run_step2_action_identifiable_current.py"
 OBSOLETE_V128_RUNNER = ROOT / "scripts" / "run_step2_v128_control_4060.py"
 V128_SEVEN = ROOT / "scripts" / "run_seven_strategies_v128.py"
@@ -119,7 +120,7 @@ def test_project7_registry_has_one_current_user_surface_and_complete_dev_diagnos
 
 def test_current_lint_surface_is_high_signal_and_excludes_archival_style_debt() -> None:
     payload = json.loads(CURRENT_LINT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_V7_STAGE_RANKING_ACTIVE_ONLY"
+    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_V8_BALANCED_STAGE_A_ACTIVE_ONLY"
     assert payload["full_repository_ruff_is_gate"] is False
     assert payload["current_surface_ruff_is_gate"] is True
     assert payload["rule_select"] == ["E4", "E7", "E9", "F"]
@@ -128,6 +129,7 @@ def test_current_lint_surface_is_high_signal_and_excludes_archival_style_debt() 
     required = {
         "scripts/lint_current_surface.py",
         "scripts/run_step2_current.py",
+        "scripts/run_step2_balanced_stagea_current.py",
         "scripts/run_step2_action_identifiable_current.py",
         "scripts/audit_step2_actuator_flow_effect_current.py",
         "scripts/audit_step2_direct_hydraulic_effect_current.py",
@@ -140,6 +142,7 @@ def test_current_lint_surface_is_high_signal_and_excludes_archival_style_debt() 
         "src/rtc/step2_action_identifiable_v128.py",
         "src/rtc/step2_counterfactual_first_v128.py",
         "src/rtc/step2_counterfactual_training_v5.py",
+        "src/rtc/step2_stagea_balanced_v128.py",
         "src/rtc/step2_oracle_isolation_v128.py",
         "src/rtc/step2_current_dev_context_v128.py",
         "src/rtc/step2_train_v128_exact.py",
@@ -148,6 +151,7 @@ def test_current_lint_surface_is_high_signal_and_excludes_archival_style_debt() 
         "src/rtc/spatial_diagnostics_v128.py",
         "src/rtc/step2_spatial_audit_v128.py",
         "src/rtc/step2_gradient_audit_v128_dev.py",
+        "tests/test_step2_stagea_balanced_v128.py",
         "tests/test_v128_counterfactual_first.py",
         "tests/test_v128_oracle_isolation.py",
     }
@@ -176,8 +180,11 @@ def test_current_preflight_alias_and_development_version_are_installed() -> None
 
 def test_current_wrappers_pin_the_selected_counterfactual_implementation() -> None:
     current_text = CURRENT_STEP2.read_text(encoding="utf-8")
+    balanced_text = CURRENT_BALANCED_RUNNER.read_text(encoding="utf-8")
     enhanced_text = CURRENT_INTERNAL_RUNNER.read_text(encoding="utf-8")
-    assert "run_step2_action_identifiable_current import main" in current_text
+    assert "run_step2_balanced_stagea_current import main" in current_text
+    assert "run_step2_action_identifiable_current as current" in balanced_text
+    assert "train_counterfactual_first_stage_a_balanced_v128" in balanced_text
     assert "run_step2_v128_current_profiles as runner" in enhanced_text
     assert "derive_direct_response_scales_v128" in enhanced_text
     assert "train_counterfactual_first_stage_a_v5" in enhanced_text
