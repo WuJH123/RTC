@@ -241,7 +241,9 @@ def train_direct_action_flow_a0_v4(
                     true_delta,
                     model.actuator.direct_action_flow_scale[actuator],
                 )
-                losses.append(loss); magnitudes.append(magnitude); directions.append(direction)
+                losses.append(loss)
+                magnitudes.append(magnitude)
+                directions.append(direction)
                 selected_pairs += 1
                 direct_nonzero += int(abs(float(true_delta.detach().cpu())) > _DIRECT_EFFECT_FLOOR)
             effect = torch.stack(losses).mean()
@@ -494,7 +496,9 @@ def train_joint_direct_a2_v4(
                         true_delta=target_state[1] - target_state[0], state_weights=state_weights
                     )
                     losses.append(flow_loss + state_loss)
-                    flow_mags.append(flow_mag); flow_dirs.append(flow_dir); state_losses.append(state_loss)
+                    flow_mags.append(flow_mag)
+                    flow_dirs.append(flow_dir)
+                    state_losses.append(state_loss)
                     selected_pairs += 1
                 direct = torch.stack(losses).mean()
                 if not bool(torch.isfinite(direct)):
