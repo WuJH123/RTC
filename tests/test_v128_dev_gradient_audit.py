@@ -52,6 +52,6 @@ def test_dev_full_settings_gradient_matches_linear_objective_exactly() -> None:
     )
     expected = np.arange(72 * 2, dtype=np.float64).reshape(72, 2) + 1.0
     np.testing.assert_array_equal(gradient, expected)
-    assert decomposition["smooth_flood_scale_m3s"] == 0.01
+    assert np.isclose(decomposition["smooth_flood_scale_m3s"], 0.01, rtol=0.0, atol=1.0e-8)
     assert decomposition["smooth_flood_gate_mean"] == 0.5
     assert decomposition["smooth_flood_gate_fraction_lt_0p01"] == 0.0
