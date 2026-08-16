@@ -1,9 +1,8 @@
 """Shared construction/lineage helpers for the current action-identifiable V128 Development model.
 
 Training and every smoke/dev audit must reconstruct the same model class and must include the
-same edge-physics artifact/source fingerprints in stage-checkpoint lineage.  Keeping this logic
-in one module prevents the historical failure where training advanced but audit entrypoints
-silently rebuilt an older V128 architecture.
+same edge-physics artifact/source fingerprints in stage-checkpoint lineage. Keeping this logic
+in one module prevents training from advancing while audits silently rebuild an older model.
 """
 from __future__ import annotations
 
@@ -15,6 +14,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from .edge_physics_current_v128 import load_edge_physics_artifact_v128
+from .step2_action_flow_warmup_v128 import ACTION_FLOW_WARMUP_CONTRACT
 from .step2_action_identifiable_v128 import (
     ACTION_CONDITIONED_FLOW_SCALE_CONTRACT,
     ACTION_IDENTIFIABLE_MODEL_CONTRACT,
@@ -22,7 +22,7 @@ from .step2_action_identifiable_v128 import (
     build_action_identifiable_v128_model_from_graph,
 )
 
-CURRENT_DEV_CONTEXT_CONTRACT = "PROJECT7_V128_ACTION_IDENTIFIABLE_DEV_CONTEXT_V1"
+CURRENT_DEV_CONTEXT_CONTRACT = "PROJECT7_V128_ACTION_IDENTIFIABLE_DEV_CONTEXT_V2_FLOW_WARMUP"
 
 
 def sha256_file(path: str | Path) -> str:
@@ -38,6 +38,7 @@ def action_identifiable_source_sha256() -> str:
     digest = hashlib.sha256()
     for module_name in (
         "rtc.step2_action_identifiable_v128",
+        "rtc.step2_action_flow_warmup_v128",
         "rtc.step2_differentiable_v128_edge",
         "rtc.edge_physics_current_v128",
     ):
@@ -61,6 +62,7 @@ def extend_action_identifiable_stage_lineage(
             "action_identifiable_source_sha256": action_identifiable_source_sha256(),
             "action_identifiable_model_contract": ACTION_IDENTIFIABLE_MODEL_CONTRACT,
             "action_identifiable_training_contract": ACTION_IDENTIFIABLE_TRAINING_CONTRACT,
+            "action_flow_warmup_contract": ACTION_FLOW_WARMUP_CONTRACT,
             "flow_scale_contract": ACTION_CONDITIONED_FLOW_SCALE_CONTRACT,
         }
     )
