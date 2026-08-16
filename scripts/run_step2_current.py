@@ -1,10 +1,10 @@
 """Stable current Project7 Step2 entrypoint.
 
-The current smoke/dev surface is the diagnostic-driven action-identifiable V128 repair.  It
-requires a frozen edge-physics artifact and combines FIT-only action-conditioned flow scaling,
-explicit actuator-setting response, edge-aware hydraulic propagation and counterfactual
-action-effect training.  ``--profile full`` is intentionally blocked until this Development
-candidate passes the existing held-out ranking/gradient/spatial/closed-loop gates.
+The current smoke/dev surface keeps the counterfactual-first V128 surrogate and uses balanced,
+FIT-only same-prefix direct supervision in Stage A.  D2 direct pairs are prioritised for non-zero
+authoritative response, actuator coverage and response magnitude before B0 is considered.
+``--profile full`` remains intentionally blocked until Development direct-flow, strict q-only
+hydraulic, trajectory/ranking and closed-loop gates pass.
 
 Raw Torch Chrome tracing remains disabled on the 16-GB Windows workstation because its trace
 export can consume tens of GB of virtual/private memory after successful training.  Use normal
@@ -18,7 +18,7 @@ from rtc.step2_lazy_stream_v128 import install_v128_lazy_streaming
 
 install_v128_lazy_streaming()
 
-from run_step2_action_identifiable_current import main as _current_main  # noqa: E402
+from run_step2_balanced_stagea_current import main as _current_main  # noqa: E402
 
 
 def main() -> None:
