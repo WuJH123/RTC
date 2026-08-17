@@ -1,19 +1,23 @@
-"""One-sided HOLD-relative admission calibration for Project7 Direct-TFV MPC.
+"""Optimizer-aware one-sided admission calibration for Project7 Direct-TFV MPC.
 
-The continuous Step3 optimizer selects an extremal minimum from a large differentiable action
-space. Even when the value model is approximately unbiased on cached candidates, this selection can
-amplify optimistic residuals (optimizer's curse). The authoritative Development H360 replay exposed
-exactly this failure mode: strong negative predictions can be useful, while weak negative extrema can
-be false-beneficial.
+The scientific failure exposed by Development is selection-induced optimism: cached D3 candidates
+look reasonably safe, but the continuous L-BFGS-B optimizer searches a much larger action space and
+selects extremal negative predictions. Exact same-prefix H360 SWMM replay showed that weak optimizer
+minima can be false-beneficial even with zero replay/prefix error.
 
-This module keeps the scientific objective unchanged (system-wide cumulative TFV only). It derives a
-one-sided residual margin from a rainfall-disjoint subset of the existing D3 HOLD-reference holdout
-and admits an action only when
+The canonical margin therefore combines two Development-only evidence sources:
 
-    predicted_delta_tfv + calibrated_upper_residual_margin < 0.
+1. rainfall-disjoint D3 HOLD-reference cached residuals, which quantify the base value-model error;
+2. exact same-prefix SWMM residuals for *optimizer-selected* H360 plans, which quantify the
+   distribution shift created by continuous optimization itself.
 
-The remaining D3 HOLD-reference groups are retained as an admission audit. No Validation/Final data,
-PFV/peak objective, rule baseline, future realised rainfall or SWMM call is introduced online.
+The online objective remains system-wide cumulative TFV only. Step3 executes a plan only when
+
+    predicted_delta_tfv + one_sided_residual_margin < 0.
+
+No PFV/peak/energy objective, rule-baseline imitation, future realised rainfall or online SWMM call is
+introduced. Optimizer replay used for calibration is Development evidence and cannot simultaneously
+serve as independent validation evidence.
 """
 from __future__ import annotations
 
@@ -34,10 +38,11 @@ from .step2_train_response_v60 import InputNormalizationV60
 
 
 DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_D3_HOLD_ONE_SIDED_ADMISSION_V1"
+    "PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1"
 )
 DIRECT_TFV_ADMISSION_COVERAGE = 0.90
 DIRECT_TFV_ADMISSION_SPLIT_SEED = 4217
+DIRECT_TFV_REPLAY_CONTRACT = "PROJECT7_DIRECT_TFV_SAME_PREFIX_H360_AUTHORITATIVE_SWMM_REPLAY_V1"
 
 
 def _stable_key(text: str, seed: int) -> str:
@@ -50,7 +55,7 @@ def split_d3_holdout_for_admission(
     *,
     seed: int = DIRECT_TFV_ADMISSION_SPLIT_SEED,
 ) -> tuple[list[str], list[str], dict[str, Any]]:
-    """Split D3 holdout by rainfall group so calibration and audit never share rainfall forcing."""
+    """Split D3 holdout by rainfall group so base calibration and audit do not share forcing."""
 
     by_group: dict[str, list[str]] = {}
     for name in names:
@@ -63,9 +68,7 @@ def split_d3_holdout_for_admission(
     calibration_group_count = max(1, len(groups) // 2)
     calibration_groups = set(groups[:calibration_group_count])
     audit_groups = set(groups[calibration_group_count:])
-    calibration = sorted(
-        name for group in calibration_groups for name in by_group[group]
-    )
+    calibration = sorted(name for group in calibration_groups for name in by_group[group])
     audit = sorted(name for group in audit_groups for name in by_group[group])
     if not calibration or not audit:
         raise ValueError("D3 admission calibration/audit split must both be non-empty")
@@ -113,14 +116,7 @@ def _score_group(
     with torch.no_grad():
         output = _forward_candidates(model, batch, indices, graph_tensors=graph_tensors)
     prediction = output.total_delta_tfv_m3.detach().cpu().numpy().astype(np.float64)
-    truth = (
-        batch.true_delta_tfv_m3[0]
-        .index_select(0, indices)
-        .detach()
-        .cpu()
-        .numpy()
-        .astype(np.float64)
-    )
+    truth = batch.true_delta_tfv_m3[0].index_select(0, indices).detach().cpu().numpy().astype(np.float64)
     change_count = (
         _candidate_change_counts(batch)
         .index_select(0, indices)
@@ -132,6 +128,73 @@ def _score_group(
     return prediction, truth, change_count
 
 
+def _optimizer_replay_residuals(
+    report: Mapping[str, Any],
+    *,
+    density_floor: int,
+) -> tuple[list[float], list[float], dict[str, Any]]:
+    if str(report.get("contract", "")) != DIRECT_TFV_REPLAY_CONTRACT:
+        raise ValueError("Direct-TFV admission requires the exact same-prefix H360 replay contract")
+    if report.get("development_only") is not True or report.get("swmm_launched") is not True:
+        raise ValueError("optimizer replay calibration must be authoritative Development SWMM evidence")
+    if int(report.get("prefix_mismatch_count", -1)) != 0:
+        raise ValueError("optimizer replay calibration contains prefix mismatches")
+    rows = report.get("results")
+    if not isinstance(rows, list) or len(rows) < 4:
+        raise ValueError("optimizer replay calibration requires at least four exact H360 plans")
+
+    residuals: list[float] = []
+    dense: list[float] = []
+    event_ids: set[str] = set()
+    plan_hashes: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("optimizer replay result is not an object")
+        for key in (
+            "predicted_delta_tfv_m3",
+            "true_delta_tfv_h360_m3",
+            "active_facility_count",
+            "plan_sha256",
+        ):
+            if key not in row:
+                raise ValueError(f"optimizer replay result lacks {key}")
+        if float(row.get("prefix_state_max_abs_difference", 0.0)) != 0.0:
+            raise ValueError("optimizer replay state prefix differs")
+        if float(row.get("prefix_target_max_abs_difference", 0.0)) != 0.0:
+            raise ValueError("optimizer replay target prefix differs")
+        if float(row.get("prefix_current_max_abs_difference", 0.0)) != 0.0:
+            raise ValueError("optimizer replay current-setting prefix differs")
+        if float(row.get("prefix_statistics_max_abs_difference", 0.0)) != 0.0:
+            raise ValueError("optimizer replay cumulative-statistics prefix differs")
+        if float(row.get("hold_reference_target_max_abs_difference", 0.0)) != 0.0:
+            raise ValueError("optimizer replay HOLD target differs from logged reference")
+        if abs(float(row.get("candidate_branch_routing_error_pct", 0.0))) > 1.0e-9:
+            raise ValueError("optimizer replay candidate branch has routing error")
+        if abs(float(row.get("hold_branch_routing_error_pct", 0.0))) > 1.0e-9:
+            raise ValueError("optimizer replay HOLD branch has routing error")
+
+        predicted = float(row["predicted_delta_tfv_m3"])
+        truth = float(row["true_delta_tfv_h360_m3"])
+        residual = truth - predicted
+        if not math.isfinite(residual):
+            raise ValueError("optimizer replay residual is non-finite")
+        residuals.append(residual)
+        if int(row["active_facility_count"]) >= int(density_floor):
+            dense.append(residual)
+        event_ids.add(str(row.get("event_id", "UNKNOWN")))
+        plan_hash = str(row["plan_sha256"])
+        if plan_hash in plan_hashes:
+            raise ValueError("optimizer replay calibration repeats a plan SHA")
+        plan_hashes.add(plan_hash)
+    return residuals, dense, {
+        "optimizer_replay_count": len(residuals),
+        "optimizer_replay_dense_count": len(dense),
+        "optimizer_replay_event_ids": sorted(event_ids),
+        "optimizer_replay_plan_sha256": sorted(plan_hashes),
+        "optimizer_replay_prefix_mismatch_count": 0,
+    }
+
+
 def derive_direct_tfv_admission_calibration(
     model: Any,
     *,
@@ -141,9 +204,10 @@ def derive_direct_tfv_admission_calibration(
     graph: Any,
     device: torch.device,
     action_support: Mapping[str, Any],
+    optimizer_replay_report: Mapping[str, Any],
     coverage: float = DIRECT_TFV_ADMISSION_COVERAGE,
 ) -> dict[str, Any]:
-    """Calibrate optimism margins from D3 HOLD-reference candidates only."""
+    """Combine D3 model residuals with exact optimizer-selected H360 replay residuals."""
 
     if str(action_support.get("joint_density_reference_semantics", "")) != "HOLD_REFERENCE_ONLY":
         raise ValueError("current Direct-TFV admission requires HOLD-reference joint-density support")
@@ -152,10 +216,8 @@ def derive_direct_tfv_admission_calibration(
         int(math.ceil(float(action_support.get("joint_changed_facility_count_q90", 2.0)))),
     )
     static = _graph_tensors(graph, device)
-    all_residuals: list[float] = []
-    dense_residuals: list[float] = []
-    selected_residuals: list[float] = []
-    selected_dense_residuals: list[float] = []
+    d3_residuals: list[float] = []
+    d3_dense_residuals: list[float] = []
     groups = branches = dense_branches = 0
     model.eval()
     for name in names:
@@ -169,62 +231,59 @@ def derive_direct_tfv_admission_calibration(
         )
         residual = truth - prediction
         finite = np.isfinite(residual)
-        all_residuals.extend(residual[finite].tolist())
+        d3_residuals.extend(residual[finite].tolist())
         dense = finite & (change_count >= density_floor)
-        dense_residuals.extend(residual[dense].tolist())
+        d3_dense_residuals.extend(residual[dense].tolist())
         dense_branches += int(np.sum(dense))
-        prediction_with_hold = np.concatenate((np.zeros(1, dtype=np.float64), prediction))
-        selected = int(np.argmin(prediction_with_hold))
-        if selected > 0:
-            index = selected - 1
-            value = float(residual[index])
-            if math.isfinite(value):
-                selected_residuals.append(value)
-                if int(change_count[index]) >= density_floor:
-                    selected_dense_residuals.append(value)
         groups += 1
         branches += len(prediction)
-
     if groups <= 0 or branches <= 0:
         raise ValueError("D3 admission calibration has no usable groups")
-    global_branch_q = _one_sided_conformal_upper(all_residuals, coverage)
-    selected_q = _one_sided_conformal_upper(
-        selected_residuals if selected_residuals else all_residuals,
-        coverage,
-    )
-    if dense_residuals:
-        dense_branch_q = _one_sided_conformal_upper(dense_residuals, coverage)
-    else:
-        dense_branch_q = global_branch_q
-    if selected_dense_residuals:
-        selected_dense_q = _one_sided_conformal_upper(selected_dense_residuals, coverage)
-    else:
-        selected_dense_q = selected_q
 
-    global_margin = max(0.0, global_branch_q, selected_q)
-    dense_margin = max(global_margin, dense_branch_q, selected_dense_q)
+    replay_residuals, replay_dense, replay_meta = _optimizer_replay_residuals(
+        optimizer_replay_report,
+        density_floor=density_floor,
+    )
+    d3_global_q = _one_sided_conformal_upper(d3_residuals, coverage)
+    d3_dense_q = (
+        _one_sided_conformal_upper(d3_dense_residuals, coverage)
+        if d3_dense_residuals
+        else d3_global_q
+    )
+    replay_global_q = _one_sided_conformal_upper(replay_residuals, coverage)
+    replay_dense_q = (
+        _one_sided_conformal_upper(replay_dense, coverage)
+        if replay_dense
+        else replay_global_q
+    )
+
+    global_margin = max(0.0, d3_global_q, replay_global_q)
+    dense_margin = max(global_margin, d3_dense_q, replay_dense_q)
     return {
         "contract": DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT,
         "development_only": True,
-        "reference_semantics": "D3_HOLD_REFERENCE",
+        "reference_semantics": "HOLD_ACTIVE_TARGET_H360",
         "coverage": float(coverage),
         "residual_definition": "true_delta_tfv_m3_minus_predicted_delta_tfv_m3",
         "admission_rule": "predicted_delta_tfv_m3 + one_sided_residual_margin_m3 < 0",
         "density_floor_changed_facilities": int(density_floor),
         "global_margin_m3": float(global_margin),
         "dense_margin_m3": float(dense_margin),
-        "global_branch_residual_quantile_m3": float(global_branch_q),
-        "selected_residual_quantile_m3": float(selected_q),
-        "dense_branch_residual_quantile_m3": float(dense_branch_q),
-        "selected_dense_residual_quantile_m3": float(selected_dense_q),
-        "calibration_groups": int(groups),
-        "calibration_branches": int(branches),
-        "dense_calibration_branches": int(dense_branches),
-        "selected_candidate_residual_count": int(len(selected_residuals)),
-        "selected_dense_residual_count": int(len(selected_dense_residuals)),
+        "d3_branch_residual_quantile_m3": float(d3_global_q),
+        "d3_dense_residual_quantile_m3": float(d3_dense_q),
+        "optimizer_replay_residual_quantile_m3": float(replay_global_q),
+        "optimizer_replay_dense_residual_quantile_m3": float(replay_dense_q),
+        "d3_calibration_groups": int(groups),
+        "d3_calibration_branches": int(branches),
+        "d3_dense_calibration_branches": int(dense_branches),
+        **replay_meta,
         "scientific_role": (
-            "Correct selection-induced optimistic bias of the continuous TFV optimizer; this is a "
-            "one-sided target-residual calibration, not a new objective or rule-baseline imitation"
+            "Correct continuous-optimizer selection-induced optimism using exact same-prefix SWMM "
+            "optimizer residuals, with D3 HOLD residuals as the base-model component"
+        ),
+        "independence_note": (
+            "events listed in optimizer_replay_event_ids are calibration evidence and must not be "
+            "counted as independent post-calibration validation events"
         ),
     }
 
@@ -248,7 +307,7 @@ def evaluate_direct_tfv_admission(
     device: torch.device,
     calibration: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Audit the calibrated admission rule on rainfall-disjoint D3 HOLD-reference groups."""
+    """Audit the final margin on rainfall-disjoint D3 HOLD-reference cached groups."""
 
     static = _graph_tensors(graph, device)
     groups = acted = harmful = beneficial = 0
@@ -286,12 +345,8 @@ def evaluate_direct_tfv_admission(
         "selected_beneficial_fraction": float(beneficial / groups),
         "selected_harmful_fraction": float(harmful / groups),
         "selected_true_delta_tfv_m3": float(np.mean(selected_truth)),
-        "admission_upper_bound_m3_min": (
-            float(np.min(selected_upper)) if selected_upper else 0.0
-        ),
-        "admission_upper_bound_m3_max": (
-            float(np.max(selected_upper)) if selected_upper else 0.0
-        ),
+        "admission_upper_bound_m3_min": float(np.min(selected_upper)) if selected_upper else 0.0,
+        "admission_upper_bound_m3_max": float(np.max(selected_upper)) if selected_upper else 0.0,
     }
 
 
@@ -299,6 +354,8 @@ __all__ = [
     "DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT",
     "DIRECT_TFV_ADMISSION_COVERAGE",
     "DIRECT_TFV_ADMISSION_SPLIT_SEED",
+    "DIRECT_TFV_REPLAY_CONTRACT",
+    "_one_sided_conformal_upper",
     "admission_margin_m3",
     "derive_direct_tfv_admission_calibration",
     "evaluate_direct_tfv_admission",
