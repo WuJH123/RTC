@@ -1,6 +1,6 @@
 {
-  "contract": "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V3",
-  "purpose": "Fail closed on correctness for the maintained selection-aware Direct-TFV Step1-Step2-selection-Step3 Development path without making legacy V128 style debt a current gate.",
+  "contract": "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V4",
+  "purpose": "Fail closed on correctness for the maintained selection-aware Direct-TFV Step1-Step2-selection-Step3-authoritative-Development-runtime path without making legacy V128 style debt a current gate.",
   "full_repository_ruff_is_gate": false,
   "current_surface_ruff_is_gate": true,
   "rule_select": ["E4", "E7", "E9", "F"],
@@ -10,9 +10,13 @@
     "scripts/run_step2_tfv_value_selection_aware_current.py",
     "scripts/run_step2_selection_threshold_current.py",
     "scripts/run_step3_direct_tfv_solver_current.py",
+    "scripts/run_policy_direct_tfv_development.py",
+    "scripts/audit_direct_tfv_closed_loop_current.py",
     "scripts/audit_facility_tfv_influence_current.py",
     "scripts/run_policy_current.py",
     "scripts/run_seven_strategies_current.py",
+    "src/rtc/checkpoint_direct_tfv.py",
+    "src/rtc/controller_direct_tfv.py",
     "src/rtc/step2_tfv_value.py",
     "src/rtc/step2_tfv_value_training.py",
     "src/rtc/step2_tfv_value_training_v3.py",
@@ -27,9 +31,10 @@
     "tests/test_direct_tfv_value.py",
     "tests/test_direct_tfv_selection_aware.py",
     "tests/test_direct_tfv_step3_trust_region.py",
+    "tests/test_direct_tfv_runtime_adapter.py",
     "tests/test_facility_tfv_influence.py",
     "tests/test_facility_tfv_influence_cli.py"
   ],
-  "legacy_policy": "V128 hydraulic-world-model modules, Direct-TFV V2 runner, and V1 scalar residual guard remain reproducibility/ablation surfaces and are not canonical current lint paths.",
+  "legacy_policy": "V128 hydraulic-world-model modules, Direct-TFV V2 runner, V1 scalar residual guard and V127 policy internals remain reproducibility/ablation surfaces; only the mature target-latch/write-readback execution shell is reused.",
   "non_gate_historical_debt_policy": "Do not mass-format archival code during scientific debugging."
 }
