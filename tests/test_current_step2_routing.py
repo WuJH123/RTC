@@ -40,6 +40,7 @@ def test_current_contract_is_calibrated_direct_tfv_v6() -> None:
     assert payload["selected_implementation_contract"] == "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2"
     assert payload["training_contract"] == "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5"
     assert payload["step3_contract"] == "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V5"
+    assert payload["admission_contract"] == "PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1"
     assert "upper bound < 0" in payload["step3_current"]["admission"]
     assert payload["action_contract"]["all_writable_actuators_screened_every_decision"] is True
     assert payload["scientific_bottleneck"]["classification"] == "DEVELOPMENT_NO_CONTROL_BENEFIT_INCONSISTENT"
@@ -51,7 +52,7 @@ def test_execution_registry_routes_calibration_before_step3() -> None:
     assert current["research_contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V6"
     assert current["training_contract"] == "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5"
     assert current["step3_contract"] == "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V5"
-    assert current["admission_contract"] == "PROJECT7_DIRECT_TFV_D3_HOLD_ONE_SIDED_ADMISSION_V1"
+    assert current["admission_contract"] == "PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1"
     assert current["admission_calibration"] == "scripts/calibrate_direct_tfv_admission_current.py"
     assert current["runtime_enabled"] is False
     assert current["validation_enabled"] is False
@@ -67,7 +68,7 @@ def test_current_step2_wrapper_still_routes_to_v5_core_runner() -> None:
     assert "single_facility_coverage_count" in direct
 
 
-def test_current_cli_surfaces_expose_calibrated_admission() -> None:
+def test_current_cli_surfaces_expose_optimizer_aware_admission() -> None:
     step2 = _help(CURRENT_STEP2)
     for argument in (
         "--profile {smoke,dev}", "--graph", "--cache-manifest", "--d4-fit-cache",
@@ -75,7 +76,10 @@ def test_current_cli_surfaces_expose_calibrated_admission() -> None:
     ):
         assert argument in step2
     calibration = _help(ADMISSION)
-    for argument in ("--checkpoint", "--cache-manifest", "--causal-store", "--causal-state-store", "--coverage", "--out"):
+    for argument in (
+        "--checkpoint", "--optimizer-replay-report", "--cache-manifest", "--causal-store",
+        "--causal-state-store", "--coverage", "--out",
+    ):
         assert argument in calibration
     step3 = _help(STEP3_RUNNER)
     for argument in ("--checkpoint", "--admission-calibration", "--active-support-quantile", "--max-groups"):
