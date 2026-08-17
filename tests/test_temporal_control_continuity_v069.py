@@ -14,7 +14,11 @@ from rtc.project7_contract import (
     validate_project7_runtime_config,
 )
 from rtc.runtime import choose_first_move, command_continuity
-from rtc.runtime_controller_guard import ContinuityGuardController
+from rtc.runtime_controller_guard import (
+    FLOAT32_SETTING_EQUIVALENCE_ATOL,
+    FLOAT32_SETTING_EQUIVALENCE_CONTRACT,
+    ContinuityGuardController,
+)
 from rtc.tfv_mpc import _project_block_settings_
 from rtc.timing_freeze import freeze_phase0_timing
 
@@ -146,6 +150,48 @@ def test_proposed_outer_guard_refuses_illegal_jump() -> None:
     )
     with pytest.raises(RuntimeError, match="outside its declared temporal-continuity contract"):
         guard(_observation(0.0))
+
+
+def test_outer_guard_preserves_float32_equivalent_scored_boundary_action() -> None:
+    # This reproduces the authoritative Direct-TFV failure: a float64 SWMM latch that becomes
+    # exactly 0.5 when represented as float32, followed by a legally scored move to 1.0.
+    anchor = 0.4999999972060323
+    guard = ContinuityGuardController(
+        _ConstantController(1.0),
+        max_delta_per_update=0.5,
+        allow_projection=False,
+        enforce_current_delta=False,
+    )
+    action = guard(_observation(anchor, target=anchor))
+    assert action.settings["A1"] == 1.0
+    assert action.diagnostics is not None
+    diagnostics = action.diagnostics
+    assert diagnostics["continuity_projection_applied"] is False
+    assert diagnostics["continuity_numerical_equivalence_applied"] is True
+    assert diagnostics["continuity_numeric_equivalence_contract"] == (
+        FLOAT32_SETTING_EQUIVALENCE_CONTRACT
+    )
+    assert diagnostics["continuity_numeric_atol"] == FLOAT32_SETTING_EQUIVALENCE_ATOL
+    assert diagnostics["continuity_raw_to_projected_max"] == pytest.approx(
+        2.7939677238464355e-09, abs=1.0e-12
+    )
+    assert diagnostics["continuity_raw_target_excess_max"] == pytest.approx(
+        2.7939677238464355e-09, abs=1.0e-12
+    )
+    assert diagnostics["command_delta_from_previous_target_max"] == pytest.approx(
+        0.5000000027939677, abs=1.0e-12
+    )
+
+
+def test_outer_guard_still_refuses_material_slew_excess() -> None:
+    guard = ContinuityGuardController(
+        _ConstantController(0.900001),
+        max_delta_per_update=0.5,
+        allow_projection=False,
+        enforce_current_delta=False,
+    )
+    with pytest.raises(RuntimeError, match="outside its declared temporal-continuity contract"):
+        guard(_observation(0.4, target=0.4))
 
 
 def test_project7_runtime_contract_freezes_60_120_360() -> None:
