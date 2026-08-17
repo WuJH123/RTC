@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 import time
 
-import numpy as np
 import torch
 
 from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
