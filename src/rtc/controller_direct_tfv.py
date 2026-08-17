@@ -1,9 +1,8 @@
-"""Authoritative-runtime adapter for the current Direct-TFV trust-region MPC.
+"""Authoritative-runtime adapter for the current core Direct-TFV receding MPC.
 
-The mature Project7 target-latch controller already provides causal Step1 history, rainfall forecast,
+The mature Project7 target-latch controller provides causal Step1 history, rainfall forecast,
 600-s decision timing, target-write verification and score-equals-execute semantics. This module
-reuses that execution shell but replaces the old V122/V127 policy with the current Direct-TFV
-selection-aware value model and screened trust-region Step3.
+uses that execution shell while the policy itself is the current all-109 Direct-TFV receding MPC.
 """
 from __future__ import annotations
 
@@ -14,10 +13,10 @@ import torch
 
 from .closed_loop import CausalObservation, ControllerAction
 from .controller_v122 import V122TorchMPCController
-from .step3_tfv_value_mpc_v2 import DIRECT_TFV_STEP3_CONTRACT, DirectTFVTrustRegionMPC
+from .step3_tfv_value_mpc_v3 import DIRECT_TFV_STEP3_CONTRACT, DirectTFVRecedingMPC
 
 
-DIRECT_TFV_CONTROLLER_CONTRACT = "PROJECT7_DIRECT_TFV_TARGET_LATCH_CONTROLLER_V1"
+DIRECT_TFV_CONTROLLER_CONTRACT = "PROJECT7_DIRECT_TFV_TARGET_LATCH_CONTROLLER_V2"
 
 
 @dataclass(frozen=True)
@@ -32,17 +31,17 @@ class _RuntimeMPCResult:
     gradient_norm: float
     solver_elapsed_seconds: float
     screened_facility_count: int
+    predicted_beneficial_facility_count: int
     active_facility_count: int
     first_move_changed_facility_count: int
     maximum_support_ratio: float
-    minimum_predicted_improvement_m3: float
     scipy_message: str
 
 
 class DirectTFVRuntimeMPCAdapter:
     """Match the validated target-latch controller's historical MPC call signature."""
 
-    def __init__(self, inner: DirectTFVTrustRegionMPC) -> None:
+    def __init__(self, inner: DirectTFVRecedingMPC) -> None:
         self.inner = inner
         self.last_result: _RuntimeMPCResult | None = None
 
@@ -69,7 +68,7 @@ class DirectTFVRuntimeMPCAdapter:
             current_settings=current_settings,
             active_target=previous_requested_settings,
         )
-        valid = result.selected_source == "DIRECT_TFV_TRUST_REGION_LBFGSB"
+        valid = result.selected_source == "DIRECT_TFV_RECEDING_LBFGSB"
         wrapped = _RuntimeMPCResult(
             settings=result.settings,
             predicted_delta_tfv_m3=float(result.predicted_delta_tfv_m3),
@@ -81,10 +80,10 @@ class DirectTFVRuntimeMPCAdapter:
             gradient_norm=float(result.gradient_norm),
             solver_elapsed_seconds=float(result.elapsed_seconds),
             screened_facility_count=int(result.screened_facility_count),
+            predicted_beneficial_facility_count=int(result.predicted_beneficial_facility_count),
             active_facility_count=int(result.active_facility_count),
             first_move_changed_facility_count=int(result.first_move_changed_facility_count),
             maximum_support_ratio=float(result.maximum_support_ratio),
-            minimum_predicted_improvement_m3=float(result.minimum_predicted_improvement_m3),
             scipy_message=str(result.scipy_message),
         )
         self.last_result = wrapped
@@ -94,7 +93,7 @@ class DirectTFVRuntimeMPCAdapter:
 class DirectTFVAuthoritativeController(V122TorchMPCController):
     """Execute the exact first target scored by the current Direct-TFV Step3."""
 
-    def __init__(self, *args: Any, mpc: DirectTFVTrustRegionMPC, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, mpc: DirectTFVRecedingMPC, **kwargs: Any) -> None:
         adapter = DirectTFVRuntimeMPCAdapter(mpc)
         super().__init__(*args, mpc=adapter, **kwargs)
         self._direct_mpc_adapter = adapter
@@ -107,7 +106,7 @@ class DirectTFVAuthoritativeController(V122TorchMPCController):
         diagnostics["direct_tfv_controller_contract"] = DIRECT_TFV_CONTROLLER_CONTRACT
         diagnostics["direct_tfv_step3_contract"] = DIRECT_TFV_STEP3_CONTRACT
         diagnostics["all_109_facilities_screened_contract"] = True
-        diagnostics["trust_region_from_trainfit_support"] = True
+        diagnostics["separate_selection_threshold_used"] = False
         result = self._direct_mpc_adapter.last_result
         if result is not None:
             diagnostics.update(
@@ -119,18 +118,18 @@ class DirectTFVAuthoritativeController(V122TorchMPCController):
                     "gradient_norm": result.gradient_norm,
                     "solver_elapsed_seconds": result.solver_elapsed_seconds,
                     "screened_facility_count": result.screened_facility_count,
+                    "predicted_beneficial_facility_count": result.predicted_beneficial_facility_count,
                     "active_facility_count": result.active_facility_count,
                     "first_move_changed_facility_count": result.first_move_changed_facility_count,
                     "maximum_support_ratio": result.maximum_support_ratio,
-                    "minimum_predicted_improvement_m3": result.minimum_predicted_improvement_m3,
                     "scipy_message": result.scipy_message[:2000],
                 }
             )
         source = str(action.source)
         if source == "MPC_V122":
-            source = "MPC_DIRECT_TFV_TRUST_REGION"
+            source = "MPC_DIRECT_TFV_RECEDING"
         elif source == "PASSIVE_MPC_NO_PREDICTED_BENEFIT":
-            source = "HOLD_DIRECT_TFV_NO_CONFIDENT_BENEFIT"
+            source = "HOLD_DIRECT_TFV_NO_PREDICTED_BENEFIT"
         elif source.endswith("_V122"):
             source = source[:-5] + "_DIRECT_TFV"
         return ControllerAction(settings=action.settings, source=source, diagnostics=diagnostics)
