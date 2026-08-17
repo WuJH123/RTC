@@ -1,66 +1,48 @@
 {
-  "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V6",
-  "status": "CURRENT_DEVELOPMENT_CALIBRATED_STEP3_NOT_POLICY_LOCKED",
+  "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V7",
+  "status": "CURRENT_DEVELOPMENT_OPTIMIZER_CONSISTENT_STEP3_NOT_POLICY_LOCKED",
   "selected_implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
   "training_contract": "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5",
-  "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V5",
+  "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V6",
   "admission_contract": "PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1",
+  "sequence_support_contract": "PROJECT7_DIRECT_TFV_D3_HOLD_JOINT_SEQUENCE_SUPPORT_V1",
   "authoritative_truth": "SWMM",
-  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, learn all-109 action effects on future system-wide cumulative TFV, optimize inside D3-HOLD TrainFit support, execute only when an optimizer-aware one-sided H360 residual upper margin remains beneficial, then re-observe",
+  "research_goal": "optimizer-consistent all-109 Direct-TFV receding MPC under sparse causal sensing",
   "core_pipeline": {
     "step1": "causal sparse sensing -> current full-network hydraulic reconstruction",
     "step2": "causal current state + causal rainfall + complete H360 reference/candidate actions -> authoritative exact delta TFV",
-    "admission_calibration": "combine a finite-sample 90% one-sided D3 HOLD cached-residual bound with the maximum observed exact same-prefix H360 residual from optimizer-selected Development plans",
-    "step3": "screen all 109 facilities, optimize q95-supported joint actions, execute iff predicted delta TFV + calibrated one-sided residual margin < 0 and the first 10-minute block changes; otherwise HOLD",
+    "sequence_support": "derive label-independent first-block action mass, H120 action mass and H120 temporal-variation q90/q95/q99/max only from D3 TrainFit HOLD-reference joint branches",
+    "admission_calibration": "finite-sample one-sided D3 HOLD residual bound plus empirical maximum exact optimizer-replay optimism residual without a replay coverage claim",
+    "step3": "screen all 109 facilities; optimize q95-supported actions; contract each decoded H120 sequence differentiably into D3-HOLD joint temporal support; execute iff calibrated delta-TFV upper bound < 0 and first move changes; otherwise HOLD",
     "swmm": "authoritative offline label/evaluation/calibration truth only; never called inside online candidate search"
   },
-  "time_contract": {
-    "model_step_seconds": 300,
-    "control_update_seconds": 600,
-    "prediction_horizon_minutes": 360,
-    "free_control_horizon_minutes": 120,
-    "execute_minutes": 10
-  },
+  "time_contract": {"model_step_seconds": 300, "control_update_seconds": 600, "prediction_horizon_minutes": 360, "free_control_horizon_minutes": 120, "execute_minutes": 10},
   "action_contract": {
     "actuators": 109,
     "all_writable_actuators_screened_every_decision": true,
     "engineering_bounds": "physical min/max plus <=0.5 setting movement per 10-minute update",
-    "support_bounds": "per-facility TrainFit q95 action magnitude plus D3-HOLD joint-density q95, never above observed D3-HOLD joint maximum",
+    "per_facility_support": "TrainFit q95 first-move and sequence magnitude",
+    "joint_density_support": "D3-HOLD q95 changed-facility count",
+    "joint_temporal_support": "D3-HOLD q95 first-block L1 mass, H120 L1 mass and H120 temporal total variation, enforced inside the differentiable decoder",
     "performance_tuned_threshold": false,
-    "statistical_admission": "D3 HOLD cached residuals use a finite-sample 90% one-sided split-conformal upper bound when sample size supports it; the small optimizer-replay sample contributes only its maximum observed true-minus-predicted residual and makes no coverage claim"
+    "score_equals_execute": true
   },
   "scientific_bottleneck": {
-    "classification": "DEVELOPMENT_NO_CONTROL_BENEFIT_INCONSISTENT",
-    "mechanism": "continuous optimizer selection-induced optimism / false-beneficial actions",
-    "evidence": "T5 exact same-prefix H360 replay had 3/6 false-beneficial despite zero prefix mismatch; T10 benefit nearly vanished and T20 exceeded no-control under threshold-free V5/V4",
-    "not_primary": ["runtime execution", "109-facility coverage", "q95 active-set size", "D4 reference shift"]
+    "classification": "DEVELOPMENT_OPTIMIZER_CONSISTENCY_UNDER_TEST",
+    "mechanism": "continuous optimizer selection-induced optimism compounded by joint temporal sequence extrapolation",
+    "evidence": "threshold-free V5 had T5 exact same-prefix H360 3/6 false-beneficial; T10 benefit nearly vanished and T20 exceeded no-control",
+    "not_primary": ["runtime execution", "109-facility coverage", "q95 active-set size", "PFV objective", "D4 reference shift"]
   },
   "step3_current": {
-    "module": "src/rtc/step3_tfv_value_mpc_v5.py",
+    "module": "src/rtc/step3_tfv_value_mpc_v6.py",
     "admission_module": "src/rtc/direct_tfv_admission.py",
-    "calibration_runner": "scripts/calibrate_direct_tfv_admission_current.py",
+    "sequence_support_module": "src/rtc/direct_tfv_sequence_support.py",
+    "sequence_support_builder": "scripts/build_direct_tfv_sequence_support_current.py",
     "solver_audit_runner": "scripts/run_step3_direct_tfv_solver_calibrated_current.py",
     "development_runtime": "scripts/run_policy_direct_tfv_development.py",
-    "development_audit": "scripts/audit_direct_tfv_calibrated_closed_loop_current.py",
     "active_support": "q95 canonical; q90 conservative ablation; q99 diagnostic only",
-    "admission": "optimizer-aware upper margin < 0; weak/uncertain extrema HOLD",
-    "first_move_contract": "future-only no-op plan is HOLD",
     "runtime_promoted": false
   },
-  "data_boundaries": {
-    "D2": "training/development only",
-    "D3": "training plus rainfall-disjoint internal residual calibration/audit",
-    "optimizer_replay": "Development-only exact same-prefix H360 calibration; its event IDs cannot be counted as independent post-calibration evidence; small replay sample makes no formal coverage claim",
-    "D4_AUDIT": "reference-shift diagnostic only",
-    "Validation_access": false,
-    "Final_access": false,
-    "Formal_access": false,
-    "Policy_Lock_access": false
-  },
-  "legacy": {
-    "Step3_V4": "threshold-free ablation that exposed optimizer selection-induced optimism",
-    "V4_training": "legacy checkpoint compatibility only",
-    "V128_hydraulic_world_model": "ablation/history only"
-  },
-  "promotion_rule": "first restore event-balanced no-control non-inferiority and reduce exact same-prefix false-beneficial decisions on post-calibration Development events; only then reassess Internal/Auto-RBC competitiveness and untouched Validation"
+  "data_boundaries": {"Validation_access": false, "Final_access": false, "Formal_access": false, "Policy_Lock_access": false},
+  "promotion_rule": "on fresh post-calibration Development events, first show zero sequence-support/engineering violations, lower exact same-prefix false-beneficial rate and event-balanced no-control non-inferiority; only then assess strong-baseline competitiveness, horizon sensitivity and untouched Validation"
 }

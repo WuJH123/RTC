@@ -1,14 +1,16 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V7",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V8",
   "current": {
-    "status": "CURRENT_DEVELOPMENT_CALIBRATED_STEP3_NOT_POLICY_LOCKED",
-    "research_contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V6",
+    "status": "CURRENT_DEVELOPMENT_OPTIMIZER_CONSISTENT_STEP3_NOT_POLICY_LOCKED",
+    "research_contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V7",
     "implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
     "training_contract": "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5",
-    "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V5",
+    "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V6",
     "admission_contract": "PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1",
-    "development_runtime_contract": "PROJECT7_DIRECT_TFV_AUTHORITATIVE_10MIN_DEVELOPMENT_RTC_V4",
+    "sequence_support_contract": "PROJECT7_DIRECT_TFV_D3_HOLD_JOINT_SEQUENCE_SUPPORT_V1",
+    "development_runtime_contract": "PROJECT7_DIRECT_TFV_AUTHORITATIVE_10MIN_DEVELOPMENT_RTC_V5",
     "step2_training": "scripts/run_step2_current.py",
+    "sequence_support_build": "scripts/build_direct_tfv_sequence_support_current.py",
     "admission_calibration": "scripts/calibrate_direct_tfv_admission_current.py",
     "step3_solver_audit": "scripts/run_step3_direct_tfv_solver_calibrated_current.py",
     "development_authoritative_runtime": "scripts/run_policy_direct_tfv_development.py",
@@ -22,30 +24,33 @@
     "policy_lock_enabled": false
   },
   "scientific_state": {
-    "primary_bottleneck": "DEVELOPMENT_NO_CONTROL_BENEFIT_INCONSISTENT",
-    "root_cause_hypothesis": "continuous optimizer selection-induced optimistic bias causes false-beneficial TFV actions",
-    "evidence": "threshold-free V5/V4 had T5 H360 sign 3/6, T10 near-zero event benefit and T20 worse than no-control despite zero execution violations",
-    "response": "combine rainfall-disjoint D3 HOLD residuals with exact same-prefix residuals of optimizer-selected H360 plans; admit only upper-bound-negative actions"
+    "primary_bottleneck": "DEVELOPMENT_OPTIMIZER_CONSISTENCY_UNDER_TEST",
+    "root_cause_hypothesis": "continuous optimizer exploits action-value error and can assemble joint H120 temporal sequences outside D3-HOLD training geometry even when every facility radius and active K is individually supported",
+    "evidence": "threshold-free V5 had T5 H360 sign 3/6, T10 near-zero event benefit and T20 worse than no-control despite zero execution violations",
+    "response": "keep TFV-only Step2 weights; add label-independent D3-HOLD joint temporal trust region inside the differentiable decoder; retain optimizer-aware one-sided admission"
   },
   "hard_rules": [
     "primary objective remains system-wide cumulative TFV only",
     "all 109 facilities remain screened",
-    "q95 D3-HOLD joint-density support remains canonical; q99 remains diagnostic only",
-    "admission calibration must include exact same-prefix optimizer-selected Development SWMM replay residuals",
-    "D3 HOLD cached residual calibration/audit remains rainfall-group disjoint",
+    "q95 D3-HOLD support remains canonical; q90 is conservative ablation and q99 diagnostic only",
+    "joint temporal support is derived only from D3 TrainFit HOLD-reference action geometry and never from TFV outcomes",
+    "joint temporal support is enforced before scoring inside the differentiable decoder so score equals execute",
+    "admission calibration must retain exact same-prefix optimizer-selected Development SWMM replay residuals",
     "events used in optimizer-replay calibration cannot be described as independent post-calibration validation evidence",
-    "no Validation/Final/Formal/Policy Lock data may calibrate the margin",
+    "no Validation/Final/Formal/Policy Lock data may calibrate support or admission",
     "an action executes only when calibrated upper bound < 0 and its first 10-minute block changes",
     "SWMM is never called inside online candidate search",
     "Auto-RBC/EFD/baselines are not weakened or tuned to improve Proposed ranking",
     "production and untouched evaluation remain fail-closed"
   ],
   "development_sequence": [
-    "reuse accepted Step2 V5 checkpoint",
-    "derive optimizer-aware one-sided admission from the existing T5 exact H360 replay plus rainfall-disjoint D3 HOLD residuals",
-    "run calibrated Step3 V5 solver audit on the disjoint D3 audit half",
-    "use calibration event T5 only as an engineering/replay consistency smoke after calibration, not independent evidence",
-    "run T10/T20 Development as post-calibration event audits and generate exact H360 audit replays",
+    "reuse accepted Step2 V5 checkpoint; do not retrain merely to add support metadata",
+    "build D3-HOLD joint sequence support artifact from the exact Step2 TrainFit split",
+    "reuse/verify optimizer-aware one-sided admission against the same Step2 checkpoint",
+    "run Step3 V6 solver audit on rainfall-disjoint D3 audit groups and require zero joint-sequence support violations",
+    "run T10/T20 as fresh post-calibration Development closed loops before any horizon or PFV change",
+    "replay accepted and rejected optimizer plans with exact same-prefix H360 SWMM and compare false-beneficial rates",
+    "only if inconsistency remains, collect optimizer-aware hard negatives or test frozen horizon ablations",
     "require event-balanced no-control consistency before reassessing Internal/Auto-RBC competitiveness",
     "do not enter Validation until policy is frozen"
   ]

@@ -1,4 +1,4 @@
-"""Audit calibrated Direct-TFV Step3 V5 on D3 HOLD-reference Development states."""
+"""Audit optimizer-consistent Direct-TFV Step3 V6 on D3 HOLD-reference Development states."""
 from __future__ import annotations
 
 import argparse
@@ -11,15 +11,16 @@ import torch
 
 from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
 from rtc.direct_tfv_admission import DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT
+from rtc.direct_tfv_sequence_support import validate_direct_tfv_sequence_support
 from rtc.production_cli import _load_graph
 from rtc.step2_causal_rainfall_v123 import CausalForecastValueCacheV123, load_causal_forecast_store_v123
 from rtc.step2_state_store_v127 import CausalStep1StateCacheV127, load_causal_state_store_v127
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
 from rtc.step3_tfv_value_mpc_v4 import DirectTFVMPCDesignV4
-from rtc.step3_tfv_value_mpc_v5 import DirectTFVRecedingMPCV5
+from rtc.step3_tfv_value_mpc_v6 import DirectTFVRecedingMPCV6
 
 
-CURRENT_STEP3_CALIBRATED_AUDIT_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_STEP3_CALIBRATED_AUDIT_V1"
+CURRENT_STEP3_CALIBRATED_AUDIT_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_STEP3_OPTIMIZER_CONSISTENT_AUDIT_V2"
 
 
 def _sha(path: str | Path) -> str:
@@ -40,6 +41,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--admission-calibration", required=True)
+    p.add_argument("--sequence-support", required=True)
     p.add_argument("--graph", required=True)
     p.add_argument("--cache-manifest", required=True)
     p.add_argument("--causal-store", required=True)
@@ -57,8 +59,15 @@ def main() -> None:
     admission = json.loads(Path(args.admission_calibration).read_text(encoding="utf-8"))
     if str(admission.get("contract")) != DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT:
         raise ValueError("wrong Direct-TFV admission calibration contract")
-    if str(admission.get("lineage", {}).get("step2_checkpoint_sha256", "")).lower() != _sha(args.checkpoint).lower():
+    checkpoint_sha = _sha(args.checkpoint)
+    if str(admission.get("lineage", {}).get("step2_checkpoint_sha256", "")).lower() != checkpoint_sha.lower():
         raise ValueError("admission calibration/checkpoint lineage mismatch")
+    sequence_support = json.loads(Path(args.sequence_support).read_text(encoding="utf-8"))
+    validate_direct_tfv_sequence_support(
+        sequence_support,
+        actuator_ids=graph.actuator_ids,
+        step2_checkpoint_sha256=checkpoint_sha,
+    )
 
     base = V60TrainCache(args.cache_manifest)
     rain = load_causal_forecast_store_v123(args.causal_store)
@@ -75,16 +84,18 @@ def main() -> None:
         raise ValueError("calibrated Step3 audit has no rainfall-disjoint D3 audit groups")
 
     design = DirectTFVMPCDesignV4(active_support_quantile=str(args.active_support_quantile))
-    controller = DirectTFVRecedingMPCV5(
+    controller = DirectTFVRecedingMPCV6(
         model=model,
         graph=graph,
         normalization=normalization,
         action_support=checkpoint["action_support"],
         admission_calibration=admission,
+        sequence_support=sequence_support,
         design=design,
     )
     records = []
     action_count = hold_count = support_violations = engineering_violations = 0
+    sequence_support_violations = 0
     for name in names:
         batch = online.batch(name, normalization, device)
         reference = batch.reference_settings[0]
@@ -101,8 +112,13 @@ def main() -> None:
         action_count += int(action)
         hold_count += int(not action)
         support_violations += int(float(result.maximum_support_ratio) > 1.0001)
+        sequence_support_violations += int(float(result.joint_sequence_support_max_ratio) > 1.0001)
         engineering_violations += int(result.first_move_changed_facility_count > result.active_facility_count)
-        if action and not (result.admission_passed and float(result.admission_upper_bound_m3) < 0.0 and result.first_move_changed_facility_count > 0):
+        if action and not (
+            result.admission_passed
+            and float(result.admission_upper_bound_m3) < 0.0
+            and result.first_move_changed_facility_count > 0
+        ):
             engineering_violations += 1
         records.append(
             {
@@ -116,6 +132,14 @@ def main() -> None:
                 "active_facility_count": int(result.active_facility_count),
                 "first_move_changed_facility_count": int(result.first_move_changed_facility_count),
                 "maximum_support_ratio": float(result.maximum_support_ratio),
+                "joint_sequence_support_quantile": result.joint_sequence_support_quantile,
+                "joint_sequence_first_block_l1": float(result.joint_sequence_first_block_l1),
+                "joint_sequence_h120_l1": float(result.joint_sequence_h120_l1),
+                "joint_sequence_h120_total_variation_l1": float(
+                    result.joint_sequence_h120_total_variation_l1
+                ),
+                "joint_sequence_support_max_ratio": float(result.joint_sequence_support_max_ratio),
+                "joint_sequence_support_binding": bool(result.joint_sequence_support_binding),
                 "solver_elapsed_seconds": float(result.elapsed_seconds),
             }
         )
@@ -127,16 +151,23 @@ def main() -> None:
         "action_count": int(action_count),
         "hold_count": int(hold_count),
         "support_violation_count": int(support_violations),
+        "joint_sequence_support_violation_count": int(sequence_support_violations),
         "engineering_violation_count": int(engineering_violations),
         "admission_global_margin_m3": float(admission["global_margin_m3"]),
         "admission_dense_margin_m3": float(admission["dense_margin_m3"]),
         "active_support_quantile_effective": controller.active_support_quantile_effective(),
         "active_support_ceiling": controller.active_support_ceiling(),
         "records": records,
-        "ready_for_authoritative_swmm_probe": bool(action_count > 0 and support_violations == 0 and engineering_violations == 0),
+        "ready_for_authoritative_swmm_probe": bool(
+            action_count > 0
+            and support_violations == 0
+            and sequence_support_violations == 0
+            and engineering_violations == 0
+        ),
         "lineage": {
-            "checkpoint_sha256": _sha(args.checkpoint),
+            "checkpoint_sha256": checkpoint_sha,
             "admission_calibration_sha256": _sha(args.admission_calibration),
+            "sequence_support_sha256": _sha(args.sequence_support),
         },
         "wall_seconds": float(time.perf_counter() - started),
     }
