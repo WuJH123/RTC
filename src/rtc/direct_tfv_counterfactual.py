@@ -29,9 +29,14 @@ def _canonical_sha256(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _eligible(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+def _eligible(
+    rows: Sequence[dict[str, Any]], *, latest_elapsed_seconds: int | None
+) -> list[dict[str, Any]]:
     eligible: list[dict[str, Any]] = []
     for index, row in enumerate(rows):
+        elapsed = int(row.get("elapsed_seconds", -1))
+        if latest_elapsed_seconds is not None and elapsed > int(latest_elapsed_seconds):
+            continue
         if str(row.get("source", "")) != "MPC_DIRECT_TFV_RECEDING":
             continue
         diagnostics = row.get("diagnostics")
@@ -57,7 +62,7 @@ def _eligible(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         eligible.append(
             {
                 "decision_index": index,
-                "elapsed_seconds": int(row.get("elapsed_seconds", -1)),
+                "elapsed_seconds": elapsed,
                 "source": str(row.get("source", "")),
                 "predicted_delta_tfv_m3": predicted,
                 "best_screening_predicted_delta_tfv_m3": float(
@@ -91,14 +96,25 @@ def _eligible(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def select_counterfactual_decisions(
-    rows: Sequence[dict[str, Any]], *, max_decisions: int = 6
+    rows: Sequence[dict[str, Any]],
+    *,
+    max_decisions: int = 6,
+    latest_elapsed_seconds: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Select strongest, median and mild predicted-benefit decisions deterministically."""
+    """Select strong/median/mild predictions while preserving a complete truth horizon.
+
+    ``latest_elapsed_seconds`` should be set to ``simulation_end_elapsed - 21600`` for the current
+    H360 value estimand. This prevents a truncated end-of-event SWMM branch from being compared with
+    a full H360 Step3 prediction.
+    """
 
     if max_decisions <= 0 or max_decisions > 6:
         raise ValueError("counterfactual diagnostic budget must lie in [1,6]")
+    if latest_elapsed_seconds is not None and latest_elapsed_seconds < 0:
+        raise ValueError("latest_elapsed_seconds must be non-negative")
     eligible = sorted(
-        _eligible(rows), key=lambda row: (float(row["predicted_delta_tfv_m3"]), int(row["decision_index"]))
+        _eligible(rows, latest_elapsed_seconds=latest_elapsed_seconds),
+        key=lambda row: (float(row["predicted_delta_tfv_m3"]), int(row["decision_index"])),
     )
     if len(eligible) <= max_decisions:
         chosen = eligible
