@@ -1,15 +1,14 @@
 """Training-support diagnostics for the Project7 Direct-TFV controller.
 
 The controller is allowed to learn all 109 writable facilities, but online optimisation must not
-silently leave the action distribution represented by authoritative SWMM counterfactuals.  This
-module derives two pieces of evidence from TrainFit data only:
+silently leave the action distribution represented by authoritative SWMM counterfactuals. This
+module derives exact single-facility coverage plus empirical first-move, sequence-magnitude and
+joint-density support from TrainFit data only.
 
-* exact single-facility learning coverage for every writable actuator; and
-* empirical action support (first-move/sequence magnitudes and joint sparsity) used by Step3 as a
-  trust region.
-
-No labels are thresholded or altered.  The support statistics constrain optimisation geometry; the
-primary learning target remains exact authoritative delta TFV.
+The original V1 contract is retained for backward-compatible checkpoint loading. The additive
+``DIRECT_TFV_JOINT_DENSITY_SUPPORT_V2`` fields expose q95/q99/max joint changed-facility counts so a
+new MPC can expand beyond q90 only when the *training data itself* supports denser coordinated
+moves. No label, objective or safety threshold is changed.
 """
 from __future__ import annotations
 
@@ -20,6 +19,7 @@ import numpy as np
 
 
 DIRECT_TFV_ACTION_SUPPORT_CONTRACT = "PROJECT7_DIRECT_TFV_109ACT_ACTION_SUPPORT_V1"
+DIRECT_TFV_JOINT_DENSITY_SUPPORT_CONTRACT = "PROJECT7_DIRECT_TFV_JOINT_DENSITY_SUPPORT_V2"
 
 
 def _q(values: Sequence[float], quantile: float, *, default: float = 0.0) -> float:
@@ -38,8 +38,8 @@ def derive_direct_tfv_action_support(
 ) -> dict[str, Any]:
     """Derive TrainFit-only action support and facility-identifiability evidence.
 
-    ``settings`` are expected on the frozen H72 five-minute grid.  Two model steps form one ten-
-    minute control block.  All returned per-facility arrays follow ``actuator_ids`` order.
+    ``settings`` are expected on the frozen H72 five-minute grid. Two model steps form one ten-
+    minute control block. All returned per-facility arrays follow ``actuator_ids`` order.
     """
 
     ids = tuple(str(value) for value in actuator_ids)
@@ -68,7 +68,9 @@ def derive_direct_tfv_action_support(
                 raise ValueError(f"{name}: settings do not match Hx109")
             if reference.shape[0] % int(control_block_steps):
                 raise ValueError(f"{name}: settings horizon is not divisible by control block")
-            ref_tfv = float(np.asarray(arrays["exact_node_flood_volume_m3"][ref], dtype=np.float64).sum())
+            ref_tfv = float(
+                np.asarray(arrays["exact_node_flood_volume_m3"][ref], dtype=np.float64).sum()
+            )
             candidates = [int(index) for index in entry.indices if int(index) != ref]
             if not candidates:
                 continue
@@ -127,8 +129,18 @@ def derive_direct_tfv_action_support(
     joint_changed_array = np.asarray(joint_changed_counts, dtype=np.float64)
     abs_tfv = np.asarray(absolute_delta_tfv, dtype=np.float64)
     joint_default = float(np.quantile(changed_array, 0.50))
+
+    def changed_quantile(q: float) -> float:
+        return float(np.quantile(changed_array, q))
+
+    def joint_quantile(q: float) -> float:
+        if joint_changed_array.size:
+            return float(np.quantile(joint_changed_array, q))
+        return joint_default
+
     return {
         "contract": DIRECT_TFV_ACTION_SUPPORT_CONTRACT,
+        "joint_density_extension_contract": DIRECT_TFV_JOINT_DENSITY_SUPPORT_CONTRACT,
         "actuator_ids": list(ids),
         "training_group_count": int(group_count),
         "training_branch_count": int(branch_count),
@@ -143,26 +155,32 @@ def derive_direct_tfv_action_support(
         "sequence_nonzero_count_per_facility": sequence_counts,
         "first_move_abs_q95_per_facility": first_q95,
         "sequence_abs_q95_per_facility": sequence_q95,
-        "changed_facility_count_q50": float(np.quantile(changed_array, 0.50)),
-        "changed_facility_count_q75": float(np.quantile(changed_array, 0.75)),
-        "changed_facility_count_q90": float(np.quantile(changed_array, 0.90)),
-        "joint_changed_facility_count_q50": (
-            float(np.quantile(joint_changed_array, 0.50)) if joint_changed_array.size else joint_default
-        ),
-        "joint_changed_facility_count_q75": (
-            float(np.quantile(joint_changed_array, 0.75)) if joint_changed_array.size else joint_default
-        ),
-        "joint_changed_facility_count_q90": (
-            float(np.quantile(joint_changed_array, 0.90)) if joint_changed_array.size else joint_default
+        "changed_facility_count_q50": changed_quantile(0.50),
+        "changed_facility_count_q75": changed_quantile(0.75),
+        "changed_facility_count_q90": changed_quantile(0.90),
+        "changed_facility_count_q95": changed_quantile(0.95),
+        "changed_facility_count_q99": changed_quantile(0.99),
+        "changed_facility_count_max": int(np.max(changed_array)),
+        "joint_changed_facility_count_q50": joint_quantile(0.50),
+        "joint_changed_facility_count_q75": joint_quantile(0.75),
+        "joint_changed_facility_count_q90": joint_quantile(0.90),
+        "joint_changed_facility_count_q95": joint_quantile(0.95),
+        "joint_changed_facility_count_q99": joint_quantile(0.99),
+        "joint_changed_facility_count_max": (
+            int(np.max(joint_changed_array)) if joint_changed_array.size else int(round(joint_default))
         ),
         "absolute_delta_tfv_q95_m3": float(np.quantile(abs_tfv, 0.95)) if abs_tfv.size else 0.0,
         "absolute_delta_tfv_max_m3": float(np.max(abs_tfv)) if abs_tfv.size else 0.0,
         "source_groups": {key: int(len(value)) for key, value in source_groups.items()},
-        "scientific_role": "TrainFit identifiability evidence and Step3 trust-region geometry only",
+        "scientific_role": (
+            "TrainFit identifiability evidence and Step3 trust-region geometry only; q95/q99/max "
+            "are support diagnostics, not performance-tuned thresholds"
+        ),
     }
 
 
 __all__ = [
     "DIRECT_TFV_ACTION_SUPPORT_CONTRACT",
+    "DIRECT_TFV_JOINT_DENSITY_SUPPORT_CONTRACT",
     "derive_direct_tfv_action_support",
 ]
