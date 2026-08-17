@@ -9,6 +9,9 @@ from typing import Any, Mapping
 from .baselines import FORMAL_FIXED_BASELINE_IDS, canonical_baseline_id
 
 
+CURRENT_SIX_BASELINE_DEVELOPMENT_CONTRACT = (
+    "PROJECT7_CURRENT_SIX_FIXED_BASELINE_DEVELOPMENT_SWMM_V1"
+)
 DIRECT_TFV_BASELINE_PANEL_CONTRACT = "PROJECT7_DIRECT_TFV_DEVELOPMENT_BASELINE_PANEL_V1"
 DIRECT_TFV_BASELINE_PROVENANCE_CONTRACT = "PROJECT7_FIXED_BASELINE_PROVENANCE_V1"
 SCIENTIFIC_COMPARATOR_IDS = ("internal_rtc", "auto_rbc", "efd")
@@ -139,11 +142,13 @@ def build_direct_tfv_baseline_comparison(
     proposed = _json_object(proposed_path)
     proposed_statistics = _statistics_path(proposed_path, proposed)
     expected = tuple(FORMAL_FIXED_BASELINE_IDS)
-    supplied = {canonical_baseline_id(key) for key in baseline_metadata_by_strategy}
-    if supplied != set(expected):
+    normalized = {
+        canonical_baseline_id(key): value for key, value in baseline_metadata_by_strategy.items()
+    }
+    if set(normalized) != set(expected):
         raise ValueError(
-            f"comparison requires exactly the six fixed baselines; missing={sorted(set(expected)-supplied)}, "
-            f"extra={sorted(supplied-set(expected))}"
+            f"comparison requires exactly the six fixed baselines; missing={sorted(set(expected)-set(normalized))}, "
+            f"extra={sorted(set(normalized)-set(expected))}"
         )
 
     proposed_tfv = tfv_m3(proposed_statistics)
@@ -160,7 +165,7 @@ def build_direct_tfv_baseline_comparison(
         }
     ]
     for strategy in expected:
-        metadata_path = Path(baseline_metadata_by_strategy[strategy]).resolve()
+        metadata_path = Path(normalized[strategy]).resolve()
         baseline = _json_object(metadata_path)
         failures = baseline_lineage_failures(
             proposed=proposed,
@@ -228,6 +233,7 @@ def build_direct_tfv_baseline_comparison(
 
 
 __all__ = [
+    "CURRENT_SIX_BASELINE_DEVELOPMENT_CONTRACT",
     "DIAGNOSTIC_EXTREME_IDS",
     "DIRECT_TFV_BASELINE_PANEL_CONTRACT",
     "DIRECT_TFV_BASELINE_PROVENANCE_CONTRACT",
