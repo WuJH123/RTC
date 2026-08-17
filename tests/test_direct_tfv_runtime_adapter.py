@@ -14,6 +14,7 @@ class _Inner:
             control_block_steps=2,
             free_control_blocks=12,
         )
+        self.graph = SimpleNamespace(actuator_ids=tuple(f"A{i:03d}" for i in range(109)))
         self.model = torch.nn.Linear(1, 1)
         self.called = None
         self.fail = False
@@ -76,6 +77,7 @@ def test_runtime_adapter_maps_target_latch_call_to_direct_step3() -> None:
     assert result.best_screening_predicted_delta_tfv_m3 == -1000.0
     assert result.optimizer_gain_beyond_best_screening_m3 == 234.0
     assert result.active_set_ceiling_binding is True
+    assert result.counterfactual_actuator_ids == tuple(f"A{i:03d}" for i in range(109))
     assert len(result.optimized_free_control_blocks) == 12
     assert all(len(block) == 109 for block in result.optimized_free_control_blocks)
     assert result.optimized_free_control_blocks[0][0] == 0.6000000238418579
