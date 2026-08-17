@@ -16,7 +16,6 @@ import torch
 
 from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
 from rtc.direct_tfv_admission import (
-    DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT,
     DIRECT_TFV_ADMISSION_COVERAGE,
     derive_direct_tfv_admission_calibration,
     evaluate_direct_tfv_admission,
