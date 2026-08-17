@@ -53,6 +53,7 @@ def derive_direct_tfv_action_support(
     first_move_values: list[list[float]] = [[] for _ in ids]
     sequence_values: list[list[float]] = [[] for _ in ids]
     changed_counts: list[int] = []
+    joint_changed_counts: list[int] = []
     absolute_delta_tfv: list[float] = []
     group_count = branch_count = single_branch_count = joint_branch_count = 0
 
@@ -98,6 +99,7 @@ def derive_direct_tfv_action_support(
                     single_branch_count += 1
                 else:
                     joint_branch_count += 1
+                    joint_changed_counts.append(int(changed_index.size))
                 candidate_tfv = float(
                     np.asarray(arrays["exact_node_flood_volume_m3"][index], dtype=np.float64).sum()
                 )
@@ -117,15 +119,14 @@ def derive_direct_tfv_action_support(
         sequence_counts.append(len(sequence))
         sequence_radius = _q(sequence, 0.95, default=0.0)
         first_radius = _q(first, 0.95, default=sequence_radius)
-        # A facility with exact single evidence but no explicit first-block perturbation remains
-        # eligible using its observed sequence support.  No facility-specific radius is invented
-        # beyond the observed setting difference.
         first_q95.append(float(max(first_radius, 0.0)))
         sequence_q95.append(float(max(sequence_radius, 0.0)))
 
     covered = single_counts > 0
     changed_array = np.asarray(changed_counts, dtype=np.float64)
+    joint_changed_array = np.asarray(joint_changed_counts, dtype=np.float64)
     abs_tfv = np.asarray(absolute_delta_tfv, dtype=np.float64)
+    joint_default = float(np.quantile(changed_array, 0.50))
     return {
         "contract": DIRECT_TFV_ACTION_SUPPORT_CONTRACT,
         "actuator_ids": list(ids),
@@ -145,6 +146,15 @@ def derive_direct_tfv_action_support(
         "changed_facility_count_q50": float(np.quantile(changed_array, 0.50)),
         "changed_facility_count_q75": float(np.quantile(changed_array, 0.75)),
         "changed_facility_count_q90": float(np.quantile(changed_array, 0.90)),
+        "joint_changed_facility_count_q50": (
+            float(np.quantile(joint_changed_array, 0.50)) if joint_changed_array.size else joint_default
+        ),
+        "joint_changed_facility_count_q75": (
+            float(np.quantile(joint_changed_array, 0.75)) if joint_changed_array.size else joint_default
+        ),
+        "joint_changed_facility_count_q90": (
+            float(np.quantile(joint_changed_array, 0.90)) if joint_changed_array.size else joint_default
+        ),
         "absolute_delta_tfv_q95_m3": float(np.quantile(abs_tfv, 0.95)) if abs_tfv.size else 0.0,
         "absolute_delta_tfv_max_m3": float(np.max(abs_tfv)) if abs_tfv.size else 0.0,
         "source_groups": {key: int(len(value)) for key, value in source_groups.items()},
