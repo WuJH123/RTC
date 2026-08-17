@@ -109,9 +109,10 @@ scripts/run_step3_direct_tfv_solver_current.py
 At every 10-minute decision Step3:
 
 1. builds a HOLD H360 reference;
-2. evaluates up/down first-move probes for **all 109 facilities** at half and full TrainFit-supported
-   first-move radius;
-3. keeps facilities whose best probe has predicted delta TFV < 0;
+2. for **all 109 facilities**, evaluates up/down probes at half and full supported first-move radius
+   under both a one-block **pulse** pattern and a **persistent** pattern; the latter preserves
+   facilities whose TFV benefit is delayed and would be missed by a single 10-minute pulse;
+3. keeps facilities whose best pulse/persistent probe has predicted delta TFV < 0;
 4. ranks those predicted-beneficial facilities;
 5. forms a dynamic active set. Default ceiling is the TrainFit q90 joint changed-facility count,
    preserving more control freedom than the previous q50=8 default;
