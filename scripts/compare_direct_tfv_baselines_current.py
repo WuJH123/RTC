@@ -6,12 +6,11 @@ import csv
 import json
 from pathlib import Path
 
-from rtc.baseline_panel import build_direct_tfv_baseline_comparison
-from rtc.baselines import FORMAL_FIXED_BASELINE_IDS
-
-from scripts.run_six_baselines_development_current import (
+from rtc.baseline_panel import (
     CURRENT_SIX_BASELINE_DEVELOPMENT_CONTRACT,
+    build_direct_tfv_baseline_comparison,
 )
+from rtc.baselines import FORMAL_FIXED_BASELINE_IDS
 
 
 def main() -> None:
