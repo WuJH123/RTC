@@ -19,6 +19,7 @@ COUNTERFACTUAL_PLAN = ROOT / "scripts" / "plan_direct_tfv_counterfactual_current
 RUNTIME_DIAGNOSTIC = ROOT / "scripts" / "diagnose_direct_tfv_runtime_failures_current.py"
 BASELINE_RUNNER = ROOT / "scripts" / "run_six_baselines_development_current.py"
 BASELINE_COMPARE = ROOT / "scripts" / "compare_direct_tfv_baselines_current.py"
+BASELINE_AGGREGATE = ROOT / "scripts" / "aggregate_direct_tfv_baselines_current.py"
 CURRENT_POLICY = ROOT / "scripts" / "run_policy_current.py"
 CURRENT_SEVEN = ROOT / "scripts" / "run_seven_strategies_current.py"
 
@@ -112,6 +113,9 @@ def test_current_cli_surfaces_are_explicit_and_threshold_free() -> None:
     compare = _help(BASELINE_COMPARE)
     for argument in ("--proposed-metadata", "--baseline-panel", "--out-json", "--out-csv"):
         assert argument in compare
+    aggregate = _help(BASELINE_AGGREGATE)
+    for argument in ("--comparison", "--out-json", "--out-csv"):
+        assert argument in aggregate
 
 
 def test_current_lint_surface_tracks_core_paths() -> None:
@@ -127,6 +131,7 @@ def test_current_lint_surface_tracks_core_paths() -> None:
         "scripts/diagnose_direct_tfv_runtime_failures_current.py",
         "scripts/run_six_baselines_development_current.py",
         "scripts/compare_direct_tfv_baselines_current.py",
+        "scripts/aggregate_direct_tfv_baselines_current.py",
         "src/rtc/checkpoint_direct_tfv.py",
         "src/rtc/controller_direct_tfv.py",
         "src/rtc/direct_tfv_counterfactual.py",
