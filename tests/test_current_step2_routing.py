@@ -16,6 +16,9 @@ STEP3_RUNNER = ROOT / "scripts" / "run_step3_direct_tfv_solver_current.py"
 DEV_RUNTIME = ROOT / "scripts" / "run_policy_direct_tfv_development.py"
 DEV_AUDIT = ROOT / "scripts" / "audit_direct_tfv_closed_loop_current.py"
 COUNTERFACTUAL_PLAN = ROOT / "scripts" / "plan_direct_tfv_counterfactual_current.py"
+RUNTIME_DIAGNOSTIC = ROOT / "scripts" / "diagnose_direct_tfv_runtime_failures_current.py"
+BASELINE_RUNNER = ROOT / "scripts" / "run_six_baselines_development_current.py"
+BASELINE_COMPARE = ROOT / "scripts" / "compare_direct_tfv_baselines_current.py"
 CURRENT_POLICY = ROOT / "scripts" / "run_policy_current.py"
 CURRENT_SEVEN = ROOT / "scripts" / "run_seven_strategies_current.py"
 
@@ -101,11 +104,19 @@ def test_current_cli_surfaces_are_explicit_and_threshold_free() -> None:
     assert "--metadata" in plan
     assert "--max-decisions" in plan
     assert "--out" in plan
+    failure = _help(RUNTIME_DIAGNOSTIC)
+    assert "--metadata" in failure and "--out" in failure
+    baseline = _help(BASELINE_RUNNER)
+    for argument in ("--inp", "--event-id", "--native-controls-template", "--out-dir"):
+        assert argument in baseline
+    compare = _help(BASELINE_COMPARE)
+    for argument in ("--proposed-metadata", "--baseline-panel", "--out-json", "--out-csv"):
+        assert argument in compare
 
 
 def test_current_lint_surface_tracks_core_paths() -> None:
     payload = json.loads(LINT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V6"
+    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V7"
     paths = set(payload["paths"])
     required = {
         "scripts/run_step2_tfv_value_core_current.py",
@@ -113,17 +124,27 @@ def test_current_lint_surface_tracks_core_paths() -> None:
         "scripts/run_policy_direct_tfv_development.py",
         "scripts/audit_direct_tfv_closed_loop_current.py",
         "scripts/plan_direct_tfv_counterfactual_current.py",
+        "scripts/diagnose_direct_tfv_runtime_failures_current.py",
+        "scripts/run_six_baselines_development_current.py",
+        "scripts/compare_direct_tfv_baselines_current.py",
         "src/rtc/checkpoint_direct_tfv.py",
         "src/rtc/controller_direct_tfv.py",
         "src/rtc/direct_tfv_counterfactual.py",
+        "src/rtc/baseline_panel.py",
+        "src/rtc/runtime_failure_diagnostics.py",
         "src/rtc/runtime_controller_guard.py",
         "src/rtc/step2_tfv_value_training_v4.py",
         "src/rtc/step2_tfv_support.py",
         "src/rtc/step3_tfv_value_mpc_v3.py",
+        "src/rtc/production_guard.py",
+        "src/rtc/production_cli_router.py",
+        "src/rtc/baselines.py",
+        "src/rtc/rule_baselines.py",
         "tests/test_direct_tfv_core_training.py",
         "tests/test_direct_tfv_step3_core.py",
         "tests/test_direct_tfv_runtime_adapter.py",
         "tests/test_direct_tfv_counterfactual.py",
+        "tests/test_direct_tfv_scientific_bottleneck_panel.py",
         "tests/test_temporal_control_continuity_v069.py",
     }
     assert required <= paths
