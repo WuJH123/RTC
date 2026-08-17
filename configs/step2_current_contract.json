@@ -1,13 +1,15 @@
 {
   "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V2",
-  "status": "CURRENT_DEVELOPMENT_IMPLEMENTATION_NOT_POLICY_LOCKED",
+  "status": "CURRENT_DEVELOPMENT_SELECTION_CALIBRATION_NOT_POLICY_LOCKED",
   "selected_implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
+  "selection_contract": "PROJECT7_DIRECT_TFV_HOLD_ACTION_SELECTION_GUARD_V1",
   "authoritative_truth": "SWMM",
-  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, estimate how candidate actions of 109 writable facilities change future system-wide cumulative TFV, choose a lower-TFV H120 control sequence inside an H360 evaluation horizon, execute only the first 10-minute target, and repeat",
+  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, estimate how candidate actions of 109 writable facilities change future system-wide cumulative TFV, conservatively decide whether the best predicted action beats HOLD, execute only the first 10-minute target, and repeat",
   "core_pipeline": {
     "step1": "reconstruct the current full-network hydraulic state from sparse causal observations so online control does not require a fresh full SWMM state simulation",
     "step2": "learn state-conditioned pairwise action value directly: causal current state + causal rainfall forecast + complete reference sequence + complete candidate 109-facility sequence -> delta TFV",
-    "step3": "minimize Step2 predicted delta TFV over 12 x 109 bounded continuous control variables, execute the first 10-minute target, then re-observe",
+    "selection": "use a Development-calibrated one-sided selected-action residual margin to admit an action only when predicted delta TFV plus margin remains below HOLD zero",
+    "step3": "after selection calibration is supported, minimize Step2 predicted delta TFV over 12 x 109 bounded continuous control variables, apply the calibrated HOLD guard, execute the first 10-minute target, then re-observe",
     "swmm": "authoritative offline label generator and final evaluation truth; not the online candidate evaluator"
   },
   "time_contract": {
@@ -44,7 +46,8 @@
     "training_loss": "continuous normalized exact delta-TFV regression plus within-group pairwise ordering; the historical 1-percent practical-effect threshold is reporting-only and never converts labels to zero",
     "main_effect_stage": "source-interleaved single-actuator training",
     "interaction_stage": "freeze learned facility/context representation and fit joint interaction value difference from multi-actuator candidates",
-    "development_profile": "smoke remains a small deterministic signal check; dev uses all admitted existing Development groups: 112 D2 FIT, 112 D3 FIT, 33 D4 FIT, 32 D2 holdout, 32 D3 holdout and all 15 untouched D4 AUDIT groups",
+    "development_profile": "smoke remains a small deterministic signal check; dev uses all admitted existing Development groups: 112 D2 FIT, 112 D3 FIT, 33 D4 FIT, 32 D2 holdout, 32 D3 holdout and all 15 D4 AUDIT groups",
+    "full_dev_interpretation": "V2 preserves useful held-out D2/D3 ordering and substantially improves D4 ranking, but raw argmin selection remains over-eager: all split hold_selected_fraction values are zero, D4 FIT contains oracle-HOLD groups that are always acted on, and D4 selected true delta TFV is approximately neutral/slightly harmful on average",
     "hydraulic_trajectory_primary_target": false,
     "hydraulic_trajectory_role": "auxiliary diagnostic/ablation only",
     "gradient_label_used": false,
@@ -53,26 +56,39 @@
     "training_module": "src/rtc/step2_tfv_value_training.py",
     "runner": "scripts/run_step2_current.py -> scripts/run_step2_tfv_value_current.py"
   },
+  "selection_current": {
+    "module": "src/rtc/step2_tfv_selection.py",
+    "runner": "scripts/run_step2_selection_calibration_current.py",
+    "checkpoint_input": "frozen full-DEV Direct-TFV V2 checkpoint; no model retraining",
+    "calibration_source": "existing D3 HOLD-reference internal holdout only, split again by rainfall group into disjoint selection-calibration and selection-audit subsets",
+    "d4_role": "D4 FIT and D4 AUDIT are stress evaluations for the guard; D4 AUDIT never fits the margin",
+    "nonconformity": "selected-action residual = authoritative true delta TFV minus predicted delta TFV for raw action-selected calibration groups",
+    "guard": "admit the model-best action only when predicted delta TFV + calibrated one-sided margin < 0; otherwise HOLD",
+    "formal_guarantee": false,
+    "reason_not_formal": "Development calibration does not assume exchangeability across the D3-to-D4 reference/operating-region shift and is not Policy Lock evidence",
+    "new_swmm_required": false
+  },
   "data_roles": {
     "D0": "baseline hydraulic-state/flood opportunity context; not direct facility attribution",
     "D1": "state/action coverage; not direct facility credit assignment",
     "D2": "primary long-duration single-facility main-effect supervision",
-    "D3": "HOLD-reference temporal single-facility supervision plus multi-facility interaction supervision",
-    "D4_FIT": "causal Sparse-RBC-reference first-move/local-operating-region supervision",
-    "D4_AUDIT": "untouched causal Sparse-RBC-reference Development audit only",
+    "D3": "HOLD-reference temporal single-facility supervision plus multi-facility interaction supervision; its model holdout is the only current HOLD-reference source suitable for no-new-SWMM selection calibration",
+    "D4_FIT": "causal Sparse-RBC-reference first-move/local-operating-region supervision and Development stress evaluation",
+    "D4_AUDIT": "causal Sparse-RBC-reference Development evaluation only; excluded from training, target-scale fitting and selection-margin fitting",
     "D5": "optional later solver-sensitivity diagnostic, not a prerequisite for learning TFV value"
   },
   "step3_current": {
     "module": "src/rtc/step3_tfv_value_mpc.py",
     "objective": "predicted delta TFV relative to HOLD",
     "optimizer": "bounded L-BFGS-B through the direct differentiable value model",
-    "fallback": "HOLD when no finite predicted TFV improvement is found",
+    "fallback": "HOLD when no finite predicted TFV improvement exceeding the configured minimum margin is found",
+    "existing_margin_hook": "DirectTFVMPCDesign.minimum_predicted_improvement_m3",
     "runtime_promoted": false,
-    "promotion_requires": "full direct-value Development evaluation must preserve the D2/D3 improvement and materially reduce the D4 first-move/reference-family gap before wiring an authoritative Development closed loop"
+    "promotion_requires": "first show that the no-retrain selection guard improves selected authoritative delta TFV and harmful-action rate on a disjoint D3 HOLD-reference audit and D4 Development stress tests without collapsing all actions to HOLD"
   },
   "legacy_v128": {
     "status": "retained for ablation/history, not the canonical current Step2",
-    "reason": "Development B0 executed successfully but TFV candidate ordering remained near-random or worse on D2/D3/D4, while authoritative facility diagnostics confirmed physical TFV control signal"
+    "reason": "Development B0 ran successfully but TFV candidate ordering remained near-random or worse on D2/D3/D4, while authoritative facility diagnostics confirmed physical TFV control signal"
   },
   "scientific_boundaries": {
     "future_realized_rainfall_online": false,
@@ -82,15 +98,17 @@
     "Formal_access": false,
     "Policy_Lock_access": false,
     "D4_AUDIT_training": false,
+    "D4_AUDIT_selection_margin_fitting": false,
     "runtime_current_enabled": false,
     "seven_strategy_current_enabled": false
   },
   "canonical_entrypoints": {
     "existing_data_training": "scripts/run_step2_current.py",
     "direct_value_training": "scripts/run_step2_tfv_value_current.py",
+    "selection_calibration": "scripts/run_step2_selection_calibration_current.py",
     "facility_truth_audit": "scripts/audit_facility_tfv_influence_current.py",
     "direct_value_step3": "src/rtc/step3_tfv_value_mpc.py",
     "legacy_v128_training": "scripts/run_step2_action_identifiable_current.py"
   },
-  "promotion_rule": "first prove on the full Development split that the pairwise direct-value model preserves D2/D3 ordering gains and improves D4 first-move/reference-family robustness; only then wire one authoritative Development closed loop."
+  "promotion_rule": "do not change the V2 ranking architecture first. Calibrate and audit HOLD/action selection on the frozen full-DEV checkpoint. Only if a conservative margin cannot make selected true delta TFV non-harmful without collapsing action rate should the project generate a small targeted HOLD-reference first-move SWMM panel or modify the selection loss."
 }
