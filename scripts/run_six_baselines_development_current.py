@@ -35,6 +35,8 @@ def _decision_execution_summary(metadata_path: Path, metadata: dict[str, Any]) -
             "material_projection_decisions": 0,
             "numerical_equivalence_decisions": 0,
             "maximum_command_delta_from_previous_target": 0.0,
+            "rule_contract_values": [],
+            "efd_depth_fallback_storage_count_max": 0,
         }
     decision_path = metadata_path.parent / str(decision_name)
     if not decision_path.is_file():
@@ -46,6 +48,8 @@ def _decision_execution_summary(metadata_path: Path, metadata: dict[str, Any]) -
     ]
     material = numerical = 0
     maximum_delta = 0.0
+    rule_contracts: set[str] = set()
+    efd_depth_fallback_max = 0
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError("baseline decision log contains a non-object row")
@@ -57,11 +61,20 @@ def _decision_execution_summary(metadata_path: Path, metadata: dict[str, Any]) -
         delta = diagnostics.get("command_delta_from_previous_target_max")
         if delta is not None:
             maximum_delta = max(maximum_delta, float(delta))
+        rule_contract = str(diagnostics.get("rule_contract", "")).strip()
+        if rule_contract:
+            rule_contracts.add(rule_contract)
+        efd_depth_fallback_max = max(
+            efd_depth_fallback_max,
+            int(diagnostics.get("depth_fallback_storage_count", 0)),
+        )
     return {
         "decision_rows": len(rows),
         "material_projection_decisions": material,
         "numerical_equivalence_decisions": numerical,
         "maximum_command_delta_from_previous_target": maximum_delta,
+        "rule_contract_values": sorted(rule_contracts),
+        "efd_depth_fallback_storage_count_max": efd_depth_fallback_max,
     }
 
 
@@ -134,6 +147,11 @@ def _run_one(
         raise RuntimeError(
             f"{strategy}: scientific comparator required material continuity projection; "
             "its native rule command is not satisfying the declared 0.5 target-slew contract"
+        )
+    if strategy == "efd" and int(execution["efd_depth_fallback_storage_count_max"]) != 0:
+        raise RuntimeError(
+            "efd: storage-volume EFD degraded to normalized-depth fallback; repair/freeze valid "
+            "storage geometry before using this run as a scientific comparator"
         )
     sensor_nodes = metadata.get("sensor_nodes")
     sensor_count = len(sensor_nodes) if isinstance(sensor_nodes, list) else 0
@@ -221,6 +239,7 @@ def main() -> None:
         "strategies": list(FORMAL_FIXED_BASELINE_IDS),
         "baseline_provenance_verified_all": True,
         "scientific_comparator_engineering_projection_required": False,
+        "efd_storage_volume_semantics_verified": True,
         "baseline_information_basis_reported": True,
         "global_peak_role": "report_only",
         "rows": rows,
