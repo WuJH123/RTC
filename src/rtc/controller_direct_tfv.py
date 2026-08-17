@@ -74,7 +74,9 @@ class DirectTFVRuntimeMPCAdapter:
     ) -> _RuntimeMPCResult:
         self.last_result = None
         del fallback_settings
-        if max_delta_per_update is not None and abs(float(max_delta_per_update) - float(self.inner.design.max_setting_delta_per_update)) > 1.0e-9:
+        if max_delta_per_update is not None and abs(
+            float(max_delta_per_update) - float(self.inner.design.max_setting_delta_per_update)
+        ) > 1.0e-9:
             raise ValueError("runtime controller max-delta differs from Direct-TFV Step3 design")
         result = self.inner.optimize(
             current_state=initial_state,
@@ -95,11 +97,19 @@ class DirectTFVRuntimeMPCAdapter:
         free_blocks_tensor = optimized[::block_steps][:free_count]
         if tuple(free_blocks_tensor.shape) != (free_count, 109):
             raise RuntimeError("Direct-TFV runtime could not recover exact [12,109] optimized plan")
-        free_blocks = tuple(tuple(float(value) for value in row) for row in free_blocks_tensor.detach().cpu().to(torch.float64).tolist())
-        hold_reference = tuple(float(value) for value in previous_requested_settings.detach().cpu().to(torch.float64).reshape(-1).tolist())
+        free_blocks = tuple(
+            tuple(float(value) for value in row)
+            for row in free_blocks_tensor.detach().cpu().to(torch.float64).tolist()
+        )
+        hold_reference = tuple(
+            float(value)
+            for value in previous_requested_settings.detach().cpu().to(torch.float64).reshape(-1).tolist()
+        )
         active_scores = tuple(float(value) for value in result.active_facility_screening_scores_m3)
         best_screening = min(active_scores) if active_scores else 0.0
-        raw_pred = float(getattr(result, "raw_optimized_predicted_delta_tfv_m3", result.predicted_delta_tfv_m3))
+        raw_pred = float(
+            getattr(result, "raw_optimized_predicted_delta_tfv_m3", result.predicted_delta_tfv_m3)
+        )
         optimizer_gain = float(best_screening - raw_pred) if math.isfinite(raw_pred) else 0.0
         requested_quantile = str(getattr(self.inner.design, "active_support_quantile", "q90"))
         effective_quantile = str(self.inner.active_support_quantile_effective())
@@ -154,7 +164,12 @@ class DirectTFVAuthoritativeController(V122TorchMPCController):
         super().__init__(*args, mpc=adapter, **kwargs)
         self._direct_mpc_adapter = adapter
 
-    def decide(self, obs: CausalObservation, *, observation_already_recorded: bool = False) -> ControllerAction:
+    def decide(
+        self,
+        obs: CausalObservation,
+        *,
+        observation_already_recorded: bool = False,
+    ) -> ControllerAction:
         action = super().decide(obs, observation_already_recorded=observation_already_recorded)
         diagnostics = dict(action.diagnostics or {})
         diagnostics["direct_tfv_controller_contract"] = DIRECT_TFV_CONTROLLER_CONTRACT
@@ -175,37 +190,64 @@ class DirectTFVAuthoritativeController(V122TorchMPCController):
                     "predicted_beneficial_facility_count": result.predicted_beneficial_facility_count,
                     "active_facility_count": result.active_facility_count,
                     "active_facility_ids": list(result.active_facility_ids),
-                    "active_facility_screening_scores_m3": list(result.active_facility_screening_scores_m3),
+                    "active_facility_screening_scores_m3": list(
+                        result.active_facility_screening_scores_m3
+                    ),
                     "first_move_changed_facility_count": result.first_move_changed_facility_count,
                     "maximum_support_ratio": result.maximum_support_ratio,
-                    "best_screening_predicted_delta_tfv_m3": result.best_screening_predicted_delta_tfv_m3,
-                    "optimizer_gain_beyond_best_screening_m3": result.optimizer_gain_beyond_best_screening_m3,
+                    "best_screening_predicted_delta_tfv_m3": (
+                        result.best_screening_predicted_delta_tfv_m3
+                    ),
+                    "optimizer_gain_beyond_best_screening_m3": (
+                        result.optimizer_gain_beyond_best_screening_m3
+                    ),
                     "active_set_ceiling_binding": result.active_set_ceiling_binding,
                     "active_support_quantile_requested": result.active_support_quantile_requested,
                     "active_support_quantile_effective": result.active_support_quantile_effective,
                     "active_support_ceiling": result.active_support_ceiling,
-                    "raw_optimized_predicted_delta_tfv_m3": result.raw_optimized_predicted_delta_tfv_m3,
+                    "raw_optimized_predicted_delta_tfv_m3": (
+                        result.raw_optimized_predicted_delta_tfv_m3
+                    ),
                     "admission_margin_m3": result.admission_margin_m3,
                     "admission_upper_bound_m3": result.admission_upper_bound_m3,
                     "admission_margin_kind": result.admission_margin_kind,
                     "admission_passed": result.admission_passed,
                     "calibrated_admission_contract": result.calibrated_admission_contract,
-                    "counterfactual_plan_telemetry_contract": DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT,
+                    "counterfactual_plan_telemetry_contract": (
+                        DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT
+                    ),
                     "counterfactual_reference_semantics": "HOLD_ACTIVE_TARGET_H360",
-                    "counterfactual_candidate_semantics": "RAW_OPTIMIZED_H120_FREE_BLOCKS_THEN_TERMINAL_HOLD_H360",
+                    "counterfactual_candidate_semantics": (
+                        "RAW_OPTIMIZED_H120_FREE_BLOCKS_THEN_TERMINAL_HOLD_H360"
+                    ),
                     "counterfactual_actuator_ids": list(result.counterfactual_actuator_ids),
-                    "optimized_free_control_blocks": [list(row) for row in result.optimized_free_control_blocks],
+                    "optimized_free_control_blocks": [
+                        list(row) for row in result.optimized_free_control_blocks
+                    ],
                     "hold_reference_settings": list(result.hold_reference_settings),
                     "scipy_message": result.scipy_message[:2000],
                 }
             )
+
         source = str(action.source)
-        if source == "MPC_V122":
+        if source == "MPC_V122" and result is not None:
+            if result.selected_source == "DIRECT_TFV_RECEDING_LBFGSB":
+                source = "MPC_DIRECT_TFV_RECEDING"
+            elif result.selected_source == "HOLD_CALIBRATED_TFV_UPPER_BOUND_NONNEGATIVE":
+                source = "HOLD_DIRECT_TFV_CALIBRATED_UPPER_BOUND"
+            elif result.selected_source == "HOLD_NO_EXECUTABLE_FIRST_MOVE":
+                source = "HOLD_DIRECT_TFV_NO_EXECUTABLE_FIRST_MOVE"
+            else:
+                source = "HOLD_DIRECT_TFV_NO_PREDICTED_BENEFIT"
+        elif source == "MPC_V122":
             source = "MPC_DIRECT_TFV_RECEDING"
         elif source == "PASSIVE_MPC_NO_PREDICTED_BENEFIT":
             source = "HOLD_DIRECT_TFV_CALIBRATED_OR_NO_BENEFIT"
         elif source.endswith("_V122"):
             source = source[:-5] + "_DIRECT_TFV"
+        diagnostics["calibrated_runtime_action_class"] = (
+            "ACTION" if source == "MPC_DIRECT_TFV_RECEDING" else "HOLD"
+        )
         return ControllerAction(settings=action.settings, source=source, diagnostics=diagnostics)
 
 
