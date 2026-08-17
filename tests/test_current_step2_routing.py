@@ -41,7 +41,8 @@ def test_current_contract_is_calibrated_direct_tfv_v6() -> None:
     assert payload["training_contract"] == "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5"
     assert payload["step3_contract"] == "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V5"
     assert payload["admission_contract"] == "PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1"
-    assert "upper bound < 0" in payload["step3_current"]["admission"]
+    assert "upper margin < 0" in payload["step3_current"]["admission"]
+    assert "optimizer-replay" in payload["action_contract"]["statistical_admission"]
     assert payload["action_contract"]["all_writable_actuators_screened_every_decision"] is True
     assert payload["scientific_bottleneck"]["classification"] == "DEVELOPMENT_NO_CONTROL_BENEFIT_INCONSISTENT"
 
