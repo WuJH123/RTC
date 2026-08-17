@@ -5,11 +5,11 @@
   "training_contract": "PROJECT7_DIRECT_TFV_CORE_TRAINING_V4",
   "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V3",
   "authoritative_truth": "SWMM",
-  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, learn how all 109 writable facilities change future system-wide cumulative TFV, evaluate all 109 facilities, optimize a predicted-beneficial multi-facility action sequence, execute the first 10-minute target, then re-observe",
+  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, learn how all 109 writable facilities change future system-wide cumulative TFV, evaluate all 109 facilities for immediate and delayed control value, optimize a predicted-beneficial multi-facility action sequence, execute the first 10-minute target, then re-observe",
   "core_pipeline": {
     "step1": "causal sparse sensing -> current full-network hydraulic reconstruction",
     "step2": "causal current state + causal rainfall + complete reference/candidate H360 actions -> authoritative exact delta TFV",
-    "step3": "HOLD is exact zero; screen all 109 facilities, optimize predicted-beneficial facilities, execute if optimized predicted delta TFV < 0, otherwise HOLD",
+    "step3": "HOLD is exact zero; screen all 109 facilities with pulse and persistent probes, optimize predicted-beneficial facilities, execute if optimized predicted delta TFV < 0, otherwise HOLD",
     "swmm": "authoritative offline label generator and authoritative control evaluation truth; never the online candidate evaluator"
   },
   "time_contract": {
@@ -56,8 +56,8 @@
     "module": "src/rtc/step3_tfv_value_mpc_v3.py",
     "solver_audit_runner": "scripts/run_step3_direct_tfv_solver_current.py",
     "reference": "HOLD",
-    "screening": "evaluate half/full-radius first-move up/down probes for all 109 facilities",
-    "beneficial_definition": "facility best first-move predicted delta TFV < 0",
+    "screening": "for all 109 facilities evaluate up/down probes at half/full first-move radius under both one-block pulse and persistent H360 patterns, so delayed-benefit facilities remain eligible",
+    "beneficial_definition": "facility best pulse/persistent probe predicted delta TFV < 0",
     "active_set": "rank all predicted-beneficial facilities; default ceiling is TrainFit joint changed-facility q90, not q50",
     "optimization": "bounded L-BFGS-B across 12 free 10-minute blocks for the dynamic active set",
     "admission": "no separate calibrated threshold; execute when optimized predicted delta TFV < 0, otherwise HOLD",
