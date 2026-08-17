@@ -1,9 +1,8 @@
 """Calibrate optimizer-aware Direct-TFV Step3 admission from Development evidence.
 
-The final one-sided margin is the conservative maximum of base D3 HOLD-reference residual evidence
-and exact same-prefix H360 SWMM residuals from optimizer-selected plans. D3 groups are rainfall-split
-into calibration/audit halves. The optimizer replay event(s) are explicitly recorded as calibration
-evidence and must not later be described as independent post-calibration validation.
+The final margin takes the conservative maximum of a rainfall-group-balanced D3 HOLD residual bound
+and exact same-prefix H360 SWMM residuals from optimizer-selected plans. The optimizer replay event(s)
+are calibration evidence and cannot later be described as independent post-calibration validation.
 """
 from __future__ import annotations
 
@@ -27,7 +26,7 @@ from rtc.step2_state_store_v127 import CausalStep1StateCacheV127, load_causal_st
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
 
 
-CURRENT_DIRECT_TFV_ADMISSION_RUN_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_ADMISSION_CALIBRATION_V2"
+CURRENT_DIRECT_TFV_ADMISSION_RUN_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_ADMISSION_CALIBRATION_V3"
 
 
 def _sha(path: str | Path) -> str:
@@ -72,7 +71,11 @@ def main() -> None:
     hold_d3 = sorted(name for name in holdout if name.startswith("D3::"))
     if len(hold_d3) != 32:
         raise ValueError(f"current Direct-TFV admission expects 32 D3 holdout groups, got {len(hold_d3)}")
-    calibration_names, audit_names, split = split_d3_holdout_for_admission(base, hold_d3)
+    calibration_names, audit_names, split = split_d3_holdout_for_admission(
+        base,
+        hold_d3,
+        coverage=float(args.coverage),
+    )
     calibration = derive_direct_tfv_admission_calibration(
         model,
         cache=online,
