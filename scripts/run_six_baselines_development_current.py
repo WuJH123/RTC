@@ -13,14 +13,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-from rtc.baseline_panel import baseline_lineage_failures, tfv_m3
+from rtc.baseline_panel import (
+    CURRENT_SIX_BASELINE_DEVELOPMENT_CONTRACT,
+    baseline_lineage_failures,
+    tfv_m3,
+)
 from rtc.baselines import FORMAL_FIXED_BASELINE_IDS
 from rtc.execution_audit_v127 import audit_target_write_readback_v127
 
 
-CURRENT_SIX_BASELINE_DEVELOPMENT_CONTRACT = (
-    "PROJECT7_CURRENT_SIX_FIXED_BASELINE_DEVELOPMENT_SWMM_V1"
-)
 PYTHON_COMMAND_BASELINES = {"auto_rbc", "efd", "all_open", "all_closed"}
 
 
@@ -144,9 +145,6 @@ def main() -> None:
             baseline=metadata,
             expected_strategy=str(row["strategy"]),
         )
-        # The reference itself has strategy=no_control, while the helper deliberately checks only
-        # the baseline strategy. All physical/event lineage fields must nevertheless match.
-        failures = [failure for failure in failures if not failure.startswith("strategy=")]
         if failures:
             raise RuntimeError(
                 f"{row['strategy']}: six-baseline panel lineage differs: " + "; ".join(failures)
