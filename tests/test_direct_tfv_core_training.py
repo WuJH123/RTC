@@ -9,8 +9,8 @@ from rtc.step2_tfv_value_training_v4 import (
 )
 
 
-def test_core_training_contract_is_v4() -> None:
-    assert DIRECT_TFV_TRAINING_CONTRACT == "PROJECT7_DIRECT_TFV_CORE_TRAINING_V4"
+def test_core_training_contract_is_v5() -> None:
+    assert DIRECT_TFV_TRAINING_CONTRACT == "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5"
 
 
 def test_facility_balanced_regression_does_not_let_repeated_facility_dominate() -> None:

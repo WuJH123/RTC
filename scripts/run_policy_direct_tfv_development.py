@@ -1,9 +1,10 @@
 """Run the current Direct-TFV controller in an authoritative Development SWMM closed loop.
 
-This is not production promotion. The policy is deliberately simple: all 109 facilities are
-screened every 10 minutes, the predicted-beneficial dynamic subset is optimised, any finite
-optimised delta TFV < 0 is executable, and only the first 10-minute target is written before
-re-observation. No separate calibrated action threshold is required.
+All 109 facilities are screened every 10 minutes. The predicted-beneficial dynamic subset is
+optimised inside TrainFit action support, any finite optimised delta TFV < 0 is executable, and only
+the first 10-minute target is written before re-observation. V4 may use the TrainFit joint q95
+active-density support when a V2 density-support payload is present; legacy checkpoints fail closed
+to q90. No calibrated improvement threshold is used.
 """
 from __future__ import annotations
 
@@ -26,10 +27,10 @@ from rtc.project7_contract import EFFECTIVE_WARMUP_MINUTES, validate_project7_ru
 from rtc.runtime_controller_guard import ContinuityGuardController
 from rtc.step1_runtime_v127 import load_frozen_step1_v127
 from rtc.step2_state_store_v127 import semantic_model_state_dict_sha256, semantic_sensor_layout_sha256
-from rtc.step3_tfv_value_mpc_v3 import DirectTFVMPCDesignV3, DirectTFVRecedingMPC
+from rtc.step3_tfv_value_mpc_v4 import DirectTFVMPCDesignV4, DirectTFVRecedingMPCV4
 
 
-DIRECT_TFV_DEVELOPMENT_RUNTIME_CONTRACT = "PROJECT7_DIRECT_TFV_AUTHORITATIVE_10MIN_DEVELOPMENT_RTC_V2"
+DIRECT_TFV_DEVELOPMENT_RUNTIME_CONTRACT = "PROJECT7_DIRECT_TFV_AUTHORITATIVE_10MIN_DEVELOPMENT_RTC_V3"
 DIRECT_TFV_CAUSAL_FORECAST_CONTRACT = "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92,scenario_multiplier=1.0)"
 
 
@@ -68,6 +69,12 @@ def main() -> None:
     p.add_argument("--optimizer-deadline-seconds", type=float, default=120.0)
     p.add_argument("--decision-runtime-budget-seconds", type=float, default=180.0)
     p.add_argument("--active-facilities", type=int, default=0)
+    p.add_argument(
+        "--active-support-quantile",
+        choices=("q90", "q95", "q99"),
+        default="q95",
+        help="TrainFit joint-action density support; legacy checkpoints automatically fall back to q90",
+    )
     args = p.parse_args()
 
     if not 0.0 < float(args.optimizer_deadline_seconds) < float(args.decision_runtime_budget_seconds) < 600.0:
@@ -76,9 +83,7 @@ def main() -> None:
     graph = _load_graph(args.graph)
     sensors = _load_lines(args.sensors)
     step1 = load_frozen_step1_v127(args.step1, device)
-    model, normalization, checkpoint = load_direct_tfv_runtime_checkpoint(
-        args.step2, graph=graph, device=device
-    )
+    model, normalization, checkpoint = load_direct_tfv_runtime_checkpoint(args.step2, graph=graph, device=device)
     _require_step1_lineage(checkpoint, step1=step1, sensors=sensors)
 
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
@@ -96,12 +101,13 @@ def main() -> None:
         fallback_policy_id="HOLD_DIRECT_TFV_RUNTIME_FALLBACK",
     )
     controller_cfg.validate()
-    design = DirectTFVMPCDesignV3(
+    design = DirectTFVMPCDesignV4(
         maxiter=int(args.lbfgsb_maxiter),
         deadline_seconds=float(args.optimizer_deadline_seconds),
         active_facility_count=int(args.active_facilities),
+        active_support_quantile=str(args.active_support_quantile),
     )
-    mpc = DirectTFVRecedingMPC(
+    mpc = DirectTFVRecedingMPCV4(
         model=model,
         graph=graph,
         normalization=normalization,
@@ -153,6 +159,7 @@ def main() -> None:
 
     metadata_path = Path(result.metadata_path)
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    support = dict(checkpoint["action_support"])
     metadata.update(
         {
             "strategy": "proposed_direct_tfv_all109_receding_mpc",
@@ -163,11 +170,18 @@ def main() -> None:
             "dynamic_active_set": True,
             "separate_selection_threshold_used": False,
             "action_rule": "optimised predicted delta TFV < 0",
-            "training_joint_changed_facility_q90": float(
-                checkpoint["action_support"].get(
-                    "joint_changed_facility_count_q90",
-                    checkpoint["action_support"].get("joint_changed_facility_count_q75", 0.0),
-                )
+            "active_support_quantile_requested": str(args.active_support_quantile),
+            "active_support_quantile_effective": mpc.active_support_quantile_effective(),
+            "active_support_ceiling": mpc.active_support_ceiling(),
+            "training_joint_changed_facility_q90": float(support.get("joint_changed_facility_count_q90", 0.0)),
+            "training_joint_changed_facility_q95": (
+                None if "joint_changed_facility_count_q95" not in support else float(support["joint_changed_facility_count_q95"])
+            ),
+            "training_joint_changed_facility_q99": (
+                None if "joint_changed_facility_count_q99" not in support else float(support["joint_changed_facility_count_q99"])
+            ),
+            "training_joint_changed_facility_max": (
+                None if "joint_changed_facility_count_max" not in support else int(support["joint_changed_facility_count_max"])
             ),
             "free_control_horizon_minutes": 120,
             "prediction_horizon_minutes": 360,
@@ -176,6 +190,8 @@ def main() -> None:
             "score_equals_execute_required": True,
             "target_write_readback_audit": write_audit,
             "step2_model_sha256": _sha(args.step2),
+            "step2_training_contract": str(checkpoint.get("training_contract", "")),
+            "step2_training_contract_is_legacy": bool(checkpoint.get("runtime_training_contract_is_legacy", False)),
             "graph_schema_sha256": _sha(args.graph),
             "step1_model_file_sha256": _sha(args.step1),
             "sensor_layout_file_sha256": _sha(args.sensors),
@@ -196,6 +212,8 @@ def main() -> None:
                 "node_statistics_path": result.node_statistics_path,
                 "decisions": result.decisions,
                 "target_write_readback_passed": True,
+                "active_support_quantile_effective": metadata["active_support_quantile_effective"],
+                "active_support_ceiling": metadata["active_support_ceiling"],
                 "sampled_global_peak_flood_rate_m3s": result.global_peak_flood_rate_m3s,
                 "flow_routing_error_pct": result.flow_routing_error_pct,
             },

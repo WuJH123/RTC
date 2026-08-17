@@ -1,7 +1,8 @@
 # Project7 current execution guide
 
 GitHub `main` is the code source of truth. Do not infer the active method from the highest V-number
-in a filename.
+in a filename: several filenames are intentionally retained for compatibility while their embedded
+scientific contract has advanced.
 
 ## 1. Frozen research problem
 
@@ -12,7 +13,7 @@ sparse causal sensors
  -> Step1 reconstruct CURRENT full-network hydraulic state
  -> Step2 learn 109-facility ACTION -> future delta TFV
  -> Step3 evaluate all 109 facilities relative to HOLD
- -> optimise the predicted-beneficial multi-facility subset
+ -> optimise the predicted-beneficial multi-facility subset inside TrainFit support
  -> execute first 10-minute target only
  -> observe again and repeat
 ```
@@ -28,33 +29,27 @@ Frozen clock/action contract:
 - H120 free control = 12 ten-minute blocks;
 - writable facilities = 109;
 - every facility is eligible and screened every decision;
+- setting movement <= 0.5 per 10-minute supervisory update;
 - execute only the first 10-minute target, then re-observe.
 
-## 2. What the completed V3 evidence means
+## 2. Why the current V5/V4 update exists
 
-Full V3 Development used all 112/112/32/32/33/15 D2/D3/D4 groups and proved complete
-single-facility learning coverage: **109/109** facilities, 14 rainfall groups per facility.
+Three Development events established two facts simultaneously:
 
-The runtime-reference-aligned D3 holdout is already useful:
+1. Direct-TFV reduced TFV versus No-control on 3/3 events and same-prefix H360 SWMM replay supported
+   the local control direction on 4/5 selected decisions; there was no evidence of catastrophic
+   continuous-optimizer sign exploitation.
+2. Direct-TFV remained weaker than Auto-RBC on 3/3 events. The strongest H360-beneficial decisions
+   bound the old q90 active-set ceiling, while the testbed itself is release-dominated (All-open is a
+   strong diagnostic extreme).
 
-```text
-rank                    0.367
-pairwise                0.637
-selected harmful        3.1%
-selected true delta TFV -31,396.6 m3
-regret                   4,319.7 m3
-```
+The response is **not** to weaken Auto-RBC or introduce a hand-tuned improvement threshold. The
+current path strengthens learned joint-action support and then asks SWMM whether broader coordinated
+control actually improves closed-loop TFV.
 
-D4 FIT/AUDIT still shows about 50% harmful raw selection, but D4 uses a Sparse-RBC reference whereas
-future Step3 uses HOLD. D4 is therefore a **reference-shift stress diagnostic**, not a reason to stop
-the HOLD-reference control path.
+## 3. Current Step2 — Direct-TFV V5 training contract
 
-Do not return to the V128 hydraulic world model and do not generate large new datasets before the
-current HOLD-reference Step3 and authoritative SWMM path is tested.
-
-## 3. Current Step2 — core Direct-TFV V4 training
-
-Model architecture remains:
+Model architecture remains unchanged:
 
 ```text
 causal Step1 current state
@@ -67,68 +62,89 @@ causal Step1 current state
 
 with 109 facility value differences plus a multi-facility interaction value difference.
 
-Structural contracts remain:
+Current training contract: `PROJECT7_DIRECT_TFV_CORE_TRAINING_V5`.
 
-```text
-candidate == reference -> exact zero
-swap(candidate, reference) -> exact sign reversal
-single changed facility -> interaction residual exactly zero
-```
-
-Current training is `PROJECT7_DIRECT_TFV_CORE_TRAINING_V4`:
-
-1. **MAIN** — exact single-facility branches learn the 109 facility effects. Regression is averaged
-   per facility before the global mean so a few facilities with 128-145 branches cannot dominate
-   facilities that have about 22-27 branches.
-2. **JOINT** — multi-facility branches fit the interaction residual. No HOLD/action decision bias is
-   added in this stage.
+1. **MAIN** — exact single-facility branches learn 109 facility effects with facility-balanced
+   regression.
+2. **JOINT** — multi-facility branches are balanced by changed-facility count and update the shared
+   facility encoder/head plus interaction head. This prevents numerous sparse joint branches from
+   drowning out rarer dense coordinated branches.
 3. **CONTROL** — only D3 HOLD-reference TrainFit groups fine-tune the late value representation with
-   a symmetric sign loss. There is no extra harmful-action safety weight and no oracle-top1 loss in
-   the canonical objective.
+   symmetric HOLD-relative sign loss.
 
-Exact cached-candidate `top1_fraction` remains a diagnostic only. The actual continuous Step3 needs
-correct value/sign and low selected regret; it does not need to reproduce the identity of one cached
-branch exactly.
+D4 FIT/AUDIT remain reference-shift stress diagnostics, not Step3 gates. There is no extra harmful-
+action bias, top-1 policy loss, uncertainty gate or calibrated minimum-improvement threshold.
 
-Full DEV fails closed only if single-facility coverage is below **109/109**.
+### Action support
 
-## 4. Current Step3 — all-109 receding MPC V3
+Per-facility q95 action magnitudes use all admitted TrainFit sources for identifiability/coverage.
+The **joint changed-facility q50/q75/q90/q95/q99/max used by online Step3 are derived from D3
+HOLD-reference branches only**. D2/D4 reference-shift geometry cannot inflate the online active set.
+
+Legacy V4 checkpoints remain runtime-readable, but because they lack the additive V2 joint-density
+support payload, Step3 V4 automatically fails back to q90.
+
+## 4. Current Step3 — support-aware all-109 MPC V4
 
 Canonical module:
 
 ```text
-src/rtc/step3_tfv_value_mpc_v3.py
+src/rtc/step3_tfv_value_mpc_v4.py
 ```
 
-Canonical solver audit:
+At every 10-minute decision:
+
+1. build exact HOLD H360 reference;
+2. screen all 109 facilities with up/down, half/full-radius, pulse/persistent probes;
+3. rank predicted-beneficial facilities (`best predicted delta TFV < 0`);
+4. choose dynamic active set;
+5. default active-density support is D3-HOLD TrainFit **q95** for a current V5 checkpoint;
+6. never exceed the maximum D3-HOLD joint changed-facility count observed in TrainFit;
+7. run bounded L-BFGS-B over 12 free 10-minute blocks;
+8. retain physical min/max, <=0.5 update and per-facility TrainFit magnitude geometry;
+9. execute if optimised predicted delta TFV < 0, otherwise HOLD;
+10. execute first 10-minute target only, then re-observe.
+
+`q90` is the conservative ablation. `q99` is diagnostic only unless later authoritative SWMM evidence
+supports promotion. Do not jump directly to an unrestricted 109-facility simultaneous move.
+
+## 5. Counterfactual integrity
+
+Same-prefix H360 replay must reproduce the authoritative closed-loop target-latch timing. Use:
 
 ```text
-scripts/run_step3_direct_tfv_solver_current.py
+src/rtc/direct_tfv_replay_guard.py
+PROJECT7_DIRECT_TFV_REPLAY_USES_AUTHORITATIVE_TARGET_LATCH_V1
 ```
 
-At every 10-minute decision Step3:
+Before branching, candidate/HOLD must match on current state, target latch, physical current settings
+and cumulative statistics, and the branch target must match the logged HOLD reference. Any mismatch
+is `COUNTERFACTUAL_REPLAY_P0` and blocks scientific interpretation.
 
-1. builds a HOLD H360 reference;
-2. for **all 109 facilities**, evaluates up/down probes at half and full supported first-move radius
-   under both a one-block **pulse** pattern and a **persistent** pattern; the latter preserves
-   facilities whose TFV benefit is delayed and would be missed by a single 10-minute pulse;
-3. keeps facilities whose best pulse/persistent probe has predicted delta TFV < 0;
-4. ranks those predicted-beneficial facilities;
-5. forms a dynamic active set. Default ceiling is the TrainFit q90 joint changed-facility count,
-   preserving more control freedom than the previous q50=8 default;
-6. runs L-BFGS-B for that active set over 12 free 10-minute blocks;
-7. enforces physical min/max, <=0.5 change per update, and the action magnitudes represented by
-   TrainFit data;
-8. if the optimised predicted delta TFV is < 0, execute the first 10-minute target; otherwise HOLD;
-9. re-observe and solve again after 10 minutes.
+## 6. Baseline semantics
 
-There is **no separate selection-threshold calibration stage** in the canonical path. HOLD is exact
-zero, so `predicted delta TFV < 0` is the direct decision implied by the scientific objective.
+The fixed Development panel remains:
 
-All 109 facilities are learned and evaluated every decision. This does **not** mean all 109 must be
-changed simultaneously; the current hydraulic state and rainfall determine the useful subset.
+```text
+no_control
+internal_rtc
+auto_rbc
+efd
+all_open
+all_closed
+```
 
-## 5. Frozen Development assets
+Scientific comparators are Internal RTC, Auto-RBC and EFD. All-open/all-closed are diagnostic
+extremes.
+
+Current `efd` is a **strict storage-volume Equal Filling Degree** comparator controlling writable
+storage outflows only. It must not be described as the older Project6 depth-zone EFD-like heuristic.
+Current Proposed uses no RBC warm start and no RBC safety fallback.
+
+Do not weaken or retune a baseline in response to Proposed performance. Baseline information basis
+(sensor counts and rule inputs) must be reported transparently.
+
+## 7. Frozen Development assets
 
 ```text
 GRAPH
@@ -150,81 +166,49 @@ STATE
 E:\RTC_sewer\Project7\study_v069\step2_v127_corrected_base_7634cd9\STEP2_V127_CAUSAL_STATE_STORE_V2.npz
 ```
 
-## 6. Development execution order
+## 8. Canonical Development order
 
-Always hard-sync and run cheap gates first:
+1. protect any local uncommitted same-prefix replay work before syncing GitHub;
+2. hard-sync `main`, install, full pytest, current lint, CUDA health;
+3. Direct-TFV V5 smoke, then full V5 DEV if smoke is structurally sound;
+4. require 109/109 exact single-facility coverage and report D3-HOLD q90/q95/q99/max joint support;
+5. judge Step2 primarily from D3 HOLD-reference harmful fraction, selected true delta TFV, regret,
+   pairwise and sign; D4 remains diagnostic;
+6. run Step3 V4 q95 solver audit, with q90 as the pre-registered conservative ablation;
+7. run one clean authoritative T5 Development SWMM closed loop;
+8. run exact same-prefix H360 SWMM counterfactuals using the shared target-latch guard;
+9. compare against the frozen provenance-verified six-baseline panel;
+10. only if T5 execution/science passes, repeat on T10/T20 and aggregate event-balanced evidence;
+11. stop before Validation/Final/Formal/Policy Lock.
 
-```powershell
-cd E:\RTC_sewer\Project7\repo
-git fetch origin --prune
-git switch main
-git reset --hard origin/main
-git clean -fd
-python -m pip install -e ".[dev,swmm]"
-python -m pytest -q
-python scripts/lint_current_surface.py
-python scripts/run_step2_current.py --help
-python scripts/run_step3_direct_tfv_solver_current.py --help
-python scripts/run_policy_direct_tfv_development.py --help
-python scripts/run_policy_current.py --promotion-status
-python scripts/run_seven_strategies_current.py --promotion-status
-```
-
-Then:
-
-```text
-A. core Direct-TFV smoke
-B. if no catastrophic D2/D3 regression, full core DEV
-C. require 109/109 single-facility TrainFit coverage
-D. judge Step2 mainly from D3 HOLD-reference held-out selected true dTFV, harmful fraction, regret,
-   pairwise and sign; D4 remains diagnostic
-E. run Step3 solver audit directly from the Step2 checkpoint
-F. if solver generates executable non-HOLD actions inside one control period, run one authoritative
-   Development SWMM closed loop
-G. compare authoritative TFV against a matched baseline
-```
-
-Do not skip directly to Formal/Final/Policy Lock.
-
-## 7. Scientific boundaries
+## 9. Scientific boundaries
 
 - no future realised rainfall online;
 - no future SWMM state/flood truth online;
 - no D4 AUDIT fitting;
-- no gradient labels;
-- no return to full future-hydraulic trajectory as the primary target;
-- no extra calibrated threshold that suppresses otherwise predicted-beneficial actions;
+- no return to V128 as the canonical target;
+- no arbitrary minimum-improvement threshold;
+- no uncertainty gate added to improve baseline ranking;
+- no weakening or event-wise tuning of Auto-RBC/EFD;
+- no unrestricted 109-way joint action without TrainFit/SWMM support;
 - production/seven-strategy promotion remains fail-closed;
 - Validation/Final/Formal/Policy Lock remain untouched during Development.
 
-## 8. What decides success
+## 10. What decides success
 
-Step2 primary evidence:
-
-```text
-109/109 single-facility TrainFit coverage
-D3 HOLD-reference pairwise/sign
-D3 selected_harmful_fraction
-D3 selected_true_delta_tfv_m3
-D3 selected_regret_m3
-```
-
-`top1_fraction` and D4 are diagnostics, not promotion gates.
-
-Step3 solver evidence:
+A training metric improvement alone is not success. The decisive chain is:
 
 ```text
-screened_facility_count = 109 for every group
-predicted-beneficial facility count > 0 on useful states
-action_selected_count > 0
-engineering/support violations = 0
-solver time < 600 s
+109/109 facility coverage
++ D3 HOLD-reference joint-density support
++ Step3 q95 support/engineering violations = 0
++ target write/readback = PASS
++ same-prefix H360 direction remains SWMM-supported
++ authoritative event TFV improves versus No-control
++ gap to competent Internal/Auto-RBC comparators narrows without weakening them
 ```
 
-The decisive scientific gate is authoritative SWMM:
-
-```text
-TFV_proposed < TFV_matched_baseline
-```
-
-while the exact scored first 10-minute target is the one actually written and read back.
+If q95 remains binding and authoritative same-prefix SWMM shows denser coordinated actions are truly
+beneficial, the next step is a **small targeted dense-joint SWMM augmentation** around the relevant
+changed-facility counts. Do not replace that evidence with a hand-tuned threshold or an unrestricted
+109-dimensional optimizer.

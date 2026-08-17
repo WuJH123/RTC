@@ -1,10 +1,4 @@
-"""Run the current all-109 Direct-TFV receding MPC on HOLD-reference Development states.
-
-This solver audit follows Step2 directly. It does not require a separate selection-threshold report:
-HOLD is exact delta TFV zero, so a predicted negative optimised delta is the natural action rule.
-All 109 facilities are screened, predicted-beneficial facilities enter a dynamic multi-facility
-active set, and only physical/rate plus TrainFit-represented action bounds are enforced.
-"""
+"""Run the current support-aware all-109 Direct-TFV receding MPC on HOLD-reference Development states."""
 from __future__ import annotations
 
 import argparse
@@ -22,10 +16,10 @@ from rtc.step2_causal_rainfall_v123 import CausalForecastValueCacheV123, load_ca
 from rtc.step2_state_store_v127 import CausalStep1StateCacheV127, load_causal_state_store_v127
 from rtc.step2_tfv_value_training import _branch_indices, _forward_candidates, _graph_tensors
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
-from rtc.step3_tfv_value_mpc_v3 import DirectTFVMPCDesignV3, DirectTFVRecedingMPC
+from rtc.step3_tfv_value_mpc_v4 import DirectTFVMPCDesignV4, DirectTFVRecedingMPCV4
 
 
-CURRENT_STEP3_SOLVER_RUN_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_STEP3_CORE_AUDIT_V2"
+CURRENT_STEP3_SOLVER_RUN_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_STEP3_CORE_AUDIT_V3"
 REPORT_FILENAME = "STEP3_DIRECT_TFV_SOLVER_REPORT.json"
 SEQUENCES_FILENAME = "STEP3_DIRECT_TFV_PROPOSED_SEQUENCES.npz"
 EXPECTED_BASE_COUNTS = (112, 112, 32, 32)
@@ -50,6 +44,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default="cuda")
     p.add_argument("--max-groups", type=int, default=0)
     p.add_argument("--active-facilities", type=int, default=0)
+    p.add_argument("--active-support-quantile", choices=("q90", "q95", "q99"), default="q95")
     return p
 
 
@@ -73,11 +68,8 @@ def main() -> None:
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
-
     graph = _load_graph(args.graph)
-    model, normalization, checkpoint = load_direct_tfv_runtime_checkpoint(
-        args.checkpoint, graph=graph, device=device
-    )
+    model, normalization, checkpoint = load_direct_tfv_runtime_checkpoint(args.checkpoint, graph=graph, device=device)
     if int(checkpoint["action_support"].get("single_facility_coverage_count", -1)) != 109:
         raise ValueError("Step3 requires 109/109 single-facility TrainFit coverage")
 
@@ -87,9 +79,7 @@ def main() -> None:
     rain_store.validate()
     state_store.validate()
     fit, holdout = deterministic_rainfall_split_v60(
-        base,
-        names=sorted(base.names("D2") + base.targeted_d3_names()),
-        holdout_fraction=0.20,
+        base, names=sorted(base.names("D2") + base.targeted_d3_names()), holdout_fraction=0.20
     )
     fit_d2 = [name for name in fit if name.startswith("D2::")]
     fit_d3 = [name for name in fit if name.startswith("D3::")]
@@ -104,8 +94,11 @@ def main() -> None:
         raise ValueError("Step3 solver audit has no D3 HOLD-reference groups")
 
     online = CausalStep1StateCacheV127(CausalForecastValueCacheV123(base, rain_store), state_store)
-    design = DirectTFVMPCDesignV3(active_facility_count=int(args.active_facilities))
-    controller = DirectTFVRecedingMPC(
+    design = DirectTFVMPCDesignV4(
+        active_facility_count=int(args.active_facilities),
+        active_support_quantile=str(args.active_support_quantile),
+    )
+    controller = DirectTFVRecedingMPCV4(
         model=model,
         graph=graph,
         normalization=normalization,
@@ -135,27 +128,17 @@ def main() -> None:
             current_settings=active_target,
             active_target=active_target,
         )
-
         indices = _branch_indices(batch, mode="all")
         cached = _forward_candidates(model, batch, indices, graph_tensors=static)
         cached_prediction = cached.total_delta_tfv_m3.detach().cpu().numpy().astype(np.float64)
-        cached_truth = (
-            batch.true_delta_tfv_m3[0]
-            .index_select(0, indices)
-            .detach()
-            .cpu()
-            .numpy()
-            .astype(np.float64)
-        )
+        cached_truth = batch.true_delta_tfv_m3[0].index_select(0, indices).detach().cpu().numpy().astype(np.float64)
         best_cached = int(np.argmin(cached_prediction))
         first = result.settings[: design.control_block_steps].mean(dim=0)
         physical_lo = torch.as_tensor(controller.min_setting, dtype=first.dtype, device=first.device)
         physical_hi = torch.as_tensor(controller.max_setting, dtype=first.dtype, device=first.device)
         physical_bad = bool(torch.any(first < physical_lo - 1.0e-6) or torch.any(first > physical_hi + 1.0e-6))
         support_bad = float(result.maximum_support_ratio) > 1.0001
-        engineering_violations += int(
-            physical_bad or result.first_move_changed_facility_count > result.active_facility_count
-        )
+        engineering_violations += int(physical_bad or result.first_move_changed_facility_count > result.active_facility_count)
         support_violations += int(support_bad)
         action_count += int(result.selected_source == "DIRECT_TFV_RECEDING_LBFGSB")
         if training_max > 0.0 and abs(float(result.predicted_delta_tfv_m3)) > 1.25 * training_max:
@@ -167,25 +150,23 @@ def main() -> None:
                 "predicted_delta_tfv_m3": float(result.predicted_delta_tfv_m3),
                 "best_cached_prediction_m3": float(cached_prediction[best_cached]),
                 "best_cached_true_delta_tfv_m3": float(cached_truth[best_cached]),
-                "predicted_gain_beyond_best_cached_m3": float(
-                    cached_prediction[best_cached] - float(result.predicted_delta_tfv_m3)
-                ),
+                "predicted_gain_beyond_best_cached_m3": float(cached_prediction[best_cached] - float(result.predicted_delta_tfv_m3)),
                 "screened_facility_count": int(result.screened_facility_count),
                 "predicted_beneficial_facility_count": int(result.predicted_beneficial_facility_count),
                 "active_facility_count": int(result.active_facility_count),
                 "active_facility_ids": list(result.active_facility_ids),
-                "active_facility_screening_scores_m3": list(result.active_facility_screening_scores_m3),
                 "first_move_changed_facility_count": int(result.first_move_changed_facility_count),
                 "maximum_support_ratio": float(result.maximum_support_ratio),
+                "active_support_quantile_requested": str(args.active_support_quantile),
+                "active_support_quantile_effective": controller.active_support_quantile_effective(),
+                "active_support_ceiling": controller.active_support_ceiling(),
                 "optimizer_success": bool(result.optimizer_success),
                 "optimizer_steps": int(result.optimizer_steps),
                 "optimizer_starts": int(result.optimizer_starts),
                 "gradient_norm": float(result.gradient_norm),
                 "solver_elapsed_seconds": float(result.elapsed_seconds),
                 "scipy_message": result.scipy_message,
-                "physical_or_active_set_violation": bool(
-                    physical_bad or result.first_move_changed_facility_count > result.active_facility_count
-                ),
+                "physical_or_active_set_violation": bool(physical_bad or result.first_move_changed_facility_count > result.active_facility_count),
                 "support_violation": bool(support_bad),
             }
         )
@@ -208,24 +189,25 @@ def main() -> None:
         settings=np.stack(proposed_sequences),
         actuator_ids=np.asarray(graph.actuator_ids),
     )
+    support = dict(checkpoint["action_support"])
     report = {
         "contract": CURRENT_STEP3_SOLVER_RUN_CONTRACT,
         "development_only": True,
         "swmm_launched": False,
         "step2_model_retrained": False,
+        "step2_training_contract": str(checkpoint.get("training_contract", "")),
         "separate_selection_threshold_used": False,
         "action_rule": "execute when optimised predicted delta TFV < 0; otherwise HOLD",
         "screen_all_109_facilities": True,
         "screening_probe_scales": list(design.screening_probe_scales),
-        "single_facility_training_coverage_count": int(
-            checkpoint["action_support"]["single_facility_coverage_count"]
-        ),
-        "training_joint_changed_facility_q90": float(
-            checkpoint["action_support"].get(
-                "joint_changed_facility_count_q90",
-                checkpoint["action_support"].get("joint_changed_facility_count_q75", 0.0),
-            )
-        ),
+        "single_facility_training_coverage_count": int(support["single_facility_coverage_count"]),
+        "active_support_quantile_requested": str(args.active_support_quantile),
+        "active_support_quantile_effective": controller.active_support_quantile_effective(),
+        "active_support_ceiling": controller.active_support_ceiling(),
+        "training_joint_changed_facility_q90": float(support.get("joint_changed_facility_count_q90", 0.0)),
+        "training_joint_changed_facility_q95": support.get("joint_changed_facility_count_q95"),
+        "training_joint_changed_facility_q99": support.get("joint_changed_facility_count_q99"),
+        "training_joint_changed_facility_max": support.get("joint_changed_facility_count_max"),
         "groups": len(records),
         "action_selected_count": int(action_count),
         "action_selected_fraction": action_fraction,

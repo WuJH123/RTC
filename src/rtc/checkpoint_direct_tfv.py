@@ -14,7 +14,8 @@ from .step2_tfv_value_training_v4 import DIRECT_TFV_TRAINING_CONTRACT
 from .step2_train_response_v60 import InputNormalizationV60
 
 
-DIRECT_TFV_RUNTIME_CHECKPOINT_CONTRACT = "PROJECT7_DIRECT_TFV_RUNTIME_CHECKPOINT_V2"
+DIRECT_TFV_RUNTIME_CHECKPOINT_CONTRACT = "PROJECT7_DIRECT_TFV_RUNTIME_CHECKPOINT_V3"
+LEGACY_DIRECT_TFV_TRAINING_CONTRACT = "PROJECT7_DIRECT_TFV_CORE_TRAINING_V4"
 
 
 def _design_from_payload(payload: dict[str, Any]) -> DirectTFVValueDesign:
@@ -48,8 +49,9 @@ def load_direct_tfv_runtime_checkpoint(
         raise ValueError("Direct-TFV checkpoint payload must be a mapping")
     if str(payload.get("contract")) != DIRECT_TFV_VALUE_CONTRACT:
         raise ValueError("Direct-TFV runtime checkpoint has the wrong model contract")
-    if str(payload.get("training_contract")) != DIRECT_TFV_TRAINING_CONTRACT:
-        raise ValueError("Direct-TFV runtime requires the core V4 training contract")
+    training_contract = str(payload.get("training_contract"))
+    if training_contract not in {DIRECT_TFV_TRAINING_CONTRACT, LEGACY_DIRECT_TFV_TRAINING_CONTRACT}:
+        raise ValueError("Direct-TFV runtime requires the V4 legacy or current V5 training contract")
     if str(payload.get("profile")) != "dev" or payload.get("development_only") is not True:
         raise ValueError("Direct-TFV runtime requires a full Development checkpoint")
     support = payload.get("action_support")
@@ -71,10 +73,12 @@ def load_direct_tfv_runtime_checkpoint(
     model.eval()
     normalization = _normalization(dict(payload["normalization"]))
     payload["runtime_loader_contract"] = DIRECT_TFV_RUNTIME_CHECKPOINT_CONTRACT
+    payload["runtime_training_contract_is_legacy"] = training_contract == LEGACY_DIRECT_TFV_TRAINING_CONTRACT
     return model, normalization, payload
 
 
 __all__ = [
     "DIRECT_TFV_RUNTIME_CHECKPOINT_CONTRACT",
+    "LEGACY_DIRECT_TFV_TRAINING_CONTRACT",
     "load_direct_tfv_runtime_checkpoint",
 ]

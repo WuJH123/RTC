@@ -1,6 +1,6 @@
 {
-  "contract": "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V7",
-  "purpose": "Fail closed on correctness for the maintained Direct-TFV Step1-Step2-Step3-authoritative-Development-runtime, counterfactual evidence, runtime-failure diagnosis and provenance-verified six-baseline Development comparison without promoting production/Final surfaces.",
+  "contract": "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V8",
+  "purpose": "Fail closed on correctness for maintained Direct-TFV V5 training, support-aware Step3 V4, authoritative Development runtime, same-prefix replay integrity and six-baseline Development comparison without promoting production/Final surfaces.",
   "full_repository_ruff_is_gate": false,
   "current_surface_ruff_is_gate": true,
   "rule_select": ["E4", "E7", "E9", "F"],
@@ -22,6 +22,7 @@
     "src/rtc/checkpoint_direct_tfv.py",
     "src/rtc/controller_direct_tfv.py",
     "src/rtc/direct_tfv_counterfactual.py",
+    "src/rtc/direct_tfv_replay_guard.py",
     "src/rtc/baseline_panel.py",
     "src/rtc/runtime_failure_diagnostics.py",
     "src/rtc/runtime_controller_guard.py",
@@ -30,6 +31,7 @@
     "src/rtc/step2_tfv_value_training_v4.py",
     "src/rtc/step2_tfv_support.py",
     "src/rtc/step3_tfv_value_mpc_v3.py",
+    "src/rtc/step3_tfv_value_mpc_v4.py",
     "src/rtc/step2_state_store_v127.py",
     "src/rtc/step2_causal_rainfall_v123.py",
     "src/rtc/production_cli.py",
@@ -45,12 +47,13 @@
     "tests/test_direct_tfv_step3_core.py",
     "tests/test_direct_tfv_runtime_adapter.py",
     "tests/test_direct_tfv_counterfactual.py",
+    "tests/test_direct_tfv_competitive_v5.py",
     "tests/test_direct_tfv_baseline_provenance.py",
     "tests/test_direct_tfv_scientific_bottleneck_panel.py",
     "tests/test_temporal_control_continuity_v069.py",
     "tests/test_facility_tfv_influence.py",
     "tests/test_facility_tfv_influence_cli.py"
   ],
-  "legacy_policy": "V128 hydraulic-world-model modules, threshold-calibration runners, V3 selection-aware training, Step3 V2 and V127 policy internals remain reproducibility/ablation surfaces; only the mature target-latch/write-readback execution shell is reused.",
+  "legacy_policy": "V128 hydraulic-world-model modules, threshold-calibration runners, Step3 V2/V3 and legacy V4-training checkpoints remain reproducibility/ablation surfaces; V4 training checkpoints remain runtime-readable but new training emits V5.",
   "non_gate_historical_debt_policy": "Do not mass-format archival code during scientific debugging."
 }
