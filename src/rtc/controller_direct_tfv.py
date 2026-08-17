@@ -110,10 +110,19 @@ class DirectTFVRuntimeMPCAdapter:
         active_scores = tuple(float(value) for value in result.active_facility_screening_scores_m3)
         best_screening = min(active_scores) if active_scores else 0.0
         optimizer_gain = float(best_screening - float(result.predicted_delta_tfv_m3)) if valid else 0.0
-        requested_quantile = str(self.inner.design.active_support_quantile)
-        effective_quantile = str(self.inner.active_support_quantile_effective())
-        support_ceiling = int(self.inner.active_support_ceiling())
-        if int(self.inner.design.active_facility_count) > 0:
+        requested_quantile = str(getattr(self.inner.design, "active_support_quantile", "q90"))
+        if hasattr(self.inner, "active_support_quantile_effective"):
+            effective_quantile = str(self.inner.active_support_quantile_effective())
+        else:
+            effective_quantile = "q90"
+        if hasattr(self.inner, "active_support_ceiling"):
+            support_ceiling = int(self.inner.active_support_ceiling())
+        else:
+            support_ceiling = max(
+                1,
+                min(109, int(math.ceil(float(result.training_joint_changed_facility_q90)))),
+            )
+        if int(getattr(self.inner.design, "active_facility_count", 0)) > 0:
             support_ceiling = min(
                 support_ceiling,
                 int(self.inner.design.active_facility_count),
