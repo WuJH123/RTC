@@ -4,17 +4,21 @@ Every 10 minutes all 109 writable facilities are evaluated relative to the curre
 The controller does not require a separate calibrated safety threshold. It acts whenever the best
 optimised sequence has predicted delta TFV < 0, otherwise it keeps HOLD.
 
+Screening deliberately tests two simple temporal patterns for every facility: a one-block pulse and
+a persistent H120 control move (with the frozen terminal hold through H360). This keeps delayed-TFV
+facilities eligible instead of assuming every useful facility must show its benefit from a single
+10-minute pulse.
+
 Workflow:
-1. score up/down first-move probes for every facility at half and full TrainFit-supported radius;
+1. score up/down pulse and persistent probes for every facility at half/full supported radius;
 2. retain predicted-beneficial facilities and rank them by predicted TFV reduction;
 3. optimise a dynamic multi-facility active set across the 12 free 10-minute control blocks;
-4. enforce only physical bounds, the 0.5-per-update engineering rate, and the action magnitudes
-   already represented by TrainFit data;
+4. enforce physical bounds, the 0.5-per-update engineering rate, and TrainFit action geometry;
 5. execute only the first 10-minute target and re-observe.
 
 The default active-set ceiling is the TrainFit q90 joint changed-facility count. This is a
-computational/support parameter, not a safety gate, and it preserves substantially more control
-freedom than the previous q50 default.
+computational/support parameter, not a safety gate, and preserves substantially more control freedom
+than the previous q50 default.
 """
 from __future__ import annotations
 
@@ -49,10 +53,15 @@ class DirectTFVMPCDesignV3:
     deadline_seconds: float = 120.0
     active_facility_count: int = 0
     screening_probe_scales: tuple[float, ...] = (0.5, 1.0)
+    screening_probe_modes: tuple[str, ...] = ("pulse", "persistent")
 
     @property
     def control_block_steps(self) -> int:
         return self.control_update_seconds // self.model_step_seconds
+
+    @property
+    def free_horizon_steps(self) -> int:
+        return self.free_control_blocks * self.control_block_steps
 
     def validate(self) -> None:
         if (self.model_step_seconds, self.control_update_seconds) != (300, 600):
@@ -72,6 +81,8 @@ class DirectTFVMPCDesignV3:
         for value in self.screening_probe_scales:
             if not math.isfinite(float(value)) or not 0.0 < float(value) <= 1.0:
                 raise ValueError("screening probe scales must lie in (0,1]")
+        if tuple(self.screening_probe_modes) != ("pulse", "persistent"):
+            raise ValueError("current Step3 requires pulse and persistent screening modes")
 
 
 @dataclass(frozen=True)
@@ -147,18 +158,30 @@ class DirectTFVRecedingMPC:
             raise ValueError("Step3 action-support radii must be non-negative")
 
     def _normalize_state(self, value: torch.Tensor) -> torch.Tensor:
-        mean = torch.as_tensor(self.normalization.state_mean, dtype=value.dtype, device=value.device)
-        std = torch.as_tensor(self.normalization.state_std, dtype=value.dtype, device=value.device).clamp_min(1.0e-6)
+        mean = torch.as_tensor(
+            self.normalization.state_mean, dtype=value.dtype, device=value.device
+        )
+        std = torch.as_tensor(
+            self.normalization.state_std, dtype=value.dtype, device=value.device
+        ).clamp_min(1.0e-6)
         return (value - mean) / std
 
     def _normalize_rainfall(self, value: torch.Tensor) -> torch.Tensor:
-        mean = torch.as_tensor(self.normalization.rainfall_mean, dtype=value.dtype, device=value.device)
-        std = torch.as_tensor(self.normalization.rainfall_std, dtype=value.dtype, device=value.device).clamp_min(1.0e-6)
+        mean = torch.as_tensor(
+            self.normalization.rainfall_mean, dtype=value.dtype, device=value.device
+        )
+        std = torch.as_tensor(
+            self.normalization.rainfall_std, dtype=value.dtype, device=value.device
+        ).clamp_min(1.0e-6)
         return (value - mean) / std
 
     def _normalize_flow(self, value: torch.Tensor) -> torch.Tensor:
-        mean = torch.as_tensor(self.normalization.flow_mean, dtype=value.dtype, device=value.device)
-        std = torch.as_tensor(self.normalization.flow_std, dtype=value.dtype, device=value.device).clamp_min(1.0e-6)
+        mean = torch.as_tensor(
+            self.normalization.flow_mean, dtype=value.dtype, device=value.device
+        )
+        std = torch.as_tensor(
+            self.normalization.flow_std, dtype=value.dtype, device=value.device
+        ).clamp_min(1.0e-6)
         return (value - mean) / std
 
     def _hold_sequence(self, active_target: torch.Tensor) -> torch.Tensor:
@@ -222,6 +245,26 @@ class DirectTFVRecedingMPC:
             active_target=active_target,
         )[0]
 
+    def _probe_sequence(
+        self,
+        *,
+        hold: torch.Tensor,
+        actuator_index: int,
+        target: float,
+        mode: str,
+    ) -> torch.Tensor:
+        sequence = hold.clone()
+        if mode == "pulse":
+            end = self.design.control_block_steps
+        elif mode == "persistent":
+            end = self.design.prediction_horizon_steps
+        else:
+            raise ValueError(f"unknown Direct-TFV screening mode: {mode}")
+        sequence[:end, actuator_index] = torch.as_tensor(
+            target, dtype=hold.dtype, device=hold.device
+        )
+        return sequence
+
     def _screen_all_facilities(
         self,
         *,
@@ -230,12 +273,14 @@ class DirectTFVRecedingMPC:
         previous_actuator_flow: torch.Tensor,
         active_target: torch.Tensor,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        device, dtype = active_target.device, active_target.dtype
         hold = self._hold_sequence(active_target)
         sequences: list[torch.Tensor] = []
         mapping: list[tuple[int, int]] = []
         for index in range(109):
-            radius = min(float(self.first_radius[index]), float(self.design.max_setting_delta_per_update))
+            radius = min(
+                float(self.first_radius[index]),
+                float(self.design.max_setting_delta_per_update),
+            )
             if radius <= 1.0e-7:
                 continue
             current = float(active_target[index].detach().cpu())
@@ -243,15 +288,22 @@ class DirectTFVRecedingMPC:
                 step = radius * float(scale)
                 for direction in (-1, 1):
                     target = current + direction * step
-                    target = max(float(self.min_setting[index]), min(float(self.max_setting[index]), target))
+                    target = max(
+                        float(self.min_setting[index]),
+                        min(float(self.max_setting[index]), target),
+                    )
                     if abs(target - current) <= 1.0e-7:
                         continue
-                    sequence = hold.clone()
-                    sequence[: self.design.control_block_steps, index] = torch.as_tensor(
-                        target, dtype=dtype, device=device
-                    )
-                    sequences.append(sequence)
-                    mapping.append((index, direction))
+                    for mode in self.design.screening_probe_modes:
+                        sequences.append(
+                            self._probe_sequence(
+                                hold=hold,
+                                actuator_index=index,
+                                target=target,
+                                mode=mode,
+                            )
+                        )
+                        mapping.append((index, direction))
         best_score = np.full(109, np.inf, dtype=np.float64)
         best_direction = np.zeros(109, dtype=np.int64)
         if sequences:
@@ -268,7 +320,9 @@ class DirectTFVRecedingMPC:
                 if float(score) < best_score[index]:
                     best_score[index] = float(score)
                     best_direction[index] = int(direction)
-        eligible = np.flatnonzero(np.isfinite(best_score) & (self.first_radius > 1.0e-7))
+        eligible = np.flatnonzero(
+            np.isfinite(best_score) & (self.first_radius > 1.0e-7)
+        )
         order = eligible[np.argsort(best_score[eligible], kind="mergesort")]
         return order.astype(np.int64), best_score, best_direction
 
@@ -280,7 +334,10 @@ class DirectTFVRecedingMPC:
         else:
             support_value = self.action_support.get(
                 "joint_changed_facility_count_q90",
-                self.action_support.get("joint_changed_facility_count_q75", self.action_support.get("joint_changed_facility_count_q50", 1.0)),
+                self.action_support.get(
+                    "joint_changed_facility_count_q75",
+                    self.action_support.get("joint_changed_facility_count_q50", 1.0),
+                ),
             )
             requested = max(1, int(math.ceil(float(support_value))))
         return int(min(beneficial_count, min(109, requested)))
@@ -300,50 +357,81 @@ class DirectTFVRecedingMPC:
         device, dtype = active_target.device, active_target.dtype
         lo = torch.as_tensor(self.min_setting, dtype=dtype, device=device)
         hi = torch.as_tensor(self.max_setting, dtype=dtype, device=device)
-        first_radius = torch.as_tensor(self.first_radius, dtype=dtype, device=device)
-        sequence_radius = torch.as_tensor(self.sequence_radius, dtype=dtype, device=device)
+        first_radius = torch.as_tensor(
+            self.first_radius, dtype=dtype, device=device
+        )
+        sequence_radius = torch.as_tensor(
+            self.sequence_radius, dtype=dtype, device=device
+        )
         previous = active_target
         blocks: list[torch.Tensor] = []
         ai = active_indices.long()
         for block in range(self.design.free_control_blocks):
             radius = first_radius if block == 0 else sequence_radius
-            lower = torch.maximum(lo, previous - float(self.design.max_setting_delta_per_update))
-            upper = torch.minimum(hi, previous + float(self.design.max_setting_delta_per_update))
+            lower = torch.maximum(
+                lo, previous - float(self.design.max_setting_delta_per_update)
+            )
+            upper = torch.minimum(
+                hi, previous + float(self.design.max_setting_delta_per_update)
+            )
             lower = torch.maximum(lower, active_target - radius)
             upper = torch.minimum(upper, active_target + radius)
             target = active_target.clone()
-            width = (upper.index_select(0, ai) - lower.index_select(0, ai)).clamp_min(0.0)
+            width = (
+                upper.index_select(0, ai) - lower.index_select(0, ai)
+            ).clamp_min(0.0)
             target_active = lower.index_select(0, ai) + fractions[block] * width
             target = target.scatter(0, ai, target_active)
             blocks.append(target)
             previous = target
         free_blocks = torch.stack(blocks)
-        total_blocks = self.design.prediction_horizon_steps // self.design.control_block_steps
+        total_blocks = (
+            self.design.prediction_horizon_steps // self.design.control_block_steps
+        )
         if total_blocks > self.design.free_control_blocks:
             free_blocks = torch.cat(
-                (free_blocks, free_blocks[-1:].expand(total_blocks - self.design.free_control_blocks, -1)),
+                (
+                    free_blocks,
+                    free_blocks[-1:].expand(
+                        total_blocks - self.design.free_control_blocks, -1
+                    ),
+                ),
                 dim=0,
             )
         return free_blocks.repeat_interleave(self.design.control_block_steps, dim=0)
 
-    def _hold_start(self, *, active_indices: torch.Tensor, active_target: torch.Tensor) -> torch.Tensor:
+    def _hold_start(
+        self, *, active_indices: torch.Tensor, active_target: torch.Tensor
+    ) -> torch.Tensor:
         device, dtype = active_target.device, active_target.dtype
         lo = torch.as_tensor(self.min_setting, dtype=dtype, device=device)
         hi = torch.as_tensor(self.max_setting, dtype=dtype, device=device)
-        first_radius = torch.as_tensor(self.first_radius, dtype=dtype, device=device)
-        sequence_radius = torch.as_tensor(self.sequence_radius, dtype=dtype, device=device)
+        first_radius = torch.as_tensor(
+            self.first_radius, dtype=dtype, device=device
+        )
+        sequence_radius = torch.as_tensor(
+            self.sequence_radius, dtype=dtype, device=device
+        )
         previous = active_target
         rows: list[torch.Tensor] = []
         ai = active_indices.long()
         for block in range(self.design.free_control_blocks):
             radius = first_radius if block == 0 else sequence_radius
-            lower = torch.maximum(lo, previous - float(self.design.max_setting_delta_per_update))
-            upper = torch.minimum(hi, previous + float(self.design.max_setting_delta_per_update))
+            lower = torch.maximum(
+                lo, previous - float(self.design.max_setting_delta_per_update)
+            )
+            upper = torch.minimum(
+                hi, previous + float(self.design.max_setting_delta_per_update)
+            )
             lower = torch.maximum(lower, active_target - radius)
             upper = torch.minimum(upper, active_target + radius)
             low_a = lower.index_select(0, ai)
             width = (upper.index_select(0, ai) - low_a).clamp_min(1.0e-12)
-            rows.append(((active_target.index_select(0, ai) - low_a) / width).clamp(0.0, 1.0))
+            rows.append(
+                ((active_target.index_select(0, ai) - low_a) / width).clamp(
+                    0.0, 1.0
+                )
+            )
             previous = active_target
         return torch.stack(rows)
 
@@ -363,14 +451,26 @@ class DirectTFVRecedingMPC:
                 seed[:, column] = 0.0
         return seed
 
-    def _support_ratio(self, sequence: torch.Tensor, active_target: torch.Tensor) -> float:
+    def _support_ratio(
+        self, sequence: torch.Tensor, active_target: torch.Tensor
+    ) -> float:
         blocks = sequence[:: self.design.control_block_steps]
         delta = torch.abs(blocks - active_target[None])
-        first = torch.as_tensor(self.first_radius, dtype=delta.dtype, device=delta.device).clamp_min(1.0e-12)
-        later = torch.as_tensor(self.sequence_radius, dtype=delta.dtype, device=delta.device).clamp_min(1.0e-12)
+        first = torch.as_tensor(
+            self.first_radius, dtype=delta.dtype, device=delta.device
+        ).clamp_min(1.0e-12)
+        later = torch.as_tensor(
+            self.sequence_radius, dtype=delta.dtype, device=delta.device
+        ).clamp_min(1.0e-12)
         ratio_first = delta[0] / first
-        ratio_later = delta[1:] / later[None] if blocks.shape[0] > 1 else ratio_first[None]
-        return float(torch.maximum(ratio_first.max(), ratio_later.max()).detach().cpu())
+        ratio_later = (
+            delta[1:] / later[None]
+            if blocks.shape[0] > 1
+            else ratio_first[None]
+        )
+        return float(
+            torch.maximum(ratio_first.max(), ratio_later.max()).detach().cpu()
+        )
 
     def optimize(
         self,
@@ -397,7 +497,10 @@ class DirectTFVRecedingMPC:
         q90 = float(
             self.action_support.get(
                 "joint_changed_facility_count_q90",
-                self.action_support.get("joint_changed_facility_count_q75", self.action_support.get("joint_changed_facility_count_q50", 1.0)),
+                self.action_support.get(
+                    "joint_changed_facility_count_q75",
+                    self.action_support.get("joint_changed_facility_count_q50", 1.0),
+                ),
             )
         )
         if active_count <= 0:
@@ -409,7 +512,7 @@ class DirectTFVRecedingMPC:
                 optimizer_steps=0,
                 optimizer_starts=0,
                 gradient_norm=0.0,
-                scipy_message="no facility has a predicted beneficial first move",
+                scipy_message="no facility has a predicted beneficial pulse/persistent probe",
                 elapsed_seconds=float(time.perf_counter() - started),
                 screened_facility_count=109,
                 predicted_beneficial_facility_count=beneficial_count,
@@ -422,8 +525,12 @@ class DirectTFVRecedingMPC:
             )
 
         active_indices_np = beneficial_order[:active_count]
-        active_indices = torch.as_tensor(active_indices_np, dtype=torch.long, device=device)
-        hold_start = self._hold_start(active_indices=active_indices, active_target=active_target)
+        active_indices = torch.as_tensor(
+            active_indices_np, dtype=torch.long, device=device
+        )
+        hold_start = self._hold_start(
+            active_indices=active_indices, active_target=active_target
+        )
         starts = [
             hold_start,
             self._direction_start(
@@ -446,7 +553,9 @@ class DirectTFVRecedingMPC:
 
             def objective(flat: np.ndarray) -> tuple[float, np.ndarray]:
                 nonlocal last_gradient_norm
-                fractions = torch.as_tensor(flat, dtype=dtype, device=device).reshape(
+                fractions = torch.as_tensor(
+                    flat, dtype=dtype, device=device
+                ).reshape(
                     self.design.free_control_blocks, active_count
                 ).requires_grad_(True)
                 sequence = self._decode_active_fractions(
@@ -461,11 +570,22 @@ class DirectTFVRecedingMPC:
                     previous_actuator_flow=previous_actuator_flow,
                     active_target=active_target,
                 )
-                gradient = torch.autograd.grad(score, fractions, allow_unused=False)[0]
-                if not bool(torch.isfinite(score)) or not bool(torch.isfinite(gradient).all()):
-                    raise RuntimeError("Direct-TFV Step3 produced non-finite objective/gradient")
-                last_gradient_norm = float(torch.linalg.vector_norm(gradient).detach().cpu())
-                return float(score.detach().cpu()), gradient.detach().cpu().numpy().reshape(-1).astype(np.float64)
+                gradient = torch.autograd.grad(
+                    score, fractions, allow_unused=False
+                )[0]
+                if not bool(torch.isfinite(score)) or not bool(
+                    torch.isfinite(gradient).all()
+                ):
+                    raise RuntimeError(
+                        "Direct-TFV Step3 produced non-finite objective/gradient"
+                    )
+                last_gradient_norm = float(
+                    torch.linalg.vector_norm(gradient).detach().cpu()
+                )
+                return (
+                    float(score.detach().cpu()),
+                    gradient.detach().cpu().numpy().reshape(-1).astype(np.float64),
+                )
 
             result = minimize(
                 objective,
@@ -514,10 +634,23 @@ class DirectTFVRecedingMPC:
             source = "DIRECT_TFV_RECEDING_LBFGSB"
 
         first_move = selected[: self.design.control_block_steps].mean(dim=0)
-        changed = int(torch.sum(torch.abs(first_move - active_target) > 1.0e-7).detach().cpu())
-        support_ratio = 0.0 if source.startswith("HOLD") else self._support_ratio(selected, active_target)
-        active_ids = tuple(str(self.graph.actuator_ids[index]) for index in active_indices_np.tolist())
-        active_scores = tuple(float(screening_scores[index]) for index in active_indices_np.tolist())
+        changed = int(
+            torch.sum(torch.abs(first_move - active_target) > 1.0e-7)
+            .detach()
+            .cpu()
+        )
+        support_ratio = (
+            0.0
+            if source.startswith("HOLD")
+            else self._support_ratio(selected, active_target)
+        )
+        active_ids = tuple(
+            str(self.graph.actuator_ids[index])
+            for index in active_indices_np.tolist()
+        )
+        active_scores = tuple(
+            float(screening_scores[index]) for index in active_indices_np.tolist()
+        )
         success = bool(best_result.success) if best_result is not None else True
         return DirectTFVMPCResultV3(
             settings=selected,
