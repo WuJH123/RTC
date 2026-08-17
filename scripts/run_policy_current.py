@@ -5,15 +5,17 @@ import argparse
 import sys
 
 
-CURRENT_RUNTIME_BLOCK_CONTRACT = "PROJECT7_CURRENT_RUNTIME_BLOCKED_UNTIL_DIRECT_TFV_SWMM_PROBE_V3"
+CURRENT_RUNTIME_BLOCK_CONTRACT = (
+    "PROJECT7_CURRENT_RUNTIME_BLOCKED_UNTIL_OPTIMIZER_CONSISTENT_SWMM_PROBE_V4"
+)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Current Project7 selection-aware Direct-TFV Step2 and screened trust-region Step3 are "
-            "Development-only. Production runtime remains blocked until the solver audit and a "
-            "small authoritative SWMM first-move/closed-loop probe pass."
+            "Current Project7 Direct-TFV Step2, D3-HOLD joint-sequence support, optimizer-aware "
+            "admission and Step3 V6 are Development-only. Production runtime remains blocked until "
+            "fresh authoritative SWMM closed-loop and exact same-prefix replay evidence pass."
         )
     )
     parser.add_argument(
@@ -32,8 +34,8 @@ def main() -> None:
         return
     raise RuntimeError(
         f"{CURRENT_RUNTIME_BLOCK_CONTRACT}: production runtime is intentionally blocked. "
-        "Finish the selection-aware Step2 DEV gate, HOLD-threshold calibration, screened Step3 "
-        "solver audit, and authoritative Development SWMM probe before production promotion."
+        "Build checkpoint-bound D3-HOLD joint-sequence support, pass Step3 V6 solver/audit gates, "
+        "and show fresh Development SWMM/replay evidence before production promotion."
     )
 
 
