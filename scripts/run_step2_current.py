@@ -7,8 +7,9 @@ selection-aware training stage so the model learns the HOLD=0 decision boundary 
 control.
 
 Legacy V128 hydraulic-world-model training and the earlier Direct-TFV V2 runner remain in the
-repository for ablation/history only.  Raw Torch Chrome tracing remains fail-closed on the 16-GB
-Development workstation.
+repository for ablation/history only. Raw Torch Chrome tracing remains fail-closed on the 16-GB
+Development workstation; use bounded low-frequency TRAINING_TELEMETRY.jsonl-style resource
+monitoring when additional host/GPU evidence is needed.
 """
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ def main() -> None:
     ):
         raise RuntimeError(
             "current Project7 disables raw --torch-profiler trace export on the 16-GB Development "
-            "workstation. Use bounded resource telemetry instead."
+            "workstation. Use bounded TRAINING_TELEMETRY.jsonl-style resource telemetry instead."
         )
     _direct_main()
 
