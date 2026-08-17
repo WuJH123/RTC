@@ -120,7 +120,10 @@ def test_fresh_calibration_rejects_optimizer_replay_and_reserved_postcalibration
 
     fresh, fresh_cache = _names("fresh", 9)
     fresh_cache.entries[fresh[0]].event_id = "T5_D120_chicago"
-    with pytest.raises(ValueError, match="optimizer-replay"):
+    # Exact replay-event reuse is caught by the stable structured role-overlap key before
+    # the secondary substring/token guard.  Assert that machine-readable contract rather
+    # than prose from the later (unreachable for an exact ID match) error branch.
+    with pytest.raises(ValueError, match="calibration_optimizer_replay_event"):
         validate_fresh_admission_partition(
             base_cache=base,
             step2_trainfit_d3_names=train,
