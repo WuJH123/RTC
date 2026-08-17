@@ -60,12 +60,12 @@ def _bare() -> DirectTFVRecedingMPCV5:
     return mpc
 
 
-def test_one_sided_conformal_requires_supported_finite_sample_coverage() -> None:
-    assert _minimum_conformal_sample_size(0.90) == 10
+def test_one_sided_conformal_requires_supported_independent_sample_count() -> None:
+    assert _minimum_conformal_sample_size(0.90) == 9
     with pytest.raises(ValueError, match="needs at least"):
         _one_sided_conformal_upper([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 0.90)
-    values = [float(value) for value in range(1, 11)]
-    assert _one_sided_conformal_upper(values, 0.90) == 10.0
+    values = [float(value) for value in range(1, 10)]
+    assert _one_sided_conformal_upper(values, 0.90) == 9.0
 
 
 def test_admission_margin_uses_dense_geometry_for_large_active_set() -> None:
