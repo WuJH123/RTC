@@ -50,7 +50,7 @@ class DirectTFVRuntimeMPCAdapter:
         """Expose the inner value model required by ``TorchMPCController`` initialisation.
 
         The shared target-latch controller moves ``mpc.model`` to its runtime device and switches it
-        to eval mode during construction.  Keep this compatibility surface explicit rather than
+        to eval mode during construction. Keep this compatibility surface explicit rather than
         forwarding arbitrary historical MPC attributes.
         """
 
@@ -67,6 +67,10 @@ class DirectTFVRuntimeMPCAdapter:
         previous_actuator_flow: torch.Tensor,
         max_delta_per_update: float | None,
     ) -> _RuntimeMPCResult:
+        # A failed inner solve is converted to a runtime fallback by the target-latch controller.
+        # Clear the previous solve first so that such a fallback can never inherit stale Step3
+        # diagnostics from an earlier successful decision.
+        self.last_result = None
         del fallback_settings
         if max_delta_per_update is not None and abs(
             float(max_delta_per_update) - float(self.inner.design.max_setting_delta_per_update)
