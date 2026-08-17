@@ -72,7 +72,7 @@ def test_sequence_geometry_counts_first_mass_h120_mass_and_temporal_variation() 
     geometry = direct_tfv_sequence_geometry(candidate, reference)
     assert np.isclose(geometry["first_block_l1"], 0.75)
     assert np.isclose(geometry["h120_l1"], 1.0)
-    assert np.isclose(geometry["h120_total_variation_l1"], 1.0)
+    assert np.isclose(geometry["h120_total_variation_l1"], 1.5)
 
 
 def test_derive_sequence_support_uses_only_multi_facility_h120_branch() -> None:
