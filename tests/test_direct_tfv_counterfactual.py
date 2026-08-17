@@ -52,6 +52,18 @@ def test_selector_ignores_hold_and_missing_plan_telemetry() -> None:
     assert [row["decision_index"] for row in selected] == [0]
 
 
+def test_selector_excludes_decisions_without_complete_truth_horizon() -> None:
+    rows = [_row(i, -1000.0 + i * 50.0) for i in range(8)]
+    selected = select_counterfactual_decisions(
+        rows,
+        max_decisions=6,
+        latest_elapsed_seconds=3600 + 3 * 600,
+    )
+    assert len(selected) == 4
+    assert all(int(row["elapsed_seconds"]) <= 5400 for row in selected)
+    assert {int(row["decision_index"]) for row in selected} == {0, 1, 2, 3}
+
+
 def test_selector_rejects_unbounded_diagnostic_budget() -> None:
     try:
         select_counterfactual_decisions([_row(0, -100.0)], max_decisions=7)
