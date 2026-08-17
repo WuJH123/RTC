@@ -45,6 +45,17 @@ class DirectTFVRuntimeMPCAdapter:
         self.inner = inner
         self.last_result: _RuntimeMPCResult | None = None
 
+    @property
+    def model(self) -> torch.nn.Module:
+        """Expose the inner value model required by ``TorchMPCController`` initialisation.
+
+        The shared target-latch controller moves ``mpc.model`` to its runtime device and switches it
+        to eval mode during construction.  Keep this compatibility surface explicit rather than
+        forwarding arbitrary historical MPC attributes.
+        """
+
+        return self.inner.model
+
     def optimize(
         self,
         *,
