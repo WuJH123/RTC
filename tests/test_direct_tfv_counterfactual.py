@@ -22,6 +22,7 @@ def _row(index: int, predicted: float, *, source: str = "MPC_DIRECT_TFV_RECEDING
             "active_facility_ids": [f"A{i:03d}" for i in range(22)],
             "active_set_ceiling_binding": True,
             "first_move_changed_facility_count": 10,
+            "counterfactual_actuator_ids": [f"A{i:03d}" for i in range(109)],
             "hold_reference_settings": [0.5] * 109,
             "optimized_free_control_blocks": [[0.5 + index * 0.001] * 109 for _ in range(12)],
             "counterfactual_reference_semantics": "HOLD_ACTIVE_TARGET_H360",
@@ -41,6 +42,7 @@ def test_selector_spans_strong_median_and_mild_predictions() -> None:
     assert 5 in indices and 6 in indices
     assert indices[-2:] == [10, 11]
     assert all(len(str(row["plan_sha256"])) == 64 for row in selected)
+    assert all(len(row["counterfactual_actuator_ids"]) == 109 for row in selected)
 
 
 def test_selector_ignores_hold_and_missing_plan_telemetry() -> None:
@@ -50,6 +52,22 @@ def test_selector_ignores_hold_and_missing_plan_telemetry() -> None:
     del missing["diagnostics"]["optimized_free_control_blocks"]
     selected = select_counterfactual_decisions([valid, hold, missing], max_decisions=6)
     assert [row["decision_index"] for row in selected] == [0]
+
+
+def test_selector_requires_unique_ordered_actuator_ids() -> None:
+    invalid = _row(0, -100.0)
+    invalid["diagnostics"]["counterfactual_actuator_ids"][-1] = "A000"
+    assert select_counterfactual_decisions([invalid], max_decisions=6) == []
+
+
+def test_plan_hash_binds_actuator_order() -> None:
+    first = _row(0, -100.0)
+    second = _row(0, -100.0)
+    ids = second["diagnostics"]["counterfactual_actuator_ids"]
+    ids[0], ids[1] = ids[1], ids[0]
+    first_selected = select_counterfactual_decisions([first], max_decisions=6)
+    second_selected = select_counterfactual_decisions([second], max_decisions=6)
+    assert first_selected[0]["plan_sha256"] != second_selected[0]["plan_sha256"]
 
 
 def test_selector_excludes_decisions_without_complete_truth_horizon() -> None:
