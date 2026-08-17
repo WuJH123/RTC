@@ -44,6 +44,9 @@ def main() -> None:
         proposed_metadata=args.proposed_metadata,
         baseline_metadata_by_strategy=metadata_by_strategy,
     )
+    payload["event_id"] = str(panel.get("event_id", ""))
+    if not payload["event_id"]:
+        raise ValueError("baseline panel lacks event_id")
     payload["baseline_panel_path"] = str(panel_path)
 
     out_json = Path(args.out_json).resolve()
