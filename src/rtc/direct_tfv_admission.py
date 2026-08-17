@@ -1,23 +1,21 @@
 """Optimizer-aware one-sided admission calibration for Project7 Direct-TFV MPC.
 
-The scientific failure exposed by Development is selection-induced optimism: cached D3 candidates
-look reasonably safe, but the continuous L-BFGS-B optimizer searches a much larger action space and
-selects extremal negative predictions. Exact same-prefix H360 SWMM replay showed that weak optimizer
-minima can be false-beneficial even with zero replay/prefix error.
+The current scientific failure is continuous-optimizer selection-induced optimism: cached D3
+candidates can look safe while L-BFGS-B selects extremal negative predictions that are false-
+beneficial in exact same-prefix H360 SWMM replay.
 
-The canonical margin therefore combines two Development-only evidence sources:
+The admission margin combines two Development-only evidence sources without overstating their
+statistical strength:
 
-1. rainfall-disjoint D3 HOLD-reference cached residuals, which quantify the base value-model error;
-2. exact same-prefix SWMM residuals for *optimizer-selected* H360 plans, which quantify the
-   distribution shift created by continuous optimization itself.
+1. rainfall-disjoint D3 HOLD-reference cached residuals use a finite-sample one-sided split-conformal
+   upper quantile when the sample count supports the requested coverage;
+2. the small exact optimizer-replay sample uses the **maximum observed optimism residual**. With only
+   six optimizer plans it would be statistically invalid to claim a finite 90% conformal bound.
 
-The online objective remains system-wide cumulative TFV only. Step3 executes a plan only when
-
-    predicted_delta_tfv + one_sided_residual_margin < 0.
-
-No PFV/peak/energy objective, rule-baseline imitation, future realised rainfall or online SWMM call is
-introduced. Optimizer replay used for calibration is Development evidence and cannot simultaneously
-serve as independent validation evidence.
+The final margin is the more conservative of these components. The online objective remains
+system-wide cumulative TFV only. No PFV/peak/energy objective, baseline imitation, future realised
+rainfall or online SWMM call is introduced. Optimizer replay used for calibration cannot also be
+claimed as independent post-calibration validation evidence.
 """
 from __future__ import annotations
 
@@ -85,18 +83,29 @@ def split_d3_holdout_for_admission(
     }
 
 
-def _one_sided_conformal_upper(values: Sequence[float], coverage: float) -> float:
-    """Finite-sample one-sided split-conformal upper quantile."""
-
+def _minimum_conformal_sample_size(coverage: float) -> int:
     if not 0.5 < float(coverage) < 1.0:
         raise ValueError("one-sided admission coverage must lie in (0.5,1)")
+    return int(math.ceil(float(coverage) / (1.0 - float(coverage))))
+
+
+def _one_sided_conformal_upper(values: Sequence[float], coverage: float) -> float:
+    """Finite-sample one-sided split-conformal upper quantile without invalid rank clipping."""
+
     data = np.asarray(tuple(values), dtype=np.float64)
     data = data[np.isfinite(data)]
     if data.size <= 0:
         raise ValueError("cannot calibrate Direct-TFV admission from an empty residual set")
+    minimum = _minimum_conformal_sample_size(coverage)
+    if int(data.size) < minimum:
+        raise ValueError(
+            f"{coverage:.3f} one-sided conformal coverage needs at least {minimum} residuals; "
+            f"got {int(data.size)}"
+        )
     ordered = np.sort(data)
     rank = int(math.ceil((data.size + 1) * float(coverage)))
-    rank = min(max(rank, 1), int(data.size))
+    if rank < 1 or rank > int(data.size):
+        raise ValueError("requested conformal coverage has no finite order statistic")
     return float(ordered[rank - 1])
 
 
@@ -207,7 +216,7 @@ def derive_direct_tfv_admission_calibration(
     optimizer_replay_report: Mapping[str, Any],
     coverage: float = DIRECT_TFV_ADMISSION_COVERAGE,
 ) -> dict[str, Any]:
-    """Combine D3 model residuals with exact optimizer-selected H360 replay residuals."""
+    """Combine formal D3 residual quantiles with empirical optimizer-replay maxima."""
 
     if str(action_support.get("joint_density_reference_semantics", "")) != "HOLD_REFERENCE_ONLY":
         raise ValueError("current Direct-TFV admission requires HOLD-reference joint-density support")
@@ -245,41 +254,42 @@ def derive_direct_tfv_admission_calibration(
         density_floor=density_floor,
     )
     d3_global_q = _one_sided_conformal_upper(d3_residuals, coverage)
+    minimum = _minimum_conformal_sample_size(coverage)
     d3_dense_q = (
         _one_sided_conformal_upper(d3_dense_residuals, coverage)
-        if d3_dense_residuals
+        if len(d3_dense_residuals) >= minimum
         else d3_global_q
     )
-    replay_global_q = _one_sided_conformal_upper(replay_residuals, coverage)
-    replay_dense_q = (
-        _one_sided_conformal_upper(replay_dense, coverage)
-        if replay_dense
-        else replay_global_q
-    )
 
-    global_margin = max(0.0, d3_global_q, replay_global_q)
-    dense_margin = max(global_margin, d3_dense_q, replay_dense_q)
+    replay_global_max = max(replay_residuals)
+    replay_dense_max = max(replay_dense) if replay_dense else replay_global_max
+    global_margin = max(0.0, d3_global_q, replay_global_max)
+    dense_margin = max(global_margin, d3_dense_q, replay_dense_max)
     return {
         "contract": DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT,
         "development_only": True,
         "reference_semantics": "HOLD_ACTIVE_TARGET_H360",
-        "coverage": float(coverage),
+        "d3_conformal_coverage": float(coverage),
         "residual_definition": "true_delta_tfv_m3_minus_predicted_delta_tfv_m3",
         "admission_rule": "predicted_delta_tfv_m3 + one_sided_residual_margin_m3 < 0",
         "density_floor_changed_facilities": int(density_floor),
         "global_margin_m3": float(global_margin),
         "dense_margin_m3": float(dense_margin),
-        "d3_branch_residual_quantile_m3": float(d3_global_q),
-        "d3_dense_residual_quantile_m3": float(d3_dense_q),
-        "optimizer_replay_residual_quantile_m3": float(replay_global_q),
-        "optimizer_replay_dense_residual_quantile_m3": float(replay_dense_q),
+        "d3_branch_residual_conformal_upper_m3": float(d3_global_q),
+        "d3_dense_residual_conformal_upper_m3": float(d3_dense_q),
+        "d3_dense_conformal_used": bool(len(d3_dense_residuals) >= minimum),
+        "optimizer_replay_rule": "MAX_OBSERVED_TRUE_MINUS_PREDICTED_RESIDUAL",
+        "optimizer_replay_residual_max_m3": float(replay_global_max),
+        "optimizer_replay_dense_residual_max_m3": float(replay_dense_max),
+        "optimizer_replay_coverage_claimed": False,
         "d3_calibration_groups": int(groups),
         "d3_calibration_branches": int(branches),
         "d3_dense_calibration_branches": int(dense_branches),
         **replay_meta,
         "scientific_role": (
-            "Correct continuous-optimizer selection-induced optimism using exact same-prefix SWMM "
-            "optimizer residuals, with D3 HOLD residuals as the base-model component"
+            "D3 residuals provide the finite-sample one-sided model-error bound; exact optimizer "
+            "replay contributes a conservative observed selection-shift maximum without a false "
+            "coverage claim"
         ),
         "independence_note": (
             "events listed in optimizer_replay_event_ids are calibration evidence and must not be "
@@ -355,6 +365,7 @@ __all__ = [
     "DIRECT_TFV_ADMISSION_COVERAGE",
     "DIRECT_TFV_ADMISSION_SPLIT_SEED",
     "DIRECT_TFV_REPLAY_CONTRACT",
+    "_minimum_conformal_sample_size",
     "_one_sided_conformal_upper",
     "admission_margin_m3",
     "derive_direct_tfv_admission_calibration",
