@@ -13,12 +13,16 @@ candidate is still executed only when its predicted delta TFV is negative.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from typing import Any, Mapping
 
 from .step2_tfv_support import DIRECT_TFV_JOINT_DENSITY_SUPPORT_CONTRACT
-from .step3_tfv_value_mpc_v3 import DirectTFVMPCDesignV3, DirectTFVRecedingMPC
+from .step3_tfv_value_mpc_v3 import (
+    DirectTFVMPCDesignV3,
+    DirectTFVMPCResultV3,
+    DirectTFVRecedingMPC,
+)
 
 
 DIRECT_TFV_STEP3_CONTRACT = "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V4"
@@ -106,6 +110,16 @@ class DirectTFVRecedingMPCV4(DirectTFVRecedingMPC):
         else:
             requested = self.active_support_ceiling()
         return int(min(beneficial_count, min(109, requested)))
+
+    def optimize(self, **kwargs: Any) -> DirectTFVMPCResultV3:
+        """Run the inherited numerical solver but stamp the current scientific contract."""
+
+        result = super().optimize(**kwargs)
+        return replace(
+            result,
+            policy_mode=self.policy_mode,
+            policy_mode_contract=self.policy_mode_contract,
+        )
 
 
 __all__ = [
