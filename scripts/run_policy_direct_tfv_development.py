@@ -1,8 +1,9 @@
 """Run the current Direct-TFV controller in an authoritative Development SWMM closed loop.
 
-This is not production promotion.  It reuses the validated target-latch/write-readback execution
-shell while replacing the historical V127 policy with the current selection-aware Direct-TFV model,
-calibrated HOLD threshold and all-109 screened trust-region Step3.
+This is not production promotion. The policy is deliberately simple: all 109 facilities are
+screened every 10 minutes, the predicted-beneficial dynamic subset is optimised, any finite
+optimised delta TFV < 0 is executable, and only the first 10-minute target is written before
+re-observation. No separate calibrated action threshold is required.
 """
 from __future__ import annotations
 
@@ -25,11 +26,10 @@ from rtc.project7_contract import EFFECTIVE_WARMUP_MINUTES, validate_project7_ru
 from rtc.runtime_controller_guard import ContinuityGuardController
 from rtc.step1_runtime_v127 import load_frozen_step1_v127
 from rtc.step2_state_store_v127 import semantic_model_state_dict_sha256, semantic_sensor_layout_sha256
-from rtc.step2_tfv_selection_v2 import DIRECT_TFV_SELECTION_THRESHOLD_CONTRACT
-from rtc.step3_tfv_value_mpc_v2 import DirectTFVMPCDesignV2, DirectTFVTrustRegionMPC
+from rtc.step3_tfv_value_mpc_v3 import DirectTFVMPCDesignV3, DirectTFVRecedingMPC
 
 
-DIRECT_TFV_DEVELOPMENT_RUNTIME_CONTRACT = "PROJECT7_DIRECT_TFV_AUTHORITATIVE_10MIN_DEVELOPMENT_RTC_V1"
+DIRECT_TFV_DEVELOPMENT_RUNTIME_CONTRACT = "PROJECT7_DIRECT_TFV_AUTHORITATIVE_10MIN_DEVELOPMENT_RTC_V2"
 DIRECT_TFV_CAUSAL_FORECAST_CONTRACT = "PersistenceDecayForecast(history_steps_for_level=1,decay_per_step=0.92,scenario_multiplier=1.0)"
 
 
@@ -63,11 +63,11 @@ def main() -> None:
     p.add_argument("--graph", required=True)
     p.add_argument("--step1", required=True)
     p.add_argument("--step2", required=True)
-    p.add_argument("--selection-report", required=True)
     p.add_argument("--device", default="cuda")
     p.add_argument("--lbfgsb-maxiter", type=int, default=30)
     p.add_argument("--optimizer-deadline-seconds", type=float, default=120.0)
     p.add_argument("--decision-runtime-budget-seconds", type=float, default=180.0)
+    p.add_argument("--active-facilities", type=int, default=0)
     args = p.parse_args()
 
     if not 0.0 < float(args.optimizer_deadline_seconds) < float(args.decision_runtime_budget_seconds) < 600.0:
@@ -81,15 +81,6 @@ def main() -> None:
     )
     _require_step1_lineage(checkpoint, step1=step1, sensors=sensors)
 
-    selection = json.loads(Path(args.selection_report).read_text(encoding="utf-8"))
-    if str(selection.get("selection_contract")) != DIRECT_TFV_SELECTION_THRESHOLD_CONTRACT:
-        raise ValueError("runtime requires current Direct-TFV selection threshold contract")
-    if str(selection.get("lineage", {}).get("checkpoint_sha256", "")).lower() != _sha(args.step2).lower():
-        raise ValueError("selection threshold was calibrated on a different Step2 checkpoint")
-    if selection.get("d3_split", {}).get("rainfall_overlap"):
-        raise ValueError("selection calibration/audit rainfall overlap is non-empty")
-    threshold = float(selection["calibration"]["minimum_predicted_improvement_m3"])
-
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
     project_contract = validate_project7_runtime_config(cfg)
     event_clock = inspect_prepared_event_clock(args.inp)
@@ -102,15 +93,15 @@ def main() -> None:
         control_block_steps=2,
         max_setting_delta_per_update=0.5,
         decision_runtime_budget_seconds=float(args.decision_runtime_budget_seconds),
-        fallback_policy_id="HOLD_DIRECT_TFV_FAIL_CLOSED",
+        fallback_policy_id="HOLD_DIRECT_TFV_RUNTIME_FALLBACK",
     )
     controller_cfg.validate()
-    design = DirectTFVMPCDesignV2(
+    design = DirectTFVMPCDesignV3(
         maxiter=int(args.lbfgsb_maxiter),
         deadline_seconds=float(args.optimizer_deadline_seconds),
-        minimum_predicted_improvement_m3=threshold,
+        active_facility_count=int(args.active_facilities),
     )
-    mpc = DirectTFVTrustRegionMPC(
+    mpc = DirectTFVRecedingMPC(
         model=model,
         graph=graph,
         normalization=normalization,
@@ -164,14 +155,20 @@ def main() -> None:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata.update(
         {
-            "strategy": "proposed_direct_tfv_selection_aware_trust_region",
+            "strategy": "proposed_direct_tfv_all109_receding_mpc",
             "direct_tfv_development_runtime_contract": DIRECT_TFV_DEVELOPMENT_RUNTIME_CONTRACT,
             "development_only": True,
             "tfv_primary": True,
             "all_109_facilities_screened_each_decision": True,
             "dynamic_active_set": True,
-            "trust_region_from_trainfit_action_support": True,
-            "minimum_predicted_improvement_m3": threshold,
+            "separate_selection_threshold_used": False,
+            "action_rule": "optimised predicted delta TFV < 0",
+            "training_joint_changed_facility_q90": float(
+                checkpoint["action_support"].get(
+                    "joint_changed_facility_count_q90",
+                    checkpoint["action_support"].get("joint_changed_facility_count_q75", 0.0),
+                )
+            ),
             "free_control_horizon_minutes": 120,
             "prediction_horizon_minutes": 360,
             "execute_first_move_minutes": 10,
@@ -179,7 +176,6 @@ def main() -> None:
             "score_equals_execute_required": True,
             "target_write_readback_audit": write_audit,
             "step2_model_sha256": _sha(args.step2),
-            "selection_report_sha256": _sha(args.selection_report),
             "graph_schema_sha256": _sha(args.graph),
             "step1_model_file_sha256": _sha(args.step1),
             "sensor_layout_file_sha256": _sha(args.sensors),
