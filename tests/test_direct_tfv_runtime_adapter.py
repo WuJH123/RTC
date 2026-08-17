@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import torch
 
 from rtc.controller_direct_tfv import DirectTFVRuntimeMPCAdapter
+from rtc.direct_tfv_admission import DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT
 
 
 class _Inner:
@@ -13,11 +14,19 @@ class _Inner:
             max_setting_delta_per_update=0.5,
             control_block_steps=2,
             free_control_blocks=12,
+            active_facility_count=0,
+            active_support_quantile="q95",
         )
         self.graph = SimpleNamespace(actuator_ids=tuple(f"A{i:03d}" for i in range(109)))
         self.model = torch.nn.Linear(1, 1)
         self.called = None
         self.fail = False
+
+    def active_support_quantile_effective(self) -> str:
+        return "q95"
+
+    def active_support_ceiling(self) -> int:
+        return 23
 
     def optimize(self, **kwargs):
         self.called = kwargs
@@ -27,7 +36,14 @@ class _Inner:
         settings[:24, :5] = 0.6
         return SimpleNamespace(
             settings=settings,
+            optimized_candidate_settings=settings.clone(),
             predicted_delta_tfv_m3=-1234.0,
+            raw_optimized_predicted_delta_tfv_m3=-6234.0,
+            admission_margin_m3=5000.0,
+            admission_upper_bound_m3=-1234.0,
+            admission_margin_kind="dense",
+            admission_passed=True,
+            calibrated_admission_contract=DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT,
             selected_source="DIRECT_TFV_RECEDING_LBFGSB",
             optimizer_success=True,
             optimizer_steps=4,
@@ -36,12 +52,12 @@ class _Inner:
             elapsed_seconds=0.2,
             screened_facility_count=109,
             predicted_beneficial_facility_count=30,
-            active_facility_count=22,
-            active_facility_ids=tuple(f"A{i:03d}" for i in range(22)),
-            active_facility_screening_scores_m3=tuple(-1000.0 + i for i in range(22)),
+            active_facility_count=23,
+            active_facility_ids=tuple(f"A{i:03d}" for i in range(23)),
+            active_facility_screening_scores_m3=tuple(-1000.0 + i for i in range(23)),
             first_move_changed_facility_count=5,
             maximum_support_ratio=0.8,
-            training_joint_changed_facility_q90=22.0,
+            training_joint_changed_facility_q90=20.0,
             scipy_message="ok",
         )
 
@@ -66,7 +82,7 @@ def test_runtime_adapter_exposes_model_required_by_controller_base() -> None:
     assert adapter.model.training is False
 
 
-def test_runtime_adapter_maps_target_latch_call_to_direct_step3() -> None:
+def test_runtime_adapter_maps_calibrated_step3_and_preserves_raw_plan() -> None:
     inner = _Inner()
     adapter = DirectTFVRuntimeMPCAdapter(inner)  # type: ignore[arg-type]
     result = _optimize(adapter)
@@ -75,7 +91,14 @@ def test_runtime_adapter_maps_target_latch_call_to_direct_step3() -> None:
     assert result.predicted_beneficial_facility_count == 30
     assert result.first_move_changed_facility_count == 5
     assert result.best_screening_predicted_delta_tfv_m3 == -1000.0
-    assert result.optimizer_gain_beyond_best_screening_m3 == 234.0
+    assert result.raw_optimized_predicted_delta_tfv_m3 == -6234.0
+    assert result.admission_margin_m3 == 5000.0
+    assert result.admission_upper_bound_m3 == -1234.0
+    assert result.admission_margin_kind == "dense"
+    assert result.admission_passed is True
+    assert result.calibrated_admission_contract == DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT
+    assert result.active_support_quantile_effective == "q95"
+    assert result.active_support_ceiling == 23
     assert result.active_set_ceiling_binding is True
     assert result.counterfactual_actuator_ids == tuple(f"A{i:03d}" for i in range(109))
     assert len(result.optimized_free_control_blocks) == 12

@@ -1,10 +1,9 @@
-"""Diagnostic evidence helpers for Direct-TFV decision-level SWMM counterfactuals.
+"""Diagnostic selection for exact same-prefix Direct-TFV H360 counterfactual replay.
 
-This module does not alter controller actions. It selects a small deterministic set of completed
-non-HOLD decisions whose exact H120 free-control plan and H360 HOLD reference were recorded by the
-authoritative runtime. These decisions can then be replayed from the same causal hydraulic prefix
-in authoritative SWMM to test value magnitude/sign without confusing a local H360 counterfactual
-with whole-event closed-loop benefit.
+V2 selects raw optimizer plans whether calibrated admission accepted or rejected them. This is
+necessary to test the scientific claim made by Step3 V5: rejected extrema should contain the weak or
+false-beneficial plans while admitted extrema should remain beneficial. The helper never changes the
+executed controller action.
 """
 from __future__ import annotations
 
@@ -15,10 +14,10 @@ from typing import Any, Sequence
 
 
 DIRECT_TFV_COUNTERFACTUAL_MANIFEST_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_DECISION_COUNTERFACTUAL_MANIFEST_V1"
+    "PROJECT7_DIRECT_TFV_DECISION_COUNTERFACTUAL_MANIFEST_V2"
 )
 DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_V1"
+    "PROJECT7_DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_V2"
 )
 
 
@@ -37,8 +36,6 @@ def _eligible(
         elapsed = int(row.get("elapsed_seconds", -1))
         if latest_elapsed_seconds is not None and elapsed > int(latest_elapsed_seconds):
             continue
-        if str(row.get("source", "")) != "MPC_DIRECT_TFV_RECEDING":
-            continue
         diagnostics = row.get("diagnostics")
         if not isinstance(diagnostics, dict):
             continue
@@ -46,7 +43,12 @@ def _eligible(
             DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT
         ):
             continue
-        predicted = float(diagnostics.get("predicted_delta_tfv_m3", math.nan))
+        raw_predicted = float(
+            diagnostics.get(
+                "raw_optimized_predicted_delta_tfv_m3",
+                diagnostics.get("predicted_delta_tfv_m3", math.nan),
+            )
+        )
         blocks = diagnostics.get("optimized_free_control_blocks")
         hold = diagnostics.get("hold_reference_settings")
         actuator_ids = diagnostics.get("counterfactual_actuator_ids")
@@ -55,7 +57,7 @@ def _eligible(
             and len(actuator_ids) == 109
             and len({str(value) for value in actuator_ids}) == 109
         )
-        if not math.isfinite(predicted) or predicted >= 0.0:
+        if not math.isfinite(raw_predicted) or raw_predicted >= 0.0:
             continue
         if not (
             valid_actuator_ids
@@ -70,8 +72,21 @@ def _eligible(
             {
                 "decision_index": index,
                 "elapsed_seconds": elapsed,
-                "source": str(row.get("source", "")),
-                "predicted_delta_tfv_m3": predicted,
+                "executed_source": str(row.get("source", "")),
+                "optimizer_selected_source": str(
+                    diagnostics.get("direct_tfv_selected_source", "")
+                ),
+                "raw_optimized_predicted_delta_tfv_m3": raw_predicted,
+                "admission_margin_m3": float(
+                    diagnostics.get("admission_margin_m3", math.nan)
+                ),
+                "admission_upper_bound_m3": float(
+                    diagnostics.get("admission_upper_bound_m3", math.nan)
+                ),
+                "admission_margin_kind": str(
+                    diagnostics.get("admission_margin_kind", "")
+                ),
+                "admission_passed": bool(diagnostics.get("admission_passed", False)),
                 "best_screening_predicted_delta_tfv_m3": float(
                     diagnostics.get("best_screening_predicted_delta_tfv_m3", math.nan)
                 ),
@@ -109,12 +124,7 @@ def select_counterfactual_decisions(
     max_decisions: int = 6,
     latest_elapsed_seconds: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Select strong/median/mild predictions while preserving a complete truth horizon.
-
-    ``latest_elapsed_seconds`` should be set to ``simulation_end_elapsed - 21600`` for the current
-    H360 value estimand. This prevents a truncated end-of-event SWMM branch from being compared with
-    a full H360 Step3 prediction.
-    """
+    """Select strong/median/mild raw optimizer predictions across admission outcomes."""
 
     if max_decisions <= 0 or max_decisions > 6:
         raise ValueError("counterfactual diagnostic budget must lie in [1,6]")
@@ -122,14 +132,15 @@ def select_counterfactual_decisions(
         raise ValueError("latest_elapsed_seconds must be non-negative")
     eligible = sorted(
         _eligible(rows, latest_elapsed_seconds=latest_elapsed_seconds),
-        key=lambda row: (float(row["predicted_delta_tfv_m3"]), int(row["decision_index"])),
+        key=lambda row: (
+            float(row["raw_optimized_predicted_delta_tfv_m3"]),
+            int(row["decision_index"]),
+        ),
     )
     if len(eligible) <= max_decisions:
         chosen = eligible
     else:
         count = len(eligible)
-        # Prioritise two strongest, two around the distribution median, and two mildest. For smaller
-        # budgets the deterministic priority order still spans the prediction distribution.
         candidate_positions = [
             0,
             1,

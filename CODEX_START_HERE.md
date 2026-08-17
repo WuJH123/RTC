@@ -1,129 +1,126 @@
 # Project7 current execution guide
 
-GitHub `main` is the code source of truth. Do not infer the active method from the highest V-number
-in a filename: several filenames are intentionally retained for compatibility while their embedded
-scientific contract has advanced.
+GitHub `main` is the code source of truth. Project7 is an **idealized EPA-SWMM methodology testbed**,
+not a field digital twin.
 
-## 1. Frozen research problem
-
-Project7 is an **idealized EPA-SWMM methodology testbed**, not a field digital twin.
+## Frozen research problem
 
 ```text
 sparse causal sensors
  -> Step1 reconstruct CURRENT full-network hydraulic state
- -> Step2 learn 109-facility ACTION -> future delta TFV
- -> Step3 evaluate all 109 facilities relative to HOLD
- -> optimise the predicted-beneficial multi-facility subset inside TrainFit support
+ -> Step2 learn 109-facility action effects on future system-wide cumulative TFV
+ -> Step3 screen all 109 facilities relative to HOLD
+ -> optimise a q95-supported H120 joint action sequence for H360 TFV
+ -> admit the optimizer plan only when an optimizer-aware one-sided TFV residual upper bound < 0
  -> execute first 10-minute target only
- -> observe again and repeat
+ -> re-observe and repeat
 ```
 
-Primary objective: **system-wide cumulative TFV minimization**. SWMM is authoritative truth for
-offline labels and authoritative control evaluation; SWMM is not the online candidate evaluator.
+Primary objective: **system-wide cumulative TFV minimization**. SWMM is authoritative offline truth.
+No future realised rainfall, future SWMM state or future flooding truth is available online.
 
 Frozen clock/action contract:
-
-- model/state step = 300 s;
+- state/model step = 300 s;
 - control update = 600 s;
-- H360 prediction = 72 model steps;
+- H360 prediction = 72 five-minute steps;
 - H120 free control = 12 ten-minute blocks;
 - writable facilities = 109;
-- every facility is eligible and screened every decision;
-- setting movement <= 0.5 per 10-minute supervisory update;
-- execute only the first 10-minute target, then re-observe.
+- all 109 are screened every decision;
+- setting movement <= 0.5 per 10-minute update;
+- execute first 10-minute target only, then re-observe.
 
-## 2. Why the current V5/V4 update exists
+## Current evidence and scientific bottleneck
 
-Three Development events established two facts simultaneously:
+Step2 V5 has 109/109 exact single-facility coverage and useful D3 HOLD-reference cached-candidate
+metrics. Step3 V4 also executes correctly: zero support/engineering/readback violations and runtime
+well below 600 s. Those are no longer the primary bottleneck.
 
-1. Direct-TFV reduced TFV versus No-control on 3/3 events and same-prefix H360 SWMM replay supported
-   the local control direction on 4/5 selected decisions; there was no evidence of catastrophic
-   continuous-optimizer sign exploitation.
-2. Direct-TFV remained weaker than Auto-RBC on 3/3 events. The strongest H360-beneficial decisions
-   bound the old q90 active-set ceiling, while the testbed itself is release-dominated (All-open is a
-   strong diagnostic extreme).
-
-The response is **not** to weaken Auto-RBC or introduce a hand-tuned improvement threshold. The
-current path strengthens learned joint-action support and then asks SWMM whether broader coordinated
-control actually improves closed-loop TFV.
-
-## 3. Current Step2 — Direct-TFV V5 training contract
-
-Model architecture remains unchanged:
+Authoritative V5/V4 Development results exposed a more specific failure:
 
 ```text
-causal Step1 current state
-+ causal rainfall forecast
-+ previous managed flow
-+ complete H360 reference sequence
-+ complete H360 candidate sequence
- -> delta TFV = V(candidate) - V(reference)
+T5_D120   TFV reduction vs No-control  +11.547%
+T10_D180                              +0.615%
+T20_D300                              -1.396%
 ```
 
-with 109 facility value differences plus a multi-facility interaction value difference.
+Event-balanced mean reduction is only about 3.59%, median about 0.61%; Proposed loses to Auto-RBC on
+all three events. More importantly, exact same-prefix T5 H360 replay has zero prefix/routing mismatch
+but only 3/6 correct signs. Three optimizer-selected negative predictions are false-beneficial, and a
+fourth predicted -124,660 m3 is essentially zero in SWMM (-96 m3).
 
-Current training contract: `PROJECT7_DIRECT_TFV_CORE_TRAINING_V5`.
-
-1. **MAIN** — exact single-facility branches learn 109 facility effects with facility-balanced
-   regression.
-2. **JOINT** — multi-facility branches are balanced by changed-facility count and update the shared
-   facility encoder/head plus interaction head. This prevents numerous sparse joint branches from
-   drowning out rarer dense coordinated branches.
-3. **CONTROL** — only D3 HOLD-reference TrainFit groups fine-tune the late value representation with
-   symmetric HOLD-relative sign loss.
-
-D4 FIT/AUDIT remain reference-shift stress diagnostics, not Step3 gates. There is no extra harmful-
-action bias, top-1 policy loss, uncertainty gate or calibrated minimum-improvement threshold.
-
-### Action support
-
-Per-facility q95 action magnitudes use all admitted TrainFit sources for identifiability/coverage.
-The **joint changed-facility q50/q75/q90/q95/q99/max used by online Step3 are derived from D3
-HOLD-reference branches only**. D2/D4 reference-shift geometry cannot inflate the online active set.
-
-Legacy V4 checkpoints remain runtime-readable, but because they lack the additive V2 joint-density
-support payload, Step3 V4 automatically fails back to q90.
-
-## 4. Current Step3 — support-aware all-109 MPC V4
-
-Canonical module:
+Current classification:
 
 ```text
-src/rtc/step3_tfv_value_mpc_v4.py
+DEVELOPMENT_NO_CONTROL_BENEFIT_INCONSISTENT
 ```
 
-At every 10-minute decision:
+The mechanism under test is **continuous-optimizer selection-induced optimism (optimizer's curse)**:
+the cached D3 candidate set can look safe while L-BFGS-B selects much more optimistic extrema from a
+larger continuous action space. Simply increasing active K from q90 to q95 did not solve the problem;
+q95 was 32/32 ceiling-binding and T10/T20 still regressed. q99 remains diagnostic only.
 
-1. build exact HOLD H360 reference;
-2. screen all 109 facilities with up/down, half/full-radius, pulse/persistent probes;
-3. rank predicted-beneficial facilities (`best predicted delta TFV < 0`);
-4. choose dynamic active set;
-5. default active-density support is D3-HOLD TrainFit **q95** for a current V5 checkpoint;
-6. never exceed the maximum D3-HOLD joint changed-facility count observed in TrainFit;
-7. run bounded L-BFGS-B over 12 free 10-minute blocks;
-8. retain physical min/max, <=0.5 update and per-facility TrainFit magnitude geometry;
-9. execute if optimised predicted delta TFV < 0, otherwise HOLD;
-10. execute first 10-minute target only, then re-observe.
+## Step2 — keep V5 frozen for this diagnosis
 
-`q90` is the conservative ablation. `q99` is diagnostic only unless later authoritative SWMM evidence
-supports promotion. Do not jump directly to an unrestricted 109-facility simultaneous move.
-
-## 5. Counterfactual integrity
-
-Same-prefix H360 replay must reproduce the authoritative closed-loop target-latch timing. Use:
+Current training contract:
 
 ```text
-src/rtc/direct_tfv_replay_guard.py
-PROJECT7_DIRECT_TFV_REPLAY_USES_AUTHORITATIVE_TARGET_LATCH_V1
+PROJECT7_DIRECT_TFV_CORE_TRAINING_V5
 ```
 
-Before branching, candidate/HOLD must match on current state, target latch, physical current settings
-and cumulative statistics, and the branch target must match the logged HOLD reference. Any mismatch
-is `COUNTERFACTUAL_REPLAY_P0` and blocks scientific interpretation.
+Model remains shared pairwise `V(candidate)-V(reference)` with 109 facility contributions plus joint
+interaction. MAIN is facility-balanced; JOINT is changed-facility-density balanced; CONTROL uses D3
+HOLD-reference TrainFit groups. Do **not** retrain Step2 merely to respond to the current false-benefit
+finding until the calibrated Step3 test is completed.
 
-## 6. Baseline semantics
+## Step3 V5 — optimizer-aware one-sided admission
 
-The fixed Development panel remains:
+Canonical contracts:
+
+```text
+PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V5
+PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1
+```
+
+The optimizer is unchanged: all-109 screening, D3-HOLD q95 active-density support, bounded H120
+L-BFGS-B, TFV-only objective. The new admission layer changes only whether the optimized plan is
+executed:
+
+```text
+UCB_like = predicted_delta_TFV + one_sided_residual_margin
+if UCB_like < 0 and first 10-minute block changes:
+    execute first block
+else:
+    HOLD
+```
+
+The residual margin conservatively combines:
+1. rainfall-disjoint D3 HOLD cached residuals (base value-model error); and
+2. exact same-prefix H360 SWMM residuals from **optimizer-selected Development plans** (optimizer
+   selection shift).
+
+This is not a hand-tuned minimum-improvement threshold and not a new objective. It is a target-error
+calibration derived from authoritative Development evidence. The event(s) used to create optimizer
+replay residuals are calibration evidence and cannot later be claimed as independent post-calibration
+validation.
+
+A plan whose first executed block is unchanged is always HOLD, even if later hypothetical blocks have
+predicted benefit, because those later blocks will be re-optimised after re-observation.
+
+## Counterfactual audit V2
+
+The runtime stores the raw optimized plan even when admission rejects it. The counterfactual selector
+therefore samples both accepted and rejected raw optimizer plans. This allows the post-calibration
+H360 audit to test the intended mechanism directly:
+
+- admitted raw plans should remain truly beneficial more often;
+- rejected raw plans should contain weak/false-beneficial extrema;
+- all candidate/HOLD branches must have identical causal prefix, target latch, current setting and
+  cumulative statistics;
+- any replay mismatch remains `COUNTERFACTUAL_REPLAY_P0`.
+
+## Baselines
+
+Frozen Development panel remains:
 
 ```text
 no_control
@@ -134,17 +131,11 @@ all_open
 all_closed
 ```
 
-Scientific comparators are Internal RTC, Auto-RBC and EFD. All-open/all-closed are diagnostic
-extremes.
+Do not weaken or retune any baseline. Current EFD is strict storage-volume EFD, not the older
+Project6 depth-zone EFD-like heuristic. Auto-RBC remains the same causal actuator-adjacent rule
+comparator.
 
-Current `efd` is a **strict storage-volume Equal Filling Degree** comparator controlling writable
-storage outflows only. It must not be described as the older Project6 depth-zone EFD-like heuristic.
-Current Proposed uses no RBC warm start and no RBC safety fallback.
-
-Do not weaken or retune a baseline in response to Proposed performance. Baseline information basis
-(sensor counts and rule inputs) must be reported transparently.
-
-## 7. Frozen Development assets
+## Frozen Development assets
 
 ```text
 GRAPH
@@ -153,12 +144,6 @@ E:\RTC_sewer\Project7\study_v069\formal_assets\graph_schema.npz
 BASE_CACHE
 E:\RTC_sewer\Project7\study_v069\step2_v60_control_latent_rebuild\training_cache_v60\CACHE_MANIFEST.json
 
-D4_FIT
-E:\RTC_sewer\Project7\study_v069\step2_v125_d4_v2_bc04bc7\cache_fit\training_cache\CACHE_MANIFEST.json
-
-D4_AUDIT
-E:\RTC_sewer\Project7\study_v069\step2_v125_d4_v2_bc04bc7\cache_audit\training_cache\CACHE_MANIFEST.json
-
 RAIN
 E:\RTC_sewer\Project7\study_v069\step2_v123_tfv_pfv_knowledge_guided_mpc\addbbd3\STEP2_V123_CAUSAL_FORECAST_STORE.npz
 
@@ -166,49 +151,45 @@ STATE
 E:\RTC_sewer\Project7\study_v069\step2_v127_corrected_base_7634cd9\STEP2_V127_CAUSAL_STATE_STORE_V2.npz
 ```
 
-## 8. Canonical Development order
+Reuse the accepted Step2 V5 checkpoint. Do not rerun full Step2 unless new evidence later identifies a
+Step2 model defect.
 
-1. protect any local uncommitted same-prefix replay work before syncing GitHub;
-2. hard-sync `main`, install, full pytest, current lint, CUDA health;
-3. Direct-TFV V5 smoke, then full V5 DEV if smoke is structurally sound;
-4. require 109/109 exact single-facility coverage and report D3-HOLD q90/q95/q99/max joint support;
-5. judge Step2 primarily from D3 HOLD-reference harmful fraction, selected true delta TFV, regret,
-   pairwise and sign; D4 remains diagnostic;
-6. run Step3 V4 q95 solver audit, with q90 as the pre-registered conservative ablation;
-7. run one clean authoritative T5 Development SWMM closed loop;
-8. run exact same-prefix H360 SWMM counterfactuals using the shared target-latch guard;
-9. compare against the frozen provenance-verified six-baseline panel;
-10. only if T5 execution/science passes, repeat on T10/T20 and aggregate event-balanced evidence;
+## Canonical Development order
+
+1. protect local uncommitted replay work before syncing GitHub;
+2. hard-sync `main`, install, pytest, current lint, CUDA check;
+3. reuse the accepted Step2 V5 checkpoint;
+4. create admission calibration with `scripts/calibrate_direct_tfv_admission_current.py`, including the
+   exact T5 optimizer H360 replay report;
+5. require replay prefix mismatch = 0 and record optimizer replay calibration event IDs;
+6. run `scripts/run_step3_direct_tfv_solver_calibrated_current.py` on the rainfall-disjoint D3 audit
+   half;
+7. T5 may be rerun only as an engineering/calibration-consistency smoke because its optimizer replay
+   was used for calibration;
+8. run T10/T20 as post-calibration Development event audits;
+9. generate exact H360 replay on T10/T20, including both accepted and rejected raw optimizer plans;
+10. require event-level No-control consistency and reduced false-beneficial rate before returning to
+    Auto-RBC competitiveness;
 11. stop before Validation/Final/Formal/Policy Lock.
 
-## 9. Scientific boundaries
+## Scientific boundaries
 
+- system-wide TFV remains the only optimization objective;
+- no PFV or Global Peak gate/objective;
+- no online SWMM candidate evaluation;
 - no future realised rainfall online;
-- no future SWMM state/flood truth online;
-- no D4 AUDIT fitting;
-- no return to V128 as the canonical target;
-- no arbitrary minimum-improvement threshold;
-- no uncertainty gate added to improve baseline ranking;
-- no weakening or event-wise tuning of Auto-RBC/EFD;
-- no unrestricted 109-way joint action without TrainFit/SWMM support;
-- production/seven-strategy promotion remains fail-closed;
-- Validation/Final/Formal/Policy Lock remain untouched during Development.
+- no q99 canonical promotion from surrogate predictions alone;
+- no event-wise Auto-RBC/EFD tuning;
+- no use of Validation/Final/Formal/Policy Lock for admission calibration;
+- no production promotion while Development benefit remains inconsistent.
 
-## 10. What decides success
+## What decides the next branch
 
-A training metric improvement alone is not success. The decisive chain is:
+If post-calibration T10/T20 regain consistent TFV benefit vs No-control and exact H360 false-beneficial
+rate falls materially, classify the current bottleneck as **optimizer-selection calibration limited**
+and then reassess the remaining gap to Internal/Auto-RBC.
 
-```text
-109/109 facility coverage
-+ D3 HOLD-reference joint-density support
-+ Step3 q95 support/engineering violations = 0
-+ target write/readback = PASS
-+ same-prefix H360 direction remains SWMM-supported
-+ authoritative event TFV improves versus No-control
-+ gap to competent Internal/Auto-RBC comparators narrows without weakening them
-```
-
-If q95 remains binding and authoritative same-prefix SWMM shows denser coordinated actions are truly
-beneficial, the next step is a **small targeted dense-joint SWMM augmentation** around the relevant
-changed-facility counts. Do not replace that evidence with a hand-tuned threshold or an unrestricted
-109-dimensional optimizer.
+If event-level benefit remains inconsistent even after weak optimizer extrema are rejected, the next
+scientific question is no longer admission. Then inspect whether Step2 lacks optimizer-distribution
+training support or whether the H360 value estimand itself is misaligned with closed-loop 10-minute
+receding control. Do not solve that by adding more objectives or weakening baselines.

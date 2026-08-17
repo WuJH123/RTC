@@ -1,9 +1,4 @@
-"""Authoritative-runtime adapter for the current core Direct-TFV receding MPC.
-
-The mature Project7 target-latch controller provides causal Step1 history, rainfall forecast,
-600-s decision timing, target-write verification and score-equals-execute semantics. This module
-uses that execution shell while the policy itself is the support-aware all-109 Direct-TFV MPC V4.
-"""
+"""Authoritative-runtime adapter for calibrated Project7 Direct-TFV MPC."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,19 +9,23 @@ import torch
 
 from .closed_loop import CausalObservation, ControllerAction
 from .controller_v122 import V122TorchMPCController
-from .step3_tfv_value_mpc_v4 import DIRECT_TFV_STEP3_CONTRACT, DirectTFVRecedingMPCV4
+from .step3_tfv_value_mpc_v5 import DIRECT_TFV_STEP3_CONTRACT, DirectTFVRecedingMPCV5
 
 
-DIRECT_TFV_CONTROLLER_CONTRACT = "PROJECT7_DIRECT_TFV_TARGET_LATCH_CONTROLLER_V3"
-DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_V1"
-)
+DIRECT_TFV_CONTROLLER_CONTRACT = "PROJECT7_DIRECT_TFV_TARGET_LATCH_CONTROLLER_V4"
+DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT = "PROJECT7_DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_V2"
 
 
 @dataclass(frozen=True)
 class _RuntimeMPCResult:
     settings: torch.Tensor
     predicted_delta_tfv_m3: float
+    raw_optimized_predicted_delta_tfv_m3: float
+    admission_margin_m3: float
+    admission_upper_bound_m3: float
+    admission_margin_kind: str
+    admission_passed: bool
+    calibrated_admission_contract: str
     candidate_valid: bool
     selected_source: str
     optimizer_success: bool
@@ -54,9 +53,7 @@ class _RuntimeMPCResult:
 
 
 class DirectTFVRuntimeMPCAdapter:
-    """Match the validated target-latch controller's historical MPC call signature."""
-
-    def __init__(self, inner: DirectTFVRecedingMPCV4) -> None:
+    def __init__(self, inner: DirectTFVRecedingMPCV5) -> None:
         self.inner = inner
         self.last_result: _RuntimeMPCResult | None = None
 
@@ -94,9 +91,12 @@ class DirectTFVRuntimeMPCAdapter:
             raise RuntimeError("Direct-TFV counterfactual actuator order must contain 109 unique IDs")
         block_steps = int(self.inner.design.control_block_steps)
         free_count = int(self.inner.design.free_control_blocks)
-        free_blocks_tensor = result.settings[::block_steps][:free_count]
+        optimized = getattr(result, "optimized_candidate_settings", None)
+        if optimized is None:
+            optimized = result.settings
+        free_blocks_tensor = optimized[::block_steps][:free_count]
         if tuple(free_blocks_tensor.shape) != (free_count, 109):
-            raise RuntimeError("Direct-TFV runtime could not recover exact [12,109] free-control plan")
+            raise RuntimeError("Direct-TFV runtime could not recover exact [12,109] optimized plan")
         free_blocks = tuple(
             tuple(float(value) for value in row)
             for row in free_blocks_tensor.detach().cpu().to(torch.float64).tolist()
@@ -105,28 +105,17 @@ class DirectTFVRuntimeMPCAdapter:
             float(value)
             for value in previous_requested_settings.detach().cpu().to(torch.float64).reshape(-1).tolist()
         )
-        if len(hold_reference) != 109:
-            raise RuntimeError("Direct-TFV runtime HOLD reference must contain 109 settings")
         active_scores = tuple(float(value) for value in result.active_facility_screening_scores_m3)
         best_screening = min(active_scores) if active_scores else 0.0
-        optimizer_gain = float(best_screening - float(result.predicted_delta_tfv_m3)) if valid else 0.0
+        raw_pred = float(
+            getattr(result, "raw_optimized_predicted_delta_tfv_m3", result.predicted_delta_tfv_m3)
+        )
+        optimizer_gain = float(best_screening - raw_pred) if math.isfinite(raw_pred) else 0.0
         requested_quantile = str(getattr(self.inner.design, "active_support_quantile", "q90"))
-        if hasattr(self.inner, "active_support_quantile_effective"):
-            effective_quantile = str(self.inner.active_support_quantile_effective())
-        else:
-            effective_quantile = "q90"
-        if hasattr(self.inner, "active_support_ceiling"):
-            support_ceiling = int(self.inner.active_support_ceiling())
-        else:
-            support_ceiling = max(
-                1,
-                min(109, int(math.ceil(float(result.training_joint_changed_facility_q90)))),
-            )
+        effective_quantile = str(self.inner.active_support_quantile_effective())
+        support_ceiling = int(self.inner.active_support_ceiling())
         if int(getattr(self.inner.design, "active_facility_count", 0)) > 0:
-            support_ceiling = min(
-                support_ceiling,
-                int(self.inner.design.active_facility_count),
-            )
+            support_ceiling = min(support_ceiling, int(self.inner.design.active_facility_count))
         ceiling_binding = bool(
             result.predicted_beneficial_facility_count > result.active_facility_count
             and result.active_facility_count >= min(109, support_ceiling)
@@ -134,6 +123,12 @@ class DirectTFVRuntimeMPCAdapter:
         wrapped = _RuntimeMPCResult(
             settings=result.settings,
             predicted_delta_tfv_m3=float(result.predicted_delta_tfv_m3),
+            raw_optimized_predicted_delta_tfv_m3=raw_pred,
+            admission_margin_m3=float(getattr(result, "admission_margin_m3", 0.0)),
+            admission_upper_bound_m3=float(getattr(result, "admission_upper_bound_m3", raw_pred)),
+            admission_margin_kind=str(getattr(result, "admission_margin_kind", "none")),
+            admission_passed=bool(getattr(result, "admission_passed", valid)),
+            calibrated_admission_contract=str(getattr(result, "calibrated_admission_contract", "")),
             candidate_valid=bool(valid),
             selected_source=str(result.selected_source),
             optimizer_success=bool(result.optimizer_success),
@@ -149,7 +144,7 @@ class DirectTFVRuntimeMPCAdapter:
             first_move_changed_facility_count=int(result.first_move_changed_facility_count),
             maximum_support_ratio=float(result.maximum_support_ratio),
             best_screening_predicted_delta_tfv_m3=float(best_screening),
-            optimizer_gain_beyond_best_screening_m3=float(optimizer_gain),
+            optimizer_gain_beyond_best_screening_m3=optimizer_gain,
             active_set_ceiling_binding=ceiling_binding,
             active_support_quantile_requested=requested_quantile,
             active_support_quantile_effective=effective_quantile,
@@ -164,22 +159,23 @@ class DirectTFVRuntimeMPCAdapter:
 
 
 class DirectTFVAuthoritativeController(V122TorchMPCController):
-    """Execute the exact first target scored by the current Direct-TFV Step3."""
-
-    def __init__(self, *args: Any, mpc: DirectTFVRecedingMPCV4, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, mpc: DirectTFVRecedingMPCV5, **kwargs: Any) -> None:
         adapter = DirectTFVRuntimeMPCAdapter(mpc)
         super().__init__(*args, mpc=adapter, **kwargs)
         self._direct_mpc_adapter = adapter
 
     def decide(
-        self, obs: CausalObservation, *, observation_already_recorded: bool = False
+        self,
+        obs: CausalObservation,
+        *,
+        observation_already_recorded: bool = False,
     ) -> ControllerAction:
         action = super().decide(obs, observation_already_recorded=observation_already_recorded)
         diagnostics = dict(action.diagnostics or {})
         diagnostics["direct_tfv_controller_contract"] = DIRECT_TFV_CONTROLLER_CONTRACT
         diagnostics["direct_tfv_step3_contract"] = DIRECT_TFV_STEP3_CONTRACT
         diagnostics["all_109_facilities_screened_contract"] = True
-        diagnostics["separate_selection_threshold_used"] = False
+        diagnostics["calibrated_one_sided_admission_used"] = True
         result = self._direct_mpc_adapter.last_result
         if result is not None:
             diagnostics.update(
@@ -194,31 +190,64 @@ class DirectTFVAuthoritativeController(V122TorchMPCController):
                     "predicted_beneficial_facility_count": result.predicted_beneficial_facility_count,
                     "active_facility_count": result.active_facility_count,
                     "active_facility_ids": list(result.active_facility_ids),
-                    "active_facility_screening_scores_m3": list(result.active_facility_screening_scores_m3),
+                    "active_facility_screening_scores_m3": list(
+                        result.active_facility_screening_scores_m3
+                    ),
                     "first_move_changed_facility_count": result.first_move_changed_facility_count,
                     "maximum_support_ratio": result.maximum_support_ratio,
-                    "best_screening_predicted_delta_tfv_m3": result.best_screening_predicted_delta_tfv_m3,
-                    "optimizer_gain_beyond_best_screening_m3": result.optimizer_gain_beyond_best_screening_m3,
+                    "best_screening_predicted_delta_tfv_m3": (
+                        result.best_screening_predicted_delta_tfv_m3
+                    ),
+                    "optimizer_gain_beyond_best_screening_m3": (
+                        result.optimizer_gain_beyond_best_screening_m3
+                    ),
                     "active_set_ceiling_binding": result.active_set_ceiling_binding,
                     "active_support_quantile_requested": result.active_support_quantile_requested,
                     "active_support_quantile_effective": result.active_support_quantile_effective,
                     "active_support_ceiling": result.active_support_ceiling,
-                    "counterfactual_plan_telemetry_contract": DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT,
+                    "raw_optimized_predicted_delta_tfv_m3": (
+                        result.raw_optimized_predicted_delta_tfv_m3
+                    ),
+                    "admission_margin_m3": result.admission_margin_m3,
+                    "admission_upper_bound_m3": result.admission_upper_bound_m3,
+                    "admission_margin_kind": result.admission_margin_kind,
+                    "admission_passed": result.admission_passed,
+                    "calibrated_admission_contract": result.calibrated_admission_contract,
+                    "counterfactual_plan_telemetry_contract": (
+                        DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT
+                    ),
                     "counterfactual_reference_semantics": "HOLD_ACTIVE_TARGET_H360",
-                    "counterfactual_candidate_semantics": "EXACT_OPTIMIZED_H120_FREE_BLOCKS_THEN_TERMINAL_HOLD_H360",
+                    "counterfactual_candidate_semantics": (
+                        "RAW_OPTIMIZED_H120_FREE_BLOCKS_THEN_TERMINAL_HOLD_H360"
+                    ),
                     "counterfactual_actuator_ids": list(result.counterfactual_actuator_ids),
-                    "optimized_free_control_blocks": [list(row) for row in result.optimized_free_control_blocks],
+                    "optimized_free_control_blocks": [
+                        list(row) for row in result.optimized_free_control_blocks
+                    ],
                     "hold_reference_settings": list(result.hold_reference_settings),
                     "scipy_message": result.scipy_message[:2000],
                 }
             )
+
         source = str(action.source)
-        if source == "MPC_V122":
+        if source == "MPC_V122" and result is not None:
+            if result.selected_source == "DIRECT_TFV_RECEDING_LBFGSB":
+                source = "MPC_DIRECT_TFV_RECEDING"
+            elif result.selected_source == "HOLD_CALIBRATED_TFV_UPPER_BOUND_NONNEGATIVE":
+                source = "HOLD_DIRECT_TFV_CALIBRATED_UPPER_BOUND"
+            elif result.selected_source == "HOLD_NO_EXECUTABLE_FIRST_MOVE":
+                source = "HOLD_DIRECT_TFV_NO_EXECUTABLE_FIRST_MOVE"
+            else:
+                source = "HOLD_DIRECT_TFV_NO_PREDICTED_BENEFIT"
+        elif source == "MPC_V122":
             source = "MPC_DIRECT_TFV_RECEDING"
         elif source == "PASSIVE_MPC_NO_PREDICTED_BENEFIT":
-            source = "HOLD_DIRECT_TFV_NO_PREDICTED_BENEFIT"
+            source = "HOLD_DIRECT_TFV_CALIBRATED_OR_NO_BENEFIT"
         elif source.endswith("_V122"):
             source = source[:-5] + "_DIRECT_TFV"
+        diagnostics["calibrated_runtime_action_class"] = (
+            "ACTION" if source == "MPC_DIRECT_TFV_RECEDING" else "HOLD"
+        )
         return ControllerAction(settings=action.settings, source=source, diagnostics=diagnostics)
 
 
