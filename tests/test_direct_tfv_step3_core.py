@@ -81,6 +81,27 @@ def test_core_decoder_keeps_nonactive_facilities_at_hold_and_respects_support() 
     assert controller._support_ratio(sequence, active_target) <= 1.00001
 
 
-def test_screening_uses_two_scales_not_a_single_full_jump() -> None:
+def test_screening_uses_two_scales_and_immediate_delayed_modes() -> None:
     design = DirectTFVMPCDesignV3()
     assert design.screening_probe_scales == (0.5, 1.0)
+    assert design.screening_probe_modes == ("pulse", "persistent")
+
+
+def test_pulse_and_persistent_probe_have_distinct_temporal_support() -> None:
+    controller = _controller()
+    hold = torch.full((72, 109), 0.5)
+    pulse = controller._probe_sequence(
+        hold=hold,
+        actuator_index=3,
+        target=0.6,
+        mode="pulse",
+    )
+    persistent = controller._probe_sequence(
+        hold=hold,
+        actuator_index=3,
+        target=0.6,
+        mode="persistent",
+    )
+    assert torch.allclose(pulse[:2, 3], torch.full((2,), 0.6))
+    assert torch.allclose(pulse[2:, 3], torch.full((70,), 0.5))
+    assert torch.allclose(persistent[:, 3], torch.full((72,), 0.6))
