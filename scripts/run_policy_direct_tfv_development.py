@@ -61,6 +61,8 @@ def _load_admission(path: str | Path, *, step2_path: str | Path) -> dict:
     split = payload.get("split")
     if not isinstance(split, dict) or int(split.get("rainfall_group_overlap_count", -1)) != 0:
         raise ValueError("runtime admission calibration/audit rainfall groups are not disjoint")
+    if payload.get("optimizer_replay_coverage_claimed") is not False:
+        raise ValueError("small optimizer replay sample must not claim conformal coverage")
     return payload
 
 
@@ -165,7 +167,12 @@ def main() -> None:
             "calibrated_one_sided_admission_used": True,
             "calibrated_admission_contract": DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT,
             "action_rule": "execute iff calibrated upper bound on delta TFV < 0 and first move changes",
-            "admission_coverage": float(admission["coverage"]),
+            "d3_conformal_coverage": float(admission["d3_conformal_coverage"]),
+            "optimizer_replay_rule": str(admission["optimizer_replay_rule"]),
+            "optimizer_replay_coverage_claimed": bool(admission["optimizer_replay_coverage_claimed"]),
+            "optimizer_replay_residual_max_m3": float(admission["optimizer_replay_residual_max_m3"]),
+            "optimizer_replay_dense_residual_max_m3": float(admission["optimizer_replay_dense_residual_max_m3"]),
+            "optimizer_replay_event_ids": list(admission["optimizer_replay_event_ids"]),
             "admission_global_margin_m3": float(admission["global_margin_m3"]),
             "admission_dense_margin_m3": float(admission["dense_margin_m3"]),
             "admission_density_floor_changed_facilities": int(admission["density_floor_changed_facilities"]),
@@ -205,6 +212,8 @@ def main() -> None:
         "target_write_readback_passed": True,
         "active_support_quantile_effective": metadata["active_support_quantile_effective"],
         "active_support_ceiling": metadata["active_support_ceiling"],
+        "d3_conformal_coverage": metadata["d3_conformal_coverage"],
+        "optimizer_replay_coverage_claimed": metadata["optimizer_replay_coverage_claimed"],
         "admission_global_margin_m3": metadata["admission_global_margin_m3"],
         "admission_dense_margin_m3": metadata["admission_dense_margin_m3"],
         "sampled_global_peak_flood_rate_m3s": result.global_peak_flood_rate_m3s,
