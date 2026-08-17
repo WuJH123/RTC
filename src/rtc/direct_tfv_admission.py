@@ -7,15 +7,17 @@ beneficial in exact same-prefix H360 SWMM replay.
 The admission margin combines two Development-only evidence sources without overstating their
 statistical strength:
 
-1. rainfall-disjoint D3 HOLD-reference cached residuals use a finite-sample one-sided split-conformal
-   upper quantile when the sample count supports the requested coverage;
-2. the small exact optimizer-replay sample uses the **maximum observed optimism residual**. With only
-   six optimizer plans it would be statistically invalid to claim a finite 90% conformal bound.
+1. rainfall-disjoint D3 HOLD-reference residuals use a finite-sample one-sided split-conformal upper
+   bound whose independent calibration unit is the rainfall group, not individual correlated
+   candidate branches. Each calibration rainfall group contributes its worst true-minus-predicted
+   residual;
+2. the small exact optimizer-replay sample uses the maximum observed optimism residual. With only a
+   few optimizer plans it would be invalid to claim formal conformal coverage.
 
-The final margin is the more conservative of these components. The online objective remains
-system-wide cumulative TFV only. No PFV/peak/energy objective, baseline imitation, future realised
-rainfall or online SWMM call is introduced. Optimizer replay used for calibration cannot also be
-claimed as independent post-calibration validation evidence.
+The final margin is the more conservative component. The online objective remains system-wide
+cumulative TFV only. No PFV/peak/energy objective, baseline imitation, future realised rainfall or
+online SWMM call is introduced. Optimizer replay used for calibration cannot also be claimed as
+independent post-calibration validation evidence.
 """
 from __future__ import annotations
 
@@ -47,13 +49,21 @@ def _stable_key(text: str, seed: int) -> str:
     return hashlib.sha256(f"{seed}|{text}".encode("utf-8")).hexdigest()
 
 
+def _minimum_conformal_sample_size(coverage: float) -> int:
+    if not 0.5 < float(coverage) < 1.0:
+        raise ValueError("one-sided admission coverage must lie in (0.5,1)")
+    ratio = float(coverage) / (1.0 - float(coverage))
+    return int(math.ceil(ratio - 1.0e-12))
+
+
 def split_d3_holdout_for_admission(
     cache: Any,
     names: Sequence[str],
     *,
+    coverage: float = DIRECT_TFV_ADMISSION_COVERAGE,
     seed: int = DIRECT_TFV_ADMISSION_SPLIT_SEED,
 ) -> tuple[list[str], list[str], dict[str, Any]]:
-    """Split D3 holdout by rainfall group so base calibration and audit do not share forcing."""
+    """Create rainfall-disjoint D3 calibration/audit sets with valid finite-sample coverage."""
 
     by_group: dict[str, list[str]] = {}
     for name in names:
@@ -61,9 +71,14 @@ def split_d3_holdout_for_admission(
         group = str(entry.rainfall_group)
         by_group.setdefault(group, []).append(str(name))
     groups = sorted(by_group, key=lambda value: _stable_key(value, seed))
-    if len(groups) < 2:
-        raise ValueError("D3 admission calibration requires at least two rainfall groups")
-    calibration_group_count = max(1, len(groups) // 2)
+    minimum = _minimum_conformal_sample_size(coverage)
+    if len(groups) < minimum + 1:
+        raise ValueError(
+            f"{coverage:.3f} rainfall-group conformal calibration plus an independent D3 audit "
+            f"needs at least {minimum + 1} rainfall groups; got {len(groups)}"
+        )
+    calibration_group_count = max(minimum, len(groups) // 2)
+    calibration_group_count = min(calibration_group_count, len(groups) - 1)
     calibration_groups = set(groups[:calibration_group_count])
     audit_groups = set(groups[calibration_group_count:])
     calibration = sorted(name for group in calibration_groups for name in by_group[group])
@@ -75,18 +90,14 @@ def split_d3_holdout_for_admission(
         raise RuntimeError(f"D3 admission rainfall groups overlap: {sorted(overlap)}")
     return calibration, audit, {
         "split_seed": int(seed),
+        "requested_conformal_coverage": float(coverage),
+        "minimum_calibration_rainfall_groups": int(minimum),
         "calibration_group_count": len(calibration_groups),
         "audit_group_count": len(audit_groups),
         "calibration_rainfall_groups": sorted(calibration_groups),
         "audit_rainfall_groups": sorted(audit_groups),
         "rainfall_group_overlap_count": 0,
     }
-
-
-def _minimum_conformal_sample_size(coverage: float) -> int:
-    if not 0.5 < float(coverage) < 1.0:
-        raise ValueError("one-sided admission coverage must lie in (0.5,1)")
-    return int(math.ceil(float(coverage) / (1.0 - float(coverage))))
 
 
 def _one_sided_conformal_upper(values: Sequence[float], coverage: float) -> float:
@@ -99,11 +110,11 @@ def _one_sided_conformal_upper(values: Sequence[float], coverage: float) -> floa
     minimum = _minimum_conformal_sample_size(coverage)
     if int(data.size) < minimum:
         raise ValueError(
-            f"{coverage:.3f} one-sided conformal coverage needs at least {minimum} residuals; "
-            f"got {int(data.size)}"
+            f"{coverage:.3f} one-sided conformal coverage needs at least {minimum} independent "
+            f"residual units; got {int(data.size)}"
         )
     ordered = np.sort(data)
-    rank = int(math.ceil((data.size + 1) * float(coverage)))
+    rank = int(math.ceil((data.size + 1) * float(coverage) - 1.0e-12))
     if rank < 1 or rank > int(data.size):
         raise ValueError("requested conformal coverage has no finite order statistic")
     return float(ordered[rank - 1])
@@ -167,16 +178,15 @@ def _optimizer_replay_residuals(
         ):
             if key not in row:
                 raise ValueError(f"optimizer replay result lacks {key}")
-        if float(row.get("prefix_state_max_abs_difference", 0.0)) != 0.0:
-            raise ValueError("optimizer replay state prefix differs")
-        if float(row.get("prefix_target_max_abs_difference", 0.0)) != 0.0:
-            raise ValueError("optimizer replay target prefix differs")
-        if float(row.get("prefix_current_max_abs_difference", 0.0)) != 0.0:
-            raise ValueError("optimizer replay current-setting prefix differs")
-        if float(row.get("prefix_statistics_max_abs_difference", 0.0)) != 0.0:
-            raise ValueError("optimizer replay cumulative-statistics prefix differs")
-        if float(row.get("hold_reference_target_max_abs_difference", 0.0)) != 0.0:
-            raise ValueError("optimizer replay HOLD target differs from logged reference")
+        for key in (
+            "prefix_state_max_abs_difference",
+            "prefix_target_max_abs_difference",
+            "prefix_current_max_abs_difference",
+            "prefix_statistics_max_abs_difference",
+            "hold_reference_target_max_abs_difference",
+        ):
+            if float(row.get(key, 0.0)) != 0.0:
+                raise ValueError(f"optimizer replay calibration has nonzero {key}")
         if abs(float(row.get("candidate_branch_routing_error_pct", 0.0))) > 1.0e-9:
             raise ValueError("optimizer replay candidate branch has routing error")
         if abs(float(row.get("hold_branch_routing_error_pct", 0.0))) > 1.0e-9:
@@ -216,7 +226,7 @@ def derive_direct_tfv_admission_calibration(
     optimizer_replay_report: Mapping[str, Any],
     coverage: float = DIRECT_TFV_ADMISSION_COVERAGE,
 ) -> dict[str, Any]:
-    """Combine formal D3 residual quantiles with empirical optimizer-replay maxima."""
+    """Combine rainfall-group conformal residual maxima with empirical optimizer maxima."""
 
     if str(action_support.get("joint_density_reference_semantics", "")) != "HOLD_REFERENCE_ONLY":
         raise ValueError("current Direct-TFV admission requires HOLD-reference joint-density support")
@@ -225,9 +235,9 @@ def derive_direct_tfv_admission_calibration(
         int(math.ceil(float(action_support.get("joint_changed_facility_count_q90", 2.0)))),
     )
     static = _graph_tensors(graph, device)
-    d3_residuals: list[float] = []
-    d3_dense_residuals: list[float] = []
-    groups = branches = dense_branches = 0
+    group_global_max: dict[str, float] = {}
+    group_dense_max: dict[str, float] = {}
+    branches = dense_branches = 0
     model.eval()
     for name in names:
         prediction, truth, change_count = _score_group(
@@ -238,26 +248,38 @@ def derive_direct_tfv_admission_calibration(
             graph_tensors=static,
             device=device,
         )
+        rainfall_group = str(cache.entry(name).rainfall_group)
         residual = truth - prediction
         finite = np.isfinite(residual)
-        d3_residuals.extend(residual[finite].tolist())
+        if bool(np.any(finite)):
+            worst = float(np.max(residual[finite]))
+            group_global_max[rainfall_group] = max(
+                worst,
+                group_global_max.get(rainfall_group, -math.inf),
+            )
         dense = finite & (change_count >= density_floor)
-        d3_dense_residuals.extend(residual[dense].tolist())
-        dense_branches += int(np.sum(dense))
-        groups += 1
+        if bool(np.any(dense)):
+            worst_dense = float(np.max(residual[dense]))
+            group_dense_max[rainfall_group] = max(
+                worst_dense,
+                group_dense_max.get(rainfall_group, -math.inf),
+            )
+            dense_branches += int(np.sum(dense))
         branches += len(prediction)
-    if groups <= 0 or branches <= 0:
-        raise ValueError("D3 admission calibration has no usable groups")
+    if not group_global_max or branches <= 0:
+        raise ValueError("D3 admission calibration has no usable rainfall-group residual maxima")
 
     replay_residuals, replay_dense, replay_meta = _optimizer_replay_residuals(
         optimizer_replay_report,
         density_floor=density_floor,
     )
-    d3_global_q = _one_sided_conformal_upper(d3_residuals, coverage)
+    group_values = list(group_global_max.values())
+    d3_global_q = _one_sided_conformal_upper(group_values, coverage)
     minimum = _minimum_conformal_sample_size(coverage)
+    dense_group_values = list(group_dense_max.values())
     d3_dense_q = (
-        _one_sided_conformal_upper(d3_dense_residuals, coverage)
-        if len(d3_dense_residuals) >= minimum
+        _one_sided_conformal_upper(dense_group_values, coverage)
+        if len(dense_group_values) >= minimum
         else d3_global_q
     )
 
@@ -270,26 +292,28 @@ def derive_direct_tfv_admission_calibration(
         "development_only": True,
         "reference_semantics": "HOLD_ACTIVE_TARGET_H360",
         "d3_conformal_coverage": float(coverage),
+        "d3_conformal_unit": "RAINFALL_GROUP_MAX_TRUE_MINUS_PREDICTED_RESIDUAL",
         "residual_definition": "true_delta_tfv_m3_minus_predicted_delta_tfv_m3",
         "admission_rule": "predicted_delta_tfv_m3 + one_sided_residual_margin_m3 < 0",
         "density_floor_changed_facilities": int(density_floor),
         "global_margin_m3": float(global_margin),
         "dense_margin_m3": float(dense_margin),
-        "d3_branch_residual_conformal_upper_m3": float(d3_global_q),
-        "d3_dense_residual_conformal_upper_m3": float(d3_dense_q),
-        "d3_dense_conformal_used": bool(len(d3_dense_residuals) >= minimum),
+        "d3_rainfall_group_residual_conformal_upper_m3": float(d3_global_q),
+        "d3_dense_rainfall_group_residual_conformal_upper_m3": float(d3_dense_q),
+        "d3_dense_conformal_used": bool(len(dense_group_values) >= minimum),
+        "d3_calibration_rainfall_group_count": int(len(group_values)),
+        "d3_dense_calibration_rainfall_group_count": int(len(dense_group_values)),
+        "d3_calibration_branches": int(branches),
+        "d3_dense_calibration_branches": int(dense_branches),
         "optimizer_replay_rule": "MAX_OBSERVED_TRUE_MINUS_PREDICTED_RESIDUAL",
         "optimizer_replay_residual_max_m3": float(replay_global_max),
         "optimizer_replay_dense_residual_max_m3": float(replay_dense_max),
         "optimizer_replay_coverage_claimed": False,
-        "d3_calibration_groups": int(groups),
-        "d3_calibration_branches": int(branches),
-        "d3_dense_calibration_branches": int(dense_branches),
         **replay_meta,
         "scientific_role": (
-            "D3 residuals provide the finite-sample one-sided model-error bound; exact optimizer "
-            "replay contributes a conservative observed selection-shift maximum without a false "
-            "coverage claim"
+            "Rainfall-group maxima provide the finite-sample D3 model-error bound without branch "
+            "pseudo-replication; exact optimizer replay contributes a conservative observed "
+            "selection-shift maximum without a formal coverage claim"
         ),
         "independence_note": (
             "events listed in optimizer_replay_event_ids are calibration evidence and must not be "
