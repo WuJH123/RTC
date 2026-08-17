@@ -19,7 +19,7 @@ from .step3_tfv_value_mpc_v3 import DIRECT_TFV_STEP3_CONTRACT, DirectTFVReceding
 
 DIRECT_TFV_CONTROLLER_CONTRACT = "PROJECT7_DIRECT_TFV_TARGET_LATCH_CONTROLLER_V2"
 DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_V1"
+    "PROJECT7_DIRECT_TFV_COUNTERFACTUAL_PLAN_TEMETRY_V1"
 )
 
 
@@ -44,6 +44,7 @@ class _RuntimeMPCResult:
     best_screening_predicted_delta_tfv_m3: float
     optimizer_gain_beyond_best_screening_m3: float
     active_set_ceiling_binding: bool
+    counterfactual_actuator_ids: tuple[str, ...]
     optimized_free_control_blocks: tuple[tuple[float, ...], ...]
     hold_reference_settings: tuple[float, ...]
     scipy_message: str
@@ -95,6 +96,9 @@ class DirectTFVRuntimeMPCAdapter:
             active_target=previous_requested_settings,
         )
         valid = result.selected_source == "DIRECT_TFV_RECEDING_LBFGSB"
+        actuator_ids = tuple(str(value) for value in self.inner.graph.actuator_ids)
+        if len(actuator_ids) != 109 or len(set(actuator_ids)) != 109:
+            raise RuntimeError("Direct-TFV counterfactual actuator order must contain 109 unique IDs")
         block_steps = int(self.inner.design.control_block_steps)
         free_count = int(self.inner.design.free_control_blocks)
         free_blocks_tensor = result.settings[::block_steps][:free_count]
@@ -140,6 +144,7 @@ class DirectTFVRuntimeMPCAdapter:
             best_screening_predicted_delta_tfv_m3=float(best_screening),
             optimizer_gain_beyond_best_screening_m3=float(optimizer_gain),
             active_set_ceiling_binding=ceiling_binding,
+            counterfactual_actuator_ids=actuator_ids,
             optimized_free_control_blocks=free_blocks,
             hold_reference_settings=hold_reference,
             scipy_message=str(result.scipy_message),
@@ -198,6 +203,7 @@ class DirectTFVAuthoritativeController(V122TorchMPCController):
                     "counterfactual_candidate_semantics": (
                         "EXACT_OPTIMIZED_H120_FREE_BLOCKS_THEN_TERMINAL_HOLD_H360"
                     ),
+                    "counterfactual_actuator_ids": list(result.counterfactual_actuator_ids),
                     "optimized_free_control_blocks": [
                         list(row) for row in result.optimized_free_control_blocks
                     ],
