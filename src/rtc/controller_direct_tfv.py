@@ -7,6 +7,7 @@ uses that execution shell while the policy itself is the current all-109 Direct-
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any
 
 import torch
@@ -17,6 +18,9 @@ from .step3_tfv_value_mpc_v3 import DIRECT_TFV_STEP3_CONTRACT, DirectTFVReceding
 
 
 DIRECT_TFV_CONTROLLER_CONTRACT = "PROJECT7_DIRECT_TFV_TARGET_LATCH_CONTROLLER_V2"
+DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT = (
+    "PROJECT7_DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_V1"
+)
 
 
 @dataclass(frozen=True)
@@ -33,8 +37,16 @@ class _RuntimeMPCResult:
     screened_facility_count: int
     predicted_beneficial_facility_count: int
     active_facility_count: int
+    active_facility_ids: tuple[str, ...]
+    active_facility_screening_scores_m3: tuple[float, ...]
     first_move_changed_facility_count: int
     maximum_support_ratio: float
+    best_screening_predicted_delta_tfv_m3: float
+    optimizer_gain_beyond_best_screening_m3: float
+    active_set_ceiling_binding: bool
+    counterfactual_actuator_ids: tuple[str, ...]
+    optimized_free_control_blocks: tuple[tuple[float, ...], ...]
+    hold_reference_settings: tuple[float, ...]
     scipy_message: str
 
 
@@ -84,6 +96,34 @@ class DirectTFVRuntimeMPCAdapter:
             active_target=previous_requested_settings,
         )
         valid = result.selected_source == "DIRECT_TFV_RECEDING_LBFGSB"
+        actuator_ids = tuple(str(value) for value in self.inner.graph.actuator_ids)
+        if len(actuator_ids) != 109 or len(set(actuator_ids)) != 109:
+            raise RuntimeError("Direct-TFV counterfactual actuator order must contain 109 unique IDs")
+        block_steps = int(self.inner.design.control_block_steps)
+        free_count = int(self.inner.design.free_control_blocks)
+        free_blocks_tensor = result.settings[::block_steps][:free_count]
+        if tuple(free_blocks_tensor.shape) != (free_count, 109):
+            raise RuntimeError("Direct-TFV runtime could not recover exact [12,109] free-control plan")
+        free_blocks = tuple(
+            tuple(float(value) for value in row)
+            for row in free_blocks_tensor.detach().cpu().to(torch.float64).tolist()
+        )
+        hold_reference = tuple(
+            float(value)
+            for value in previous_requested_settings.detach().cpu().to(torch.float64).reshape(-1).tolist()
+        )
+        if len(hold_reference) != 109:
+            raise RuntimeError("Direct-TFV runtime HOLD reference must contain 109 settings")
+        active_scores = tuple(float(value) for value in result.active_facility_screening_scores_m3)
+        best_screening = min(active_scores) if active_scores else 0.0
+        optimizer_gain = (
+            float(best_screening - float(result.predicted_delta_tfv_m3)) if valid else 0.0
+        )
+        q90_ceiling = max(1, int(math.ceil(float(result.training_joint_changed_facility_q90))))
+        ceiling_binding = bool(
+            result.predicted_beneficial_facility_count > result.active_facility_count
+            and result.active_facility_count >= min(109, q90_ceiling)
+        )
         wrapped = _RuntimeMPCResult(
             settings=result.settings,
             predicted_delta_tfv_m3=float(result.predicted_delta_tfv_m3),
@@ -97,8 +137,16 @@ class DirectTFVRuntimeMPCAdapter:
             screened_facility_count=int(result.screened_facility_count),
             predicted_beneficial_facility_count=int(result.predicted_beneficial_facility_count),
             active_facility_count=int(result.active_facility_count),
+            active_facility_ids=tuple(result.active_facility_ids),
+            active_facility_screening_scores_m3=active_scores,
             first_move_changed_facility_count=int(result.first_move_changed_facility_count),
             maximum_support_ratio=float(result.maximum_support_ratio),
+            best_screening_predicted_delta_tfv_m3=float(best_screening),
+            optimizer_gain_beyond_best_screening_m3=float(optimizer_gain),
+            active_set_ceiling_binding=ceiling_binding,
+            counterfactual_actuator_ids=actuator_ids,
+            optimized_free_control_blocks=free_blocks,
+            hold_reference_settings=hold_reference,
             scipy_message=str(result.scipy_message),
         )
         self.last_result = wrapped
@@ -135,8 +183,31 @@ class DirectTFVAuthoritativeController(V122TorchMPCController):
                     "screened_facility_count": result.screened_facility_count,
                     "predicted_beneficial_facility_count": result.predicted_beneficial_facility_count,
                     "active_facility_count": result.active_facility_count,
+                    "active_facility_ids": list(result.active_facility_ids),
+                    "active_facility_screening_scores_m3": list(
+                        result.active_facility_screening_scores_m3
+                    ),
                     "first_move_changed_facility_count": result.first_move_changed_facility_count,
                     "maximum_support_ratio": result.maximum_support_ratio,
+                    "best_screening_predicted_delta_tfv_m3": (
+                        result.best_screening_predicted_delta_tfv_m3
+                    ),
+                    "optimizer_gain_beyond_best_screening_m3": (
+                        result.optimizer_gain_beyond_best_screening_m3
+                    ),
+                    "active_set_ceiling_binding": result.active_set_ceiling_binding,
+                    "counterfactual_plan_telemetry_contract": (
+                        DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT
+                    ),
+                    "counterfactual_reference_semantics": "HOLD_ACTIVE_TARGET_H360",
+                    "counterfactual_candidate_semantics": (
+                        "EXACT_OPTIMIZED_H120_FREE_BLOCKS_THEN_TERMINAL_HOLD_H360"
+                    ),
+                    "counterfactual_actuator_ids": list(result.counterfactual_actuator_ids),
+                    "optimized_free_control_blocks": [
+                        list(row) for row in result.optimized_free_control_blocks
+                    ],
+                    "hold_reference_settings": list(result.hold_reference_settings),
                     "scipy_message": result.scipy_message[:2000],
                 }
             )
@@ -152,6 +223,7 @@ class DirectTFVAuthoritativeController(V122TorchMPCController):
 
 __all__ = [
     "DIRECT_TFV_CONTROLLER_CONTRACT",
+    "DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT",
     "DirectTFVAuthoritativeController",
     "DirectTFVRuntimeMPCAdapter",
 ]

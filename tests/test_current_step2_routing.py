@@ -15,6 +15,7 @@ DIRECT_RUNNER = ROOT / "scripts" / "run_step2_tfv_value_core_current.py"
 STEP3_RUNNER = ROOT / "scripts" / "run_step3_direct_tfv_solver_current.py"
 DEV_RUNTIME = ROOT / "scripts" / "run_policy_direct_tfv_development.py"
 DEV_AUDIT = ROOT / "scripts" / "audit_direct_tfv_closed_loop_current.py"
+COUNTERFACTUAL_PLAN = ROOT / "scripts" / "plan_direct_tfv_counterfactual_current.py"
 CURRENT_POLICY = ROOT / "scripts" / "run_policy_current.py"
 CURRENT_SEVEN = ROOT / "scripts" / "run_seven_strategies_current.py"
 
@@ -95,19 +96,26 @@ def test_current_cli_surfaces_are_explicit_and_threshold_free() -> None:
     audit = _help(DEV_AUDIT)
     assert "--metadata" in audit
     assert "--baseline-node-statistics" in audit
+    assert "--baseline-metadata" in audit
+    plan = _help(COUNTERFACTUAL_PLAN)
+    assert "--metadata" in plan
+    assert "--max-decisions" in plan
+    assert "--out" in plan
 
 
 def test_current_lint_surface_tracks_core_paths() -> None:
     payload = json.loads(LINT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V5"
+    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V6"
     paths = set(payload["paths"])
     required = {
         "scripts/run_step2_tfv_value_core_current.py",
         "scripts/run_step3_direct_tfv_solver_current.py",
         "scripts/run_policy_direct_tfv_development.py",
         "scripts/audit_direct_tfv_closed_loop_current.py",
+        "scripts/plan_direct_tfv_counterfactual_current.py",
         "src/rtc/checkpoint_direct_tfv.py",
         "src/rtc/controller_direct_tfv.py",
+        "src/rtc/direct_tfv_counterfactual.py",
         "src/rtc/runtime_controller_guard.py",
         "src/rtc/step2_tfv_value_training_v4.py",
         "src/rtc/step2_tfv_support.py",
@@ -115,6 +123,7 @@ def test_current_lint_surface_tracks_core_paths() -> None:
         "tests/test_direct_tfv_core_training.py",
         "tests/test_direct_tfv_step3_core.py",
         "tests/test_direct_tfv_runtime_adapter.py",
+        "tests/test_direct_tfv_counterfactual.py",
         "tests/test_temporal_control_continuity_v069.py",
     }
     assert required <= paths
