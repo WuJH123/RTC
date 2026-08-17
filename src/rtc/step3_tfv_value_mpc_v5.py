@@ -1,9 +1,11 @@
 """Calibrated Direct-TFV receding MPC V5.
 
 V5 keeps the V4 all-109 screening, q95 HOLD-relative action support and bounded H120 optimisation.
-The only policy change is evidence-driven admission: an optimised sequence is executable only when a
-rainfall-disjoint D3 HOLD-reference one-sided residual upper bound remains below zero. This corrects
-the continuous optimizer's selection-induced optimism without changing the TFV-only objective.
+The policy change is evidence-driven admission: an optimised sequence is executable only when an
+optimizer-aware one-sided residual upper bound remains below zero. The margin includes exact
+same-prefix H360 SWMM residuals from optimizer-selected Development plans, so it addresses the
+selection-induced optimism observed in continuous Step3 rather than relying on cached candidates
+alone. The TFV-only objective is unchanged.
 
 A plan whose first executed 10-minute block is identical to HOLD is also treated as HOLD. Future-only
 benefit cannot be counted as an executed action because the controller re-observes before those
@@ -39,7 +41,7 @@ class DirectTFVMPCResultV5(DirectTFVMPCResultV3):
 
 
 class DirectTFVRecedingMPCV5(DirectTFVRecedingMPCV4):
-    """V4 optimizer plus one-sided D3-HOLD target-residual action admission."""
+    """V4 optimizer plus optimizer-aware one-sided HOLD-H360 action admission."""
 
     policy_mode = "direct_tfv_all109_receding_mpc_v5"
     policy_mode_contract = DIRECT_TFV_STEP3_CONTRACT
@@ -62,11 +64,13 @@ class DirectTFVRecedingMPCV5(DirectTFVRecedingMPCV4):
             design=design,
         )
         if str(admission_calibration.get("contract")) != DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT:
-            raise ValueError("Direct-TFV V5 requires current D3 HOLD admission calibration")
+            raise ValueError("Direct-TFV V5 requires current optimizer-aware admission calibration")
         if admission_calibration.get("development_only") is not True:
             raise ValueError("Direct-TFV V5 admission calibration must be Development-only evidence")
-        if str(admission_calibration.get("reference_semantics", "")) != "D3_HOLD_REFERENCE":
+        if str(admission_calibration.get("reference_semantics", "")) != "HOLD_ACTIVE_TARGET_H360":
             raise ValueError("Direct-TFV V5 admission calibration has the wrong reference semantics")
+        if int(admission_calibration.get("optimizer_replay_count", 0)) < 4:
+            raise ValueError("Direct-TFV V5 requires exact optimizer-replay residual evidence")
         for key in ("global_margin_m3", "dense_margin_m3"):
             value = float(admission_calibration.get(key, float("nan")))
             if not torch.isfinite(torch.tensor(value)) or value < 0.0:
