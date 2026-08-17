@@ -49,10 +49,17 @@ def _eligible(
         predicted = float(diagnostics.get("predicted_delta_tfv_m3", math.nan))
         blocks = diagnostics.get("optimized_free_control_blocks")
         hold = diagnostics.get("hold_reference_settings")
+        actuator_ids = diagnostics.get("counterfactual_actuator_ids")
+        valid_actuator_ids = bool(
+            isinstance(actuator_ids, list)
+            and len(actuator_ids) == 109
+            and len({str(value) for value in actuator_ids}) == 109
+        )
         if not math.isfinite(predicted) or predicted >= 0.0:
             continue
         if not (
-            isinstance(blocks, list)
+            valid_actuator_ids
+            and isinstance(blocks, list)
             and len(blocks) == 12
             and all(isinstance(block, list) and len(block) == 109 for block in blocks)
             and isinstance(hold, list)
@@ -82,6 +89,7 @@ def _eligible(
                 "first_move_changed_facility_count": int(
                     diagnostics.get("first_move_changed_facility_count", -1)
                 ),
+                "counterfactual_actuator_ids": [str(value) for value in actuator_ids],
                 "hold_reference_settings": hold,
                 "optimized_free_control_blocks": blocks,
                 "counterfactual_reference_semantics": str(
@@ -145,6 +153,7 @@ def select_counterfactual_decisions(
         payload = dict(row)
         payload["plan_sha256"] = _canonical_sha256(
             {
+                "counterfactual_actuator_ids": payload["counterfactual_actuator_ids"],
                 "hold_reference_settings": payload["hold_reference_settings"],
                 "optimized_free_control_blocks": payload["optimized_free_control_blocks"],
             }
