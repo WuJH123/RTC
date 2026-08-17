@@ -9,7 +9,11 @@ from rtc.controller_direct_tfv import DirectTFVRuntimeMPCAdapter
 
 class _Inner:
     def __init__(self) -> None:
-        self.design = SimpleNamespace(max_setting_delta_per_update=0.5)
+        self.design = SimpleNamespace(
+            max_setting_delta_per_update=0.5,
+            control_block_steps=2,
+            free_control_blocks=12,
+        )
         self.model = torch.nn.Linear(1, 1)
         self.called = None
         self.fail = False
@@ -18,8 +22,10 @@ class _Inner:
         self.called = kwargs
         if self.fail:
             raise RuntimeError("synthetic solve failure")
+        settings = torch.full((72, 109), 0.5)
+        settings[:24, :5] = 0.6
         return SimpleNamespace(
-            settings=torch.full((72, 109), 0.5),
+            settings=settings,
             predicted_delta_tfv_m3=-1234.0,
             selected_source="DIRECT_TFV_RECEDING_LBFGSB",
             optimizer_success=True,
@@ -28,10 +34,13 @@ class _Inner:
             gradient_norm=3.0,
             elapsed_seconds=0.2,
             screened_facility_count=109,
-            predicted_beneficial_facility_count=17,
-            active_facility_count=17,
+            predicted_beneficial_facility_count=30,
+            active_facility_count=22,
+            active_facility_ids=tuple(f"A{i:03d}" for i in range(22)),
+            active_facility_screening_scores_m3=tuple(-1000.0 + i for i in range(22)),
             first_move_changed_facility_count=5,
             maximum_support_ratio=0.8,
+            training_joint_changed_facility_q90=22.0,
             scipy_message="ok",
         )
 
@@ -62,8 +71,15 @@ def test_runtime_adapter_maps_target_latch_call_to_direct_step3() -> None:
     result = _optimize(adapter)
     assert result.candidate_valid is True
     assert result.screened_facility_count == 109
-    assert result.predicted_beneficial_facility_count == 17
+    assert result.predicted_beneficial_facility_count == 30
     assert result.first_move_changed_facility_count == 5
+    assert result.best_screening_predicted_delta_tfv_m3 == -1000.0
+    assert result.optimizer_gain_beyond_best_screening_m3 == 234.0
+    assert result.active_set_ceiling_binding is True
+    assert len(result.optimized_free_control_blocks) == 12
+    assert all(len(block) == 109 for block in result.optimized_free_control_blocks)
+    assert result.optimized_free_control_blocks[0][0] == 0.6000000238418579
+    assert result.hold_reference_settings == (0.5,) * 109
     assert adapter.last_result is result
     assert inner.called is not None
     assert torch.allclose(inner.called["active_target"], torch.full((109,), 0.5))
