@@ -1,14 +1,14 @@
 """Training-support diagnostics for the Project7 Direct-TFV controller.
 
-The controller is allowed to learn all 109 writable facilities, but online optimisation must not
-silently leave the action distribution represented by authoritative SWMM counterfactuals. This
-module derives exact single-facility coverage plus empirical first-move, sequence-magnitude and
-joint-density support from TrainFit data only.
+The controller may learn all 109 writable facilities, but online optimisation must not silently leave
+the action distribution represented by authoritative SWMM counterfactuals. Per-facility magnitude
+coverage is derived from all admitted TrainFit sources, while the *joint changed-facility density*
+used by HOLD-reference Step3 is derived only from the declared HOLD-reference source family (D3 in
+the current runner). This prevents D2/D4 reference-shift geometry from inflating the online active set.
 
-The original V1 contract is retained for backward-compatible checkpoint loading. The additive
-``DIRECT_TFV_JOINT_DENSITY_SUPPORT_V2`` fields expose q95/q99/max joint changed-facility counts so a
-new MPC can expand beyond q90 only when the *training data itself* supports denser coordinated
-moves. No label, objective or safety threshold is changed.
+The original V1 support contract remains readable by legacy checkpoints. The additive
+``DIRECT_TFV_JOINT_DENSITY_SUPPORT_V2`` fields expose q95/q99/max HOLD-relative joint densities. No
+label, objective or performance-tuned action threshold is introduced.
 """
 from __future__ import annotations
 
@@ -35,11 +35,12 @@ def derive_direct_tfv_action_support(
     actuator_ids: Sequence[str],
     control_block_steps: int = 2,
     epsilon: float = 1.0e-7,
+    joint_density_sources: Sequence[str] = ("D3",),
 ) -> dict[str, Any]:
-    """Derive TrainFit-only action support and facility-identifiability evidence.
+    """Derive TrainFit-only magnitude/coverage and HOLD-relative joint-density evidence.
 
     ``settings`` are expected on the frozen H72 five-minute grid. Two model steps form one ten-
-    minute control block. All returned per-facility arrays follow ``actuator_ids`` order.
+    minute control block. All per-facility arrays follow ``actuator_ids`` order.
     """
 
     ids = tuple(str(value) for value in actuator_ids)
@@ -47,15 +48,25 @@ def derive_direct_tfv_action_support(
         raise ValueError("Direct-TFV action support requires exactly 109 unique actuators")
     if int(control_block_steps) <= 0:
         raise ValueError("control_block_steps must be positive")
+    density_sources = tuple(str(value) for value in joint_density_sources)
+    if not density_sources:
+        raise ValueError("joint_density_sources must contain the HOLD-reference source family")
+    missing_density_sources = sorted(set(density_sources) - set(source_groups))
+    if missing_density_sources:
+        raise ValueError(
+            f"joint-density support sources are absent from TrainFit groups: {missing_density_sources}"
+        )
 
     single_counts = np.zeros(len(ids), dtype=np.int64)
     single_rainfall: list[set[str]] = [set() for _ in ids]
     first_move_values: list[list[float]] = [[] for _ in ids]
     sequence_values: list[list[float]] = [[] for _ in ids]
     changed_counts: list[int] = []
-    joint_changed_counts: list[int] = []
+    joint_changed_counts_all: list[int] = []
+    joint_changed_counts_online: list[int] = []
     absolute_delta_tfv: list[float] = []
     group_count = branch_count = single_branch_count = joint_branch_count = 0
+    online_joint_branch_count = 0
 
     for source, names in source_groups.items():
         cache = source_caches[source]
@@ -100,8 +111,12 @@ def derive_direct_tfv_action_support(
                     single_rainfall[actuator_index].add(str(entry.rainfall_group))
                     single_branch_count += 1
                 else:
+                    count = int(changed_index.size)
                     joint_branch_count += 1
-                    joint_changed_counts.append(int(changed_index.size))
+                    joint_changed_counts_all.append(count)
+                    if source in density_sources:
+                        online_joint_branch_count += 1
+                        joint_changed_counts_online.append(count)
                 candidate_tfv = float(
                     np.asarray(arrays["exact_node_flood_volume_m3"][index], dtype=np.float64).sum()
                 )
@@ -111,6 +126,10 @@ def derive_direct_tfv_action_support(
 
     if branch_count <= 0 or not changed_counts:
         raise ValueError("Direct-TFV action support found no changed training branches")
+    if not joint_changed_counts_online:
+        raise ValueError(
+            "Direct-TFV online joint-density support found no multi-facility HOLD-reference branches"
+        )
 
     first_q95: list[float] = []
     sequence_q95: list[float] = []
@@ -126,26 +145,27 @@ def derive_direct_tfv_action_support(
 
     covered = single_counts > 0
     changed_array = np.asarray(changed_counts, dtype=np.float64)
-    joint_changed_array = np.asarray(joint_changed_counts, dtype=np.float64)
+    joint_all_array = np.asarray(joint_changed_counts_all, dtype=np.float64)
+    joint_online_array = np.asarray(joint_changed_counts_online, dtype=np.float64)
     abs_tfv = np.asarray(absolute_delta_tfv, dtype=np.float64)
-    joint_default = float(np.quantile(changed_array, 0.50))
 
     def changed_quantile(q: float) -> float:
         return float(np.quantile(changed_array, q))
 
-    def joint_quantile(q: float) -> float:
-        if joint_changed_array.size:
-            return float(np.quantile(joint_changed_array, q))
-        return joint_default
+    def online_joint_quantile(q: float) -> float:
+        return float(np.quantile(joint_online_array, q))
 
     return {
         "contract": DIRECT_TFV_ACTION_SUPPORT_CONTRACT,
         "joint_density_extension_contract": DIRECT_TFV_JOINT_DENSITY_SUPPORT_CONTRACT,
+        "joint_density_reference_semantics": "HOLD_REFERENCE_ONLY",
+        "joint_density_sources": list(density_sources),
         "actuator_ids": list(ids),
         "training_group_count": int(group_count),
         "training_branch_count": int(branch_count),
         "single_branch_count": int(single_branch_count),
         "joint_branch_count": int(joint_branch_count),
+        "online_reference_joint_branch_count": int(online_joint_branch_count),
         "single_facility_coverage_count": int(np.sum(covered)),
         "single_facility_coverage_fraction": float(np.mean(covered)),
         "uncovered_facilities": [ids[index] for index in np.flatnonzero(~covered).tolist()],
@@ -161,20 +181,22 @@ def derive_direct_tfv_action_support(
         "changed_facility_count_q95": changed_quantile(0.95),
         "changed_facility_count_q99": changed_quantile(0.99),
         "changed_facility_count_max": int(np.max(changed_array)),
-        "joint_changed_facility_count_q50": joint_quantile(0.50),
-        "joint_changed_facility_count_q75": joint_quantile(0.75),
-        "joint_changed_facility_count_q90": joint_quantile(0.90),
-        "joint_changed_facility_count_q95": joint_quantile(0.95),
-        "joint_changed_facility_count_q99": joint_quantile(0.99),
-        "joint_changed_facility_count_max": (
-            int(np.max(joint_changed_array)) if joint_changed_array.size else int(round(joint_default))
+        "joint_changed_facility_count_all_sources_q90": (
+            float(np.quantile(joint_all_array, 0.90)) if joint_all_array.size else 0.0
         ),
+        "joint_changed_facility_count_q50": online_joint_quantile(0.50),
+        "joint_changed_facility_count_q75": online_joint_quantile(0.75),
+        "joint_changed_facility_count_q90": online_joint_quantile(0.90),
+        "joint_changed_facility_count_q95": online_joint_quantile(0.95),
+        "joint_changed_facility_count_q99": online_joint_quantile(0.99),
+        "joint_changed_facility_count_max": int(np.max(joint_online_array)),
         "absolute_delta_tfv_q95_m3": float(np.quantile(abs_tfv, 0.95)) if abs_tfv.size else 0.0,
         "absolute_delta_tfv_max_m3": float(np.max(abs_tfv)) if abs_tfv.size else 0.0,
         "source_groups": {key: int(len(value)) for key, value in source_groups.items()},
         "scientific_role": (
-            "TrainFit identifiability evidence and Step3 trust-region geometry only; q95/q99/max "
-            "are support diagnostics, not performance-tuned thresholds"
+            "All TrainFit sources support per-facility magnitude/identifiability; HOLD-reference D3 "
+            "alone defines online joint-density q90/q95/q99/max. These are trust-region geometry, "
+            "not performance-tuned thresholds."
         ),
     }
 
