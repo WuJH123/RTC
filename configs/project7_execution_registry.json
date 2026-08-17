@@ -1,21 +1,26 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V3",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V4",
   "current": {
-    "status": "CURRENT_DEVELOPMENT_SELECTION_AWARE_STEP3_NOT_POLICY_LOCKED",
+    "status": "CURRENT_DEVELOPMENT_SELECTION_AWARE_STEP3_AUTHORITATIVE_RUNTIME_NOT_POLICY_LOCKED",
     "research_contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V3",
     "implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
     "training_contract": "PROJECT7_DIRECT_TFV_SELECTION_AWARE_TRAINING_V3",
     "selection_contract": "PROJECT7_DIRECT_TFV_HOLD_ACTION_THRESHOLD_V2",
     "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_SCREENED_TRUST_REGION_MPC_V2",
+    "development_runtime_contract": "PROJECT7_DIRECT_TFV_AUTHORITATIVE_10MIN_DEVELOPMENT_RTC_V1",
     "guide": "CODEX_START_HERE.md",
     "step2_training": "scripts/run_step2_current.py",
     "selection_calibration": "scripts/run_step2_selection_threshold_current.py",
     "step3_solver_audit": "scripts/run_step3_direct_tfv_solver_current.py",
-    "runtime": "scripts/run_policy_current.py (fail-closed until authoritative Development SWMM probe passes)",
+    "development_authoritative_runtime": "scripts/run_policy_direct_tfv_development.py",
+    "development_authoritative_audit": "scripts/audit_direct_tfv_closed_loop_current.py",
+    "runtime": "scripts/run_policy_current.py (production fail-closed until Development evidence passes)",
     "seven_strategy": "scripts/run_seven_strategies_current.py (fail-closed until explicit production promotion)",
     "lint_gate": "python scripts/lint_current_surface.py",
     "required_step2_profiles": ["smoke", "dev"],
     "enabled_step2_profiles": ["smoke", "dev"],
+    "development_authoritative_runtime_enabled": true,
+    "production_runtime_enabled": false,
     "runtime_enabled": false,
     "seven_strategy_enabled": false,
     "d5_enabled": false
@@ -30,6 +35,11 @@
     "selection_runner": "scripts/run_step2_selection_threshold_current.py",
     "step3_development": "src/rtc/step3_tfv_value_mpc_v2.py",
     "step3_solver_runner": "scripts/run_step3_direct_tfv_solver_current.py",
+    "runtime_checkpoint_loader": "src/rtc/checkpoint_direct_tfv.py",
+    "runtime_controller": "src/rtc/controller_direct_tfv.py",
+    "development_runtime_runner": "scripts/run_policy_direct_tfv_development.py",
+    "development_runtime_audit": "scripts/audit_direct_tfv_closed_loop_current.py",
+    "execution_shell_reused": "rtc.closed_loop target-latch/write-readback shell only; historical V127 policy objective is not reused",
     "facility_truth_audit": "src/rtc/facility_tfv_influence.py"
   },
   "hard_rules": [
@@ -40,18 +50,19 @@
     "all 109 facilities must be screened at every Step3 decision",
     "Step3 may optimize only a dynamic active set inside per-facility TrainFit q95 action support and physical/rate bounds",
     "Step3 must require the independently calibrated D3 HOLD-reference minimum predicted improvement before executing an action",
+    "authoritative Development runtime must execute exactly the scored first 10-minute target with target-write/readback verification and no post-score projection",
     "only the first 10-minute target is executed before re-observation",
     "SWMM remains authoritative offline truth and is not called inside candidate search",
-    "runtime/seven-strategy/Validation/Final/Formal/Policy Lock remain fail-closed during Development",
-    "legacy V128 world-model and scalar max-residual guard are ablation/history only"
+    "production runtime/seven-strategy/Validation/Final/Formal/Policy Lock remain fail-closed during Development",
+    "legacy V128 world-model, V127 policy objective and scalar max-residual guard are ablation/history only"
   ],
   "development_sequence": [
     "selection-aware Direct-TFV smoke",
     "full selection-aware Direct-TFV DEV with 109/109 coverage gate",
     "rainfall-disjoint HOLD/action threshold calibration",
     "109-facility screened trust-region Step3 solver audit",
-    "small authoritative SWMM first-move probe",
-    "one causal Development 10-minute closed loop",
+    "one or more authoritative Development SWMM closed loops using the current Direct-TFV runtime",
+    "audit score-equals-execute, 109 screening, support bounds, readback and authoritative TFV versus a matched baseline",
     "multi-event Development evidence",
     "only then production promotion"
   ]
