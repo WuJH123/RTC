@@ -1,8 +1,9 @@
-"""Calibrate the current Direct-TFV Step3 action admission on D3 HOLD-reference holdout data.
+"""Calibrate optimizer-aware Direct-TFV Step3 admission from Development evidence.
 
-This is a Development-only, no-SWMM calibration step. It uses a rainfall-disjoint half of the
-existing D3 internal holdout to estimate a one-sided TFV residual margin, and evaluates the resulting
-admission rule on the other half. The Step2 model is not retrained.
+The final one-sided margin is the conservative maximum of base D3 HOLD-reference residual evidence
+and exact same-prefix H360 SWMM residuals from optimizer-selected plans. D3 groups are rainfall-split
+into calibration/audit halves. The optimizer replay event(s) are explicitly recorded as calibration
+evidence and must not later be described as independent post-calibration validation.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ from rtc.step2_state_store_v127 import CausalStep1StateCacheV127, load_causal_st
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
 
 
-CURRENT_DIRECT_TFV_ADMISSION_RUN_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_ADMISSION_CALIBRATION_V1"
+CURRENT_DIRECT_TFV_ADMISSION_RUN_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_ADMISSION_CALIBRATION_V2"
 
 
 def _sha(path: str | Path) -> str:
@@ -41,6 +42,7 @@ def _sha(path: str | Path) -> str:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--checkpoint", required=True)
+    p.add_argument("--optimizer-replay-report", required=True)
     p.add_argument("--graph", required=True)
     p.add_argument("--cache-manifest", required=True)
     p.add_argument("--causal-store", required=True)
@@ -55,6 +57,9 @@ def main() -> None:
     model, normalization, checkpoint = load_direct_tfv_runtime_checkpoint(
         args.checkpoint, graph=graph, device=device
     )
+    replay = json.loads(Path(args.optimizer_replay_report).read_text(encoding="utf-8"))
+    if not isinstance(replay, dict):
+        raise ValueError("optimizer replay report must be a JSON object")
     base = V60TrainCache(args.cache_manifest)
     rain_store = load_causal_forecast_store_v123(args.causal_store)
     state_store = load_causal_state_store_v127(args.causal_state_store)
@@ -77,6 +82,7 @@ def main() -> None:
         graph=graph,
         device=device,
         action_support=checkpoint["action_support"],
+        optimizer_replay_report=replay,
         coverage=float(args.coverage),
     )
     audit = evaluate_direct_tfv_admission(
@@ -89,16 +95,15 @@ def main() -> None:
         calibration=calibration,
     )
     payload = {
-        "contract": DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT,
-        "run_contract": CURRENT_DIRECT_TFV_ADMISSION_RUN_CONTRACT,
-        "development_only": True,
         **calibration,
+        "run_contract": CURRENT_DIRECT_TFV_ADMISSION_RUN_CONTRACT,
         "split": split,
-        "calibration_names": calibration_names,
+        "d3_calibration_names": calibration_names,
         "audit_names": audit_names,
         "audit": audit,
         "lineage": {
             "step2_checkpoint_sha256": _sha(args.checkpoint),
+            "optimizer_replay_report_sha256": _sha(args.optimizer_replay_report),
             "graph_sha256": _sha(args.graph),
             "base_cache_sha256": _sha(args.cache_manifest),
             "causal_rainfall_sha256": _sha(args.causal_store),
