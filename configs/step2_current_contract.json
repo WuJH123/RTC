@@ -1,89 +1,64 @@
 {
-  "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V5",
-  "status": "CURRENT_DEVELOPMENT_CORE_STEP3_NOT_POLICY_LOCKED",
+  "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V6",
+  "status": "CURRENT_DEVELOPMENT_CALIBRATED_STEP3_NOT_POLICY_LOCKED",
   "selected_implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
   "training_contract": "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5",
-  "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V4",
+  "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V5",
   "authoritative_truth": "SWMM",
-  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, learn how all 109 writable facilities change future system-wide cumulative TFV, evaluate all 109 facilities for immediate and delayed control value, optimize a predicted-beneficial multi-facility action sequence inside empirical TrainFit support, execute the first 10-minute target, then re-observe",
+  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, learn all-109 action effects on future system-wide cumulative TFV, optimize inside D3-HOLD TrainFit support, execute only when a rainfall-disjoint D3 one-sided residual upper bound remains beneficial, then re-observe",
   "core_pipeline": {
     "step1": "causal sparse sensing -> current full-network hydraulic reconstruction",
-    "step2": "causal current state + causal rainfall + complete reference/candidate H360 actions -> authoritative exact delta TFV",
-    "step3": "HOLD is exact zero; screen all 109 facilities with pulse and persistent probes, optimize predicted-beneficial facilities inside TrainFit joint-density support, execute if optimized predicted delta TFV < 0, otherwise HOLD",
-    "swmm": "authoritative offline label generator and authoritative control evaluation truth; never the online candidate evaluator"
+    "step2": "causal current state + causal rainfall + complete H360 reference/candidate actions -> authoritative exact delta TFV",
+    "admission_calibration": "split the existing D3 HOLD internal holdout by rainfall group; one half calibrates a one-sided true-minus-predicted TFV residual margin and the other half audits admission",
+    "step3": "screen all 109 facilities, optimize q95-supported joint actions, execute iff predicted delta TFV + calibrated one-sided residual margin < 0 and the first 10-minute block changes; otherwise HOLD",
+    "swmm": "authoritative offline label/evaluation truth only; never called inside online candidate search"
   },
   "time_contract": {
     "model_step_seconds": 300,
     "control_update_seconds": 600,
-    "prediction_horizon_steps": 72,
     "prediction_horizon_minutes": 360,
-    "free_control_blocks": 12,
     "free_control_horizon_minutes": 120,
-    "execute_minutes": 10,
-    "terminal_tail": "hold the final H120 target through H360"
+    "execute_minutes": 10
   },
   "action_contract": {
     "actuators": 109,
     "all_writable_actuators_screened_every_decision": true,
-    "all_writable_actuators_eligible": true,
-    "full_unrestricted_online_1308_search": false,
-    "engineering_bounds": "per-facility physical min/max plus <=0.5 setting movement per 10-minute update",
-    "support_bounds": "per-facility TrainFit q95 action magnitudes plus TrainFit joint changed-facility density; q95 is used only when the checkpoint carries the V2 density extension, otherwise q90 is retained",
-    "performance_tuned_action_threshold": false
+    "engineering_bounds": "physical min/max plus <=0.5 setting movement per 10-minute update",
+    "support_bounds": "per-facility TrainFit q95 action magnitude plus D3-HOLD joint-density q95, never above observed D3-HOLD joint maximum",
+    "performance_tuned_threshold": false,
+    "statistical_admission": "90% one-sided split-conformal residual margin from rainfall-disjoint D3 HOLD holdout"
   },
-  "step2_current": {
-    "primary_target": "authoritative exact SWMM delta TFV relative to same-prefix reference",
-    "model": "shared pairwise V(candidate)-V(reference), decomposed into 109 facility value differences plus multi-facility interaction value difference",
-    "model_module": "src/rtc/step2_tfv_value.py",
-    "training_module": "src/rtc/step2_tfv_value_training_v4.py",
-    "runner": "scripts/run_step2_current.py -> scripts/run_step2_tfv_value_core_current.py",
-    "main_stage": "exact single-facility branches train 109 facility main-value differences with facility-balanced regression",
-    "joint_stage": "multi-facility branches are balanced by changed-facility count and train the shared facility representation plus interaction head, so rare dense coordination cannot be drowned out by sparse joint branches",
-    "control_stage": "D3 HOLD-reference TrainFit groups only; late value representation receives symmetric sign calibration for the actual online act-vs-HOLD decision",
-    "top1_policy": "exact cached-candidate top1 is diagnostic only",
-    "d4_role": "reference-shift stress diagnostic; poor D4 selection does not block HOLD-reference Step3",
-    "action_support_artifact": "checkpoint.action_support stores per-facility q95 radii and q50/q75/q90/q95/q99/max joint changed-facility counts"
+  "scientific_bottleneck": {
+    "classification": "DEVELOPMENT_NO_CONTROL_BENEFIT_INCONSISTENT",
+    "mechanism": "continuous optimizer selection-induced optimism / false-beneficial actions",
+    "evidence": "T5 exact same-prefix H360 replay had 3/6 false-beneficial despite zero prefix mismatch; T10 benefit nearly vanished and T20 exceeded no-control under threshold-free V5/V4",
+    "not_primary": ["runtime execution", "109-facility coverage", "q95 active-set size", "D4 reference shift"]
   },
   "step3_current": {
-    "module": "src/rtc/step3_tfv_value_mpc_v4.py",
-    "solver_audit_runner": "scripts/run_step3_direct_tfv_solver_current.py",
-    "reference": "HOLD",
-    "screening": "all 109 facilities; up/down half/full radius; pulse and persistent probes",
-    "beneficial_definition": "facility best pulse/persistent probe predicted delta TFV < 0",
-    "active_set": "rank all predicted-beneficial facilities; default ceiling is TrainFit joint q95 when V2 density support exists, otherwise fail closed to q90; never exceed observed TrainFit joint maximum",
-    "optimization": "bounded L-BFGS-B across 12 free 10-minute blocks for the dynamic active set",
-    "admission": "no separate calibrated threshold; execute when optimized predicted delta TFV < 0, otherwise HOLD",
-    "execute": "first 10-minute target only; re-observe before the next decision",
+    "module": "src/rtc/step3_tfv_value_mpc_v5.py",
+    "admission_module": "src/rtc/direct_tfv_admission.py",
+    "calibration_runner": "scripts/calibrate_direct_tfv_admission_current.py",
+    "solver_audit_runner": "scripts/run_step3_direct_tfv_solver_calibrated_current.py",
+    "development_runtime": "scripts/run_policy_direct_tfv_development.py",
+    "development_audit": "scripts/audit_direct_tfv_calibrated_closed_loop_current.py",
+    "active_support": "q95 canonical; q90 conservative ablation; q99 diagnostic only",
+    "admission": "upper bound < 0; weak/uncertain optimizer minima HOLD",
+    "first_move_contract": "future-only no-op plan is HOLD",
     "runtime_promoted": false
   },
-  "counterfactual_integrity": {
-    "target_latch_contract": "PROJECT7_DIRECT_TFV_REPLAY_USES_AUTHORITATIVE_TARGET_LATCH_V1",
-    "require_same_prefix_state_target_current_statistics": true,
-    "require_hold_reference_target_match": true
-  },
   "data_boundaries": {
-    "D2": "primary single-facility attribution and long-duration numeric supervision",
-    "D3": "HOLD-reference temporal/joint supervision and online control-reference supervision",
-    "D4_FIT": "Sparse-RBC-reference local first-move training/stress data; not the runtime reference",
-    "D4_AUDIT": "untouched Development reference-shift audit only",
-    "future_realized_rainfall_online": false,
-    "future_swmm_state_online": false,
+    "D2": "training/development only",
+    "D3": "training plus rainfall-disjoint internal calibration/audit",
+    "D4_AUDIT": "reference-shift diagnostic only",
     "Validation_access": false,
     "Final_access": false,
     "Formal_access": false,
     "Policy_Lock_access": false
   },
   "legacy": {
-    "V4_training": "runtime-compatible legacy checkpoint only; new training uses V5",
-    "Step3_V3": "reproducibility/ablation only",
-    "V128_hydraulic_world_model": "ablation/history only",
-    "Direct_TFV_threshold_calibration": "ablation/history only"
+    "Step3_V4": "threshold-free ablation that exposed optimizer's curse",
+    "V4_training": "legacy checkpoint compatibility only",
+    "V128_hydraulic_world_model": "ablation/history only"
   },
-  "canonical_entrypoints": {
-    "step2_training": "scripts/run_step2_current.py",
-    "step3_solver_audit": "scripts/run_step3_direct_tfv_solver_current.py",
-    "development_runtime": "scripts/run_policy_direct_tfv_development.py",
-    "facility_truth_audit": "scripts/audit_facility_tfv_influence_current.py"
-  },
-  "promotion_rule": "prove 109/109 facility learning, dense-joint held-out control value and support-aware Step3 behavior, then validate exact first moves with authoritative Development SWMM before any Validation/Final promotion"
+  "promotion_rule": "first restore event-balanced no-control non-inferiority and reduce exact same-prefix false-beneficial decisions; only then reassess Internal/Auto-RBC competitiveness and untouched Validation"
 }
