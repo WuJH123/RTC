@@ -1,4 +1,4 @@
-"""Load a frozen selection-aware Direct-TFV checkpoint for Development runtime."""
+"""Load a frozen core Direct-TFV checkpoint for Development runtime."""
 from __future__ import annotations
 
 from dataclasses import fields
@@ -10,11 +10,11 @@ import torch
 
 from .step2_tfv_support import DIRECT_TFV_ACTION_SUPPORT_CONTRACT
 from .step2_tfv_value import DIRECT_TFV_VALUE_CONTRACT, DirectFacilityTFVValueModel, DirectTFVValueDesign
-from .step2_tfv_value_training_v3 import DIRECT_TFV_TRAINING_CONTRACT
+from .step2_tfv_value_training_v4 import DIRECT_TFV_TRAINING_CONTRACT
 from .step2_train_response_v60 import InputNormalizationV60
 
 
-DIRECT_TFV_RUNTIME_CHECKPOINT_CONTRACT = "PROJECT7_DIRECT_TFV_RUNTIME_CHECKPOINT_V1"
+DIRECT_TFV_RUNTIME_CHECKPOINT_CONTRACT = "PROJECT7_DIRECT_TFV_RUNTIME_CHECKPOINT_V2"
 
 
 def _design_from_payload(payload: dict[str, Any]) -> DirectTFVValueDesign:
@@ -49,7 +49,7 @@ def load_direct_tfv_runtime_checkpoint(
     if str(payload.get("contract")) != DIRECT_TFV_VALUE_CONTRACT:
         raise ValueError("Direct-TFV runtime checkpoint has the wrong model contract")
     if str(payload.get("training_contract")) != DIRECT_TFV_TRAINING_CONTRACT:
-        raise ValueError("Direct-TFV runtime requires the selection-aware V3 training contract")
+        raise ValueError("Direct-TFV runtime requires the core V4 training contract")
     if str(payload.get("profile")) != "dev" or payload.get("development_only") is not True:
         raise ValueError("Direct-TFV runtime requires a full Development checkpoint")
     support = payload.get("action_support")
