@@ -1,16 +1,18 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V8",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V9",
   "current": {
-    "status": "CURRENT_DEVELOPMENT_OPTIMIZER_CONSISTENT_STEP3_NOT_POLICY_LOCKED",
-    "research_contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V7",
+    "status": "CURRENT_DEVELOPMENT_FRESH_ADMISSION_CALIBRATION_REQUIRED_NOT_POLICY_LOCKED",
+    "research_contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V8",
     "implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
     "training_contract": "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5",
     "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V6",
     "admission_contract": "PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1",
+    "fresh_admission_data_contract": "PROJECT7_DIRECT_TFV_FRESH_D3_HOLD_ADMISSION_CALIBRATION_V1",
     "sequence_support_contract": "PROJECT7_DIRECT_TFV_D3_HOLD_JOINT_SEQUENCE_SUPPORT_V1",
     "development_runtime_contract": "PROJECT7_DIRECT_TFV_AUTHORITATIVE_10MIN_DEVELOPMENT_RTC_V5",
     "step2_training": "scripts/run_step2_current.py",
     "sequence_support_build": "scripts/build_direct_tfv_sequence_support_current.py",
+    "fresh_admission_preflight": "scripts/validate_direct_tfv_fresh_admission_data_current.py",
     "admission_calibration": "scripts/calibrate_direct_tfv_admission_current.py",
     "step3_solver_audit": "scripts/run_step3_direct_tfv_solver_calibrated_current.py",
     "development_authoritative_runtime": "scripts/run_policy_direct_tfv_development.py",
@@ -24,19 +26,25 @@
     "policy_lock_enabled": false
   },
   "scientific_state": {
-    "primary_bottleneck": "DEVELOPMENT_OPTIMIZER_CONSISTENCY_UNDER_TEST",
-    "root_cause_hypothesis": "continuous optimizer exploits action-value error and can assemble joint H120 temporal sequences outside D3-HOLD training geometry even when every facility radius and active K is individually supported",
-    "evidence": "threshold-free V5 had T5 H360 sign 3/6, T10 near-zero event benefit and T20 worse than no-control despite zero execution violations",
-    "response": "keep TFV-only Step2 weights; add label-independent D3-HOLD joint temporal trust region inside the differentiable decoder; retain optimizer-aware one-sided admission"
+    "primary_bottleneck": "ADMISSION_CALIBRATION_FAIL_CLOSED_INSUFFICIENT_RAINFALL_GROUPS",
+    "cause": "the original Step2 D3 holdout contains only four independent rainfall groups, but 90% one-sided split conformal requires at least nine calibration rainfall groups before any separate audit",
+    "invalid_shortcuts": [
+      "do not lower 90% coverage",
+      "do not reuse the 14 Step2 TrainFit rainfall groups for conformal calibration",
+      "do not split four holdout rainfall groups and clip an invalid conformal rank",
+      "do not use T10/T20 or untouched evaluation as calibration"
+    ],
+    "response": "create fresh Development-only D3-HOLD calibration rainfall groups; preserve every original D3 holdout rainfall group as independent audit; retain optimizer replay empirical maximum and Step3 V6 unchanged"
   },
   "hard_rules": [
     "primary objective remains system-wide cumulative TFV only",
+    "accepted Step2 V5 weights remain frozen for this experiment",
     "all 109 facilities remain screened",
-    "q95 D3-HOLD support remains canonical; q90 is conservative ablation and q99 diagnostic only",
-    "joint temporal support is derived only from D3 TrainFit HOLD-reference action geometry and never from TFV outcomes",
-    "joint temporal support is enforced before scoring inside the differentiable decoder so score equals execute",
-    "admission calibration must retain exact same-prefix optimizer-selected Development SWMM replay residuals",
-    "events used in optimizer-replay calibration cannot be described as independent post-calibration validation evidence",
+    "q95 D3-HOLD support remains canonical; q90 conservative and q99 diagnostic only",
+    "fresh conformal calibration uses at least nine independent rainfall groups at 90% coverage",
+    "Step2 TrainFit, fresh calibration and original holdout audit rainfall groups must be mutually disjoint",
+    "fresh calibration must exclude optimizer-replay events and T10_D180/T20_D300",
+    "optimizer replay maximum makes no formal coverage claim",
     "no Validation/Final/Formal/Policy Lock data may calibrate support or admission",
     "an action executes only when calibrated upper bound < 0 and its first 10-minute block changes",
     "SWMM is never called inside online candidate search",
@@ -44,14 +52,14 @@
     "production and untouched evaluation remain fail-closed"
   ],
   "development_sequence": [
-    "reuse accepted Step2 V5 checkpoint; do not retrain merely to add support metadata",
-    "build D3-HOLD joint sequence support artifact from the exact Step2 TrainFit split",
-    "reuse/verify optimizer-aware one-sided admission against the same Step2 checkpoint",
-    "run Step3 V6 solver audit on rainfall-disjoint D3 audit groups and require zero joint-sequence support violations",
-    "run T10/T20 as fresh post-calibration Development closed loops before any horizon or PFV change",
-    "replay accepted and rejected optimizer plans with exact same-prefix H360 SWMM and compare false-beneficial rates",
-    "only if inconsistency remains, collect optimizer-aware hard negatives or test frozen horizon ablations",
-    "require event-balanced no-control consistency before reassessing Internal/Auto-RBC competitiveness",
+    "reuse accepted Step2 V5 checkpoint and already-valid D3-HOLD sequence-support artifact",
+    "generate a small fresh Development-only D3-HOLD admission calibration pool with at least nine independent rainfall groups; prefer 10-12 only for empirical stability if cheap",
+    "run fresh-admission preflight and require zero TrainFit/calibration/audit/replay/post-calibration-event overlap",
+    "calibrate 90% one-sided rainfall-group residual bound from the fresh pool and audit on all original four D3 holdout rainfall groups",
+    "run Step3 V6 solver audit and require zero joint-sequence/engineering violations",
+    "run T10/T20 as fresh post-calibration Development closed loops",
+    "replay accepted and rejected optimizer plans with exact same-prefix H360 SWMM",
+    "only if admitted in-support plans remain false-beneficial, collect optimizer-aware hard negatives for Step2",
     "do not enter Validation until policy is frozen"
   ]
 }
