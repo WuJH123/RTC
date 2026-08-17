@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from rtc.baseline_panel import (
     CURRENT_SIX_BASELINE_DEVELOPMENT_CONTRACT,
@@ -23,6 +24,45 @@ from rtc.execution_audit_v127 import audit_target_write_readback_v127
 
 
 PYTHON_COMMAND_BASELINES = {"auto_rbc", "efd", "all_open", "all_closed"}
+SCIENTIFIC_PYTHON_BASELINES = {"auto_rbc", "efd"}
+
+
+def _decision_execution_summary(metadata_path: Path, metadata: dict[str, Any]) -> dict[str, Any]:
+    decision_name = metadata.get("decision_file")
+    if not decision_name:
+        return {
+            "decision_rows": 0,
+            "material_projection_decisions": 0,
+            "numerical_equivalence_decisions": 0,
+            "maximum_command_delta_from_previous_target": 0.0,
+        }
+    decision_path = metadata_path.parent / str(decision_name)
+    if not decision_path.is_file():
+        raise FileNotFoundError(decision_path)
+    rows = [
+        json.loads(line)
+        for line in decision_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    material = numerical = 0
+    maximum_delta = 0.0
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("baseline decision log contains a non-object row")
+        diagnostics = row.get("diagnostics")
+        if not isinstance(diagnostics, dict):
+            continue
+        material += int(diagnostics.get("continuity_projection_applied") is True)
+        numerical += int(diagnostics.get("continuity_numerical_equivalence_applied") is True)
+        delta = diagnostics.get("command_delta_from_previous_target_max")
+        if delta is not None:
+            maximum_delta = max(maximum_delta, float(delta))
+    return {
+        "decision_rows": len(rows),
+        "material_projection_decisions": material,
+        "numerical_equivalence_decisions": numerical,
+        "maximum_command_delta_from_previous_target": maximum_delta,
+    }
 
 
 def _run_one(
@@ -86,6 +126,17 @@ def _run_one(
         write_audit = audit_target_write_readback_v127(metadata_path=metadata_path)
         if write_audit.get("passed") is not True:
             raise RuntimeError(f"{strategy}: target write/readback audit failed")
+    execution = _decision_execution_summary(metadata_path, metadata)
+    if (
+        strategy in SCIENTIFIC_PYTHON_BASELINES
+        and int(execution["material_projection_decisions"]) != 0
+    ):
+        raise RuntimeError(
+            f"{strategy}: scientific comparator required material continuity projection; "
+            "its native rule command is not satisfying the declared 0.5 target-slew contract"
+        )
+    sensor_nodes = metadata.get("sensor_nodes")
+    sensor_count = len(sensor_nodes) if isinstance(sensor_nodes, list) else 0
     return {
         "event_id": event_id,
         "strategy": strategy,
@@ -93,9 +144,11 @@ def _run_one(
         "global_peak_flood_rate_m3s": float(metadata.get("global_peak_flood_rate_m3s", 0.0)),
         "flow_routing_error_pct": float(metadata.get("flow_routing_error_pct", 0.0)),
         "decisions": int(metadata.get("decisions", 0)),
+        "sensor_node_count": sensor_count,
         "target_write_readback_passed": (
             None if write_audit is None else bool(write_audit.get("passed"))
         ),
+        **execution,
         "metadata_path": str(metadata_path.resolve()),
         "node_statistics_path": str(statistics_path.resolve()),
         "metadata": metadata,
@@ -167,6 +220,8 @@ def main() -> None:
         "native_controls_template": str(native),
         "strategies": list(FORMAL_FIXED_BASELINE_IDS),
         "baseline_provenance_verified_all": True,
+        "scientific_comparator_engineering_projection_required": False,
+        "baseline_information_basis_reported": True,
         "global_peak_role": "report_only",
         "rows": rows,
     }
