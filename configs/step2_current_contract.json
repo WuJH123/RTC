@@ -6,11 +6,11 @@
   "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V5",
   "admission_contract": "PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1",
   "authoritative_truth": "SWMM",
-  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, learn all-109 action effects on future system-wide cumulative TFV, optimize inside D3-HOLD TrainFit support, execute only when an optimizer-aware one-sided H360 residual upper bound remains beneficial, then re-observe",
+  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, learn all-109 action effects on future system-wide cumulative TFV, optimize inside D3-HOLD TrainFit support, execute only when an optimizer-aware one-sided H360 residual upper margin remains beneficial, then re-observe",
   "core_pipeline": {
     "step1": "causal sparse sensing -> current full-network hydraulic reconstruction",
     "step2": "causal current state + causal rainfall + complete H360 reference/candidate actions -> authoritative exact delta TFV",
-    "admission_calibration": "combine rainfall-disjoint D3 HOLD cached residuals with exact same-prefix H360 SWMM residuals of optimizer-selected Development plans",
+    "admission_calibration": "combine a finite-sample 90% one-sided D3 HOLD cached-residual bound with the maximum observed exact same-prefix H360 residual from optimizer-selected Development plans",
     "step3": "screen all 109 facilities, optimize q95-supported joint actions, execute iff predicted delta TFV + calibrated one-sided residual margin < 0 and the first 10-minute block changes; otherwise HOLD",
     "swmm": "authoritative offline label/evaluation/calibration truth only; never called inside online candidate search"
   },
@@ -27,7 +27,7 @@
     "engineering_bounds": "physical min/max plus <=0.5 setting movement per 10-minute update",
     "support_bounds": "per-facility TrainFit q95 action magnitude plus D3-HOLD joint-density q95, never above observed D3-HOLD joint maximum",
     "performance_tuned_threshold": false,
-    "statistical_admission": "90% one-sided residual upper margin, conservatively taking the maximum supported by D3 HOLD cached residuals and exact optimizer-selected same-prefix H360 SWMM residuals"
+    "statistical_admission": "D3 HOLD cached residuals use a finite-sample 90% one-sided split-conformal upper bound when sample size supports it; the small optimizer-replay sample contributes only its maximum observed true-minus-predicted residual and makes no coverage claim"
   },
   "scientific_bottleneck": {
     "classification": "DEVELOPMENT_NO_CONTROL_BENEFIT_INCONSISTENT",
@@ -43,14 +43,14 @@
     "development_runtime": "scripts/run_policy_direct_tfv_development.py",
     "development_audit": "scripts/audit_direct_tfv_calibrated_closed_loop_current.py",
     "active_support": "q95 canonical; q90 conservative ablation; q99 diagnostic only",
-    "admission": "optimizer-aware upper bound < 0; weak/uncertain extrema HOLD",
+    "admission": "optimizer-aware upper margin < 0; weak/uncertain extrema HOLD",
     "first_move_contract": "future-only no-op plan is HOLD",
     "runtime_promoted": false
   },
   "data_boundaries": {
     "D2": "training/development only",
     "D3": "training plus rainfall-disjoint internal residual calibration/audit",
-    "optimizer_replay": "Development-only exact same-prefix H360 calibration; its event IDs cannot be counted as independent post-calibration evidence",
+    "optimizer_replay": "Development-only exact same-prefix H360 calibration; its event IDs cannot be counted as independent post-calibration evidence; small replay sample makes no formal coverage claim",
     "D4_AUDIT": "reference-shift diagnostic only",
     "Validation_access": false,
     "Final_access": false,
