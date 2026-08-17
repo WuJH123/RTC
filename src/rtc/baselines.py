@@ -23,7 +23,7 @@ class BaselineDefinition:
 BASELINES = {
     "proposed": BaselineDefinition(
         "proposed",
-        "V127 sparse-state control-oriented differentiable hydraulic surrogate with 109-actuator continuous H120/H360 receding-horizon MPC; RBC is warm start/safety fallback only",
+        "Sparse causal Step1 state reconstruction plus learned 109-actuator pairwise delta-TFV value and support-aware H120/H360 receding MPC; no RBC warm start, no RBC safety fallback and no calibrated improvement threshold",
         True,
         False,
         False,
@@ -48,7 +48,7 @@ BASELINES = {
     ),
     "efd": BaselineDefinition(
         "efd",
-        "Storage Equal Filling Degree control using causal storage-volume/capacity filling degree and writable storage outflows",
+        "Strict storage Equal Filling Degree comparator using causal storage volume/capacity and writable storage-outflow actuators only; it is intentionally not the older depth-zone EFD-like heuristic",
         True,
         False,
     ),
