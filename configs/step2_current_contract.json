@@ -4,14 +4,15 @@
   "selected_implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
   "training_contract": "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5",
   "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V5",
+  "admission_contract": "PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1",
   "authoritative_truth": "SWMM",
-  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, learn all-109 action effects on future system-wide cumulative TFV, optimize inside D3-HOLD TrainFit support, execute only when a rainfall-disjoint D3 one-sided residual upper bound remains beneficial, then re-observe",
+  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, learn all-109 action effects on future system-wide cumulative TFV, optimize inside D3-HOLD TrainFit support, execute only when an optimizer-aware one-sided H360 residual upper bound remains beneficial, then re-observe",
   "core_pipeline": {
     "step1": "causal sparse sensing -> current full-network hydraulic reconstruction",
     "step2": "causal current state + causal rainfall + complete H360 reference/candidate actions -> authoritative exact delta TFV",
-    "admission_calibration": "split the existing D3 HOLD internal holdout by rainfall group; one half calibrates a one-sided true-minus-predicted TFV residual margin and the other half audits admission",
+    "admission_calibration": "combine rainfall-disjoint D3 HOLD cached residuals with exact same-prefix H360 SWMM residuals of optimizer-selected Development plans",
     "step3": "screen all 109 facilities, optimize q95-supported joint actions, execute iff predicted delta TFV + calibrated one-sided residual margin < 0 and the first 10-minute block changes; otherwise HOLD",
-    "swmm": "authoritative offline label/evaluation truth only; never called inside online candidate search"
+    "swmm": "authoritative offline label/evaluation/calibration truth only; never called inside online candidate search"
   },
   "time_contract": {
     "model_step_seconds": 300,
@@ -26,7 +27,7 @@
     "engineering_bounds": "physical min/max plus <=0.5 setting movement per 10-minute update",
     "support_bounds": "per-facility TrainFit q95 action magnitude plus D3-HOLD joint-density q95, never above observed D3-HOLD joint maximum",
     "performance_tuned_threshold": false,
-    "statistical_admission": "90% one-sided split-conformal residual margin from rainfall-disjoint D3 HOLD holdout"
+    "statistical_admission": "90% one-sided residual upper margin, conservatively taking the maximum supported by D3 HOLD cached residuals and exact optimizer-selected same-prefix H360 SWMM residuals"
   },
   "scientific_bottleneck": {
     "classification": "DEVELOPMENT_NO_CONTROL_BENEFIT_INCONSISTENT",
@@ -42,13 +43,14 @@
     "development_runtime": "scripts/run_policy_direct_tfv_development.py",
     "development_audit": "scripts/audit_direct_tfv_calibrated_closed_loop_current.py",
     "active_support": "q95 canonical; q90 conservative ablation; q99 diagnostic only",
-    "admission": "upper bound < 0; weak/uncertain optimizer minima HOLD",
+    "admission": "optimizer-aware upper bound < 0; weak/uncertain extrema HOLD",
     "first_move_contract": "future-only no-op plan is HOLD",
     "runtime_promoted": false
   },
   "data_boundaries": {
     "D2": "training/development only",
-    "D3": "training plus rainfall-disjoint internal calibration/audit",
+    "D3": "training plus rainfall-disjoint internal residual calibration/audit",
+    "optimizer_replay": "Development-only exact same-prefix H360 calibration; its event IDs cannot be counted as independent post-calibration evidence",
     "D4_AUDIT": "reference-shift diagnostic only",
     "Validation_access": false,
     "Final_access": false,
@@ -56,9 +58,9 @@
     "Policy_Lock_access": false
   },
   "legacy": {
-    "Step3_V4": "threshold-free ablation that exposed optimizer's curse",
+    "Step3_V4": "threshold-free ablation that exposed optimizer selection-induced optimism",
     "V4_training": "legacy checkpoint compatibility only",
     "V128_hydraulic_world_model": "ablation/history only"
   },
-  "promotion_rule": "first restore event-balanced no-control non-inferiority and reduce exact same-prefix false-beneficial decisions; only then reassess Internal/Auto-RBC competitiveness and untouched Validation"
+  "promotion_rule": "first restore event-balanced no-control non-inferiority and reduce exact same-prefix false-beneficial decisions on post-calibration Development events; only then reassess Internal/Auto-RBC competitiveness and untouched Validation"
 }
