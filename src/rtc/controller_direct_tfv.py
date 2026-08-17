@@ -2,7 +2,7 @@
 
 The mature Project7 target-latch controller provides causal Step1 history, rainfall forecast,
 600-s decision timing, target-write verification and score-equals-execute semantics. This module
-uses that execution shell while the policy itself is the current all-109 Direct-TFV receding MPC.
+uses that execution shell while the policy itself is the support-aware all-109 Direct-TFV MPC V4.
 """
 from __future__ import annotations
 
@@ -14,10 +14,10 @@ import torch
 
 from .closed_loop import CausalObservation, ControllerAction
 from .controller_v122 import V122TorchMPCController
-from .step3_tfv_value_mpc_v3 import DIRECT_TFV_STEP3_CONTRACT, DirectTFVRecedingMPC
+from .step3_tfv_value_mpc_v4 import DIRECT_TFV_STEP3_CONTRACT, DirectTFVRecedingMPCV4
 
 
-DIRECT_TFV_CONTROLLER_CONTRACT = "PROJECT7_DIRECT_TFV_TARGET_LATCH_CONTROLLER_V2"
+DIRECT_TFV_CONTROLLER_CONTRACT = "PROJECT7_DIRECT_TFV_TARGET_LATCH_CONTROLLER_V3"
 DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT = (
     "PROJECT7_DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_V1"
 )
@@ -44,6 +44,9 @@ class _RuntimeMPCResult:
     best_screening_predicted_delta_tfv_m3: float
     optimizer_gain_beyond_best_screening_m3: float
     active_set_ceiling_binding: bool
+    active_support_quantile_requested: str
+    active_support_quantile_effective: str
+    active_support_ceiling: int
     counterfactual_actuator_ids: tuple[str, ...]
     optimized_free_control_blocks: tuple[tuple[float, ...], ...]
     hold_reference_settings: tuple[float, ...]
@@ -53,19 +56,12 @@ class _RuntimeMPCResult:
 class DirectTFVRuntimeMPCAdapter:
     """Match the validated target-latch controller's historical MPC call signature."""
 
-    def __init__(self, inner: DirectTFVRecedingMPC) -> None:
+    def __init__(self, inner: DirectTFVRecedingMPCV4) -> None:
         self.inner = inner
         self.last_result: _RuntimeMPCResult | None = None
 
     @property
     def model(self) -> torch.nn.Module:
-        """Expose the inner value model required by ``TorchMPCController`` initialisation.
-
-        The shared target-latch controller moves ``mpc.model`` to its runtime device and switches it
-        to eval mode during construction. Keep this compatibility surface explicit rather than
-        forwarding arbitrary historical MPC attributes.
-        """
-
         return self.inner.model
 
     def optimize(
@@ -79,9 +75,6 @@ class DirectTFVRuntimeMPCAdapter:
         previous_actuator_flow: torch.Tensor,
         max_delta_per_update: float | None,
     ) -> _RuntimeMPCResult:
-        # A failed inner solve is converted to a runtime fallback by the target-latch controller.
-        # Clear the previous solve first so that such a fallback can never inherit stale Step3
-        # diagnostics from an earlier successful decision.
         self.last_result = None
         del fallback_settings
         if max_delta_per_update is not None and abs(
@@ -116,13 +109,18 @@ class DirectTFVRuntimeMPCAdapter:
             raise RuntimeError("Direct-TFV runtime HOLD reference must contain 109 settings")
         active_scores = tuple(float(value) for value in result.active_facility_screening_scores_m3)
         best_screening = min(active_scores) if active_scores else 0.0
-        optimizer_gain = (
-            float(best_screening - float(result.predicted_delta_tfv_m3)) if valid else 0.0
-        )
-        q90_ceiling = max(1, int(math.ceil(float(result.training_joint_changed_facility_q90))))
+        optimizer_gain = float(best_screening - float(result.predicted_delta_tfv_m3)) if valid else 0.0
+        requested_quantile = str(self.inner.design.active_support_quantile)
+        effective_quantile = str(self.inner.active_support_quantile_effective())
+        support_ceiling = int(self.inner.active_support_ceiling())
+        if int(self.inner.design.active_facility_count) > 0:
+            support_ceiling = min(
+                support_ceiling,
+                int(self.inner.design.active_facility_count),
+            )
         ceiling_binding = bool(
             result.predicted_beneficial_facility_count > result.active_facility_count
-            and result.active_facility_count >= min(109, q90_ceiling)
+            and result.active_facility_count >= min(109, support_ceiling)
         )
         wrapped = _RuntimeMPCResult(
             settings=result.settings,
@@ -144,6 +142,9 @@ class DirectTFVRuntimeMPCAdapter:
             best_screening_predicted_delta_tfv_m3=float(best_screening),
             optimizer_gain_beyond_best_screening_m3=float(optimizer_gain),
             active_set_ceiling_binding=ceiling_binding,
+            active_support_quantile_requested=requested_quantile,
+            active_support_quantile_effective=effective_quantile,
+            active_support_ceiling=int(support_ceiling),
             counterfactual_actuator_ids=actuator_ids,
             optimized_free_control_blocks=free_blocks,
             hold_reference_settings=hold_reference,
@@ -156,7 +157,7 @@ class DirectTFVRuntimeMPCAdapter:
 class DirectTFVAuthoritativeController(V122TorchMPCController):
     """Execute the exact first target scored by the current Direct-TFV Step3."""
 
-    def __init__(self, *args: Any, mpc: DirectTFVRecedingMPC, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, mpc: DirectTFVRecedingMPCV4, **kwargs: Any) -> None:
         adapter = DirectTFVRuntimeMPCAdapter(mpc)
         super().__init__(*args, mpc=adapter, **kwargs)
         self._direct_mpc_adapter = adapter
@@ -184,29 +185,20 @@ class DirectTFVAuthoritativeController(V122TorchMPCController):
                     "predicted_beneficial_facility_count": result.predicted_beneficial_facility_count,
                     "active_facility_count": result.active_facility_count,
                     "active_facility_ids": list(result.active_facility_ids),
-                    "active_facility_screening_scores_m3": list(
-                        result.active_facility_screening_scores_m3
-                    ),
+                    "active_facility_screening_scores_m3": list(result.active_facility_screening_scores_m3),
                     "first_move_changed_facility_count": result.first_move_changed_facility_count,
                     "maximum_support_ratio": result.maximum_support_ratio,
-                    "best_screening_predicted_delta_tfv_m3": (
-                        result.best_screening_predicted_delta_tfv_m3
-                    ),
-                    "optimizer_gain_beyond_best_screening_m3": (
-                        result.optimizer_gain_beyond_best_screening_m3
-                    ),
+                    "best_screening_predicted_delta_tfv_m3": result.best_screening_predicted_delta_tfv_m3,
+                    "optimizer_gain_beyond_best_screening_m3": result.optimizer_gain_beyond_best_screening_m3,
                     "active_set_ceiling_binding": result.active_set_ceiling_binding,
-                    "counterfactual_plan_telemetry_contract": (
-                        DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT
-                    ),
+                    "active_support_quantile_requested": result.active_support_quantile_requested,
+                    "active_support_quantile_effective": result.active_support_quantile_effective,
+                    "active_support_ceiling": result.active_support_ceiling,
+                    "counterfactual_plan_telemetry_contract": DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT,
                     "counterfactual_reference_semantics": "HOLD_ACTIVE_TARGET_H360",
-                    "counterfactual_candidate_semantics": (
-                        "EXACT_OPTIMIZED_H120_FREE_BLOCKS_THEN_TERMINAL_HOLD_H360"
-                    ),
+                    "counterfactual_candidate_semantics": "EXACT_OPTIMIZED_H120_FREE_BLOCKS_THEN_TERMINAL_HOLD_H360",
                     "counterfactual_actuator_ids": list(result.counterfactual_actuator_ids),
-                    "optimized_free_control_blocks": [
-                        list(row) for row in result.optimized_free_control_blocks
-                    ],
+                    "optimized_free_control_blocks": [list(row) for row in result.optimized_free_control_blocks],
                     "hold_reference_settings": list(result.hold_reference_settings),
                     "scipy_message": result.scipy_message[:2000],
                 }
