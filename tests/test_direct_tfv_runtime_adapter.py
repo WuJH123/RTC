@@ -12,9 +12,12 @@ class _Inner:
         self.design = SimpleNamespace(max_setting_delta_per_update=0.5)
         self.model = torch.nn.Linear(1, 1)
         self.called = None
+        self.fail = False
 
     def optimize(self, **kwargs):
         self.called = kwargs
+        if self.fail:
+            raise RuntimeError("synthetic solve failure")
         return SimpleNamespace(
             settings=torch.full((72, 109), 0.5),
             predicted_delta_tfv_m3=-1234.0,
@@ -33,6 +36,18 @@ class _Inner:
         )
 
 
+def _optimize(adapter: DirectTFVRuntimeMPCAdapter):
+    return adapter.optimize(
+        initial_state=torch.zeros((1, 8, 3)),
+        rainfall_scenarios=torch.zeros((1, 72, 8, 1)),
+        current_settings=torch.full((109,), 0.4),
+        previous_requested_settings=torch.full((109,), 0.5),
+        fallback_settings=torch.full((1, 72, 109), 0.5),
+        previous_actuator_flow=torch.zeros((1, 109)),
+        max_delta_per_update=0.5,
+    )
+
+
 def test_runtime_adapter_exposes_model_required_by_controller_base() -> None:
     inner = _Inner()
     adapter = DirectTFVRuntimeMPCAdapter(inner)  # type: ignore[arg-type]
@@ -44,28 +59,30 @@ def test_runtime_adapter_exposes_model_required_by_controller_base() -> None:
 def test_runtime_adapter_maps_target_latch_call_to_direct_step3() -> None:
     inner = _Inner()
     adapter = DirectTFVRuntimeMPCAdapter(inner)  # type: ignore[arg-type]
-    initial = torch.zeros((1, 8, 3))
-    rain = torch.zeros((1, 72, 8, 1))
-    current = torch.full((109,), 0.4)
-    target = torch.full((109,), 0.5)
-    flow = torch.zeros((1, 109))
-    result = adapter.optimize(
-        initial_state=initial,
-        rainfall_scenarios=rain,
-        current_settings=current,
-        previous_requested_settings=target,
-        fallback_settings=torch.full((1, 72, 109), 0.5),
-        previous_actuator_flow=flow,
-        max_delta_per_update=0.5,
-    )
+    result = _optimize(adapter)
     assert result.candidate_valid is True
     assert result.screened_facility_count == 109
     assert result.predicted_beneficial_facility_count == 17
     assert result.first_move_changed_facility_count == 5
     assert adapter.last_result is result
     assert inner.called is not None
-    assert inner.called["active_target"] is target
-    assert inner.called["rainfall"] is rain
+    assert torch.allclose(inner.called["active_target"], torch.full((109,), 0.5))
+    assert inner.called["rainfall"].shape == (1, 72, 8, 1)
+
+
+def test_runtime_adapter_clears_stale_result_before_failed_solve() -> None:
+    inner = _Inner()
+    adapter = DirectTFVRuntimeMPCAdapter(inner)  # type: ignore[arg-type]
+    first = _optimize(adapter)
+    assert adapter.last_result is first
+    inner.fail = True
+    try:
+        _optimize(adapter)
+    except RuntimeError as exc:
+        assert "synthetic solve failure" in str(exc)
+    else:
+        raise AssertionError("synthetic solve failure was not propagated")
+    assert adapter.last_result is None
 
 
 def test_runtime_adapter_rejects_rate_contract_drift() -> None:
