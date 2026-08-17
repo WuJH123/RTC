@@ -1,9 +1,9 @@
 """Audit the current Direct-TFV authoritative Development closed loop.
 
-The audit separates execution correctness from scientific benefit.  Execution must prove the exact
-scored first move was written/read back on the 600-s grid without post-score projection, every MPC
-decision screened all 109 facilities, and every accepted action remained inside TrainFit support.
-If a baseline node-statistics file is supplied, authoritative TFV difference is reported separately.
+Execution correctness and scientific benefit are reported separately. Every MPC decision must
+screen all 109 facilities, write exactly the scored first 10-minute target on the 600-s grid, obey
+engineering/action-support bounds and pass target readback. A matched baseline is optional for the
+execution audit but required to claim authoritative TFV benefit.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 
 
-DIRECT_TFV_CLOSED_LOOP_AUDIT_CONTRACT = "PROJECT7_DIRECT_TFV_AUTHORITATIVE_CLOSED_LOOP_AUDIT_V1"
+DIRECT_TFV_CLOSED_LOOP_AUDIT_CONTRACT = "PROJECT7_DIRECT_TFV_AUTHORITATIVE_CLOSED_LOOP_AUDIT_V2"
 
 
 def _tfv(path: str | Path) -> float:
@@ -49,7 +49,7 @@ def audit_direct_tfv_closed_loop(
 ) -> dict[str, Any]:
     metadata_path = Path(metadata_path).resolve()
     meta, rows = _load(metadata_path)
-    if meta.get("strategy") != "proposed_direct_tfv_selection_aware_trust_region":
+    if meta.get("strategy") != "proposed_direct_tfv_all109_receding_mpc":
         raise ValueError("audit requires the current Direct-TFV proposed strategy")
     if int(meta.get("control_update_seconds", -1)) != 600:
         raise ValueError("Direct-TFV closed-loop control grid is not 600 s")
@@ -61,10 +61,10 @@ def audit_direct_tfv_closed_loop(
     runtimes: list[float] = []
     predicted: list[float] = []
     screened_counts: list[int] = []
+    beneficial_counts: list[int] = []
     active_counts: list[int] = []
     changed_counts: list[int] = []
     support_ratios: list[float] = []
-    fatal_prefixes = ("FALLBACK_",)
     first_elapsed = None
     for row in rows:
         elapsed = int(row.get("elapsed_seconds", -1))
@@ -77,11 +77,16 @@ def audit_direct_tfv_closed_loop(
         if not isinstance(diagnostics, dict):
             engineering_violations += 1
             continue
-        if source.startswith(fatal_prefixes):
+        if source.startswith("FALLBACK_"):
             fatal_fallbacks += 1
         if diagnostics.get("score_equals_execute") is not True:
             engineering_violations += 1
-        target_delta = float(diagnostics.get("command_delta_from_previous_target_max", diagnostics.get("target_change_max", 0.0)))
+        target_delta = float(
+            diagnostics.get(
+                "command_delta_from_previous_target_max",
+                diagnostics.get("target_change_max", 0.0),
+            )
+        )
         if not np.isfinite(target_delta) or target_delta > 0.5 + 1.0e-7:
             engineering_violations += 1
         mismatch = float(diagnostics.get("previous_write_target_readback_mismatch_max", 0.0))
@@ -91,19 +96,21 @@ def audit_direct_tfv_closed_loop(
         runtime = diagnostics.get("decision_runtime_seconds")
         if runtime is not None and np.isfinite(float(runtime)):
             runtimes.append(float(runtime))
-        if source == "MPC_DIRECT_TFV_TRUST_REGION":
+        if source == "MPC_DIRECT_TFV_RECEDING":
             mpc_actions += 1
             screened = int(diagnostics.get("screened_facility_count", -1))
+            beneficial = int(diagnostics.get("predicted_beneficial_facility_count", -1))
             active = int(diagnostics.get("active_facility_count", -1))
             changed = int(diagnostics.get("first_move_changed_facility_count", -1))
             ratio = float(diagnostics.get("maximum_support_ratio", np.inf))
             screened_counts.append(screened)
+            beneficial_counts.append(beneficial)
             active_counts.append(active)
             changed_counts.append(changed)
             support_ratios.append(ratio)
             if screened != 109:
                 engineering_violations += 1
-            if active <= 0 or changed < 0 or changed > active:
+            if beneficial < active or active <= 0 or changed < 0 or changed > active:
                 engineering_violations += 1
             if not np.isfinite(ratio) or ratio > 1.0001:
                 support_violations += 1
@@ -112,7 +119,7 @@ def audit_direct_tfv_closed_loop(
                 engineering_violations += 1
             else:
                 predicted.append(value)
-        elif source == "HOLD_DIRECT_TFV_NO_CONFIDENT_BENEFIT":
+        elif source == "HOLD_DIRECT_TFV_NO_PREDICTED_BENEFIT":
             hold_actions += 1
 
     statistics_name = meta.get("node_statistics_file")
@@ -147,6 +154,8 @@ def audit_direct_tfv_closed_loop(
         "engineering_violation_count": int(engineering_violations),
         "target_readback_failure_count": int(readback_failures),
         "screened_facility_count_values": sorted(set(screened_counts)),
+        "predicted_beneficial_facility_count_min": min(beneficial_counts) if beneficial_counts else 0,
+        "predicted_beneficial_facility_count_max": max(beneficial_counts) if beneficial_counts else 0,
         "active_facility_count_min": min(active_counts) if active_counts else 0,
         "active_facility_count_max": max(active_counts) if active_counts else 0,
         "first_move_changed_facility_count_min": min(changed_counts) if changed_counts else 0,
