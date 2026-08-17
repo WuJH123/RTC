@@ -108,12 +108,14 @@ def test_current_lint_surface_tracks_core_paths() -> None:
         "scripts/audit_direct_tfv_closed_loop_current.py",
         "src/rtc/checkpoint_direct_tfv.py",
         "src/rtc/controller_direct_tfv.py",
+        "src/rtc/runtime_controller_guard.py",
         "src/rtc/step2_tfv_value_training_v4.py",
         "src/rtc/step2_tfv_support.py",
         "src/rtc/step3_tfv_value_mpc_v3.py",
         "tests/test_direct_tfv_core_training.py",
         "tests/test_direct_tfv_step3_core.py",
         "tests/test_direct_tfv_runtime_adapter.py",
+        "tests/test_temporal_control_continuity_v069.py",
     }
     assert required <= paths
     assert all((ROOT / path).is_file() for path in paths)

@@ -13,6 +13,12 @@ from .runtime import choose_first_move, command_continuity
 CONTINUITY_GUARD_CONTRACT = (
     "RTC_SUPERVISORY_TEMPORAL_CONTINUITY_V5_PER_ACTUATOR_COMMAND_ENVELOPE_TOTAL_RUNTIME"
 )
+FLOAT32_SETTING_EQUIVALENCE_CONTRACT = "RTC_FLOAT32_SETTING_EQUIVALENCE_ATOL_V1"
+# Runtime policy settings are scored in torch.float32 while the SWMM target latch is read back as
+# float64.  On the dimensionless [0,1] setting range, half a float32 ULP is <= 5.96e-8.  A 1e-7
+# absolute tolerance therefore covers representation-only round trips without relaxing the declared
+# 0.5 engineering slew.  It also matches the authoritative closed-loop audit tolerance.
+FLOAT32_SETTING_EQUIVALENCE_ATOL = 1.0e-7
 
 
 def _delta_vector(value: float | np.ndarray, actuator_count: int) -> np.ndarray:
@@ -31,6 +37,11 @@ def _array_sha256(value: np.ndarray) -> str:
     return hashlib.sha256(array.tobytes(order="C")).hexdigest()
 
 
+def _positive_excess(error: np.ndarray, limit: np.ndarray) -> float:
+    excess = np.maximum(np.asarray(error, dtype=float) - np.asarray(limit, dtype=float), 0.0)
+    return float(excess.max(initial=0.0))
+
+
 class ContinuityGuardController:
     """Wrap a Python policy with explicit per-actuator command continuity semantics.
 
@@ -43,6 +54,12 @@ class ContinuityGuardController:
     records wall-clock time around the *entire* wrapped decision plus continuity checks, so
     V128 real-time acceptance is based on the complete supervisory callback rather than the
     inner optimizer/controller timing alone.
+
+    The current Direct-TFV runtime crosses a float64 SWMM readback -> float32 Torch scoring ->
+    float64 execution boundary. Representation-only differences up to
+    ``FLOAT32_SETTING_EQUIVALENCE_ATOL`` are treated as numerical equivalence, not as a policy
+    projection. In that case the exact scored raw command is preserved so score==execute remains
+    true. Material continuity violations still fail closed when projection is disabled.
     """
 
     def __init__(
@@ -98,6 +115,8 @@ class ContinuityGuardController:
         active_target = np.asarray(obs.actuator_target_setting, dtype=float).reshape(-1)
         if active_target.shape != current.shape:
             raise ValueError("target/current readback shapes differ")
+        if not np.isfinite(raw).all():
+            raise ValueError("policy emitted non-finite actuator settings")
         delta = _delta_vector(self.max_delta_per_update, len(expected))
 
         previous_write_mismatch = (
@@ -117,34 +136,68 @@ class ContinuityGuardController:
             enforce_current_delta=self.enforce_current_delta,
         )
         raw_projection = float(np.abs(decision.requested - raw).max(initial=0.0))
-        if raw_projection > 1e-9 and not self.allow_projection:
-            raise RuntimeError(
-                "policy emitted a command outside its declared temporal-continuity contract: "
-                f"projection={raw_projection:.12g}, "
-                f"current_tracking_delta={np.abs(raw-current).max(initial=0.0):.12g}, "
-                f"target_command_delta={np.abs(raw-active_target).max(initial=0.0):.12g}"
-            )
-        continuity = command_continuity(
-            decision.requested,
+        raw_in_bounds = bool(np.all((raw >= 0.0) & (raw <= 1.0)))
+        raw_continuity = command_continuity(
+            raw,
             current,
             previous_requested_settings=active_target,
             max_delta_per_update=delta,
             enforce_current_delta=self.enforce_current_delta,
+            tolerance=FLOAT32_SETTING_EQUIVALENCE_ATOL,
+        )
+        projection_detected = bool(raw_projection > 1.0e-12 or not raw_in_bounds)
+        numerical_equivalence = bool(
+            projection_detected
+            and raw_in_bounds
+            and raw_projection <= FLOAT32_SETTING_EQUIVALENCE_ATOL
+            and raw_continuity.passed
+        )
+        material_projection = bool(projection_detected and not numerical_equivalence)
+        if material_projection and not self.allow_projection:
+            raise RuntimeError(
+                "policy emitted a command outside its declared temporal-continuity contract: "
+                f"projection={raw_projection:.12g}, "
+                f"current_tracking_delta={np.abs(raw-current).max(initial=0.0):.12g}, "
+                f"target_command_delta={np.abs(raw-active_target).max(initial=0.0):.12g}, "
+                f"numeric_atol={FLOAT32_SETTING_EQUIVALENCE_ATOL:.12g}"
+            )
+
+        # A representation-only clamp is not a policy modification: preserve the exact raw command
+        # that Step3 scored. Genuine diagnostic projections still use choose_first_move's output.
+        requested = (
+            decision.requested.copy()
+            if material_projection
+            else raw.copy()
+        )
+        continuity = command_continuity(
+            requested,
+            current,
+            previous_requested_settings=active_target,
+            max_delta_per_update=delta,
+            enforce_current_delta=self.enforce_current_delta,
+            tolerance=FLOAT32_SETTING_EQUIVALENCE_ATOL,
         )
         if not continuity.passed:
-            raise RuntimeError("supervisory continuity guard failed after projection")
+            raise RuntimeError("supervisory continuity guard failed after numerical-equivalence audit")
 
-        self.previous_requested = decision.requested.copy()
+        self.previous_requested = requested.copy()
         guarded_elapsed = float(time.perf_counter() - guarded_started)
         if not np.isfinite(guarded_elapsed) or guarded_elapsed < 0.0:
             raise RuntimeError("continuity guard produced invalid wall-clock runtime")
+        raw_target_error = np.abs(raw - active_target)
+        raw_current_error = np.abs(raw - current)
         diagnostics = dict(action.diagnostics or {})
         diagnostics.update(
             {
                 "continuity_guard_contract": CONTINUITY_GUARD_CONTRACT,
                 "continuity_guard_passed": True,
-                "continuity_projection_applied": bool(raw_projection > 1e-9),
+                "continuity_projection_applied": material_projection,
+                "continuity_numerical_equivalence_applied": numerical_equivalence,
+                "continuity_numeric_equivalence_contract": FLOAT32_SETTING_EQUIVALENCE_CONTRACT,
+                "continuity_numeric_atol": FLOAT32_SETTING_EQUIVALENCE_ATOL,
                 "continuity_raw_to_projected_max": raw_projection,
+                "continuity_raw_target_excess_max": _positive_excess(raw_target_error, delta),
+                "continuity_raw_current_excess_max": _positive_excess(raw_current_error, delta),
                 "previous_write_target_readback_mismatch_max": previous_write_mismatch,
                 "command_delta_from_current_tracking_max": continuity.max_delta_from_current,
                 "command_delta_from_previous_target_max": continuity.max_delta_from_previous_command,
@@ -154,11 +207,11 @@ class ContinuityGuardController:
                 "max_setting_delta_is_per_actuator": bool(np.ptp(delta) > 1e-12),
                 "max_setting_delta_vector_sha256": _array_sha256(delta),
                 "guarded_decision_runtime_seconds": guarded_elapsed,
-                "guarded_runtime_semantics": "inner_decision_plus_continuity_validation_projection_check",
+                "guarded_runtime_semantics": "inner_decision_plus_continuity_validation_numeric_equivalence_check",
             }
         )
         return ControllerAction(
-            settings=dict(zip(expected, decision.requested, strict=True)),
+            settings=dict(zip(expected, requested, strict=True)),
             source=action.source,
             diagnostics=diagnostics,
         )
