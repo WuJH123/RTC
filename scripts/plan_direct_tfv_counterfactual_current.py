@@ -45,15 +45,28 @@ def main() -> None:
     parser.add_argument("--metadata", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--max-decisions", type=int, default=6)
+    parser.add_argument(
+        "--latest-elapsed-seconds",
+        type=int,
+        help=(
+            "latest decision elapsed time with a complete H360 truth window; set to "
+            "simulation_end_elapsed-21600"
+        ),
+    )
     args = parser.parse_args()
 
     metadata_path = Path(args.metadata).resolve()
     metadata, rows = _load(metadata_path)
-    selected = select_counterfactual_decisions(rows, max_decisions=int(args.max_decisions))
+    selected = select_counterfactual_decisions(
+        rows,
+        max_decisions=int(args.max_decisions),
+        latest_elapsed_seconds=args.latest_elapsed_seconds,
+    )
     if not selected:
         raise RuntimeError(
-            "no action decision contains current counterfactual-plan telemetry; rerun the Development "
-            "event with the current runtime before attempting authoritative branch replay"
+            "no action decision contains current counterfactual-plan telemetry inside the requested "
+            "complete-H360 window; rerun the Development event with the current runtime or revise "
+            "the truth-window bound from the authoritative INP clock"
         )
     payload = {
         "contract": DIRECT_TFV_COUNTERFACTUAL_MANIFEST_CONTRACT,
@@ -62,7 +75,9 @@ def main() -> None:
         "source_inp_sha256": metadata.get("source_inp_sha256"),
         "controller_config_sha256": metadata.get("controller_config_sha256"),
         "swmm_engine_version": metadata.get("swmm_engine_version"),
-        "step1_model_sha256": metadata.get("step1_model_sha256"),
+        "step1_model_sha256": metadata.get(
+            "step1_model_sha256", metadata.get("step1_model_file_sha256")
+        ),
         "step2_model_sha256": metadata.get("step2_model_sha256"),
         "local_reference": "HOLD_ACTIVE_TARGET_H360",
         "candidate": "EXACT_OPTIMIZED_H120_FREE_BLOCKS_THEN_TERMINAL_HOLD_H360",
@@ -70,6 +85,8 @@ def main() -> None:
             "authoritative H360 incremental TFV(candidate plan - HOLD) from the identical causal prefix"
         ),
         "whole_event_no_control_reduction_is_not_this_estimand": True,
+        "complete_h360_truth_required": True,
+        "latest_elapsed_seconds": args.latest_elapsed_seconds,
         "available_action_decisions": sum(
             str(row.get("source", "")) == "MPC_DIRECT_TFV_RECEDING" for row in rows
         ),
