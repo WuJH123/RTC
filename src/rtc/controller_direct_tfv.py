@@ -1,7 +1,7 @@
 """Authoritative-runtime adapter for the current Direct-TFV trust-region MPC.
 
 The mature Project7 target-latch controller already provides causal Step1 history, rainfall forecast,
-600-s decision timing, target-write verification and score-equals-execute semantics.  This module
+600-s decision timing, target-write verification and score-equals-execute semantics. This module
 reuses that execution shell but replaces the old V122/V127 policy with the current Direct-TFV
 selection-aware value model and screened trust-region Step3.
 """
@@ -44,6 +44,7 @@ class DirectTFVRuntimeMPCAdapter:
 
     def __init__(self, inner: DirectTFVTrustRegionMPC) -> None:
         self.inner = inner
+        self.last_result: _RuntimeMPCResult | None = None
 
     def optimize(
         self,
@@ -69,7 +70,7 @@ class DirectTFVRuntimeMPCAdapter:
             active_target=previous_requested_settings,
         )
         valid = result.selected_source == "DIRECT_TFV_TRUST_REGION_LBFGSB"
-        return _RuntimeMPCResult(
+        wrapped = _RuntimeMPCResult(
             settings=result.settings,
             predicted_delta_tfv_m3=float(result.predicted_delta_tfv_m3),
             candidate_valid=bool(valid),
@@ -86,14 +87,17 @@ class DirectTFVRuntimeMPCAdapter:
             minimum_predicted_improvement_m3=float(result.minimum_predicted_improvement_m3),
             scipy_message=str(result.scipy_message),
         )
+        self.last_result = wrapped
+        return wrapped
 
 
 class DirectTFVAuthoritativeController(V122TorchMPCController):
     """Execute the exact first target scored by the current Direct-TFV Step3."""
 
     def __init__(self, *args: Any, mpc: DirectTFVTrustRegionMPC, **kwargs: Any) -> None:
-        super().__init__(*args, mpc=DirectTFVRuntimeMPCAdapter(mpc), **kwargs)
-        self._direct_mpc_adapter = self.mpc
+        adapter = DirectTFVRuntimeMPCAdapter(mpc)
+        super().__init__(*args, mpc=adapter, **kwargs)
+        self._direct_mpc_adapter = adapter
 
     def decide(
         self, obs: CausalObservation, *, observation_already_recorded: bool = False
@@ -104,6 +108,24 @@ class DirectTFVAuthoritativeController(V122TorchMPCController):
         diagnostics["direct_tfv_step3_contract"] = DIRECT_TFV_STEP3_CONTRACT
         diagnostics["all_109_facilities_screened_contract"] = True
         diagnostics["trust_region_from_trainfit_support"] = True
+        result = self._direct_mpc_adapter.last_result
+        if result is not None:
+            diagnostics.update(
+                {
+                    "direct_tfv_selected_source": result.selected_source,
+                    "optimizer_success": result.optimizer_success,
+                    "optimizer_steps": result.optimizer_steps,
+                    "optimizer_starts": result.optimizer_starts,
+                    "gradient_norm": result.gradient_norm,
+                    "solver_elapsed_seconds": result.solver_elapsed_seconds,
+                    "screened_facility_count": result.screened_facility_count,
+                    "active_facility_count": result.active_facility_count,
+                    "first_move_changed_facility_count": result.first_move_changed_facility_count,
+                    "maximum_support_ratio": result.maximum_support_ratio,
+                    "minimum_predicted_improvement_m3": result.minimum_predicted_improvement_m3,
+                    "scipy_message": result.scipy_message[:2000],
+                }
+            )
         source = str(action.source)
         if source == "MPC_V122":
             source = "MPC_DIRECT_TFV_TRUST_REGION"
