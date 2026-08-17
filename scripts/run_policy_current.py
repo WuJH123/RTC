@@ -5,17 +5,15 @@ import argparse
 import sys
 
 
-CURRENT_RUNTIME_BLOCK_CONTRACT = (
-    "PROJECT7_CURRENT_RUNTIME_BLOCKED_UNTIL_COUNTERFACTUAL_PRODUCTION_LOADER_V1"
-)
+CURRENT_RUNTIME_BLOCK_CONTRACT = "PROJECT7_CURRENT_RUNTIME_BLOCKED_UNTIL_DIRECT_TFV_SWMM_PROBE_V3"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Current Project7 counterfactual-first Step2 is Development-only. Authoritative "
-            "closed-loop runtime is intentionally blocked until an explicit production model "
-            "checkpoint factory/loader and matching controller contract are promoted."
+            "Current Project7 selection-aware Direct-TFV Step2 and screened trust-region Step3 are "
+            "Development-only. Production runtime remains blocked until the solver audit and a "
+            "small authoritative SWMM first-move/closed-loop probe pass."
         )
     )
     parser.add_argument(
@@ -33,10 +31,9 @@ def main() -> None:
         print("runtime_enabled=false")
         return
     raise RuntimeError(
-        f"{CURRENT_RUNTIME_BLOCK_CONTRACT}: current smoke/dev checkpoints are NONFINAL and no "
-        "matching production checkpoint loader exists. Do not route an old base-V128 checkpoint "
-        "as the current Proposal. Finish Development gates, then implement an explicit production "
-        "promotion before authoritative SWMM runtime."
+        f"{CURRENT_RUNTIME_BLOCK_CONTRACT}: production runtime is intentionally blocked. "
+        "Finish the selection-aware Step2 DEV gate, HOLD-threshold calibration, screened Step3 "
+        "solver audit, and authoritative Development SWMM probe before production promotion."
     )
 
 

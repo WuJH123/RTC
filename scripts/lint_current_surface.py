@@ -1,9 +1,4 @@
-"""Run the high-signal Ruff gate for the maintained Project7 surface.
-
-The repository retains legacy implementation files for provenance and ablation. Their historical
-style debt must not block the current direct-TFV Development path, so this gate checks only the
-explicit maintained Python surface with correctness-oriented Ruff rules.
-"""
+"""Run the high-signal Ruff gate for the maintained Project7 surface."""
 from __future__ import annotations
 
 import json
@@ -14,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "configs" / "project7_current_lint_surface.json"
-EXPECTED_CONTRACT = "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V2"
+EXPECTED_CONTRACT = "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V3"
 EXPECTED_RULES = ("E4", "E7", "E9", "F")
 
 
@@ -26,21 +21,18 @@ def _load_contract() -> tuple[list[str], tuple[str, ...]]:
         raise RuntimeError("current lint contract must not turn repository-wide Ruff debt into a stop-gate")
     if payload.get("current_surface_ruff_is_gate") is not True:
         raise RuntimeError("current lint surface must remain a fail-closed gate")
-
     rules_raw = payload.get("rule_select")
     if not isinstance(rules_raw, list):
         raise RuntimeError("current lint contract lacks rule_select")
     rules = tuple(str(value) for value in rules_raw)
     if rules != EXPECTED_RULES:
         raise RuntimeError(f"current lint rules must remain {list(EXPECTED_RULES)}, got {list(rules)}")
-
     raw = payload.get("paths")
     if not isinstance(raw, list) or not raw:
         raise RuntimeError("current lint surface contains no paths")
     paths = [str(value) for value in raw]
     if len(paths) != len(set(paths)):
         raise RuntimeError("current lint surface contains duplicate paths")
-
     missing = [path for path in paths if not (ROOT / path).is_file()]
     if missing:
         raise RuntimeError(f"current lint surface references missing files: {missing}")
