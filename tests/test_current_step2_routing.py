@@ -14,6 +14,8 @@ CURRENT_STEP2 = ROOT / "scripts" / "run_step2_current.py"
 DIRECT_RUNNER = ROOT / "scripts" / "run_step2_tfv_value_selection_aware_current.py"
 SELECTION_RUNNER = ROOT / "scripts" / "run_step2_selection_threshold_current.py"
 STEP3_RUNNER = ROOT / "scripts" / "run_step3_direct_tfv_solver_current.py"
+DEV_RUNTIME = ROOT / "scripts" / "run_policy_direct_tfv_development.py"
+DEV_AUDIT = ROOT / "scripts" / "audit_direct_tfv_closed_loop_current.py"
 CURRENT_POLICY = ROOT / "scripts" / "run_policy_current.py"
 CURRENT_SEVEN = ROOT / "scripts" / "run_seven_strategies_current.py"
 
@@ -91,22 +93,33 @@ def test_current_cli_surfaces_are_explicit() -> None:
     assert "--checkpoint" in step3
     assert "--selection-report" in step3
     assert "--max-groups" in step3
+    runtime = _help(DEV_RUNTIME)
+    for argument in ("--inp", "--step1", "--step2", "--selection-report", "--sensors"):
+        assert argument in runtime
+    audit = _help(DEV_AUDIT)
+    assert "--metadata" in audit
+    assert "--baseline-node-statistics" in audit
 
 
-def test_current_lint_surface_tracks_v3_paths() -> None:
+def test_current_lint_surface_tracks_authoritative_runtime_paths() -> None:
     payload = json.loads(LINT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V3"
+    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V4"
     paths = set(payload["paths"])
     required = {
         "scripts/run_step2_tfv_value_selection_aware_current.py",
         "scripts/run_step2_selection_threshold_current.py",
         "scripts/run_step3_direct_tfv_solver_current.py",
+        "scripts/run_policy_direct_tfv_development.py",
+        "scripts/audit_direct_tfv_closed_loop_current.py",
+        "src/rtc/checkpoint_direct_tfv.py",
+        "src/rtc/controller_direct_tfv.py",
         "src/rtc/step2_tfv_value_training_v3.py",
         "src/rtc/step2_tfv_support.py",
         "src/rtc/step2_tfv_selection_v2.py",
         "src/rtc/step3_tfv_value_mpc_v2.py",
         "tests/test_direct_tfv_selection_aware.py",
         "tests/test_direct_tfv_step3_trust_region.py",
+        "tests/test_direct_tfv_runtime_adapter.py",
     }
     assert required <= paths
     assert all((ROOT / path).is_file() for path in paths)
