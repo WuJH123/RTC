@@ -10,6 +10,7 @@ from rtc.controller_direct_tfv import DirectTFVRuntimeMPCAdapter
 class _Inner:
     def __init__(self) -> None:
         self.design = SimpleNamespace(max_setting_delta_per_update=0.5)
+        self.model = torch.nn.Linear(1, 1)
         self.called = None
 
     def optimize(self, **kwargs):
@@ -30,6 +31,14 @@ class _Inner:
             maximum_support_ratio=0.8,
             scipy_message="ok",
         )
+
+
+def test_runtime_adapter_exposes_model_required_by_controller_base() -> None:
+    inner = _Inner()
+    adapter = DirectTFVRuntimeMPCAdapter(inner)  # type: ignore[arg-type]
+    assert adapter.model is inner.model
+    adapter.model.to(torch.device("cpu")).eval()
+    assert adapter.model.training is False
 
 
 def test_runtime_adapter_maps_target_latch_call_to_direct_step3() -> None:
