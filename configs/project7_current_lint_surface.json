@@ -9,6 +9,7 @@
     "scripts/run_step2_current.py",
     "scripts/run_step2_tfv_value_core_current.py",
     "scripts/build_direct_tfv_sequence_support_current.py",
+    "scripts/design_direct_tfv_admission_d3_current.py",
     "scripts/validate_direct_tfv_fresh_admission_data_current.py",
     "scripts/calibrate_direct_tfv_admission_current.py",
     "scripts/run_step3_direct_tfv_solver_calibrated_current.py",
