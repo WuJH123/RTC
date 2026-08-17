@@ -34,6 +34,7 @@
     "tests/test_direct_tfv_step3_core.py",
     "tests/test_direct_tfv_runtime_adapter.py",
     "tests/test_direct_tfv_counterfactual.py",
+    "tests/test_direct_tfv_baseline_provenance.py",
     "tests/test_temporal_control_continuity_v069.py",
     "tests/test_facility_tfv_influence.py",
     "tests/test_facility_tfv_influence_cli.py"
