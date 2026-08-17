@@ -1,21 +1,16 @@
 """Stable current Project7 Step2 entrypoint.
 
-The primary research target is explicit: learn how the 109 writable facility actions change
-system-wide cumulative TFV, conditioned on causal Step1 reconstructed state and causal rainfall.
-The current runner keeps the validated pairwise V(candidate)-V(reference) architecture and adds a
-selection-aware training stage so the model learns the HOLD=0 decision boundary needed by online
-control.
-
-Legacy V128 hydraulic-world-model training and the earlier Direct-TFV V2 runner remain in the
-repository for ablation/history only. Raw Torch Chrome tracing remains fail-closed on the 16-GB
-Development workstation; use bounded low-frequency TRAINING_TELEMETRY.jsonl-style resource
-monitoring when additional host/GPU evidence is needed.
+The current scientific target is direct and control-oriented: learn how all 109 writable facility
+actions change system-wide cumulative TFV from causal reconstructed state and causal rainfall.
+MAIN learns facility effects with facility-balanced regression, JOINT learns interactions, and the
+final CONTROL stage is restricted to D3 HOLD-reference data because that is the online Step3
+reference. D4 is diagnostic only and cannot block Step3.
 """
 from __future__ import annotations
 
 import sys
 
-from run_step2_tfv_value_selection_aware_current import main as _direct_main
+from run_step2_tfv_value_core_current import main as _direct_main
 
 
 def main() -> None:

@@ -17,17 +17,17 @@ class _Inner:
         return SimpleNamespace(
             settings=torch.full((72, 109), 0.5),
             predicted_delta_tfv_m3=-1234.0,
-            selected_source="DIRECT_TFV_TRUST_REGION_LBFGSB",
+            selected_source="DIRECT_TFV_RECEDING_LBFGSB",
             optimizer_success=True,
             optimizer_steps=4,
             optimizer_starts=2,
             gradient_norm=3.0,
             elapsed_seconds=0.2,
             screened_facility_count=109,
-            active_facility_count=8,
+            predicted_beneficial_facility_count=17,
+            active_facility_count=17,
             first_move_changed_facility_count=5,
             maximum_support_ratio=0.8,
-            minimum_predicted_improvement_m3=500.0,
             scipy_message="ok",
         )
 
@@ -51,6 +51,7 @@ def test_runtime_adapter_maps_target_latch_call_to_direct_step3() -> None:
     )
     assert result.candidate_valid is True
     assert result.screened_facility_count == 109
+    assert result.predicted_beneficial_facility_count == 17
     assert result.first_move_changed_facility_count == 5
     assert adapter.last_result is result
     assert inner.called is not None

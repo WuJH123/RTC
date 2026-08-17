@@ -1,17 +1,15 @@
 {
-  "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V3",
-  "status": "CURRENT_DEVELOPMENT_SELECTION_AWARE_STEP3_NOT_POLICY_LOCKED",
+  "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V4",
+  "status": "CURRENT_DEVELOPMENT_CORE_STEP3_NOT_POLICY_LOCKED",
   "selected_implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
-  "training_contract": "PROJECT7_DIRECT_TFV_SELECTION_AWARE_TRAINING_V3",
-  "selection_contract": "PROJECT7_DIRECT_TFV_HOLD_ACTION_THRESHOLD_V2",
-  "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_SCREENED_TRUST_REGION_MPC_V2",
+  "training_contract": "PROJECT7_DIRECT_TFV_CORE_TRAINING_V4",
+  "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V3",
   "authoritative_truth": "SWMM",
-  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, learn how all 109 writable facilities change future system-wide cumulative TFV, screen all 109 facilities, optimize a TrainFit-supported dynamic active set, execute only a confidently beneficial first 10-minute target, then re-observe",
+  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, learn how all 109 writable facilities change future system-wide cumulative TFV, evaluate all 109 facilities for immediate and delayed control value, optimize a predicted-beneficial multi-facility action sequence, execute the first 10-minute target, then re-observe",
   "core_pipeline": {
     "step1": "causal sparse sensing -> current full-network hydraulic reconstruction",
     "step2": "causal current state + causal rainfall + complete reference/candidate H360 actions -> authoritative exact delta TFV",
-    "selection": "explicit HOLD/action training plus a rainfall-disjoint Development minimum-predicted-improvement threshold",
-    "step3": "screen all 109 facilities, choose a dynamic active set from learned first-move value, optimize only inside TrainFit action support, require the calibrated improvement threshold, execute first 10 minutes, repeat",
+    "step3": "HOLD is exact zero; screen all 109 facilities with pulse and persistent probes, optimize predicted-beneficial facilities, execute if optimized predicted delta TFV < 0, otherwise HOLD",
     "swmm": "authoritative offline label generator and authoritative control evaluation truth; never the online candidate evaluator"
   },
   "time_contract": {
@@ -29,58 +27,49 @@
     "all_writable_actuators_screened_every_decision": true,
     "all_writable_actuators_eligible": true,
     "full_unrestricted_online_1308_search": false,
-    "reason": "unrestricted 12x109 optimisation can exploit unsupported surrogate regions; current Step3 dynamically screens all 109 then optimizes an empirically supported sparse active set",
+    "reason": "all 109 facilities are evaluated, while continuous H120 optimization is limited to the predicted-beneficial dynamic subset so the 10-minute controller remains computationally practical",
     "engineering_bounds": "per-facility physical min/max plus <=0.5 setting movement per 10-minute update",
-    "support_bounds": "per-facility first-move and sequence q95 setting differences derived from TrainFit only"
+    "support_bounds": "TrainFit q95 action magnitudes are retained as optimization geometry; they are not an additional action-admission threshold"
   },
   "step2_current": {
     "primary_target": "authoritative exact SWMM delta TFV relative to same-prefix reference",
     "model": "shared pairwise V(candidate)-V(reference), decomposed into 109 facility value differences plus multi-facility interaction value difference",
     "model_module": "src/rtc/step2_tfv_value.py",
-    "training_module": "src/rtc/step2_tfv_value_training_v3.py",
-    "runner": "scripts/run_step2_current.py -> scripts/run_step2_tfv_value_selection_aware_current.py",
+    "training_module": "src/rtc/step2_tfv_value_training_v4.py",
+    "runner": "scripts/run_step2_current.py -> scripts/run_step2_tfv_value_core_current.py",
     "reference_representation": "complete H360 reference and candidate sequences through the same value network",
     "zero_action_contract": "candidate == reference -> exact predicted delta TFV zero",
     "antisymmetry_contract": "swapping candidate/reference negates predicted delta exactly",
-    "main_stage": "exact single-facility branches train 109 facility main-value differences",
-    "joint_stage": "multi-facility branches train interaction residual",
-    "selection_stage": "low-learning-rate late-representation/head fine-tuning on all TrainFit branches with explicit HOLD/action sign and oracle-choice losses",
-    "harmful_false_benefit_asymmetry": "harmful actions receive greater HOLD/action loss weight because false-beneficial predictions can trigger real control while missed benefit falls back to HOLD",
+    "main_stage": "exact single-facility branches train 109 facility main-value differences with facility-balanced regression",
+    "joint_stage": "multi-facility branches train the interaction residual without HOLD decision bias",
+    "control_stage": "D3 HOLD-reference TrainFit groups only; late value representation receives symmetric sign calibration for the actual online act-vs-HOLD decision",
+    "top1_policy": "exact cached-candidate top1 is diagnostic only; primary control evidence is selected true delta TFV, regret, harmful fraction, pairwise ordering and sign",
     "historical_1pct_threshold_used_for_training": false,
     "hydraulic_trajectory_primary_target": false,
     "gradient_label_used": false,
     "dev_group_counts": "112 D2 FIT + 112 D3 FIT + 33 D4 FIT; audit on 32 D2 holdout + 32 D3 holdout + 15 D4 AUDIT",
-    "109_facility_learning_gate": "full DEV fails closed unless all 109 facilities have exact single-facility TrainFit evidence",
-    "action_support_artifact": "checkpoint.action_support stores per-facility first-move/sequence q95 support, joint changed-facility quantiles, facility coverage, and TrainFit delta-TFV range"
-  },
-  "selection_current": {
-    "module": "src/rtc/step2_tfv_selection_v2.py",
-    "runner": "scripts/run_step2_selection_threshold_current.py",
-    "calibration_reference_family": "D3 HOLD",
-    "calibration_split": "existing D3 internal holdout split again by rainfall group into disjoint calibration/audit sets",
-    "method": "choose the minimum predicted improvement threshold lexicographically: minimize harmful selections, then false actions on oracle-HOLD groups, then mean authoritative selected delta TFV, regret, and finally prefer useful action rate",
-    "previous_scalar_margin_status": "ablation/history only; with n=16 and alpha=0.10 its finite-sample rank equals the sample maximum and was empirically overconservative",
-    "d4_audit_used_for_calibration": false,
-    "formal_guarantee": false
+    "109_facility_learning_gate": "full DEV fails closed only if exact single-facility TrainFit coverage is below 109/109",
+    "d4_role": "reference-shift stress diagnostic; poor D4 selection does not block HOLD-reference Step3",
+    "action_support_artifact": "checkpoint.action_support stores per-facility action coverage/support and joint changed-facility quantiles"
   },
   "step3_current": {
-    "module": "src/rtc/step3_tfv_value_mpc_v2.py",
+    "module": "src/rtc/step3_tfv_value_mpc_v3.py",
     "solver_audit_runner": "scripts/run_step3_direct_tfv_solver_current.py",
     "reference": "HOLD",
-    "screening": "evaluate first-move up/down probes for all 109 facilities inside per-facility TrainFit first-move q95 support",
-    "active_set": "dynamic top learned facilities; default count is TrainFit joint changed-facility median",
-    "optimization": "bounded L-BFGS-B only for the dynamic active set across 12 free 10-minute blocks",
-    "trust_region": "all optimized targets remain inside per-facility TrainFit q95 action support and physical/rate bounds",
-    "admission": "execute optimized action only when predicted improvement exceeds the calibrated D3 HOLD-reference threshold; otherwise HOLD",
+    "screening": "for all 109 facilities evaluate up/down probes at half/full first-move radius under both one-block pulse and persistent H360 patterns, so delayed-benefit facilities remain eligible",
+    "beneficial_definition": "facility best pulse/persistent probe predicted delta TFV < 0",
+    "active_set": "rank all predicted-beneficial facilities; default ceiling is TrainFit joint changed-facility q90, not q50",
+    "optimization": "bounded L-BFGS-B across 12 free 10-minute blocks for the dynamic active set",
+    "admission": "no separate calibrated threshold; execute when optimized predicted delta TFV < 0, otherwise HOLD",
     "execute": "first 10-minute target only; re-observe before the next decision",
-    "solver_only_gate": "must screen 109/109, have zero support/engineering violations, complete inside the control period, and select at least one action before authoritative SWMM probes",
+    "solver_only_gate": "must screen 109/109, obey physical/rate/support geometry, complete inside the control period, and generate at least one action before authoritative SWMM evaluation",
     "runtime_promoted": false
   },
   "data_boundaries": {
-    "D2": "primary single-facility attribution and long-duration action support",
-    "D3": "HOLD-reference temporal/joint supervision and HOLD-reference selection calibration/audit",
-    "D4_FIT": "Sparse-RBC-reference local first-move training and Development stress data",
-    "D4_AUDIT": "untouched Development audit only; excluded from model training, target scaling, support derivation and selection calibration",
+    "D2": "primary single-facility attribution and long-duration numeric supervision",
+    "D3": "HOLD-reference temporal/joint supervision and online control-reference supervision",
+    "D4_FIT": "Sparse-RBC-reference local first-move training/stress data; not the runtime reference",
+    "D4_AUDIT": "untouched Development reference-shift audit only",
     "future_realized_rainfall_online": false,
     "future_swmm_state_online": false,
     "Validation_access": false,
@@ -90,13 +79,13 @@
   },
   "legacy": {
     "V128_hydraulic_world_model": "ablation/history only",
-    "Direct_TFV_V2_scalar_selection_margin": "ablation/history only"
+    "Direct_TFV_threshold_calibration": "ablation/history only"
   },
   "canonical_entrypoints": {
     "step2_training": "scripts/run_step2_current.py",
-    "selection_threshold": "scripts/run_step2_selection_threshold_current.py",
     "step3_solver_audit": "scripts/run_step3_direct_tfv_solver_current.py",
+    "development_runtime": "scripts/run_policy_direct_tfv_development.py",
     "facility_truth_audit": "scripts/audit_facility_tfv_influence_current.py"
   },
-  "promotion_rule": "first prove selection-aware Step2 retains useful held-out ordering while reducing harmful raw selections; then calibrate the HOLD threshold; then pass the 109-facility screened trust-region Step3 solver audit; only then run a small authoritative SWMM first-move/closed-loop probe"
+  "promotion_rule": "prove 109/109 facility learning and useful D3 HOLD-reference held-out control value, then run Step3 directly, then validate the exact first move with authoritative Development SWMM"
 }

@@ -11,8 +11,7 @@ CURRENT = ROOT / "configs" / "step2_current_contract.json"
 REGISTRY = ROOT / "configs" / "project7_execution_registry.json"
 LINT = ROOT / "configs" / "project7_current_lint_surface.json"
 CURRENT_STEP2 = ROOT / "scripts" / "run_step2_current.py"
-DIRECT_RUNNER = ROOT / "scripts" / "run_step2_tfv_value_selection_aware_current.py"
-SELECTION_RUNNER = ROOT / "scripts" / "run_step2_selection_threshold_current.py"
+DIRECT_RUNNER = ROOT / "scripts" / "run_step2_tfv_value_core_current.py"
 STEP3_RUNNER = ROOT / "scripts" / "run_step3_direct_tfv_solver_current.py"
 DEV_RUNTIME = ROOT / "scripts" / "run_policy_direct_tfv_development.py"
 DEV_AUDIT = ROOT / "scripts" / "audit_direct_tfv_closed_loop_current.py"
@@ -33,45 +32,44 @@ def _help(path: Path) -> str:
     return result.stdout
 
 
-def test_current_contract_is_selection_aware_direct_tfv_v3() -> None:
+def test_current_contract_is_direct_tfv_core_v4() -> None:
     payload = json.loads(CURRENT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V3"
+    assert payload["contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V4"
     assert payload["selected_implementation_contract"] == "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2"
-    assert payload["training_contract"] == "PROJECT7_DIRECT_TFV_SELECTION_AWARE_TRAINING_V3"
-    assert payload["selection_contract"] == "PROJECT7_DIRECT_TFV_HOLD_ACTION_THRESHOLD_V2"
-    assert payload["step3_contract"] == "PROJECT7_DIRECT_TFV_109ACT_SCREENED_TRUST_REGION_MPC_V2"
-    assert payload["step2_current"]["109_facility_learning_gate"].startswith("full DEV fails closed")
-    assert payload["step2_current"]["hydraulic_trajectory_primary_target"] is False
-    assert payload["step2_current"]["gradient_label_used"] is False
-    assert payload["step3_current"]["screening"].startswith("evaluate first-move")
+    assert payload["training_contract"] == "PROJECT7_DIRECT_TFV_CORE_TRAINING_V4"
+    assert payload["step3_contract"] == "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V3"
+    assert payload["step2_current"]["109_facility_learning_gate"].startswith("full DEV fails closed only")
+    assert payload["step2_current"]["d4_role"].startswith("reference-shift stress diagnostic")
+    assert payload["step2_current"]["top1_policy"].startswith("exact cached-candidate top1 is diagnostic only")
+    assert payload["step3_current"]["admission"].startswith("no separate calibrated threshold")
     assert payload["action_contract"]["all_writable_actuators_screened_every_decision"] is True
 
 
-def test_execution_registry_routes_v3_training_selection_and_step3() -> None:
+def test_execution_registry_routes_directly_from_step2_to_step3() -> None:
     payload = json.loads(REGISTRY.read_text(encoding="utf-8"))
     current = payload["current"]
-    assert current["research_contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V3"
-    assert current["training_contract"] == "PROJECT7_DIRECT_TFV_SELECTION_AWARE_TRAINING_V3"
-    assert current["selection_calibration"] == "scripts/run_step2_selection_threshold_current.py"
+    assert current["research_contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V4"
+    assert current["training_contract"] == "PROJECT7_DIRECT_TFV_CORE_TRAINING_V4"
+    assert "selection_calibration" not in current
     assert current["step3_solver_audit"] == "scripts/run_step3_direct_tfv_solver_current.py"
     assert current["runtime_enabled"] is False
     selected = payload["selected_internal_implementation"]
-    assert selected["step2_training"] == "src/rtc/step2_tfv_value_training_v3.py explicit HOLD/action + oracle-choice loss"
-    assert selected["step3_development"] == "src/rtc/step3_tfv_value_mpc_v2.py"
+    assert selected["step2_training"].startswith("src/rtc/step2_tfv_value_training_v4.py")
+    assert selected["step3_development"] == "src/rtc/step3_tfv_value_mpc_v3.py"
 
 
-def test_current_step2_wrapper_routes_to_selection_aware_runner() -> None:
+def test_current_step2_wrapper_routes_to_core_runner() -> None:
     text = CURRENT_STEP2.read_text(encoding="utf-8")
-    assert "run_step2_tfv_value_selection_aware_current import main" in text
-    assert "run_step2_action_identifiable_current" not in text
+    assert "run_step2_tfv_value_core_current import main" in text
+    assert "run_step2_tfv_value_selection_aware_current" not in text
     direct = DIRECT_RUNNER.read_text(encoding="utf-8")
-    assert "train_direct_tfv_value_model_v3" in direct
+    assert "train_direct_tfv_value_model_v4" in direct
     assert "derive_direct_tfv_action_support" in direct
     assert "single_facility_coverage_count" in direct
-    assert "selection_aware_training" in direct
+    assert "control_training_reference_family" in direct
 
 
-def test_current_cli_surfaces_are_explicit() -> None:
+def test_current_cli_surfaces_are_explicit_and_threshold_free() -> None:
     step2 = _help(CURRENT_STEP2)
     for argument in (
         "--profile {smoke,dev}",
@@ -82,43 +80,39 @@ def test_current_cli_surfaces_are_explicit() -> None:
         "--causal-store",
         "--causal-state-store",
         "--out-dir",
-        "--selection-epochs",
+        "--control-epochs",
     ):
         assert argument in step2
-    selection = _help(SELECTION_RUNNER)
-    assert "--checkpoint" in selection
-    assert "--d4-audit-cache" in selection
-    assert "--alpha" not in selection
     step3 = _help(STEP3_RUNNER)
     assert "--checkpoint" in step3
-    assert "--selection-report" in step3
+    assert "--selection-report" not in step3
     assert "--max-groups" in step3
+    assert "--active-facilities" in step3
     runtime = _help(DEV_RUNTIME)
-    for argument in ("--inp", "--step1", "--step2", "--selection-report", "--sensors"):
+    for argument in ("--inp", "--step1", "--step2", "--sensors", "--active-facilities"):
         assert argument in runtime
+    assert "--selection-report" not in runtime
     audit = _help(DEV_AUDIT)
     assert "--metadata" in audit
     assert "--baseline-node-statistics" in audit
 
 
-def test_current_lint_surface_tracks_authoritative_runtime_paths() -> None:
+def test_current_lint_surface_tracks_core_paths() -> None:
     payload = json.loads(LINT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V4"
+    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V5"
     paths = set(payload["paths"])
     required = {
-        "scripts/run_step2_tfv_value_selection_aware_current.py",
-        "scripts/run_step2_selection_threshold_current.py",
+        "scripts/run_step2_tfv_value_core_current.py",
         "scripts/run_step3_direct_tfv_solver_current.py",
         "scripts/run_policy_direct_tfv_development.py",
         "scripts/audit_direct_tfv_closed_loop_current.py",
         "src/rtc/checkpoint_direct_tfv.py",
         "src/rtc/controller_direct_tfv.py",
-        "src/rtc/step2_tfv_value_training_v3.py",
+        "src/rtc/step2_tfv_value_training_v4.py",
         "src/rtc/step2_tfv_support.py",
-        "src/rtc/step2_tfv_selection_v2.py",
-        "src/rtc/step3_tfv_value_mpc_v2.py",
-        "tests/test_direct_tfv_selection_aware.py",
-        "tests/test_direct_tfv_step3_trust_region.py",
+        "src/rtc/step3_tfv_value_mpc_v3.py",
+        "tests/test_direct_tfv_core_training.py",
+        "tests/test_direct_tfv_step3_core.py",
         "tests/test_direct_tfv_runtime_adapter.py",
     }
     assert required <= paths

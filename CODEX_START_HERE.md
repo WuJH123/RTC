@@ -11,9 +11,8 @@ Project7 is an **idealized EPA-SWMM methodology testbed**, not a field digital t
 sparse causal sensors
  -> Step1 reconstruct CURRENT full-network hydraulic state
  -> Step2 learn 109-facility ACTION -> future delta TFV
- -> explicit HOLD/action decision calibration
- -> Step3 screen all 109 facilities
- -> optimize a TrainFit-supported dynamic active set
+ -> Step3 evaluate all 109 facilities relative to HOLD
+ -> optimise the predicted-beneficial multi-facility subset
  -> execute first 10-minute target only
  -> observe again and repeat
 ```
@@ -31,29 +30,31 @@ Frozen clock/action contract:
 - every facility is eligible and screened every decision;
 - execute only the first 10-minute target, then re-observe.
 
-## 2. What the completed V2 evidence means
+## 2. What the completed V3 evidence means
 
-Direct exact-delta-TFV learning is the correct core target. Full V2 Development used
-112/112/32/32/33/15 D2/D3/D4 groups and produced useful ordering:
+Full V3 Development used all 112/112/32/32/33/15 D2/D3/D4 groups and proved complete
+single-facility learning coverage: **109/109** facilities, 14 rainfall groups per facility.
+
+The runtime-reference-aligned D3 holdout is already useful:
 
 ```text
-D2 holdout  rank 0.299  pairwise 0.614  selected true dTFV  -6,028.9 m3
-D3 holdout  rank 0.340  pairwise 0.623  selected true dTFV -30,221.8 m3
-D4 FIT      rank 0.419  pairwise 0.659  selected true dTFV    +311.6 m3
-D4 AUDIT    rank 0.326  pairwise 0.640  selected true dTFV    +315.9 m3
+rank                    0.367
+pairwise                0.637
+selected harmful        3.1%
+selected true delta TFV -31,396.6 m3
+regret                   4,319.7 m3
 ```
 
-The model therefore learned useful action ordering, especially D3/D4, but raw argmin selection was
-too eager. The first scalar residual guard fixed harmful actions only by becoming overconservative:
-with 16 D3 calibration groups and alpha=0.10 its finite-sample rank was 16/16, so the margin became
-the maximum residual (27,986 m3) and D2/D4 collapsed to HOLD.
+D4 FIT/AUDIT still shows about 50% harmful raw selection, but D4 uses a Sparse-RBC reference whereas
+future Step3 uses HOLD. D4 is therefore a **reference-shift stress diagnostic**, not a reason to stop
+the HOLD-reference control path.
 
-Do **not** return to the V128 hydraulic world model. The remaining problem is control-oriented:
-learn the absolute HOLD boundary and prevent Step3 from exploiting unsupported action sequences.
+Do not return to the V128 hydraulic world model and do not generate large new datasets before the
+current HOLD-reference Step3 and authoritative SWMM path is tested.
 
-## 3. Current Step2 — pairwise value model + selection-aware training
+## 3. Current Step2 — core Direct-TFV V4 training
 
-The model architecture remains:
+Model architecture remains:
 
 ```text
 causal Step1 current state
@@ -74,56 +75,29 @@ swap(candidate, reference) -> exact sign reversal
 single changed facility -> interaction residual exactly zero
 ```
 
-Current training is `PROJECT7_DIRECT_TFV_SELECTION_AWARE_TRAINING_V3`:
+Current training is `PROJECT7_DIRECT_TFV_CORE_TRAINING_V4`:
 
-1. **MAIN** — exact single-facility branches train the 109 facility effects.
-2. **JOINT** — multi-facility branches train the interaction residual.
-3. **SELECTION** — low-learning-rate late-representation/head fine-tuning on all TrainFit branches
-   adds explicit HOLD-vs-action sign loss and oracle-choice loss.
+1. **MAIN** — exact single-facility branches learn the 109 facility effects. Regression is averaged
+   per facility before the global mean so a few facilities with 128-145 branches cannot dominate
+   facilities that have about 22-27 branches.
+2. **JOINT** — multi-facility branches fit the interaction residual. No HOLD/action decision bias is
+   added in this stage.
+3. **CONTROL** — only D3 HOLD-reference TrainFit groups fine-tune the late value representation with
+   a symmetric sign loss. There is no extra harmful-action safety weight and no oracle-top1 loss in
+   the canonical objective.
 
-Harmful actions receive extra sign-loss weight because a false-beneficial prediction can trigger a
-real control move; a missed benefit falls back to HOLD.
+Exact cached-candidate `top1_fraction` remains a diagnostic only. The actual continuous Step3 needs
+correct value/sign and low selected regret; it does not need to reproduce the identity of one cached
+branch exactly.
 
-Full DEV now fails closed unless TrainFit contains exact single-facility evidence for **109/109**
-facilities. The checkpoint also stores TrainFit action support:
+Full DEV fails closed only if single-facility coverage is below **109/109**.
 
-- per-facility first-move absolute q95;
-- per-facility sequence absolute q95;
-- joint changed-facility count quantiles;
-- per-facility single-branch/rainfall coverage;
-- TrainFit delta-TFV magnitude range.
-
-D4 AUDIT never enters model training, target scaling, support derivation, or decision calibration.
-
-## 4. Current HOLD/action calibration
-
-The old max-residual scalar guard is history/ablation only.
-
-Current runner:
-
-```text
-scripts/run_step2_selection_threshold_current.py
-```
-
-uses the same rainfall-disjoint D3 HOLD-reference calibration/audit split, but directly calibrates
-the online decision variable: the **minimum predicted improvement** needed before ACTION is admitted.
-
-Threshold selection is lexicographic on the calibration subset:
-
-1. minimise harmful selected actions;
-2. minimise false actions when HOLD is authoritative oracle;
-3. among equally safe thresholds, minimise authoritative selected delta TFV;
-4. minimise regret;
-5. prefer useful action rate.
-
-This is Development calibration, not a formal probabilistic guarantee.
-
-## 5. Current Step3 — all-109 screening + trust-region MPC
+## 4. Current Step3 — all-109 receding MPC V3
 
 Canonical module:
 
 ```text
-src/rtc/step3_tfv_value_mpc_v2.py
+src/rtc/step3_tfv_value_mpc_v3.py
 ```
 
 Canonical solver audit:
@@ -135,23 +109,25 @@ scripts/run_step3_direct_tfv_solver_current.py
 At every 10-minute decision Step3:
 
 1. builds a HOLD H360 reference;
-2. evaluates small first-move up/down probes for **all 109 facilities** inside each facility's
-   TrainFit first-move q95 support;
-3. ranks all facilities by learned first-move delta TFV;
-4. forms a dynamic active set. Default active-set size is the TrainFit median number of changed
-   facilities among joint counterfactuals;
-5. runs L-BFGS-B only for that active set over 12 free 10-minute blocks;
-6. constrains every target to physical min/max, <=0.5 update movement, and per-facility TrainFit q95
-   action support;
-7. accepts the solution only if predicted improvement exceeds the calibrated D3 HOLD-reference
-   minimum-improvement threshold;
-8. otherwise returns HOLD;
-9. executes only the first 10-minute target and re-observes.
+2. evaluates up/down first-move probes for **all 109 facilities** at half and full TrainFit-supported
+   first-move radius;
+3. keeps facilities whose best probe has predicted delta TFV < 0;
+4. ranks those predicted-beneficial facilities;
+5. forms a dynamic active set. Default ceiling is the TrainFit q90 joint changed-facility count,
+   preserving more control freedom than the previous q50=8 default;
+6. runs L-BFGS-B for that active set over 12 free 10-minute blocks;
+7. enforces physical min/max, <=0.5 change per update, and the action magnitudes represented by
+   TrainFit data;
+8. if the optimised predicted delta TFV is < 0, execute the first 10-minute target; otherwise HOLD;
+9. re-observe and solve again after 10 minutes.
 
-This preserves the scientific claim that all 109 facilities are learned and considered, while
-preventing an unrestricted 1308-dimensional optimizer from inventing unsupported joint actions.
+There is **no separate selection-threshold calibration stage** in the canonical path. HOLD is exact
+zero, so `predicted delta TFV < 0` is the direct decision implied by the scientific objective.
 
-## 6. Frozen Development assets
+All 109 facilities are learned and evaluated every decision. This does **not** mean all 109 must be
+changed simultaneously; the current hydraulic state and rainfall determine the useful subset.
+
+## 5. Frozen Development assets
 
 ```text
 GRAPH
@@ -173,7 +149,7 @@ STATE
 E:\RTC_sewer\Project7\study_v069\step2_v127_corrected_base_7634cd9\STEP2_V127_CAUSAL_STATE_STORE_V2.npz
 ```
 
-## 7. Development execution order
+## 6. Development execution order
 
 Always hard-sync and run cheap gates first:
 
@@ -187,61 +163,67 @@ python -m pip install -e ".[dev,swmm]"
 python -m pytest -q
 python scripts/lint_current_surface.py
 python scripts/run_step2_current.py --help
-python scripts/run_step2_selection_threshold_current.py --help
 python scripts/run_step3_direct_tfv_solver_current.py --help
+python scripts/run_policy_direct_tfv_development.py --help
 python scripts/run_policy_current.py --promotion-status
 python scripts/run_seven_strategies_current.py --promotion-status
 ```
 
-Then, in order:
+Then:
 
 ```text
-A. selection-aware Direct-TFV smoke
-B. if no regression, full selection-aware DEV
+A. core Direct-TFV smoke
+B. if no catastrophic D2/D3 regression, full core DEV
 C. require 109/109 single-facility TrainFit coverage
-D. calibrate rainfall-disjoint D3 HOLD/action minimum-improvement threshold
-E. run all-109 screened trust-region Step3 solver-only audit on D3 selection-audit states
-F. if solver audit passes, run a small authoritative SWMM first-move probe
-G. only then wire one causal 10-minute closed loop
+D. judge Step2 mainly from D3 HOLD-reference held-out selected true dTFV, harmful fraction, regret,
+   pairwise and sign; D4 remains diagnostic
+E. run Step3 solver audit directly from the Step2 checkpoint
+F. if solver generates executable non-HOLD actions inside one control period, run one authoritative
+   Development SWMM closed loop
+G. compare authoritative TFV against a matched baseline
 ```
 
 Do not skip directly to Formal/Final/Policy Lock.
 
-## 8. Current scientific boundaries
+## 7. Scientific boundaries
 
 - no future realised rainfall online;
 - no future SWMM state/flood truth online;
-- no D4 AUDIT fitting of any kind;
-- no new gradient labels;
+- no D4 AUDIT fitting;
+- no gradient labels;
 - no return to full future-hydraulic trajectory as the primary target;
-- no unrestricted 12x109 online search outside TrainFit support;
-- runtime/seven-strategy production promotion remains fail-closed;
+- no extra calibrated threshold that suppresses otherwise predicted-beneficial actions;
+- production/seven-strategy promotion remains fail-closed;
 - Validation/Final/Formal/Policy Lock remain untouched during Development.
 
-## 9. What decides success
+## 8. What decides success
 
-Step2 is not judged only by rank. Read together:
+Step2 primary evidence:
 
 ```text
-rank
-pairwise
-sign
-selected_harmful_fraction
-selected_true_delta_tfv_m3
-selected_regret_m3
-false_action_when_hold_oracle_fraction
 109/109 single-facility TrainFit coverage
+D3 HOLD-reference pairwise/sign
+D3 selected_harmful_fraction
+D3 selected_true_delta_tfv_m3
+D3 selected_regret_m3
 ```
 
-Step3 solver-only success requires:
+`top1_fraction` and D4 are diagnostics, not promotion gates.
+
+Step3 solver evidence:
 
 ```text
 screened_facility_count = 109 for every group
-support_violation_count = 0
-engineering_violation_count = 0
+predicted-beneficial facility count > 0 on useful states
 action_selected_count > 0
-solver time < one 600-s control interval
+engineering/support violations = 0
+solver time < 600 s
 ```
 
-The next authoritative scientific gate is SWMM truth for the proposed first moves. Solver prediction
-alone is not final evidence.
+The decisive scientific gate is authoritative SWMM:
+
+```text
+TFV_proposed < TFV_matched_baseline
+```
+
+while the exact scored first 10-minute target is the one actually written and read back.

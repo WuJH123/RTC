@@ -1,10 +1,9 @@
-"""Run the current Direct-TFV Step3 solver on untouched HOLD-reference Development states.
+"""Run the current all-109 Direct-TFV receding MPC on HOLD-reference Development states.
 
-This is a solver-only audit: it loads the selection-aware full-DEV checkpoint and the independently
-calibrated HOLD/action threshold, screens all 109 facilities, optimises a TrainFit-supported active
-set, and saves the proposed H360 sequences.  It does not launch SWMM and therefore makes no claim of
-authoritative control benefit.  Passing this gate is the prerequisite for a small authoritative
-SWMM first-move/closed-loop probe.
+This solver audit follows Step2 directly. It does not require a separate selection-threshold report:
+HOLD is exact delta TFV zero, so a predicted negative optimised delta is the natural action rule.
+All 109 facilities are screened, predicted-beneficial facilities enter a dynamic multi-facility
+active set, and only physical/rate plus TrainFit-represented action bounds are enforced.
 """
 from __future__ import annotations
 
@@ -17,25 +16,19 @@ import time
 import numpy as np
 import torch
 
+from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
 from rtc.production_cli import _load_graph
 from rtc.step2_causal_rainfall_v123 import CausalForecastValueCacheV123, load_causal_forecast_store_v123
 from rtc.step2_state_store_v127 import CausalStep1StateCacheV127, load_causal_state_store_v127
-from rtc.step2_tfv_selection_v2 import DIRECT_TFV_SELECTION_THRESHOLD_CONTRACT
 from rtc.step2_tfv_value_training import _branch_indices, _forward_candidates, _graph_tensors
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
-from rtc.step3_tfv_value_mpc_v2 import DirectTFVMPCDesignV2, DirectTFVTrustRegionMPC
-
-from run_step2_selection_calibration_current import (
-    EXPECTED_COUNTS,
-    _d3_calibration_audit_split,
-    _load_model,
-    _normalization_from_checkpoint,
-)
+from rtc.step3_tfv_value_mpc_v3 import DirectTFVMPCDesignV3, DirectTFVRecedingMPC
 
 
-CURRENT_STEP3_SOLVER_RUN_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_STEP3_SOLVER_AUDIT_V1"
+CURRENT_STEP3_SOLVER_RUN_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_STEP3_CORE_AUDIT_V2"
 REPORT_FILENAME = "STEP3_DIRECT_TFV_SOLVER_REPORT.json"
 SEQUENCES_FILENAME = "STEP3_DIRECT_TFV_PROPOSED_SEQUENCES.npz"
+EXPECTED_BASE_COUNTS = (112, 112, 32, 32)
 
 
 def _sha(path: str | Path) -> str:
@@ -49,7 +42,6 @@ def _sha(path: str | Path) -> str:
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--checkpoint", required=True)
-    p.add_argument("--selection-report", required=True)
     p.add_argument("--graph", required=True)
     p.add_argument("--cache-manifest", required=True)
     p.add_argument("--causal-store", required=True)
@@ -57,6 +49,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--out-dir", required=True)
     p.add_argument("--device", default="cuda")
     p.add_argument("--max-groups", type=int, default=0)
+    p.add_argument("--active-facilities", type=int, default=0)
     return p
 
 
@@ -81,25 +74,12 @@ def main() -> None:
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    if "action_support" not in checkpoint:
-        raise ValueError("Step3 solver requires a checkpoint with TrainFit action_support")
-    if int(checkpoint["action_support"].get("single_facility_coverage_count", -1)) != 109:
-        raise ValueError("Step3 solver requires 109/109 single-facility TrainFit coverage")
-    model = _load_model(checkpoint, device)
-    normalization = _normalization_from_checkpoint(checkpoint)
     graph = _load_graph(args.graph)
-    if tuple(checkpoint["action_support"].get("actuator_ids", ())) != tuple(graph.actuator_ids):
-        raise ValueError("checkpoint action-support actuator order differs from graph")
-
-    selection = json.loads(Path(args.selection_report).read_text(encoding="utf-8"))
-    if str(selection.get("selection_contract")) != DIRECT_TFV_SELECTION_THRESHOLD_CONTRACT:
-        raise ValueError("Step3 solver requires the current HOLD/action threshold report")
-    if str(selection.get("lineage", {}).get("checkpoint_sha256", "")).lower() != _sha(args.checkpoint).lower():
-        raise ValueError("selection threshold was calibrated on a different Step2 checkpoint")
-    if selection.get("d3_split", {}).get("rainfall_overlap"):
-        raise ValueError("selection calibration/audit rainfall groups overlap")
-    threshold = float(selection["calibration"]["minimum_predicted_improvement_m3"])
+    model, normalization, checkpoint = load_direct_tfv_runtime_checkpoint(
+        args.checkpoint, graph=graph, device=device
+    )
+    if int(checkpoint["action_support"].get("single_facility_coverage_count", -1)) != 109:
+        raise ValueError("Step3 requires 109/109 single-facility TrainFit coverage")
 
     base = V60TrainCache(args.cache_manifest)
     rain_store = load_causal_forecast_store_v123(args.causal_store)
@@ -115,22 +95,17 @@ def main() -> None:
     fit_d3 = [name for name in fit if name.startswith("D3::")]
     hold_d2 = [name for name in holdout if name.startswith("D2::")]
     hold_d3 = [name for name in holdout if name.startswith("D3::")]
-    # D4 counts are validated by the full checkpoint/selection report.  The solver audit itself uses
-    # only HOLD-reference D3 audit states because that matches future Step3 reference semantics.
-    if tuple(map(len, (fit_d2, fit_d3, hold_d2, hold_d3))) != EXPECTED_COUNTS[:4]:
+    if tuple(map(len, (fit_d2, fit_d3, hold_d2, hold_d3))) != EXPECTED_BASE_COUNTS:
         raise ValueError("base D2/D3 Development split changed")
-    _, d3_audit, _, d3_audit_rain = _d3_calibration_audit_split(hold_d3)
-    expected_audit_rain = list(selection["d3_split"]["audit_rainfall_groups"])
-    if d3_audit_rain != expected_audit_rain:
-        raise ValueError("Step3 D3 audit rainfall groups differ from selection report")
+    names = sorted(hold_d3)
     if int(args.max_groups) > 0:
-        d3_audit = d3_audit[: int(args.max_groups)]
-    if not d3_audit:
-        raise ValueError("Step3 solver audit has no D3 audit groups")
+        names = names[: int(args.max_groups)]
+    if not names:
+        raise ValueError("Step3 solver audit has no D3 HOLD-reference groups")
 
     online = CausalStep1StateCacheV127(CausalForecastValueCacheV123(base, rain_store), state_store)
-    design = DirectTFVMPCDesignV2(minimum_predicted_improvement_m3=threshold)
-    controller = DirectTFVTrustRegionMPC(
+    design = DirectTFVMPCDesignV3(active_facility_count=int(args.active_facilities))
+    controller = DirectTFVRecedingMPC(
         model=model,
         graph=graph,
         normalization=normalization,
@@ -139,19 +114,19 @@ def main() -> None:
     )
     static = _graph_tensors(graph, device)
     records: list[dict[str, object]] = []
-    sequences: list[np.ndarray] = []
-    names: list[str] = []
+    proposed_sequences: list[np.ndarray] = []
+    output_names: list[str] = []
     support_violations = engineering_violations = 0
     action_count = 0
     training_max = float(checkpoint["action_support"].get("absolute_delta_tfv_max_m3", 0.0))
     extreme_prediction_count = 0
 
-    for name in d3_audit:
+    for name in names:
         batch = online.batch(name, normalization, device)
         reference = batch.reference_settings[0]
         active_target = reference[0]
         if float(torch.max(torch.abs(reference - active_target[None])).detach().cpu()) > 1.0e-6:
-            raise ValueError(f"{name}: D3 audit reference is not HOLD across H72")
+            raise ValueError(f"{name}: D3 holdout reference is not HOLD across H72")
         state_raw, rain_raw, flow_raw = _physical_inputs(batch, normalization)
         result = controller.optimize(
             current_state=state_raw,
@@ -160,6 +135,7 @@ def main() -> None:
             current_settings=active_target,
             active_target=active_target,
         )
+
         indices = _branch_indices(batch, mode="all")
         cached = _forward_candidates(model, batch, indices, graph_tensors=static)
         cached_prediction = cached.total_delta_tfv_m3.detach().cpu().numpy().astype(np.float64)
@@ -177,9 +153,11 @@ def main() -> None:
         physical_hi = torch.as_tensor(controller.max_setting, dtype=first.dtype, device=first.device)
         physical_bad = bool(torch.any(first < physical_lo - 1.0e-6) or torch.any(first > physical_hi + 1.0e-6))
         support_bad = float(result.maximum_support_ratio) > 1.0001
-        engineering_violations += int(physical_bad or result.first_move_changed_facility_count > result.active_facility_count)
+        engineering_violations += int(
+            physical_bad or result.first_move_changed_facility_count > result.active_facility_count
+        )
         support_violations += int(support_bad)
-        action_count += int(result.selected_source == "DIRECT_TFV_TRUST_REGION_LBFGSB")
+        action_count += int(result.selected_source == "DIRECT_TFV_RECEDING_LBFGSB")
         if training_max > 0.0 and abs(float(result.predicted_delta_tfv_m3)) > 1.25 * training_max:
             extreme_prediction_count += 1
         records.append(
@@ -193,6 +171,7 @@ def main() -> None:
                     cached_prediction[best_cached] - float(result.predicted_delta_tfv_m3)
                 ),
                 "screened_facility_count": int(result.screened_facility_count),
+                "predicted_beneficial_facility_count": int(result.predicted_beneficial_facility_count),
                 "active_facility_count": int(result.active_facility_count),
                 "active_facility_ids": list(result.active_facility_ids),
                 "active_facility_screening_scores_m3": list(result.active_facility_screening_scores_m3),
@@ -210,8 +189,8 @@ def main() -> None:
                 "support_violation": bool(support_bad),
             }
         )
-        names.append(name)
-        sequences.append(result.settings.detach().cpu().numpy().astype(np.float32))
+        output_names.append(name)
+        proposed_sequences.append(result.settings.detach().cpu().numpy().astype(np.float32))
 
     elapsed = float(time.perf_counter() - started)
     action_fraction = float(action_count / len(records))
@@ -225,8 +204,8 @@ def main() -> None:
     )
     np.savez_compressed(
         out / SEQUENCES_FILENAME,
-        group_name=np.asarray(names),
-        settings=np.stack(sequences),
+        group_name=np.asarray(output_names),
+        settings=np.stack(proposed_sequences),
         actuator_ids=np.asarray(graph.actuator_ids),
     )
     report = {
@@ -234,15 +213,18 @@ def main() -> None:
         "development_only": True,
         "swmm_launched": False,
         "step2_model_retrained": False,
-        "selection_threshold_recalibrated": False,
-        "minimum_predicted_improvement_m3": threshold,
+        "separate_selection_threshold_used": False,
+        "action_rule": "execute when optimised predicted delta TFV < 0; otherwise HOLD",
         "screen_all_109_facilities": True,
-        "trust_region_from_trainfit_action_support": True,
+        "screening_probe_scales": list(design.screening_probe_scales),
         "single_facility_training_coverage_count": int(
             checkpoint["action_support"]["single_facility_coverage_count"]
         ),
-        "training_joint_changed_facility_q50": float(
-            checkpoint["action_support"]["joint_changed_facility_count_q50"]
+        "training_joint_changed_facility_q90": float(
+            checkpoint["action_support"].get(
+                "joint_changed_facility_count_q90",
+                checkpoint["action_support"].get("joint_changed_facility_count_q75", 0.0),
+            )
         ),
         "groups": len(records),
         "action_selected_count": int(action_count),
@@ -256,14 +238,13 @@ def main() -> None:
         "records": records,
         "lineage": {
             "checkpoint_sha256": _sha(args.checkpoint),
-            "selection_report_sha256": _sha(args.selection_report),
             "graph_sha256": _sha(args.graph),
             "base_cache_sha256": _sha(args.cache_manifest),
             "causal_rainfall_sha256": _sha(args.causal_store),
             "causal_state_store_sha256": _sha(args.causal_state_store),
         },
         "resources": {"device": str(device), "wall_seconds": elapsed},
-        "next_gate": "small authoritative SWMM replay of proposed first moves before any multi-event closed loop",
+        "next_gate": "authoritative Development SWMM closed loop using the exact scored first 10-minute target",
     }
     (out / REPORT_FILENAME).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2, sort_keys=True))
