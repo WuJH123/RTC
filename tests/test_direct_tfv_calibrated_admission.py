@@ -7,6 +7,7 @@ import torch
 
 from rtc.direct_tfv_admission import (
     DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT,
+    _minimum_conformal_sample_size,
     _one_sided_conformal_upper,
     admission_margin_m3,
 )
@@ -19,7 +20,8 @@ def _calibration() -> dict:
     return {
         "contract": DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT,
         "development_only": True,
-        "reference_semantics": "D3_HOLD_REFERENCE",
+        "reference_semantics": "HOLD_ACTIVE_TARGET_H360",
+        "optimizer_replay_count": 6,
         "density_floor_changed_facilities": 20,
         "global_margin_m3": 1000.0,
         "dense_margin_m3": 5000.0,
@@ -58,8 +60,12 @@ def _bare() -> DirectTFVRecedingMPCV5:
     return mpc
 
 
-def test_one_sided_conformal_quantile_is_finite_sample_conservative() -> None:
-    assert _one_sided_conformal_upper([1.0, 2.0, 3.0, 4.0], 0.90) == 4.0
+def test_one_sided_conformal_requires_supported_finite_sample_coverage() -> None:
+    assert _minimum_conformal_sample_size(0.90) == 10
+    with pytest.raises(ValueError, match="needs at least"):
+        _one_sided_conformal_upper([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 0.90)
+    values = [float(value) for value in range(1, 11)]
+    assert _one_sided_conformal_upper(values, 0.90) == 10.0
 
 
 def test_admission_margin_uses_dense_geometry_for_large_active_set() -> None:
