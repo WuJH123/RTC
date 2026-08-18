@@ -1,14 +1,14 @@
 """Receding-consistent executable-prefix admission for Project7 Direct-TFV MPC.
 
 The online controller replans every 10 minutes, so the H120/H360 plan produced by Step3 is guidance,
-not a commitment.  Development V9 showed that full H360 optimizer plans can be authoritatively
-beneficial while the resulting 10-minute receding closed loop is still worse than No-control.  This
+not a commitment. Development V9 showed that full H360 optimizer plans can be authoritatively
+beneficial while the resulting 10-minute receding closed loop is still worse than No-control. This
 module therefore calibrates the error of the action that is actually committed before the next
 observation: execute the optimized first 10-minute block, then HOLD the current active target for the
 remaining H350 evaluation window.
 
 The raw V6 optimizer, q95 joint-sequence support, Step2 weights and TFV-only objective are unchanged.
-The independent conformal unit remains the fresh Development rainfall group.  The previous V2
+The independent conformal unit remains the fresh Development rainfall group. The previous V2
 full-plan policy margin is retained as diagnostic evidence but is not a floor on the executable-prefix
 margin; otherwise the estimand mismatch would be preserved by construction.
 """
@@ -117,10 +117,20 @@ def derive_receding_prefix_admission(
         predicted = _finite(
             row.get("predicted_prefix_delta_tfv_m3"), label="predicted executable-prefix delta TFV"
         )
-        truth = _finite(row.get("true_prefix_delta_tfv_m3"), label="true executable-prefix delta TFV")
+        truth = _finite(
+            row.get("true_prefix_delta_tfv_m3"), label="true executable-prefix delta TFV"
+        )
         residual = truth - predicted
         by_group[group].append(residual)
-        if int(row.get("active_facility_count", -1)) >= density_floor:
+        changed = int(
+            row.get(
+                "prefix_changed_facility_count",
+                row.get("first_move_changed_facility_count", row.get("active_facility_count", -1)),
+            )
+        )
+        if changed < 0:
+            raise ValueError("receding-prefix panel lacks first-move changed-facility count")
+        if changed >= density_floor:
             dense_by_group[group].append(residual)
 
     if set(by_group) != expected:
@@ -148,8 +158,12 @@ def derive_receding_prefix_admission(
     )
     global_margin = max(0.0, generic_q, prefix_q)
     dense_margin = max(global_margin, generic_dense_q, prefix_dense_q)
-    full_global = _finite(base_policy_admission.get("global_margin_m3"), label="V2 full-plan margin")
-    full_dense = _finite(base_policy_admission.get("dense_margin_m3"), label="V2 dense full-plan margin")
+    full_global = _finite(
+        base_policy_admission.get("global_margin_m3"), label="V2 full-plan margin"
+    )
+    full_dense = _finite(
+        base_policy_admission.get("dense_margin_m3"), label="V2 dense full-plan margin"
+    )
 
     return {
         "contract": DIRECT_TFV_RECEDING_PREFIX_ADMISSION_CONTRACT,
@@ -162,6 +176,7 @@ def derive_receding_prefix_admission(
         "admission_rule": "prefix_delta_tfv_m3 + receding_prefix_margin_m3 < 0",
         "full_plan_requirement": "raw_full_plan_predicted_delta_tfv_m3 < 0",
         "density_floor_changed_facilities": density_floor,
+        "density_classification_variable": "FIRST_MOVE_CHANGED_FACILITY_COUNT",
         "global_margin_m3": float(global_margin),
         "dense_margin_m3": float(dense_margin),
         "generic_d3_conformal_upper_m3": float(generic_q),
@@ -183,19 +198,20 @@ def derive_receding_prefix_admission(
         "scientific_role": (
             "V8 keeps the frozen V6 raw optimizer and q95 support, but admission is calibrated on "
             "the only action committed before replanning: optimized H10 followed by HOLD H350. "
-            "The H120/H360 plan remains search guidance and diagnostic evidence, not executable "
-            "benefit credited to the current action."
+            "Dense/global prefix uncertainty is keyed to facilities actually changed in that first "
+            "H10 block, not the larger active optimization set. The H120/H360 plan remains search "
+            "guidance and diagnostic evidence, not executable benefit credited to the current action."
         ),
     }
 
 
 def receding_prefix_margin_m3(
-    calibration: Mapping[str, Any], active_facility_count: int
+    calibration: Mapping[str, Any], changed_facility_count: int
 ) -> tuple[float, str]:
     if str(calibration.get("contract", "")) != DIRECT_TFV_RECEDING_PREFIX_ADMISSION_CONTRACT:
         raise ValueError("Direct-TFV V8 received the wrong receding-prefix admission contract")
     density_floor = int(calibration.get("density_floor_changed_facilities", 2))
-    if int(active_facility_count) >= density_floor:
+    if int(changed_facility_count) >= density_floor:
         return float(calibration["dense_margin_m3"]), "receding_prefix_dense"
     return float(calibration["global_margin_m3"]), "receding_prefix_global"
 
