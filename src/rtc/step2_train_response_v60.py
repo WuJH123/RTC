@@ -220,7 +220,11 @@ class V60TrainCache:
         if entry.source_kind != "D3":
             return False
         roles = {role.strip().upper() for role in entry.candidate_roles}
-        return bool(roles) and roles <= {"D3_V60_MANIFOLD_CANDIDATE", "D3_V60_ACTIVE_LEARNING_CANDIDATE"}
+        return bool(roles) and roles <= {
+            "D3_V60_MANIFOLD_CANDIDATE",
+            "D3_V60_ACTIVE_LEARNING_CANDIDATE",
+            "D3_V6_POLICY_CALIBRATION_CANDIDATE",
+        }
 
     def targeted_d3_names(self) -> list[str]:
         return [name for name in self.names("D3") if self.is_targeted_d3_v60(name)]
