@@ -1,7 +1,7 @@
 {
-  "contract": "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V12",
+  "contract": "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V13",
   "current": {
-    "status": "CURRENT_DEVELOPMENT_REFINED_FIRST_MOVE_CALIBRATION_REQUIRED_NOT_POLICY_LOCKED",
+    "status": "CURRENT_DEVELOPMENT_TARGET_LATCH_FIRST_MOVE_CALIBRATION_REQUIRED_NOT_POLICY_LOCKED",
     "research_contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V11",
     "implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
     "training_contract": "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5",
@@ -15,8 +15,10 @@
     "step2_training": "scripts/run_step2_current.py",
     "sequence_support_build": "scripts/build_direct_tfv_sequence_support_current.py",
     "first_move_panel_design": "scripts/design_direct_tfv_first_move_calibration_current.py",
+    "first_move_panel_merge": "scripts/merge_direct_tfv_first_move_panel_shards.py",
     "first_move_admission_calibration": "scripts/calibrate_direct_tfv_first_move_admission_current.py",
     "development_authoritative_runtime": "scripts/run_policy_direct_tfv_first_move_development.py",
+    "first_move_counterfactual_plan": "scripts/plan_direct_tfv_first_move_counterfactual_current.py",
     "development_authoritative_audit": "scripts/audit_direct_tfv_closed_loop_current.py",
     "baseline_runner": "scripts/run_six_baselines_development_current.py",
     "baseline_compare": "scripts/compare_direct_tfv_baselines_current.py",
@@ -30,27 +32,33 @@
     "policy_lock_enabled": false
   },
   "scientific_state": {
-    "primary_bottleneck": "FIRST_MOVE_QUERY_AND_ADMISSION_MISMATCH_AFTER_V10",
+    "primary_bottleneck": "V10_EXECUTION_COUNTERFACTUAL_TARGET_LATCH_MISMATCH",
     "evidence": [
       "V10 had 0 ACTION in 198 decisions despite 51-69 predicted-beneficial facilities per decision",
-      "V10 intended 13-23 first-move facility changes but the ten calibration queries all changed 23 facilities",
-      "V10 final executable-prefix margin was 25005.62 m3 and admission passed 0/198",
-      "exact authoritative replay showed 15/18 rejected plans were truly beneficial and only 3/18 harmful",
-      "all-HOLD Proposed is not identical to No-control because Proposed HOLD maintains a supervisory target while No-control performs no Python writes"
+      "exact authoritative replay showed 15/18 rejected optimizer plans were truly beneficial and only 3/18 harmful",
+      "the runtime controller stores and reasserts the last commanded 109-dimensional target until the next explicit command",
+      "V10 executable-prefix valuation instead changed the target for H10 and then reverted the changed facilities to the pre-decision target for H350",
+      "therefore V10 calibrated and gated a counterfactual trajectory that the actual target-latch controller would not execute",
+      "V10 calibration also used ten 23-facility queries while runtime proposed first moves varied from 13 to 23 facilities",
+      "all-HOLD Proposed is not No-control: Proposed HOLD means latch the current supervisory target, while No-control performs no Python supervisory write"
     ],
-    "response": "retain Step2 V5 and q95-supported all-109 coordinated H120 search, but directly refine the supported first H10 move with shrink-only per-facility factors; calibrate its signed residual on at least 24 fresh rainfall groups using residual/sqrt(actual changed-facility count), then execute only when this exact-query upper bound is beneficial"
+    "response": "retain Step2 V5 and q95-supported all-109 coordinated search, but value/refine the next target using true supervisory latch semantics; unchanged facilities copy the previous command, changed facilities receive shrink-only updates, the newly written target persists if no later command arrives, and execution uncertainty is calibrated on at least 24 fresh rainfall groups using residual/sqrt(actual changed-facility count)"
   },
   "hard_rules": [
-    "primary optimization objective remains system-wide cumulative TFV only",
-    "Priority8 PFV is added to authoritative evaluation as report-only secondary risk metric",
+    "primary online objective remains system-wide cumulative TFV only",
+    "Priority8 PFV is authoritative report-only secondary risk metric",
     "Global Peak remains report-only",
-    "accepted Step2 V5 weights remain frozen until first-move evidence demonstrates a Step2-specific failure",
+    "accepted Step2 V5 weights remain frozen until target-latch first-move evidence demonstrates a Step2-specific failure",
     "all 109 writable facilities remain screened",
     "q95 D3-HOLD support remains canonical",
-    "first-move refinement can only shrink the supported upstream first-move direction and cannot expand support",
+    "HOLD means latch the previous supervisory target and never means reset, all-closed or No-control",
+    "a changed target persists until a later explicit command changes it",
+    "unchanged facilities at each decision retain their previous commanded targets exactly",
+    "actual changed-facility count is determined from the new-versus-previous target difference, not from active K",
+    "first-move refinement can only shrink the supported upstream direction and cannot expand support",
     "first-move calibration uses at least 24 fresh Development rainfall groups",
-    "no generic-D3, V9 full-plan or V10 prefix scalar margin is allowed to become a hidden V11 execution floor",
-    "HOLD_ACTIVE_TARGET is an online supervisory reference and is not semantically equal to No-control",
+    "no generic-D3, V9 full-plan or V10 H10-then-old-target margin may become a hidden V11 execution floor",
+    "source-INP target settings remain the default common initial condition; all-open initialization is allowed only as a preregistered common-condition experiment applied consistently to Proposed and comparators",
     "no Validation/Final/Formal/Policy Lock data may calibrate or tune the policy",
     "SWMM is never called inside online candidate search",
     "Auto-RBC/EFD/baselines are not weakened or used as warm starts",
@@ -60,12 +68,12 @@
     "reuse frozen Step2 V5 and q95 sequence support",
     "generate at least 24 new forcing-only label-blind Development rainfall groups disjoint from all previous training/calibration/probe/evaluation roles",
     "build causal parent trajectories and fresh Step1/rainfall/state stores for those groups without retraining Step1/Step2",
-    "design one shrink-only refined first-move query plus HOLD per rainfall group; GPU panel design may be sharded across four independent processes",
+    "design one shrink-only target-latched refined first-move query plus previous-target latch reference per rainfall group; GPU panel design may be sharded across four processes",
     "execute authoritative first-move calibration branches with up to 24 independent SWMM workers and compile an isolated cache",
     "derive 90% rainfall-group normalized conformal admission using residual/sqrt(actual first-move changed-facility count)",
     "preregister new Development probes before reading Proposed or baseline outcomes",
     "run V9 closed loop and require nonzero actions, zero engineering/support/readback violations and runtime below 600 s",
     "compare TFV against No-control/Internal/Auto-RBC/EFD/All-open/All-closed and add Priority8 PFV plus Global Peak as report-only outcomes",
-    "replay representative accepted/rejected refined first moves with exact same-prefix SWMM before any untouched Validation"
+    "replay representative accepted/rejected target-latched first moves with exact same-prefix SWMM before any untouched Validation"
   ]
 }
