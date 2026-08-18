@@ -1,8 +1,8 @@
 """Diagnostic selection for exact same-prefix Direct-TFV H360 counterfactual replay.
 
 V2 selects raw optimizer plans whether calibrated admission accepted or rejected them. This is
-necessary to test the scientific claim made by Step3 V5: rejected extrema should contain the weak or
-false-beneficial plans while admitted extrema should remain beneficial. The helper never changes the
+necessary to test the scientific claim made by Step3: rejected extrema may contain weak or false-
+beneficial plans while admitted extrema should remain beneficial. The helper never changes the
 executed controller action.
 """
 from __future__ import annotations
@@ -77,6 +77,11 @@ def _eligible(
                     diagnostics.get("direct_tfv_selected_source", "")
                 ),
                 "raw_optimized_predicted_delta_tfv_m3": raw_predicted,
+                # Stable replay alias.  The authoritative replay runner historically consumes
+                # predicted_delta_tfv_m3 while the calibrated controller must preserve the raw
+                # optimizer prediction even when HOLD is executed.  Both fields therefore bind to
+                # the same raw counterfactual plan score in the diagnostic manifest.
+                "predicted_delta_tfv_m3": raw_predicted,
                 "admission_margin_m3": float(
                     diagnostics.get("admission_margin_m3", math.nan)
                 ),
