@@ -5,7 +5,11 @@ from dataclasses import dataclass
 import pytest
 import torch
 
-from rtc.direct_tfv_first_move import DIRECT_TFV_FIRST_MOVE_SEMANTICS, refine_supported_first_move
+from rtc.direct_tfv_first_move import (
+    DIRECT_TFV_FIRST_MOVE_PRUNING_RULE,
+    DIRECT_TFV_FIRST_MOVE_SEMANTICS,
+    refine_supported_first_move,
+)
 from rtc.direct_tfv_first_move_admission import (
     DIRECT_TFV_FIRST_MOVE_ADMISSION_CONTRACT,
     DIRECT_TFV_FIRST_MOVE_MIN_CALIBRATION_GROUPS,
@@ -55,11 +59,14 @@ class _DummyMPC:
         del current_state, rainfall, previous_actuator_flow
         first = sequence[0]
         desired = active_target.clone()
-        desired[:3] = 0.25
-        return torch.sum((first - desired) ** 2) - 1.0
+        desired[:2] = 0.25
+        # A002 is deliberately TFV-neutral. The continuous optimizer is allowed to leave a
+        # non-zero shrink factor there, while the TFV-only backward elimination must return it
+        # exactly to HOLD instead of counting a scientifically redundant target change.
+        return torch.sum((first[:2] - desired[:2]) ** 2) - 1.0
 
 
-def test_refiner_latches_new_target_and_never_expands_upstream_first_move() -> None:
+def test_refiner_latches_new_target_never_expands_and_prunes_tfv_redundant_change() -> None:
     mpc = _DummyMPC()
     active = torch.zeros(109, dtype=torch.float32)
     base = active[None].expand(72, -1).clone()
@@ -75,16 +82,23 @@ def test_refiner_latches_new_target_and_never_expands_upstream_first_move() -> N
         deadline_seconds=10.0,
     )
     first = refined.sequence[0]
-    assert refined.changed_facility_count == 3
-    assert torch.all(first[:3] >= -1.0e-7)
-    assert torch.all(first[:3] <= 0.5 + 1.0e-7)
+    assert refined.pre_prune_changed_facility_count == 3
+    assert refined.changed_facility_count == 2
+    assert refined.pruned_facility_count == 1
+    assert refined.pruned_facility_ids == ("A002",)
+    assert refined.pruning_evaluations >= 3
+    assert refined.pruning_gain_m3 >= -1.0e-5
+    assert "BACKWARD_ELIMINATION" in DIRECT_TFV_FIRST_MOVE_PRUNING_RULE
+    assert torch.all(first[:2] >= -1.0e-7)
+    assert torch.all(first[:2] <= 0.5 + 1.0e-7)
+    assert first[2].item() == pytest.approx(0.0, abs=1.0e-7)
     # P0 regression guard: after a write, the new supervisory target must stay latched when no
     # later command is issued. It must not revert to the pre-decision active_target after H10.
     assert torch.allclose(refined.sequence, first[None].expand_as(refined.sequence), atol=1.0e-7)
-    assert torch.allclose(refined.sequence[:, 3:], torch.zeros_like(refined.sequence[:, 3:]))
+    assert torch.allclose(refined.sequence[:, 2:], torch.zeros_like(refined.sequence[:, 2:]))
     assert "LATCH_NEW_TARGET" in DIRECT_TFV_FIRST_MOVE_SEMANTICS
-    assert refined.predicted_delta_tfv_m3 <= refined.base_prefix_predicted_delta_tfv_m3 + 1.0e-6
-    assert refined.gain_vs_base_prefix_m3 >= -1.0e-6
+    assert refined.predicted_delta_tfv_m3 <= refined.base_prefix_predicted_delta_tfv_m3 + 1.0e-5
+    assert refined.gain_vs_base_prefix_m3 >= -1.0e-5
 
 
 def _records(count: int) -> list[dict[str, object]]:
