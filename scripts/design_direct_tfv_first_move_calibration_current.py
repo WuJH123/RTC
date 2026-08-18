@@ -1,9 +1,10 @@
-"""Design a fresh Development calibration panel for refined first-move Direct-TFV V9.
+"""Design fresh Development calibration queries for target-latched Direct-TFV first moves.
 
-The script does not run SWMM.  For every selected fresh D3-HOLD rainfall group it obtains the frozen
-V6/V7 q95-supported H120 optimizer query, refines only its first 10-minute move by shrink-only
-L-BFGS-B, and emits exactly one HOLD plus one refined H10-then-HOLD-H350 candidate.  Deterministic
-modulo sharding allows up to four independent GPU processes to design disjoint rainfall groups.
+The script does not run SWMM. For every selected fresh D3-HOLD rainfall group it obtains the frozen
+V6/V7 q95-supported H120 optimizer query, refines only the target written at the next 10-minute
+control instant by shrink-only L-BFGS-B, and emits exactly one HOLD reference plus one candidate whose
+new target remains latched through H360 if no later command is issued. Deterministic modulo sharding
+allows up to four independent GPU processes to design disjoint rainfall groups.
 """
 from __future__ import annotations
 
@@ -178,7 +179,8 @@ def main() -> None:
             {
                 "first_move_panel_contract": DIRECT_TFV_FIRST_MOVE_PANEL_CONTRACT,
                 "first_move_query_step3_contract": DIRECT_TFV_FIRST_MOVE_QUERY_STEP3_CONTRACT,
-                "first_move_role": "HOLD_REFERENCE",
+                "first_move_role": "LATCH_PREVIOUS_TARGET_REFERENCE",
+                "first_move_semantics": "LATCH_PREVIOUS_TARGET_H360",
             }
         )
         output_rows.append(hold_output)
@@ -188,7 +190,7 @@ def main() -> None:
             {
                 "data_role": FIRST_MOVE_CANDIDATE_ROLE,
                 "sequence_index": 1,
-                "candidate_family": "v9_refined_supported_first_move",
+                "candidate_family": "v9_refined_target_latch_first_move",
                 "v60_coefficients_json": json.dumps([]),
                 "settings_sequence_json": json.dumps(candidate_sequence, sort_keys=True),
                 "sequence_sha256": candidate_sha,
@@ -197,7 +199,7 @@ def main() -> None:
                 "sequence_rate_feasible": True,
                 "first_move_panel_contract": DIRECT_TFV_FIRST_MOVE_PANEL_CONTRACT,
                 "first_move_query_step3_contract": DIRECT_TFV_FIRST_MOVE_QUERY_STEP3_CONTRACT,
-                "first_move_role": "REFINED_EXECUTABLE_QUERY",
+                "first_move_role": "REFINED_TARGET_LATCH_QUERY",
                 "first_move_semantics": DIRECT_TFV_FIRST_MOVE_SEMANTICS,
                 "predicted_refined_delta_tfv_m3": float(refined.predicted_delta_tfv_m3),
                 "base_prefix_predicted_delta_tfv_m3": float(refined.base_prefix_predicted_delta_tfv_m3),
@@ -223,7 +225,7 @@ def main() -> None:
 
     frame = pd.DataFrame.from_records(output_rows)
     if len(frame) != 2 * len(seen):
-        raise RuntimeError("first-move panel shard must contain exactly one HOLD and one candidate per rainfall group")
+        raise RuntimeError("first-move panel shard must contain exactly one reference and one candidate per rainfall group")
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(out, index=False)
@@ -233,6 +235,7 @@ def main() -> None:
         "first_move_panel_contract": DIRECT_TFV_FIRST_MOVE_PANEL_CONTRACT,
         "first_move_query_step3_contract": DIRECT_TFV_FIRST_MOVE_QUERY_STEP3_CONTRACT,
         "execution_estimand": DIRECT_TFV_FIRST_MOVE_SEMANTICS,
+        "reference_semantics": "LATCH_PREVIOUS_TARGET_H360",
         "active_support_quantile": "q95",
         "global_rainfall_group_count": len(all_rainfall_groups),
         "shard_count": int(args.shard_count),
