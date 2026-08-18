@@ -108,8 +108,11 @@ def main() -> None:
     cache = V60TrainCache(args.prefix_cache_manifest)
     records: list[dict[str, object]] = []
     seen_groups: set[str] = set()
-    for name in cache.targeted_d3_names():
+    for name in cache.names("D3"):
         entry = cache.entry(name)
+        roles = {str(role).strip().upper() for role in entry.candidate_roles}
+        if roles != {PREFIX_CANDIDATE_ROLE}:
+            raise ValueError(f"{name}: receding-prefix cache has wrong candidate roles: {sorted(roles)}")
         group = str(entry.rainfall_group)
         if group not in set(expected_groups):
             raise ValueError(f"receding-prefix cache contains non-calibration rainfall group: {group}")
