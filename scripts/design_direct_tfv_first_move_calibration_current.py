@@ -17,7 +17,10 @@ import numpy as np
 import pandas as pd
 import torch
 
-from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
+from rtc.checkpoint_direct_tfv import (
+    direct_tfv_first_move_source_sha256,
+    load_direct_tfv_runtime_checkpoint,
+)
 from rtc.data_design import canonical_sequence_sha
 from rtc.direct_tfv_first_move import DIRECT_TFV_FIRST_MOVE_SEMANTICS, refine_supported_first_move
 from rtc.direct_tfv_first_move_admission import (
@@ -102,6 +105,8 @@ def main() -> None:
     if template.empty or "checkpoint_id" not in template or "data_role" not in template:
         raise ValueError("template D3 manifest is empty or incomplete")
 
+    first_move_source_sha = direct_tfv_first_move_source_sha256()
+
     all_names = sorted(fresh.targeted_d3_names())
     all_rainfall_groups = {str(fresh.entry(name).rainfall_group) for name in all_names}
     if len(all_rainfall_groups) < DIRECT_TFV_FIRST_MOVE_MIN_CALIBRATION_GROUPS:
@@ -181,6 +186,7 @@ def main() -> None:
                 "first_move_query_step3_contract": DIRECT_TFV_FIRST_MOVE_QUERY_STEP3_CONTRACT,
                 "first_move_role": "LATCH_PREVIOUS_TARGET_REFERENCE",
                 "first_move_semantics": "LATCH_PREVIOUS_TARGET_H360",
+                "first_move_source_sha256": first_move_source_sha,
             }
         )
         output_rows.append(hold_output)
@@ -201,6 +207,7 @@ def main() -> None:
                 "first_move_query_step3_contract": DIRECT_TFV_FIRST_MOVE_QUERY_STEP3_CONTRACT,
                 "first_move_role": "REFINED_TARGET_LATCH_QUERY",
                 "first_move_semantics": DIRECT_TFV_FIRST_MOVE_SEMANTICS,
+                "first_move_source_sha256": first_move_source_sha,
                 "predicted_refined_delta_tfv_m3": float(refined.predicted_delta_tfv_m3),
                 "base_prefix_predicted_delta_tfv_m3": float(refined.base_prefix_predicted_delta_tfv_m3),
                 "refinement_gain_m3": float(refined.gain_vs_base_prefix_m3),
@@ -247,6 +254,7 @@ def main() -> None:
         "candidate_rows": len(seen),
         "records": summaries,
         "lineage": {
+            "first_move_source_sha256": first_move_source_sha,
             "step2_checkpoint_sha256": _sha(args.checkpoint),
             "policy_admission_sha256": _sha(args.policy_admission),
             "sequence_support_sha256": _sha(args.sequence_support),

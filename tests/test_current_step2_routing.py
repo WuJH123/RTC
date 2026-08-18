@@ -44,11 +44,15 @@ def test_current_contract_is_refined_first_move_v11() -> None:
     assert payload["first_move_data_contract"]["normalization"] == (
         "SQRT_FIRST_MOVE_CHANGED_FACILITY_COUNT"
     )
+    assert payload["first_move_data_contract"]["source_fingerprint"] == (
+        "BYTE_LEVEL_DIRECT_TFV_FIRST_MOVE_SOURCE_SHA256_REQUIRED_AT_PANEL_CALIBRATION_AND_RUNTIME"
+    )
     assert payload["objective_contract"]["online_primary_objective"] == (
         "SYSTEM_WIDE_CUMULATIVE_TFV_MINIMIZATION"
     )
     assert payload["objective_contract"]["pfv_role"] == "REPORT_ONLY_SECONDARY_RISK_METRIC"
     assert payload["objective_contract"]["pfv_enters_step3_objective"] is False
+    assert "BACKWARD_PRUNING" in payload["action_contract"]["first_move_refinement"]
     assert payload["action_contract"]["hold_online_reference_semantics"] == (
         "LATCH_PREVIOUS_SUPERVISORY_TARGET_NOT_NO_CONTROL_NOT_RESET"
     )
@@ -94,6 +98,7 @@ def test_execution_registry_routes_first_move_workflow() -> None:
     assert current["final_enabled"] is False
     assert current["formal_enabled"] is False
     assert current["policy_lock_enabled"] is False
+    assert any("byte-level Direct-TFV first-move source fingerprint" in rule for rule in payload["hard_rules"])
 
 
 def test_step2_remains_frozen_v5() -> None:
