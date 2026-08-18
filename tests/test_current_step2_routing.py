@@ -21,6 +21,7 @@ PREFIX_ADMISSION = ROOT / "scripts" / "calibrate_direct_tfv_receding_prefix_curr
 DEV_RUNTIME_V8 = ROOT / "scripts" / "run_policy_direct_tfv_receding_prefix_development.py"
 DEV_AUDIT = ROOT / "scripts" / "audit_direct_tfv_closed_loop_current.py"
 COUNTERFACTUAL_PLAN = ROOT / "scripts" / "plan_direct_tfv_counterfactual_current.py"
+PREFIX_COUNTERFACTUAL = ROOT / "scripts" / "plan_direct_tfv_receding_prefix_counterfactual_current.py"
 RUNTIME_DIAGNOSTIC = ROOT / "scripts" / "diagnose_direct_tfv_runtime_failures_current.py"
 BASELINE_RUNNER = ROOT / "scripts" / "run_six_baselines_development_current.py"
 BASELINE_COMPARE = ROOT / "scripts" / "compare_direct_tfv_baselines_current.py"
@@ -123,6 +124,8 @@ def test_current_cli_surfaces_expose_receding_prefix_v8() -> None:
     assert "--metadata" in audit and "--baseline-node-statistics" in audit and "--baseline-metadata" in audit
     plan = _help(COUNTERFACTUAL_PLAN)
     assert "--metadata" in plan and "--max-decisions" in plan and "--out" in plan
+    prefix_plan = _help(PREFIX_COUNTERFACTUAL)
+    assert "--metadata" in prefix_plan and "--max-decisions" in prefix_plan and "--out" in prefix_plan
     failure = _help(RUNTIME_DIAGNOSTIC)
     assert "--metadata" in failure and "--out" in failure
     baseline = _help(BASELINE_RUNNER)
@@ -141,6 +144,7 @@ def test_current_lint_surface_tracks_receding_prefix_paths() -> None:
         "scripts/design_direct_tfv_receding_prefix_calibration_current.py",
         "scripts/calibrate_direct_tfv_receding_prefix_current.py",
         "scripts/run_policy_direct_tfv_receding_prefix_development.py",
+        "scripts/plan_direct_tfv_receding_prefix_counterfactual_current.py",
         "src/rtc/direct_tfv_receding_prefix.py",
         "src/rtc/step3_tfv_value_mpc_v8.py",
         "tests/test_direct_tfv_receding_prefix.py",
