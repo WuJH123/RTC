@@ -1,6 +1,6 @@
 {
-  "contract": "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V11",
-  "purpose": "Fail closed on Direct-TFV V5, fresh rainfall-disjoint admission calibration, D3-HOLD joint-sequence support, Step3 V6, authoritative Development runtime/audit and unchanged baselines.",
+  "contract": "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V12",
+  "purpose": "Fail closed on frozen Direct-TFV V5, q95 joint-sequence support, V6 raw optimizer policy-panel calibration, policy-matched Step3 V7, authoritative Development runtime/audit and unchanged baselines.",
   "full_repository_ruff_is_gate": false,
   "current_surface_ruff_is_gate": true,
   "rule_select": ["E4", "E7", "E9", "F"],
@@ -12,8 +12,11 @@
     "scripts/design_direct_tfv_admission_d3_current.py",
     "scripts/validate_direct_tfv_fresh_admission_data_current.py",
     "scripts/calibrate_direct_tfv_admission_current.py",
+    "scripts/design_direct_tfv_policy_calibration_current.py",
+    "scripts/calibrate_direct_tfv_policy_admission_current.py",
     "scripts/run_step3_direct_tfv_solver_calibrated_current.py",
     "scripts/run_policy_direct_tfv_development.py",
+    "scripts/run_policy_direct_tfv_policy_calibrated_development.py",
     "scripts/audit_direct_tfv_closed_loop_current.py",
     "scripts/audit_direct_tfv_calibrated_closed_loop_current.py",
     "scripts/plan_direct_tfv_counterfactual_current.py",
@@ -28,6 +31,7 @@
     "src/rtc/controller_direct_tfv.py",
     "src/rtc/direct_tfv_admission.py",
     "src/rtc/direct_tfv_admission_split.py",
+    "src/rtc/direct_tfv_policy_admission.py",
     "src/rtc/direct_tfv_sequence_support.py",
     "src/rtc/direct_tfv_counterfactual.py",
     "src/rtc/direct_tfv_replay_guard.py",
@@ -42,6 +46,7 @@
     "src/rtc/step3_tfv_value_mpc_v4.py",
     "src/rtc/step3_tfv_value_mpc_v5.py",
     "src/rtc/step3_tfv_value_mpc_v6.py",
+    "src/rtc/step3_tfv_value_mpc_v7.py",
     "src/rtc/step2_state_store_v127.py",
     "src/rtc/step2_causal_rainfall_v123.py",
     "src/rtc/production_cli.py",
@@ -60,6 +65,7 @@
     "tests/test_direct_tfv_competitive_v5.py",
     "tests/test_direct_tfv_calibrated_admission.py",
     "tests/test_direct_tfv_fresh_admission_split.py",
+    "tests/test_direct_tfv_policy_admission.py",
     "tests/test_direct_tfv_sequence_support.py",
     "tests/test_direct_tfv_baseline_provenance.py",
     "tests/test_direct_tfv_scientific_bottleneck_panel.py",
@@ -67,6 +73,6 @@
     "tests/test_facility_tfv_influence.py",
     "tests/test_facility_tfv_influence_cli.py"
   ],
-  "legacy_policy": "The old four-rainfall-group Step2 D3 holdout is audit-only and must never be split to manufacture a conformal sample. Fresh Development D3-HOLD rainfall groups calibrate admission; production/Validation/Final remain fail-closed.",
+  "legacy_policy": "The old four-rainfall-group Step2 D3 holdout is audit-only. V9 keeps the V6 q95 raw optimizer fixed and calibrates its residuals on the existing fresh Development calibration rainfall groups. T10/T20 are already-observed Development diagnostics and are not independent V9 acceptance evidence; production/Validation/Final remain fail-closed.",
   "non_gate_historical_debt_policy": "Do not mass-format archival code during scientific debugging."
 }
