@@ -39,7 +39,8 @@ class _DummyMPC:
     def _contract_to_joint_sequence_support(
         sequence: torch.Tensor, active_target: torch.Tensor
     ) -> torch.Tensor:
-        # The unit test only verifies the refinement cannot expand the upstream direction.
+        # This unit test isolates latch/refinement semantics; support contraction is tested elsewhere.
+        del active_target
         return sequence
 
     @staticmethod
@@ -52,14 +53,13 @@ class _DummyMPC:
         active_target: torch.Tensor,
     ) -> torch.Tensor:
         del current_state, rainfall, previous_actuator_flow
-        first = sequence[:2].mean(dim=0)
-        # Minimum is at half of the upstream first move for A000/A001/A002.
+        first = sequence[0]
         desired = active_target.clone()
         desired[:3] = 0.25
         return torch.sum((first - desired) ** 2) - 1.0
 
 
-def test_refiner_changes_only_h10_and_never_expands_upstream_first_move() -> None:
+def test_refiner_latches_new_target_and_never_expands_upstream_first_move() -> None:
     mpc = _DummyMPC()
     active = torch.zeros(109, dtype=torch.float32)
     base = active[None].expand(72, -1).clone()
@@ -74,11 +74,15 @@ def test_refiner_changes_only_h10_and_never_expands_upstream_first_move() -> Non
         maxiter=20,
         deadline_seconds=10.0,
     )
-    first = refined.sequence[:2].mean(dim=0)
+    first = refined.sequence[0]
     assert refined.changed_facility_count == 3
     assert torch.all(first[:3] >= -1.0e-7)
     assert torch.all(first[:3] <= 0.5 + 1.0e-7)
-    assert torch.allclose(refined.sequence[2:], torch.zeros_like(refined.sequence[2:]))
+    # P0 regression guard: after a write, the new supervisory target must stay latched when no
+    # later command is issued. It must not revert to the pre-decision active_target after H10.
+    assert torch.allclose(refined.sequence, first[None].expand_as(refined.sequence), atol=1.0e-7)
+    assert torch.allclose(refined.sequence[:, 3:], torch.zeros_like(refined.sequence[:, 3:]))
+    assert "LATCH_NEW_TARGET" in DIRECT_TFV_FIRST_MOVE_SEMANTICS
     assert refined.predicted_delta_tfv_m3 <= refined.base_prefix_predicted_delta_tfv_m3 + 1.0e-6
     assert refined.gain_vs_base_prefix_m3 >= -1.0e-6
 
