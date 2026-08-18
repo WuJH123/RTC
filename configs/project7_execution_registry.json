@@ -24,6 +24,7 @@
     "receding_prefix_admission_calibration": "scripts/calibrate_direct_tfv_receding_prefix_current.py",
     "development_authoritative_runtime": "scripts/run_policy_direct_tfv_receding_prefix_development.py",
     "development_authoritative_audit": "scripts/audit_direct_tfv_closed_loop_current.py",
+    "receding_prefix_counterfactual_plan": "scripts/plan_direct_tfv_receding_prefix_counterfactual_current.py",
     "production_runtime_enabled": false,
     "runtime_enabled": false,
     "seven_strategy_enabled": false,
@@ -65,6 +66,7 @@
     "derive the 90% rainfall-group receding-prefix admission; final prefix margin is max(generic fresh-D3 conformal floor, current-prefix conformal upper)",
     "require V2 full-plan margin to be diagnostic-only while preserving the same raw optimizer first move",
     "run V8 on newly preregistered Development events not previously used in V9 design",
+    "use the receding-prefix counterfactual planner to replay exactly H10 execute then H350 HOLD, not the uncommitted full H120 plan",
     "require zero support/engineering/readback violations and exact same-prefix truth for representative accepted/rejected first moves",
     "compare event-level TFV against No-control, Internal RTC, Auto-RBC, EFD, All-open and All-closed without weakening any baseline",
     "only after Development evidence is stable may the policy be frozen for untouched Validation"
