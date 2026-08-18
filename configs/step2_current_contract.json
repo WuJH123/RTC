@@ -1,20 +1,25 @@
 {
-  "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V8",
-  "status": "CURRENT_DEVELOPMENT_FRESH_ADMISSION_CALIBRATION_REQUIRED_NOT_POLICY_LOCKED",
+  "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V9",
+  "status": "CURRENT_DEVELOPMENT_POLICY_MATCHED_ADMISSION_CALIBRATION_REQUIRED_NOT_POLICY_LOCKED",
   "selected_implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
   "training_contract": "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5",
-  "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V6",
-  "admission_contract": "PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1",
+  "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V7",
+  "raw_optimizer_query_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V6",
+  "admission_contract": "PROJECT7_DIRECT_TFV_POLICY_MATCHED_ONE_SIDED_ADMISSION_V2",
+  "base_admission_contract": "PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1",
   "fresh_admission_data_contract": "PROJECT7_DIRECT_TFV_FRESH_D3_HOLD_ADMISSION_CALIBRATION_V1",
+  "policy_panel_contract": "PROJECT7_DIRECT_TFV_V6_RAW_OPTIMIZER_CALIBRATION_PANEL_V1",
   "sequence_support_contract": "PROJECT7_DIRECT_TFV_D3_HOLD_JOINT_SEQUENCE_SUPPORT_V1",
   "authoritative_truth": "SWMM",
-  "research_goal": "optimizer-consistent all-109 Direct-TFV receding MPC under sparse causal sensing",
+  "research_goal": "policy-matched optimizer-consistent all-109 Direct-TFV receding MPC under sparse causal sensing",
   "core_pipeline": {
     "step1": "causal sparse sensing -> current full-network hydraulic reconstruction",
     "step2": "causal current state + causal rainfall + complete H360 reference/candidate actions -> authoritative exact delta TFV",
     "sequence_support": "label-independent D3 TrainFit HOLD-reference q95 joint temporal trust region",
-    "admission_calibration": "fresh Development D3-HOLD rainfall groups not used by Step2 -> 90% one-sided rainfall-group split conformal; original Step2 D3 holdout -> independent cached audit; optimizer replay -> empirical maximum only",
-    "step3": "screen all 109; optimize and differentiably contract H120 sequence to q95 support; execute iff calibrated delta-TFV upper bound < 0 and first move changes",
+    "base_admission": "fresh Development D3-HOLD rainfall groups -> 90% one-sided rainfall-group split conformal; historical pre-V6 optimizer replay retained only as diagnostic evidence",
+    "policy_panel": "on the same fresh calibration rainfall groups, run the unchanged V6 raw optimizer once per group and label its q95 support-contracted H360 plan with authoritative offline SWMM",
+    "policy_admission": "final V7 margin = max(fresh generic-D3 conformal upper, current V6 raw-optimizer rainfall-group conformal upper); obsolete pre-V6 optimizer residual maximum is not a current margin floor",
+    "step3": "screen all 109; optimize and differentiably contract H120 sequence to q95 support; execute iff policy-matched delta-TFV upper bound < 0 and first move changes",
     "swmm": "authoritative offline label/evaluation/calibration truth only; never called inside online candidate search"
   },
   "time_contract": {
@@ -34,42 +39,42 @@
     "performance_tuned_threshold": false,
     "score_equals_execute": true
   },
-  "admission_data_contract": {
+  "policy_admission_data_contract": {
     "coverage": 0.9,
     "independent_unit": "rainfall_group",
-    "minimum_fresh_calibration_rainfall_groups": 9,
-    "preferred_fresh_calibration_rainfall_groups": "10-12 when generation cost is modest; preference is stability only, not a stronger coverage claim",
+    "minimum_policy_calibration_rainfall_groups": 9,
+    "current_fresh_calibration_rainfall_groups": 10,
     "step2_trainfit_role": "MODEL_FIT_ONLY_NEVER_CONFORMAL_CALIBRATION",
-    "fresh_calibration_role": "FRESH_DEVELOPMENT_D3_HOLD_NOT_STEP2_TRAIN",
+    "fresh_calibration_role": "GENERIC_D3_AND_CURRENT_POLICY_CALIBRATION_ONLY",
     "original_step2_d3_holdout_role": "INDEPENDENT_ADMISSION_AUDIT_ONLY",
+    "historical_t5_v5_optimizer_replay_role": "DIAGNOSTIC_ONLY_NOT_CURRENT_MARGIN_FLOOR",
+    "t10_t20_role_after_v9_design": "DEVELOPMENT_DIAGNOSTIC_ALREADY_OBSERVED_NOT_INDEPENDENT_V9_ACCEPTANCE",
     "required_rainfall_overlap_counts": 0,
-    "reserved_postcalibration_events": ["T10_D180", "T20_D300"],
-    "optimizer_replay_events_may_enter_fresh_calibration": false,
-    "optimizer_replay_coverage_claimed": false
-  },
-  "scientific_bottleneck": {
-    "classification": "ADMISSION_CALIBRATION_FAIL_CLOSED_INSUFFICIENT_RAINFALL_GROUPS",
-    "mechanism_under_test": "optimizer selection-induced optimism plus possible joint temporal sequence extrapolation",
-    "evidence": "original D3 holdout has 32 branches but only 4 independent rainfall groups; 90% one-sided finite-sample conformal needs at least 9 calibration rainfall groups, so splitting that holdout into calibration plus audit is mathematically impossible",
-    "next_test": "generate a small fresh Development-only D3-HOLD calibration pool, keep accepted Step2 V5 weights and original 4-rainfall-group holdout audit frozen, then resume V6"
-  },
-  "step3_current": {
-    "module": "src/rtc/step3_tfv_value_mpc_v6.py",
-    "admission_module": "src/rtc/direct_tfv_admission.py",
-    "fresh_admission_split_module": "src/rtc/direct_tfv_admission_split.py",
-    "fresh_admission_preflight": "scripts/validate_direct_tfv_fresh_admission_data_current.py",
-    "sequence_support_module": "src/rtc/direct_tfv_sequence_support.py",
-    "sequence_support_builder": "scripts/build_direct_tfv_sequence_support_current.py",
-    "solver_audit_runner": "scripts/run_step3_direct_tfv_solver_calibrated_current.py",
-    "development_runtime": "scripts/run_policy_direct_tfv_development.py",
-    "active_support": "q95 canonical; q90 conservative ablation; q99 diagnostic only",
-    "runtime_promoted": false
-  },
-  "data_boundaries": {
     "Validation_access": false,
     "Final_access": false,
     "Formal_access": false,
     "Policy_Lock_access": false
   },
-  "promotion_rule": "first obtain valid fresh rainfall-disjoint admission calibration, then on fresh post-calibration Development events show zero support/engineering violations, reduced exact same-prefix false-beneficial rate and event-level no-control non-inferiority; only then reassess strong baselines and untouched Validation"
+  "scientific_bottleneck": {
+    "classification": "ADMISSION_POLICY_MISMATCH_OVERCONSERVATIVE",
+    "evidence": "V6 restored T10/T20 no-control consistency and exact H360 replay false-beneficial fell to 0/10, but only 12 actions were executed in each event and all 6 replayed admission-rejected plans were actually beneficial; the V1 156384 m3 margin is dominated by pre-V6 T5 optimizer residuals from a different query distribution",
+    "mechanism_under_test": "whether calibrating uncertainty on the current q95-contracted optimizer query distribution preserves reliability while recovering beneficial decisions",
+    "next_test": "build and SWMM-label a 10-rainfall-group V6 raw optimizer calibration panel, derive V2 policy-matched margin, then test V7 on newly preregistered Development events not previously used for tuning"
+  },
+  "step3_current": {
+    "module": "src/rtc/step3_tfv_value_mpc_v7.py",
+    "policy_admission_module": "src/rtc/direct_tfv_policy_admission.py",
+    "policy_panel_designer": "scripts/design_direct_tfv_policy_calibration_current.py",
+    "policy_admission_calibrator": "scripts/calibrate_direct_tfv_policy_admission_current.py",
+    "development_runtime": "scripts/run_policy_direct_tfv_policy_calibrated_development.py",
+    "active_support": "q95 canonical; q90/q99 not permitted for current V9 evidence",
+    "runtime_promoted": false
+  },
+  "promotion_rule": "first obtain a valid current-policy 90% rainfall-group calibration panel with zero role leakage; then on newly preregistered Development events show zero support/engineering violations, materially fewer false rejections than V6, preserved exact H360 sign reliability and event-level no-control non-inferiority; only then reassess Auto-RBC competitiveness and untouched Validation",
+  "data_boundaries": {
+    "Validation_access": false,
+    "Final_access": false,
+    "Formal_access": false,
+    "Policy_Lock_access": false
+  }
 }
