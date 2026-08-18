@@ -1,9 +1,9 @@
 """Design a fresh Development calibration panel for refined first-move Direct-TFV V9.
 
-The script does not run SWMM.  For every fresh D3-HOLD rainfall group it obtains the frozen V6/V7
-q95-supported H120 optimizer query, refines only its first 10-minute move by shrink-only L-BFGS-B,
-and emits exactly one HOLD plus one refined H10-then-HOLD-H350 candidate.  Authoritative labels are
-added later by the existing D3 SWMM pipeline.
+The script does not run SWMM.  For every selected fresh D3-HOLD rainfall group it obtains the frozen
+V6/V7 q95-supported H120 optimizer query, refines only its first 10-minute move by shrink-only
+L-BFGS-B, and emits exactly one HOLD plus one refined H10-then-HOLD-H350 candidate.  Deterministic
+modulo sharding allows up to four independent GPU processes to design disjoint rainfall groups.
 """
 from __future__ import annotations
 
@@ -73,8 +73,14 @@ def main() -> None:
     p.add_argument("--device", default="cuda")
     p.add_argument("--first-move-maxiter", type=int, default=12)
     p.add_argument("--first-move-deadline-seconds", type=float, default=30.0)
+    p.add_argument("--shard-count", type=int, default=1)
+    p.add_argument("--shard-index", type=int, default=0)
     args = p.parse_args()
 
+    if args.shard_count <= 0 or args.shard_count > 4:
+        raise ValueError("first-move panel shard-count must lie in [1,4]")
+    if args.shard_index < 0 or args.shard_index >= args.shard_count:
+        raise ValueError("first-move panel shard-index must lie in [0, shard-count)")
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
     graph = _load_graph(args.graph)
     model, normalization, checkpoint = load_direct_tfv_runtime_checkpoint(args.checkpoint, graph=graph, device=device)
@@ -95,15 +101,21 @@ def main() -> None:
     if template.empty or "checkpoint_id" not in template or "data_role" not in template:
         raise ValueError("template D3 manifest is empty or incomplete")
 
-    names = sorted(fresh.targeted_d3_names())
-    rainfall_groups = {str(fresh.entry(name).rainfall_group) for name in names}
-    if len(rainfall_groups) < DIRECT_TFV_FIRST_MOVE_MIN_CALIBRATION_GROUPS:
+    all_names = sorted(fresh.targeted_d3_names())
+    all_rainfall_groups = {str(fresh.entry(name).rainfall_group) for name in all_names}
+    if len(all_rainfall_groups) < DIRECT_TFV_FIRST_MOVE_MIN_CALIBRATION_GROUPS:
         raise ValueError(
             "first-move panel needs at least "
-            f"{DIRECT_TFV_FIRST_MOVE_MIN_CALIBRATION_GROUPS} fresh rainfall groups; got {len(rainfall_groups)}"
+            f"{DIRECT_TFV_FIRST_MOVE_MIN_CALIBRATION_GROUPS} fresh rainfall groups; got {len(all_rainfall_groups)}"
         )
-    if len(names) != len(rainfall_groups):
+    if len(all_names) != len(all_rainfall_groups):
         raise ValueError("first-move panel requires exactly one D3 checkpoint per fresh rainfall group")
+    names = [
+        name for position, name in enumerate(all_names)
+        if position % int(args.shard_count) == int(args.shard_index)
+    ]
+    if not names:
+        raise ValueError("first-move panel shard contains no rainfall groups")
 
     mpc = DirectTFVRecedingMPCV7(
         model=model,
@@ -123,7 +135,7 @@ def main() -> None:
         entry = fresh.entry(name)
         group = str(entry.rainfall_group)
         if group in seen:
-            raise ValueError(f"duplicate rainfall group in first-move panel: {group}")
+            raise ValueError(f"duplicate rainfall group in first-move panel shard: {group}")
         seen.add(group)
         hold_rows = template[
             (template["checkpoint_id"].astype(str) == str(entry.checkpoint_id))
@@ -211,7 +223,7 @@ def main() -> None:
 
     frame = pd.DataFrame.from_records(output_rows)
     if len(frame) != 2 * len(seen):
-        raise RuntimeError("first-move panel must contain exactly one HOLD and one candidate per rainfall group")
+        raise RuntimeError("first-move panel shard must contain exactly one HOLD and one candidate per rainfall group")
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(out, index=False)
@@ -222,7 +234,11 @@ def main() -> None:
         "first_move_query_step3_contract": DIRECT_TFV_FIRST_MOVE_QUERY_STEP3_CONTRACT,
         "execution_estimand": DIRECT_TFV_FIRST_MOVE_SEMANTICS,
         "active_support_quantile": "q95",
+        "global_rainfall_group_count": len(all_rainfall_groups),
+        "shard_count": int(args.shard_count),
+        "shard_index": int(args.shard_index),
         "rainfall_group_count": len(seen),
+        "rainfall_groups": sorted(seen),
         "rows": len(frame),
         "hold_rows": len(seen),
         "candidate_rows": len(seen),
