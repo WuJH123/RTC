@@ -49,11 +49,14 @@ def test_current_contract_is_refined_first_move_v11() -> None:
     )
     assert payload["objective_contract"]["pfv_role"] == "REPORT_ONLY_SECONDARY_RISK_METRIC"
     assert payload["objective_contract"]["pfv_enters_step3_objective"] is False
+    # Keep the regression test aligned with the latest V11 target-latch contract rather than
+    # reverting the contract to the older HOLD label. HOLD means preserving the previous
+    # supervisory target exactly; it is neither No-control nor a reset to physical current setting.
     assert payload["action_contract"]["hold_online_reference_semantics"] == (
-        "HOLD_ACTIVE_SUPERVISORY_TARGET_NOT_NO_CONTROL"
+        "LATCH_PREVIOUS_SUPERVISORY_TARGET_NOT_NO_CONTROL_NOT_RESET"
     )
     assert payload["scientific_bottleneck"]["classification"] == (
-        "FIRST_MOVE_QUERY_AND_ADMISSION_MISMATCH_AFTER_V10"
+        "V10_EXECUTION_COUNTERFACTUAL_TARGET_LATCH_MISMATCH"
     )
 
 
