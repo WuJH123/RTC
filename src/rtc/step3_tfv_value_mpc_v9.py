@@ -1,13 +1,15 @@
-"""Refined-first-move Direct-TFV MPC V9.
+"""Target-latch first-move Direct-TFV MPC V9.
 
 V9 retains the V6/V7 all-109 H120/H360 optimizer as a coordinated direction generator, then performs
-a small receding-consistent refinement of the only action actually committed before replanning.  The
-first 10-minute displacement of each changed facility can only shrink toward HOLD, so the refinement
-cannot expand beyond the upstream q95-supported query geometry.  H350 is HOLD_ACTIVE_TARGET and the
-same Step2 model evaluates the delayed H360 TFV consequence.
+a small refinement of the next supervisory target actually written before replanning. The first
+10-minute displacement of each changed facility can only shrink toward the previous target, so the
+refinement cannot expand beyond the upstream q95-supported direction. For value evaluation, the newly
+written target remains latched through H360 if no later command arrives; the real controller still
+re-observes after 10 minutes and may change a new subset while every other facility keeps its last
+commanded target.
 
 Execution is controlled only by a fresh optimizer-matched, action-density-normalized first-move
-conformal margin. Historical V9 full-plan and V10 prefix margins remain diagnostic metadata and are
+conformal margin. Historical full-plan and V10 H10-then-old-target margins remain diagnostics and are
 not hidden execution floors.
 """
 from __future__ import annotations
@@ -49,7 +51,7 @@ class DirectTFVMPCResultV9(DirectTFVMPCResultV7):
 
 
 class DirectTFVRecedingMPCV9(DirectTFVRecedingMPCV7):
-    """V7 coordinated direction plus optimizer-matched shrink-only H10 refinement."""
+    """V7 coordinated direction plus optimizer-matched shrink-only target-latch refinement."""
 
     policy_mode = "direct_tfv_all109_receding_mpc_v9"
     policy_mode_contract = DIRECT_TFV_STEP3_CONTRACT
@@ -144,14 +146,14 @@ class DirectTFVRecedingMPCV9(DirectTFVRecedingMPCV7):
         )
         upper = float(refined.predicted_delta_tfv_m3 + margin)
         passed = bool(refined.changed_facility_count > 0 and upper < 0.0)
-        hold = self._hold_sequence(active_target)
-        executed = refined.sequence if passed else hold
+        previous_latch = self._hold_sequence(active_target)
+        executed = refined.sequence if passed else previous_latch
         diagnostics = self.joint_sequence_support_diagnostics(refined.sequence, active_target)
 
         values.update(
             {
-                # Telemetry/replay binds the prediction and the candidate to the same refined
-                # H10-then-HOLD counterfactual, even when admission rejects it and HOLD executes.
+                # Telemetry/replay binds prediction and candidate to the same target-latch
+                # counterfactual even when admission rejects it and the previous target is retained.
                 "settings": executed,
                 "optimized_candidate_settings": refined.sequence,
                 "predicted_delta_tfv_m3": float(refined.predicted_delta_tfv_m3) if passed else 0.0,
@@ -159,7 +161,7 @@ class DirectTFVRecedingMPCV9(DirectTFVRecedingMPCV7):
                 "selected_source": (
                     "DIRECT_TFV_RECEDING_LBFGSB"
                     if passed
-                    else "HOLD_REFINED_FIRST_MOVE_UPPER_BOUND_NONNEGATIVE"
+                    else "LATCH_PREVIOUS_TARGET_FIRST_MOVE_UPPER_BOUND_NONNEGATIVE"
                 ),
                 "admission_margin_m3": float(margin),
                 "admission_upper_bound_m3": float(upper),
