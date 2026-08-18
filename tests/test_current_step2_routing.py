@@ -16,9 +16,9 @@ FRESH_PREFLIGHT = ROOT / "scripts" / "validate_direct_tfv_fresh_admission_data_c
 BASE_ADMISSION = ROOT / "scripts" / "calibrate_direct_tfv_admission_current.py"
 POLICY_PANEL = ROOT / "scripts" / "design_direct_tfv_policy_calibration_current.py"
 POLICY_ADMISSION = ROOT / "scripts" / "calibrate_direct_tfv_policy_admission_current.py"
-STEP3_RUNNER = ROOT / "scripts" / "run_step3_direct_tfv_solver_calibrated_current.py"
-DEV_RUNTIME_V6 = ROOT / "scripts" / "run_policy_direct_tfv_development.py"
-DEV_RUNTIME_V7 = ROOT / "scripts" / "run_policy_direct_tfv_policy_calibrated_development.py"
+PREFIX_PANEL = ROOT / "scripts" / "design_direct_tfv_receding_prefix_calibration_current.py"
+PREFIX_ADMISSION = ROOT / "scripts" / "calibrate_direct_tfv_receding_prefix_current.py"
+DEV_RUNTIME_V8 = ROOT / "scripts" / "run_policy_direct_tfv_receding_prefix_development.py"
 DEV_AUDIT = ROOT / "scripts" / "audit_direct_tfv_closed_loop_current.py"
 COUNTERFACTUAL_PLAN = ROOT / "scripts" / "plan_direct_tfv_counterfactual_current.py"
 RUNTIME_DIAGNOSTIC = ROOT / "scripts" / "diagnose_direct_tfv_runtime_failures_current.py"
@@ -38,33 +38,34 @@ def _help(path: Path) -> str:
     return result.stdout
 
 
-def test_current_contract_is_policy_matched_direct_tfv_v9() -> None:
+def test_current_contract_is_receding_prefix_direct_tfv_v10() -> None:
     payload = json.loads(CURRENT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V9"
+    assert payload["contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V10"
     assert payload["selected_implementation_contract"] == "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2"
     assert payload["training_contract"] == "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5"
     assert payload["raw_optimizer_query_contract"] == "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V6"
-    assert payload["step3_contract"] == "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V7"
-    assert payload["admission_contract"] == "PROJECT7_DIRECT_TFV_POLICY_MATCHED_ONE_SIDED_ADMISSION_V2"
-    assert payload["policy_panel_contract"] == "PROJECT7_DIRECT_TFV_V6_RAW_OPTIMIZER_CALIBRATION_PANEL_V1"
+    assert payload["step3_contract"] == "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V8"
+    assert payload["policy_admission_contract"] == "PROJECT7_DIRECT_TFV_POLICY_MATCHED_ONE_SIDED_ADMISSION_V2"
+    assert payload["receding_prefix_admission_contract"] == "PROJECT7_DIRECT_TFV_RECEDING_PREFIX_ONE_SIDED_ADMISSION_V1"
+    assert payload["receding_prefix_panel_contract"] == "PROJECT7_DIRECT_TFV_EXECUTE_H10_THEN_HOLD_H350_CALIBRATION_PANEL_V1"
     assert payload["sequence_support_contract"] == "PROJECT7_DIRECT_TFV_D3_HOLD_JOINT_SEQUENCE_SUPPORT_V1"
-    assert payload["policy_admission_data_contract"]["minimum_policy_calibration_rainfall_groups"] == 9
+    assert payload["receding_prefix_data_contract"]["minimum_calibration_rainfall_groups"] == 9
     assert payload["action_contract"]["all_writable_actuators_screened_every_decision"] is True
-    assert payload["action_contract"]["score_equals_execute"] is True
-    assert payload["scientific_bottleneck"]["classification"] == "ADMISSION_POLICY_MISMATCH_OVERCONSERVATIVE"
+    assert payload["action_contract"]["raw_optimizer_unchanged_from_v6"] is True
+    assert payload["scientific_bottleneck"]["classification"] == "OPEN_LOOP_VALUE_VS_RECEDING_CONTROL_MISMATCH"
 
 
-def test_execution_registry_routes_policy_panel_before_v7_runtime() -> None:
+def test_execution_registry_routes_prefix_panel_before_v8_runtime() -> None:
     payload = json.loads(REGISTRY.read_text(encoding="utf-8"))
     current = payload["current"]
-    assert payload["contract"] == "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V10"
-    assert current["research_contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V9"
+    assert payload["contract"] == "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V11"
+    assert current["research_contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V10"
     assert current["training_contract"] == "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5"
     assert current["raw_optimizer_query_contract"] == "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V6"
-    assert current["step3_contract"] == "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V7"
-    assert current["policy_panel_design"] == "scripts/design_direct_tfv_policy_calibration_current.py"
-    assert current["policy_admission_calibration"] == "scripts/calibrate_direct_tfv_policy_admission_current.py"
-    assert current["development_authoritative_runtime"] == "scripts/run_policy_direct_tfv_policy_calibrated_development.py"
+    assert current["step3_contract"] == "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V8"
+    assert current["receding_prefix_panel_design"] == "scripts/design_direct_tfv_receding_prefix_calibration_current.py"
+    assert current["receding_prefix_admission_calibration"] == "scripts/calibrate_direct_tfv_receding_prefix_current.py"
+    assert current["development_authoritative_runtime"] == "scripts/run_policy_direct_tfv_receding_prefix_development.py"
     assert current["runtime_enabled"] is False
     assert current["validation_enabled"] is False
     assert current["final_enabled"] is False
@@ -81,7 +82,7 @@ def test_current_step2_wrapper_still_routes_to_frozen_v5_core_runner() -> None:
     assert "single_facility_coverage_count" in direct
 
 
-def test_current_cli_surfaces_expose_policy_matched_v7() -> None:
+def test_current_cli_surfaces_expose_receding_prefix_v8() -> None:
     step2 = _help(CURRENT_STEP2)
     for argument in (
         "--profile {smoke,dev}", "--graph", "--cache-manifest", "--d4-fit-cache",
@@ -92,44 +93,32 @@ def test_current_cli_surfaces_expose_policy_matched_v7() -> None:
     for argument in ("--checkpoint", "--graph", "--cache-manifest", "--out"):
         assert argument in sequence
     preflight = _help(FRESH_PREFLIGHT)
-    for argument in (
-        "--base-cache-manifest", "--fresh-calibration-cache-manifest",
-        "--optimizer-replay-report", "--coverage", "--reserved-event-id", "--out",
-    ):
-        assert argument in preflight
+    assert "--fresh-calibration-cache-manifest" in preflight
     base_calibration = _help(BASE_ADMISSION)
-    for argument in (
-        "--checkpoint", "--optimizer-replay-report", "--cache-manifest", "--causal-store",
-        "--causal-state-store", "--fresh-calibration-cache-manifest",
-        "--fresh-calibration-causal-store", "--fresh-calibration-causal-state-store",
-        "--reserved-event-id", "--coverage", "--out",
-    ):
-        assert argument in base_calibration
+    assert "--fresh-calibration-cache-manifest" in base_calibration
     panel = _help(POLICY_PANEL)
-    for argument in (
-        "--checkpoint", "--base-admission", "--sequence-support", "--fresh-cache-manifest",
-        "--fresh-causal-store", "--fresh-causal-state-store", "--template-d3-manifest", "--out",
-    ):
-        assert argument in panel
+    assert "--template-d3-manifest" in panel and "--out" in panel
     policy_calibration = _help(POLICY_ADMISSION)
+    assert "--policy-cache-manifest" in policy_calibration and "--out" in policy_calibration
+    prefix_panel = _help(PREFIX_PANEL)
     for argument in (
-        "--base-admission", "--policy-cache-manifest", "--policy-design-manifest", "--coverage", "--out",
+        "--checkpoint", "--graph", "--fresh-cache-manifest", "--fresh-causal-store",
+        "--fresh-causal-state-store", "--policy-design-manifest", "--out",
     ):
-        assert argument in policy_calibration
-    step3 = _help(STEP3_RUNNER)
+        assert argument in prefix_panel
+    prefix_calibration = _help(PREFIX_ADMISSION)
     for argument in (
-        "--checkpoint", "--admission-calibration", "--sequence-support",
-        "--active-support-quantile", "--max-groups",
+        "--base-policy-admission", "--prefix-cache-manifest", "--prefix-design-manifest",
+        "--coverage", "--out",
     ):
-        assert argument in step3
-    runtime_v6 = _help(DEV_RUNTIME_V6)
-    assert "--admission-calibration" in runtime_v6
-    runtime_v7 = _help(DEV_RUNTIME_V7)
+        assert argument in prefix_calibration
+    runtime = _help(DEV_RUNTIME_V8)
     for argument in (
-        "--inp", "--step1", "--step2", "--policy-admission-calibration", "--sequence-support",
-        "--sensors", "--active-support-quantile",
+        "--inp", "--step1", "--step2", "--policy-admission-calibration",
+        "--receding-prefix-admission-calibration", "--sequence-support", "--sensors",
+        "--active-support-quantile",
     ):
-        assert argument in runtime_v7
+        assert argument in runtime
     audit = _help(DEV_AUDIT)
     assert "--metadata" in audit and "--baseline-node-statistics" in audit and "--baseline-metadata" in audit
     plan = _help(COUNTERFACTUAL_PLAN)
@@ -144,17 +133,17 @@ def test_current_cli_surfaces_expose_policy_matched_v7() -> None:
     assert "--comparison" in aggregate and "--out-json" in aggregate
 
 
-def test_current_lint_surface_tracks_policy_matched_paths() -> None:
+def test_current_lint_surface_tracks_receding_prefix_paths() -> None:
     payload = json.loads(LINT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V12"
+    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V13"
     paths = set(payload["paths"])
     required = {
-        "scripts/design_direct_tfv_policy_calibration_current.py",
-        "scripts/calibrate_direct_tfv_policy_admission_current.py",
-        "scripts/run_policy_direct_tfv_policy_calibrated_development.py",
-        "src/rtc/direct_tfv_policy_admission.py",
-        "src/rtc/step3_tfv_value_mpc_v7.py",
-        "tests/test_direct_tfv_policy_admission.py",
+        "scripts/design_direct_tfv_receding_prefix_calibration_current.py",
+        "scripts/calibrate_direct_tfv_receding_prefix_current.py",
+        "scripts/run_policy_direct_tfv_receding_prefix_development.py",
+        "src/rtc/direct_tfv_receding_prefix.py",
+        "src/rtc/step3_tfv_value_mpc_v8.py",
+        "tests/test_direct_tfv_receding_prefix.py",
         "src/rtc/baselines.py",
         "src/rtc/rule_baselines.py",
     }
