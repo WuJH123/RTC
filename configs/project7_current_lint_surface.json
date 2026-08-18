@@ -1,6 +1,6 @@
 {
-  "contract": "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V14",
-  "purpose": "Fail closed on frozen Direct-TFV V5, q95 support, refined first-move Step3 V9, normalized first-move admission, authoritative Development runtime, PFV reporting and unchanged baselines.",
+  "contract": "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V15",
+  "purpose": "Fail closed on frozen Direct-TFV V5, q95 support, target-latch refined first-move Step3 V9, normalized first-move admission, authoritative Development runtime/replay, PFV reporting and unchanged baselines.",
   "full_repository_ruff_is_gate": false,
   "current_surface_ruff_is_gate": true,
   "rule_select": ["E4", "E7", "E9", "F"],
@@ -20,6 +20,7 @@
     "scripts/merge_direct_tfv_first_move_panel_shards.py",
     "scripts/calibrate_direct_tfv_first_move_admission_current.py",
     "scripts/run_policy_direct_tfv_first_move_development.py",
+    "scripts/plan_direct_tfv_first_move_counterfactual_current.py",
     "scripts/add_pfv_to_direct_tfv_comparison_current.py",
     "scripts/audit_direct_tfv_closed_loop_current.py",
     "scripts/plan_direct_tfv_counterfactual_current.py",
@@ -83,6 +84,6 @@
     "tests/test_facility_tfv_influence.py",
     "tests/test_facility_tfv_influence_cli.py"
   ],
-  "legacy_policy": "V8-V10 evidence remains Development diagnostic history. V11 retains Step2 V5 and q95 support, refines the actually committed H10 move within the supported upstream direction, calibrates it on at least 24 fresh rainfall groups, and reports PFV without changing the TFV-only objective. Production/Validation/Final remain fail-closed.",
+  "legacy_policy": "V8-V10 evidence remains Development diagnostic history. V11 retains Step2 V5 and q95 support but fixes the P0 V10 counterfactual: supervisory targets are latched until the next explicit command and never auto-revert after H10. V11 calibrates this exact target-latch first-move query on at least 24 fresh rainfall groups and reports PFV without changing the TFV-only objective. Production/Validation/Final remain fail-closed.",
   "non_gate_historical_debt_policy": "Do not mass-format archival code during scientific debugging."
 }
