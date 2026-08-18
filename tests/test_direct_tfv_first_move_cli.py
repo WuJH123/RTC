@@ -38,3 +38,14 @@ def test_merge_calibration_runtime_and_pfv_surfaces_are_routable() -> None:
     assert "--first-move-deadline-seconds" in runtime
     pfv = _help(PFV)
     assert "--priority-nodes" in pfv
+
+
+def test_first_move_calibration_and_runtime_are_source_tree_bound() -> None:
+    panel_source = PANEL.read_text(encoding="utf-8")
+    calibration_source = CALIBRATE.read_text(encoding="utf-8")
+    runtime_source = RUNTIME.read_text(encoding="utf-8")
+    for source in (panel_source, calibration_source, runtime_source):
+        assert "rtc_source_tree_sha256" in source
+    assert '"rtc_source_tree_sha256": source_tree_sha' in panel_source
+    assert "different RTC source tree" in calibration_source
+    assert "different RTC source tree" in runtime_source
