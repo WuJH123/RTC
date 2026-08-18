@@ -6,8 +6,9 @@ first 10-minute displacement of each changed facility can only shrink toward HOL
 cannot expand beyond the upstream q95-supported query geometry.  H350 is HOLD_ACTIVE_TARGET and the
 same Step2 model evaluates the delayed H360 TFV consequence.
 
-Execution is controlled only by a fresh optimizer-matched first-move conformal margin.  Historical
-V9 full-plan and V10 prefix margins remain diagnostic metadata and are not hidden execution floors.
+Execution is controlled only by a fresh optimizer-matched, action-density-normalized first-move
+conformal margin. Historical V9 full-plan and V10 prefix margins remain diagnostic metadata and are
+not hidden execution floors.
 """
 from __future__ import annotations
 
@@ -137,7 +138,10 @@ class DirectTFVRecedingMPCV9(DirectTFVRecedingMPCV7):
             maxiter=self.first_move_maxiter,
             deadline_seconds=self.first_move_deadline_seconds,
         )
-        margin = first_move_margin_m3(self.first_move_admission_calibration)
+        margin = first_move_margin_m3(
+            self.first_move_admission_calibration,
+            int(refined.changed_facility_count),
+        )
         upper = float(refined.predicted_delta_tfv_m3 + margin)
         passed = bool(refined.changed_facility_count > 0 and upper < 0.0)
         hold = self._hold_sequence(active_target)
@@ -146,7 +150,8 @@ class DirectTFVRecedingMPCV9(DirectTFVRecedingMPCV7):
 
         values.update(
             {
-                # Telemetry/replay must bind prediction and sequence to the same refined counterfactual.
+                # Telemetry/replay binds the prediction and the candidate to the same refined
+                # H10-then-HOLD counterfactual, even when admission rejects it and HOLD executes.
                 "settings": executed,
                 "optimized_candidate_settings": refined.sequence,
                 "predicted_delta_tfv_m3": float(refined.predicted_delta_tfv_m3) if passed else 0.0,
@@ -158,7 +163,7 @@ class DirectTFVRecedingMPCV9(DirectTFVRecedingMPCV7):
                 ),
                 "admission_margin_m3": float(margin),
                 "admission_upper_bound_m3": float(upper),
-                "admission_margin_kind": "refined_first_move_global",
+                "admission_margin_kind": "refined_first_move_normalized",
                 "admission_passed": passed,
                 "calibrated_admission_contract": DIRECT_TFV_FIRST_MOVE_ADMISSION_CONTRACT,
                 "first_move_changed_facility_count": int(refined.changed_facility_count),
