@@ -22,6 +22,7 @@
     "scripts/audit_direct_tfv_closed_loop_current.py",
     "scripts/audit_direct_tfv_calibrated_closed_loop_current.py",
     "scripts/plan_direct_tfv_counterfactual_current.py",
+    "scripts/plan_direct_tfv_receding_prefix_counterfactual_current.py",
     "scripts/diagnose_direct_tfv_runtime_failures_current.py",
     "scripts/run_six_baselines_development_current.py",
     "scripts/compare_direct_tfv_baselines_current.py",
