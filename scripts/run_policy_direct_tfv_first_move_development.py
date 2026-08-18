@@ -13,7 +13,10 @@ from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
 from rtc.closed_loop import run_authoritative_closed_loop
 from rtc.controller_direct_tfv import DirectTFVAuthoritativeController
 from rtc.direct_tfv_first_move import DIRECT_TFV_FIRST_MOVE_SEMANTICS
-from rtc.direct_tfv_first_move_admission import DIRECT_TFV_FIRST_MOVE_ADMISSION_CONTRACT
+from rtc.direct_tfv_first_move_admission import (
+    DIRECT_TFV_FIRST_MOVE_ADMISSION_CONTRACT,
+    DIRECT_TFV_FIRST_MOVE_SCALE,
+)
 from rtc.direct_tfv_policy_admission import DIRECT_TFV_POLICY_ADMISSION_CONTRACT
 from rtc.direct_tfv_sequence_support import validate_direct_tfv_sequence_support
 from rtc.event_clock import inspect_prepared_event_clock
@@ -110,6 +113,8 @@ def main() -> None:
     )
     if str(first.get("execution_estimand", "")) != DIRECT_TFV_FIRST_MOVE_SEMANTICS:
         raise ValueError("first-move admission has the wrong execution estimand")
+    if str(first.get("normalization", "")) != DIRECT_TFV_FIRST_MOVE_SCALE:
+        raise ValueError("first-move admission has the wrong residual normalization")
     if int(first.get("calibration_rainfall_group_count", 0)) < int(first.get("minimum_calibration_rainfall_groups", 24)):
         raise ValueError("first-move admission has insufficient rainfall-group calibration")
     lineage = first.get("lineage")
@@ -211,7 +216,8 @@ def main() -> None:
             "refined_first_move_semantics": DIRECT_TFV_FIRST_MOVE_SEMANTICS,
             "first_move_admission_contract": DIRECT_TFV_FIRST_MOVE_ADMISSION_CONTRACT,
             "first_move_admission_sha256": _sha(args.first_move_admission_calibration),
-            "first_move_global_margin_m3": float(first["global_margin_m3"]),
+            "first_move_admission_normalization": DIRECT_TFV_FIRST_MOVE_SCALE,
+            "first_move_normalized_conformal_upper": float(first["normalized_residual_conformal_upper"]),
             "policy_admission_sha256": _sha(args.policy_admission_calibration),
             "v2_full_plan_margin_controls_execution": False,
             "v10_prefix_margin_controls_execution": False,
@@ -248,7 +254,7 @@ def main() -> None:
         "decisions": result.decisions,
         "target_write_readback_passed": True,
         "active_support_ceiling": metadata["active_support_ceiling"],
-        "first_move_global_margin_m3": metadata["first_move_global_margin_m3"],
+        "first_move_normalized_conformal_upper": metadata["first_move_normalized_conformal_upper"],
         "sampled_global_peak_flood_rate_m3s": result.global_peak_flood_rate_m3s,
         "flow_routing_error_pct": result.flow_routing_error_pct,
     }, indent=2), flush=True)
