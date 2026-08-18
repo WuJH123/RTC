@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from rtc.checkpoint_direct_tfv import direct_tfv_first_move_source_sha256
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PANEL = ROOT / "scripts" / "design_direct_tfv_first_move_calibration_current.py"
@@ -38,3 +40,17 @@ def test_merge_calibration_runtime_and_pfv_surfaces_are_routable() -> None:
     assert "--first-move-deadline-seconds" in runtime
     pfv = _help(PFV)
     assert "--priority-nodes" in pfv
+
+
+def test_first_move_source_fingerprint_is_byte_level_and_routed_end_to_end() -> None:
+    fingerprint = direct_tfv_first_move_source_sha256()
+    assert len(fingerprint) == 64
+    assert set(fingerprint) <= set("0123456789abcdef")
+    panel_source = PANEL.read_text(encoding="utf-8")
+    calibration_source = CALIBRATE.read_text(encoding="utf-8")
+    runtime_source = RUNTIME.read_text(encoding="utf-8")
+    for source in (panel_source, calibration_source, runtime_source):
+        assert "first_move_source_sha256" in source
+    assert "direct_tfv_first_move_source_sha256" in panel_source
+    assert "direct_tfv_first_move_source_sha256" in calibration_source
+    assert "direct_tfv_first_move_source_sha256" in runtime_source
