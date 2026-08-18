@@ -10,7 +10,8 @@ commanded target.
 
 Execution is controlled only by a fresh optimizer-matched, action-density-normalized first-move
 conformal margin. Historical full-plan and V10 H10-then-old-target margins remain diagnostics and are
-not hidden execution floors.
+not hidden execution floors. A refinement that selects zero target changes is a valid control decision:
+it simply keeps the previous supervisory target latch and does not invoke an action-admission margin.
 """
 from __future__ import annotations
 
@@ -140,20 +141,64 @@ class DirectTFVRecedingMPCV9(DirectTFVRecedingMPCV7):
             maxiter=self.first_move_maxiter,
             deadline_seconds=self.first_move_deadline_seconds,
         )
+        previous_latch = self._hold_sequence(active_target)
+        diagnostics = self.joint_sequence_support_diagnostics(refined.sequence, active_target)
+
+        if int(refined.changed_facility_count) == 0:
+            values.update(
+                {
+                    "settings": previous_latch,
+                    "optimized_candidate_settings": refined.sequence,
+                    "predicted_delta_tfv_m3": 0.0,
+                    "raw_optimized_predicted_delta_tfv_m3": float(refined.predicted_delta_tfv_m3),
+                    "selected_source": "LATCH_PREVIOUS_TARGET_NO_REFINED_CHANGE",
+                    "admission_margin_m3": 0.0,
+                    "admission_upper_bound_m3": float(refined.predicted_delta_tfv_m3),
+                    "admission_margin_kind": "none_zero_change",
+                    "admission_passed": False,
+                    "calibrated_admission_contract": DIRECT_TFV_FIRST_MOVE_ADMISSION_CONTRACT,
+                    "first_move_changed_facility_count": 0,
+                    "joint_sequence_support_quantile": str(diagnostics["quantile"]),
+                    "joint_sequence_first_block_l1": float(diagnostics["first_block_l1"]),
+                    "joint_sequence_h120_l1": float(diagnostics["h120_l1"]),
+                    "joint_sequence_h120_total_variation_l1": float(
+                        diagnostics["h120_total_variation_l1"]
+                    ),
+                    "joint_sequence_support_max_ratio": float(diagnostics["max_ratio"]),
+                    "joint_sequence_support_binding": bool(diagnostics["binding"]),
+                    "policy_mode": self.policy_mode,
+                    "policy_mode_contract": self.policy_mode_contract,
+                    "full_plan_raw_predicted_delta_tfv_m3": full_plan_score,
+                    "base_prefix_predicted_delta_tfv_m3": float(
+                        refined.base_prefix_predicted_delta_tfv_m3
+                    ),
+                    "refined_first_move_predicted_delta_tfv_m3": float(
+                        refined.predicted_delta_tfv_m3
+                    ),
+                    "first_move_refinement_gain_m3": float(refined.gain_vs_base_prefix_m3),
+                    "refined_first_move_changed_facility_count": 0,
+                    "refined_first_move_changed_facility_ids": (),
+                    "refined_first_move_margin_m3": 0.0,
+                    "refined_first_move_upper_bound_m3": float(refined.predicted_delta_tfv_m3),
+                    "refined_first_move_admission_passed": False,
+                    "refined_first_move_admission_contract": DIRECT_TFV_FIRST_MOVE_ADMISSION_CONTRACT,
+                    "refined_first_move_semantics": DIRECT_TFV_FIRST_MOVE_SEMANTICS,
+                    "first_move_refiner_elapsed_seconds": float(refined.elapsed_seconds),
+                    "first_move_refiner_steps": int(refined.optimizer_steps),
+                }
+            )
+            return DirectTFVMPCResultV9(**values)
+
         margin = first_move_margin_m3(
             self.first_move_admission_calibration,
             int(refined.changed_facility_count),
         )
         upper = float(refined.predicted_delta_tfv_m3 + margin)
-        passed = bool(refined.changed_facility_count > 0 and upper < 0.0)
-        previous_latch = self._hold_sequence(active_target)
+        passed = bool(upper < 0.0)
         executed = refined.sequence if passed else previous_latch
-        diagnostics = self.joint_sequence_support_diagnostics(refined.sequence, active_target)
 
         values.update(
             {
-                # Telemetry/replay binds prediction and candidate to the same target-latch
-                # counterfactual even when admission rejects it and the previous target is retained.
                 "settings": executed,
                 "optimized_candidate_settings": refined.sequence,
                 "predicted_delta_tfv_m3": float(refined.predicted_delta_tfv_m3) if passed else 0.0,
