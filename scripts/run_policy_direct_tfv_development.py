@@ -13,6 +13,7 @@ from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
 from rtc.closed_loop import run_authoritative_closed_loop
 from rtc.controller_direct_tfv import DirectTFVAuthoritativeController
 from rtc.direct_tfv_admission import DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT
+from rtc.direct_tfv_admission_split import validate_runtime_admission_partition
 from rtc.direct_tfv_sequence_support import validate_direct_tfv_sequence_support
 from rtc.event_clock import inspect_prepared_event_clock
 from rtc.execution_audit_v127 import audit_target_write_readback_v127
@@ -58,9 +59,7 @@ def _load_admission(path: str | Path, *, step2_path: str | Path) -> dict:
     lineage = payload.get("lineage")
     if not isinstance(lineage, dict) or str(lineage.get("step2_checkpoint_sha256", "")).lower() != _sha(step2_path).lower():
         raise ValueError("runtime admission calibration was derived from a different Step2 checkpoint")
-    split = payload.get("split")
-    if not isinstance(split, dict) or int(split.get("rainfall_group_overlap_count", -1)) != 0:
-        raise ValueError("runtime admission calibration/audit rainfall groups are not disjoint")
+    validate_runtime_admission_partition(payload)
     if payload.get("optimizer_replay_coverage_claimed") is not False:
         raise ValueError("small optimizer replay sample must not claim conformal coverage")
     return payload
