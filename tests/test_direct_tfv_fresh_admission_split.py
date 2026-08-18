@@ -6,8 +6,10 @@ import pytest
 
 from rtc.direct_tfv_admission_split import (
     DIRECT_TFV_FRESH_ADMISSION_DATA_CONTRACT,
+    DIRECT_TFV_FRESH_ADMISSION_SOURCE,
     minimum_calibration_rainfall_groups,
     validate_fresh_admission_partition,
+    validate_runtime_admission_partition,
 )
 
 
@@ -43,6 +45,26 @@ def _combined_cache(*caches: _Cache) -> _Cache:
     for cache in caches:
         merged.update(cache.entries)
     return _Cache(merged)
+
+
+def _valid_runtime_artifact() -> dict:
+    train, train_cache = _names("train", 14)
+    audit, audit_cache = _names("audit", 4)
+    fresh, fresh_cache = _names("fresh", 10)
+    partition = validate_fresh_admission_partition(
+        base_cache=_combined_cache(train_cache, audit_cache),
+        step2_trainfit_d3_names=train,
+        original_audit_d3_names=audit,
+        fresh_cache=fresh_cache,
+        fresh_calibration_d3_names=fresh,
+        coverage=0.90,
+        optimizer_replay_events=("T5_D120_chicago",),
+    )
+    return {
+        "fresh_admission_data_contract": DIRECT_TFV_FRESH_ADMISSION_DATA_CONTRACT,
+        "calibration_source_semantics": DIRECT_TFV_FRESH_ADMISSION_SOURCE,
+        "partition": partition,
+    }
 
 
 def test_ninety_percent_fresh_calibration_needs_nine_independent_rainfall_groups() -> None:
@@ -121,7 +143,7 @@ def test_fresh_calibration_rejects_optimizer_replay_and_reserved_postcalibration
     fresh, fresh_cache = _names("fresh", 9)
     fresh_cache.entries[fresh[0]].event_id = "T5_D120_chicago"
     # Exact replay-event reuse is caught by the stable structured role-overlap key before
-    # the secondary substring/token guard.  Assert that machine-readable contract rather
+    # the secondary substring/token guard. Assert that machine-readable contract rather
     # than prose from the later (unreachable for an exact ID match) error branch.
     with pytest.raises(ValueError, match="calibration_optimizer_replay_event"):
         validate_fresh_admission_partition(
@@ -161,3 +183,25 @@ def test_fresh_calibration_rejects_untouched_evaluation_identifiers() -> None:
             fresh_calibration_d3_names=fresh,
             coverage=0.90,
         )
+
+
+def test_runtime_accepts_current_partition_schema() -> None:
+    artifact = _valid_runtime_artifact()
+    partition = validate_runtime_admission_partition(artifact)
+    assert partition is artifact["partition"]
+    assert partition["fresh_calibration_rainfall_group_count"] == 10
+    assert partition["original_audit_rainfall_group_count"] == 4
+
+
+def test_runtime_rejects_legacy_split_only_schema() -> None:
+    artifact = _valid_runtime_artifact()
+    artifact["split"] = artifact.pop("partition")
+    with pytest.raises(ValueError, match="current fresh-calibration partition"):
+        validate_runtime_admission_partition(artifact)
+
+
+def test_runtime_rejects_tampered_partition_overlap_summary() -> None:
+    artifact = _valid_runtime_artifact()
+    artifact["partition"]["calibration_audit_rainfall_overlap_count"] = 1
+    with pytest.raises(ValueError, match="nonzero overlap"):
+        validate_runtime_admission_partition(artifact)
