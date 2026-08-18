@@ -1,6 +1,6 @@
 {
   "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V11",
-  "status": "CURRENT_DEVELOPMENT_REFINED_FIRST_MOVE_CALIBRATION_REQUIRED_NOT_POLICY_LOCKED",
+  "status": "CURRENT_DEVELOPMENT_TARGET_LATCH_FIRST_MOVE_CALIBRATION_REQUIRED_NOT_POLICY_LOCKED",
   "selected_implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
   "training_contract": "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5",
   "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V9",
@@ -11,7 +11,7 @@
   "receding_prefix_admission_contract": "PROJECT7_DIRECT_TFV_RECEDING_PREFIX_ONE_SIDED_ADMISSION_V1",
   "sequence_support_contract": "PROJECT7_DIRECT_TFV_D3_HOLD_JOINT_SEQUENCE_SUPPORT_V1",
   "authoritative_truth": "SWMM",
-  "research_goal": "under sparse causal sensing, optimize and calibrate the 10-minute supervisory move actually committed before replanning so system-wide cumulative TFV is reduced reliably within a 600-second RTC cycle; Priority8 PFV and Global Peak are secondary report-only outcomes",
+  "research_goal": "under sparse causal sensing, choose every 10 minutes which subset of the 109 supervisory targets to change and by how much, leave every other target latched at its previous commanded value, and minimize system-wide cumulative TFV with authoritative SWMM used only for offline calibration/evaluation",
   "objective_contract": {
     "online_primary_objective": "SYSTEM_WIDE_CUMULATIVE_TFV_MINIMIZATION",
     "pfv_role": "REPORT_ONLY_SECONDARY_RISK_METRIC",
@@ -22,12 +22,13 @@
   },
   "core_pipeline": {
     "step1": "causal sparse sensors -> current full-network hydraulic reconstruction",
-    "step2": "causal state + causal rainfall + HOLD reference/candidate H360 action -> predicted delta TFV",
+    "step2": "causal state + causal rainfall + current target-latch reference/candidate H360 action -> predicted delta TFV",
     "sequence_support": "D3 TrainFit q95 joint temporal trust region prevents continuous optimizer extrapolation",
     "coordinated_direction": "all-109 screening plus support-contracted H120/H360 V6/V7 optimizer supplies a system-level control direction",
-    "first_move_refinement": "optimize independent shrink factors only on facilities changed by the supported V6/V7 first move; execute H10 then HOLD_ACTIVE_TARGET H350; refinement cannot expand outside the upstream supported direction",
-    "first_move_admission": "fresh Development authoritative SWMM labels the same refined first-move query; 90% rainfall-group split conformal uses residual/sqrt(actual first-move changed-facility count), with at least 24 rainfall groups",
-    "runtime": "execute only when refined first-move predicted delta TFV plus its action-density-normalized margin is negative; re-observe after 10 minutes",
+    "first_move_refinement": "optimize independent shrink factors only on facilities changed by the supported upstream first move; unchanged facilities remain exactly at the previous supervisory target",
+    "first_move_counterfactual": "write the refined target now and, if no later command arrives, keep that new target latched through H360; do not revert to the pre-decision target after H10",
+    "first_move_admission": "fresh Development authoritative SWMM labels the same target-latched first-move query; 90% rainfall-group split conformal uses residual/sqrt(actual first-move changed-facility count), with at least 24 rainfall groups",
+    "runtime": "execute only when refined target-latch predicted delta TFV plus its action-density-normalized margin is negative; after 10 minutes observe again and optionally change a new subset, while all other targets retain the last command",
     "swmm": "authoritative offline calibration/evaluation only; never inside online candidate search"
   },
   "time_contract": {
@@ -36,28 +37,36 @@
     "prediction_horizon_minutes": 360,
     "free_control_horizon_minutes": 120,
     "execute_minutes": 10,
-    "execution_value_semantics": "REFINE_SUPPORTED_V6_FIRST_MOVE_THEN_HOLD_ACTIVE_TARGET_H350"
+    "execution_value_semantics": "WRITE_REFINED_H10_TARGET_THEN_LATCH_NEW_TARGET_UNTIL_NEXT_COMMAND_H360",
+    "cross_decision_target_semantics": "LAST_COMMANDED_TARGET_PERSISTS_UNTIL_EXPLICITLY_CHANGED"
   },
   "action_contract": {
     "actuators": 109,
     "all_writable_actuators_screened_every_decision": true,
-    "engineering_bounds": "physical min/max plus <=0.5 setting movement per 10-minute update",
+    "engineering_bounds": "physical min/max plus <=0.5 target movement per 10-minute update",
     "per_facility_support": "TrainFit q95 first-move and sequence magnitude",
     "joint_density_support": "D3-HOLD q95 changed-facility count",
     "joint_temporal_support": "D3-HOLD q95 first-block L1, H120 L1 and H120 temporal total variation",
     "first_move_refinement": "SHRINK_ONLY_SAME_DIRECTION_NO_SUPPORT_EXPANSION",
+    "actual_changed_facility_count": "MODEL_OUTPUT_FROM_DIFFERENCE_BETWEEN_NEW_TARGET_AND_PREVIOUS_TARGET_NOT_ACTIVE_K",
+    "unchanged_facility_semantics": "COPY_PREVIOUS_COMMANDED_TARGET_EXACTLY",
     "score_equals_execute_first_move": true,
-    "hold_online_reference_semantics": "HOLD_ACTIVE_SUPERVISORY_TARGET_NOT_NO_CONTROL"
+    "hold_online_reference_semantics": "LATCH_PREVIOUS_SUPERVISORY_TARGET_NOT_NO_CONTROL_NOT_RESET"
+  },
+  "initial_condition_contract": {
+    "current_default": "SOURCE_INP_TARGET_SETTINGS_AT_COMMON_CONTROL_START",
+    "all_open_is_not_default": true,
+    "all_open_initialization_if_studied": "COMMON_PREREGISTERED_INITIALIZATION_APPLIED_IDENTICALLY_TO_PROPOSED_AND_COMPARATORS_NOT_PROPOSED_ONLY"
   },
   "first_move_data_contract": {
     "coverage": 0.9,
     "independent_unit": "rainfall_group",
     "minimum_calibration_rainfall_groups": 24,
     "normalization": "SQRT_FIRST_MOVE_CHANGED_FACILITY_COUNT",
-    "calibration_role": "REFINED_FIRST_MOVE_ONLY_NOT_STEP2_TRAIN",
+    "calibration_role": "TARGET_LATCH_REFINED_FIRST_MOVE_ONLY_NOT_STEP2_TRAIN",
     "generic_d3_floor_role": "DIAGNOSTIC_ONLY_NOT_EXECUTION_FLOOR",
     "v9_full_plan_margin_role": "DIAGNOSTIC_ONLY_NOT_EXECUTION_FLOOR",
-    "v10_prefix_margin_role": "DIAGNOSTIC_ONLY_NOT_EXECUTION_FLOOR",
+    "v10_prefix_margin_role": "INVALID_FOR_V11_EXECUTION_BECAUSE_IT_REVERTED_TO_OLD_TARGET_AFTER_H10",
     "observed_events_excluded_from_v11_acceptance": [
       "T5",
       "T10_D180",
@@ -75,23 +84,25 @@
     "Policy_Lock_access": false
   },
   "scientific_bottleneck": {
-    "classification": "FIRST_MOVE_QUERY_AND_ADMISSION_MISMATCH_AFTER_V10",
-    "evidence": "V10 screened all 109 facilities and still found 51-69 predicted-beneficial facilities with 13-23 proposed first-move changes, yet admission passed 0/198 decisions. The final 25005.62 m3 prefix margin was larger than the optimizer's typical 0.07-4.49k m3 predicted prefix benefit, while exact SWMM replay showed 15/18 rejected plans were truly beneficial. V10 also calibrated only ten 23-facility prefix queries although runtime first moves varied from 13 to 23 facilities.",
-    "mechanism_under_test": "whether directly refining the supported H10 move and calibrating uncertainty on that exact optimizer query with a larger, density-normalized fresh rainfall panel restores action availability without reintroducing false-beneficial actions",
-    "next_test": "build at least 24 fresh Development rainfall groups, label one refined first-move query plus HOLD per group with authoritative SWMM, calibrate normalized conformal admission, then test on new preregistered Development events"
+    "classification": "V10_EXECUTION_COUNTERFACTUAL_TARGET_LATCH_MISMATCH",
+    "evidence": "The authoritative runtime stores and reasserts the last commanded 109-dimensional target until the next explicit command, but V10 calibrated EXECUTE_H10_THEN_HOLD_ACTIVE_TARGET_H350 by reverting the changed facilities to their pre-decision target after 10 minutes. V10 then passed 0/198 actions even though 15/18 rejected raw plans were authoritatively beneficial. This counterfactual was not the command trajectory the controller would actually produce.",
+    "secondary_issue": "V10 calibrated only ten 23-facility queries although actual proposed first moves varied from 13 to 23 facilities, making a single absolute margin poorly aligned with action density.",
+    "mechanism_under_test": "whether target-latch-consistent first-move valuation plus exact-query normalized conformal calibration restores action availability without reintroducing optimizer false-benefit",
+    "next_test": "build at least 24 fresh Development rainfall groups, label one target-latched refined first-move query plus previous-target latch reference per group, calibrate normalized conformal admission, then test on new preregistered Development events"
   },
   "step3_current": {
     "module": "src/rtc/step3_tfv_value_mpc_v9.py",
     "first_move_module": "src/rtc/direct_tfv_first_move.py",
     "first_move_admission_module": "src/rtc/direct_tfv_first_move_admission.py",
     "first_move_panel_designer": "scripts/design_direct_tfv_first_move_calibration_current.py",
+    "first_move_panel_merger": "scripts/merge_direct_tfv_first_move_panel_shards.py",
     "first_move_calibrator": "scripts/calibrate_direct_tfv_first_move_admission_current.py",
     "development_runtime": "scripts/run_policy_direct_tfv_first_move_development.py",
     "pfv_reporter": "scripts/add_pfv_to_direct_tfv_comparison_current.py",
     "active_support": "q95 canonical",
     "runtime_promoted": false
   },
-  "promotion_rule": "on new preregistered Development events require nonzero but reliable actions, zero support/engineering/readback violations, event-level TFV non-inferiority to No-control, representative refined first-move SWMM replay with low false-beneficial rate, and transparent PFV/Global-Peak reporting; only then consider untouched Validation",
+  "promotion_rule": "on new preregistered Development events require nonzero but reliable target changes, zero support/engineering/readback violations, event-level TFV non-inferiority to No-control, representative target-latched first-move SWMM replay with low false-beneficial rate, and transparent PFV/Global-Peak reporting; only then consider untouched Validation",
   "data_boundaries": {
     "Validation_access": false,
     "Final_access": false,
