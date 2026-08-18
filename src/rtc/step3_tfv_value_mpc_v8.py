@@ -1,7 +1,7 @@
 """Receding-consistent Direct-TFV MPC V8.
 
-V8 leaves the V6/V7 raw optimizer and q95 support geometry unchanged.  It changes only the benefit
-credited to the action that is actually committed before the next observation.  The full H120/H360
+V8 leaves the V6/V7 raw optimizer and q95 support geometry unchanged. It changes only the benefit
+credited to the action that is actually committed before the next observation. The full H120/H360
 optimizer plan remains search guidance; execution is admitted from the Step2 value of the optimized
 first 10-minute block followed by HOLD for H350, calibrated with a rainfall-group one-sided bound.
 
@@ -82,6 +82,8 @@ class DirectTFVRecedingMPCV8(DirectTFVRecedingMPCV7):
             raise ValueError("V2 full-plan margin must not remain the V8 execution gate")
         if int(prefix.get("receding_prefix_calibration_rainfall_group_count", 0)) < 9:
             raise ValueError("Direct-TFV V8 requires at least nine prefix-calibration rainfall groups")
+        if str(prefix.get("density_classification_variable", "")) != "FIRST_MOVE_CHANGED_FACILITY_COUNT":
+            raise ValueError("Direct-TFV V8 prefix density must follow the executed first move")
         super().__init__(
             model=model,
             graph=graph,
@@ -134,13 +136,13 @@ class DirectTFVRecedingMPCV8(DirectTFVRecedingMPCV7):
             active_target=active_target,
         )
         score_value = float(prefix_score.detach().cpu())
+        changed = int(result.first_move_changed_facility_count)
         margin, kind = receding_prefix_margin_m3(
             self.receding_prefix_admission_calibration,
-            int(result.active_facility_count),
+            changed,
         )
         upper = float(score_value + margin)
         hold = self._hold_sequence(active_target)
-        changed = int(result.first_move_changed_facility_count)
         passed = bool(changed > 0 and upper < 0.0)
 
         values.update(
