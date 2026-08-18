@@ -65,6 +65,7 @@ def main() -> None:
         "sequence_sha256",
         "predicted_prefix_delta_tfv_m3",
         "active_facility_count",
+        "prefix_changed_facility_count",
         "receding_prefix_panel_contract",
         "receding_prefix_query_step3_contract",
     }
@@ -137,6 +138,7 @@ def main() -> None:
                 "predicted_prefix_delta_tfv_m3": float(row.predicted_prefix_delta_tfv_m3),
                 "true_prefix_delta_tfv_m3": _true_delta(entry, index),
                 "active_facility_count": int(row.active_facility_count),
+                "prefix_changed_facility_count": int(row.prefix_changed_facility_count),
             }
         )
         seen_groups.add(group)
