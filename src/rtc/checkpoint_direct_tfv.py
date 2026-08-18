@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import fields
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,42 @@ from .step2_train_response_v60 import InputNormalizationV60
 
 DIRECT_TFV_RUNTIME_CHECKPOINT_CONTRACT = "PROJECT7_DIRECT_TFV_RUNTIME_CHECKPOINT_V3"
 LEGACY_DIRECT_TFV_TRAINING_CONTRACT = "PROJECT7_DIRECT_TFV_CORE_TRAINING_V4"
+
+# Byte-level fingerprint for the source files that define the V11 first-move query, its support,
+# target-latch valuation and authoritative runtime adapter.  This is intentionally separate from the
+# historical rtc_source_tree_sha256 compatibility alias, which is only a semantic contract hash.
+_DIRECT_TFV_FIRST_MOVE_SOURCE_FILES = (
+    "step2_tfv_value.py",
+    "step2_tfv_support.py",
+    "direct_tfv_admission.py",
+    "direct_tfv_sequence_support.py",
+    "direct_tfv_policy_admission.py",
+    "step3_tfv_value_mpc_v3.py",
+    "step3_tfv_value_mpc_v4.py",
+    "step3_tfv_value_mpc_v5.py",
+    "step3_tfv_value_mpc_v6.py",
+    "step3_tfv_value_mpc_v7.py",
+    "direct_tfv_first_move.py",
+    "direct_tfv_first_move_admission.py",
+    "step3_tfv_value_mpc_v9.py",
+    "controller_v122.py",
+    "controller_direct_tfv.py",
+    "closed_loop.py",
+)
+
+
+def direct_tfv_first_move_source_sha256() -> str:
+    """Hash the exact source implementation used by V11 first-move calibration/execution."""
+
+    root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for name in _DIRECT_TFV_FIRST_MOVE_SOURCE_FILES:
+        path = root / name
+        if not path.is_file():
+            raise RuntimeError(f"Direct-TFV first-move source file is missing: {path}")
+        digest.update(name.encode("utf-8"))
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
 
 
 def _design_from_payload(payload: dict[str, Any]) -> DirectTFVValueDesign:
@@ -80,5 +117,6 @@ def load_direct_tfv_runtime_checkpoint(
 __all__ = [
     "DIRECT_TFV_RUNTIME_CHECKPOINT_CONTRACT",
     "LEGACY_DIRECT_TFV_TRAINING_CONTRACT",
+    "direct_tfv_first_move_source_sha256",
     "load_direct_tfv_runtime_checkpoint",
 ]
