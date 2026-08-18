@@ -2,9 +2,10 @@
 
 The script does not run SWMM. For every selected fresh D3-HOLD rainfall group it obtains the frozen
 V6/V7 q95-supported H120 optimizer query, refines only the target written at the next 10-minute
-control instant by shrink-only L-BFGS-B, and emits exactly one HOLD reference plus one candidate whose
-new target remains latched through H360 if no later command is issued. Deterministic modulo sharding
-allows up to four independent GPU processes to design disjoint rainfall groups.
+control instant by shrink-only L-BFGS-B plus TFV-only redundant-facility elimination, and emits
+exactly one HOLD reference plus one candidate whose new target remains latched through H360 if no
+later command is issued. Deterministic modulo sharding allows up to four independent GPU processes
+to design disjoint rainfall groups.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ import pandas as pd
 import torch
 
 from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
+from rtc.code_contract import rtc_source_tree_sha256
 from rtc.data_design import canonical_sequence_sha
 from rtc.direct_tfv_first_move import DIRECT_TFV_FIRST_MOVE_SEMANTICS, refine_supported_first_move
 from rtc.direct_tfv_first_move_admission import (
@@ -102,6 +104,10 @@ def main() -> None:
     if template.empty or "checkpoint_id" not in template or "data_role" not in template:
         raise ValueError("template D3 manifest is empty or incomplete")
 
+    source_tree_sha = rtc_source_tree_sha256()
+    if not source_tree_sha:
+        raise RuntimeError("could not fingerprint RTC source tree for first-move calibration design")
+
     all_names = sorted(fresh.targeted_d3_names())
     all_rainfall_groups = {str(fresh.entry(name).rainfall_group) for name in all_names}
     if len(all_rainfall_groups) < DIRECT_TFV_FIRST_MOVE_MIN_CALIBRATION_GROUPS:
@@ -181,6 +187,7 @@ def main() -> None:
                 "first_move_query_step3_contract": DIRECT_TFV_FIRST_MOVE_QUERY_STEP3_CONTRACT,
                 "first_move_role": "LATCH_PREVIOUS_TARGET_REFERENCE",
                 "first_move_semantics": "LATCH_PREVIOUS_TARGET_H360",
+                "rtc_source_tree_sha256": source_tree_sha,
             }
         )
         output_rows.append(hold_output)
@@ -190,7 +197,7 @@ def main() -> None:
             {
                 "data_role": FIRST_MOVE_CANDIDATE_ROLE,
                 "sequence_index": 1,
-                "candidate_family": "v9_refined_target_latch_first_move",
+                "candidate_family": "v11_refined_target_latch_tfv_sparse_first_move",
                 "v60_coefficients_json": json.dumps([]),
                 "settings_sequence_json": json.dumps(candidate_sequence, sort_keys=True),
                 "sequence_sha256": candidate_sha,
@@ -201,10 +208,14 @@ def main() -> None:
                 "first_move_query_step3_contract": DIRECT_TFV_FIRST_MOVE_QUERY_STEP3_CONTRACT,
                 "first_move_role": "REFINED_TARGET_LATCH_QUERY",
                 "first_move_semantics": DIRECT_TFV_FIRST_MOVE_SEMANTICS,
+                "rtc_source_tree_sha256": source_tree_sha,
                 "predicted_refined_delta_tfv_m3": float(refined.predicted_delta_tfv_m3),
                 "base_prefix_predicted_delta_tfv_m3": float(refined.base_prefix_predicted_delta_tfv_m3),
                 "refinement_gain_m3": float(refined.gain_vs_base_prefix_m3),
                 "first_move_changed_facility_count": int(refined.changed_facility_count),
+                "pre_prune_changed_facility_count": int(refined.pre_prune_changed_facility_count),
+                "pruned_facility_count": int(refined.pruned_facility_count),
+                "pruning_gain_m3": float(refined.pruning_gain_m3),
                 "full_plan_predicted_delta_tfv_m3": float(upstream.raw_optimized_predicted_delta_tfv_m3),
             }
         )
@@ -220,6 +231,9 @@ def main() -> None:
                 "base_prefix_predicted_delta_tfv_m3": float(refined.base_prefix_predicted_delta_tfv_m3),
                 "refinement_gain_m3": float(refined.gain_vs_base_prefix_m3),
                 "first_move_changed_facility_count": int(refined.changed_facility_count),
+                "pre_prune_changed_facility_count": int(refined.pre_prune_changed_facility_count),
+                "pruned_facility_count": int(refined.pruned_facility_count),
+                "pruning_gain_m3": float(refined.pruning_gain_m3),
             }
         )
 
@@ -247,6 +261,7 @@ def main() -> None:
         "candidate_rows": len(seen),
         "records": summaries,
         "lineage": {
+            "rtc_source_tree_sha256": source_tree_sha,
             "step2_checkpoint_sha256": _sha(args.checkpoint),
             "policy_admission_sha256": _sha(args.policy_admission),
             "sequence_support_sha256": _sha(args.sequence_support),
