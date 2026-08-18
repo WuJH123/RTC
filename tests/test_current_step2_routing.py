@@ -44,13 +44,26 @@ def test_current_contract_is_refined_first_move_v11() -> None:
     assert payload["first_move_data_contract"]["normalization"] == (
         "SQRT_FIRST_MOVE_CHANGED_FACILITY_COUNT"
     )
+    assert payload["first_move_data_contract"]["source_fingerprint"] == (
+        "BYTE_LEVEL_DIRECT_TFV_FIRST_MOVE_SOURCE_SHA256_REQUIRED_AT_PANEL_CALIBRATION_AND_RUNTIME"
+    )
     assert payload["objective_contract"]["online_primary_objective"] == (
         "SYSTEM_WIDE_CUMULATIVE_TFV_MINIMIZATION"
     )
     assert payload["objective_contract"]["pfv_role"] == "REPORT_ONLY_SECONDARY_RISK_METRIC"
     assert payload["objective_contract"]["pfv_enters_step3_objective"] is False
+    assert "BACKWARD_PRUNING" in payload["action_contract"]["first_move_refinement"]
     assert payload["action_contract"]["hold_online_reference_semantics"] == (
         "LATCH_PREVIOUS_SUPERVISORY_TARGET_NOT_NO_CONTROL_NOT_RESET"
+    )
+    assert payload["action_contract"]["unchanged_facility_semantics"] == (
+        "COPY_PREVIOUS_COMMANDED_TARGET_EXACTLY"
+    )
+    assert payload["time_contract"]["cross_decision_target_semantics"] == (
+        "LAST_COMMANDED_TARGET_PERSISTS_UNTIL_EXPLICITLY_CHANGED"
+    )
+    assert payload["initial_condition_contract"]["current_default"].startswith(
+        "AUTHORITATIVE_ACTUATOR_TARGET_READBACK_AT_FIRST_COMMON_CONTROL_DECISION"
     )
     assert payload["scientific_bottleneck"]["classification"] == (
         "V10_EXECUTION_COUNTERFACTUAL_TARGET_LATCH_MISMATCH"
@@ -60,12 +73,15 @@ def test_current_contract_is_refined_first_move_v11() -> None:
 def test_execution_registry_routes_first_move_workflow() -> None:
     payload = json.loads(REGISTRY.read_text(encoding="utf-8"))
     current = payload["current"]
-    assert payload["contract"] == "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V12"
+    assert payload["contract"] == "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V13"
     assert current["research_contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V11"
     assert current["training_contract"] == "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5"
     assert current["step3_contract"] == "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V9"
     assert current["first_move_panel_design"] == (
         "scripts/design_direct_tfv_first_move_calibration_current.py"
+    )
+    assert current["first_move_panel_merge"] == (
+        "scripts/merge_direct_tfv_first_move_panel_shards.py"
     )
     assert current["first_move_admission_calibration"] == (
         "scripts/calibrate_direct_tfv_first_move_admission_current.py"
@@ -73,12 +89,16 @@ def test_execution_registry_routes_first_move_workflow() -> None:
     assert current["development_authoritative_runtime"] == (
         "scripts/run_policy_direct_tfv_first_move_development.py"
     )
+    assert current["first_move_counterfactual_plan"] == (
+        "scripts/plan_direct_tfv_first_move_counterfactual_current.py"
+    )
     assert current["pfv_report"] == "scripts/add_pfv_to_direct_tfv_comparison_current.py"
     assert current["runtime_enabled"] is False
     assert current["validation_enabled"] is False
     assert current["final_enabled"] is False
     assert current["formal_enabled"] is False
     assert current["policy_lock_enabled"] is False
+    assert any("byte-level Direct-TFV first-move source fingerprint" in rule for rule in payload["hard_rules"])
 
 
 def test_step2_remains_frozen_v5() -> None:
@@ -100,6 +120,8 @@ def test_current_v11_clis_are_exposed() -> None:
         "--fresh-causal-state-store",
         "--template-d3-manifest",
         "--first-move-maxiter",
+        "--shard-count",
+        "--shard-index",
         "--out",
     ):
         assert argument in panel
@@ -133,15 +155,17 @@ def test_current_v11_clis_are_exposed() -> None:
 
 def test_current_lint_surface_tracks_v11_paths() -> None:
     payload = json.loads(LINT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V14"
+    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V15"
     paths = set(payload["paths"])
     required = {
         "src/rtc/direct_tfv_first_move.py",
         "src/rtc/direct_tfv_first_move_admission.py",
         "src/rtc/step3_tfv_value_mpc_v9.py",
         "scripts/design_direct_tfv_first_move_calibration_current.py",
+        "scripts/merge_direct_tfv_first_move_panel_shards.py",
         "scripts/calibrate_direct_tfv_first_move_admission_current.py",
         "scripts/run_policy_direct_tfv_first_move_development.py",
+        "scripts/plan_direct_tfv_first_move_counterfactual_current.py",
         "scripts/add_pfv_to_direct_tfv_comparison_current.py",
         "tests/test_direct_tfv_first_move.py",
     }
@@ -153,6 +177,8 @@ def test_production_and_untouched_evaluation_remain_fail_closed() -> None:
     for path in (CURRENT_POLICY, CURRENT_SEVEN):
         help_text = _help(path)
         assert "--promotion-status" in help_text
-        result = subprocess.run([sys.executable, str(path)], cwd=ROOT, text=True, capture_output=True, check=False)
+        result = subprocess.run(
+            [sys.executable, str(path)], cwd=ROOT, text=True, capture_output=True, check=False
+        )
         assert result.returncode != 0
         assert "production" in result.stderr.lower()
