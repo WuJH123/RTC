@@ -2,7 +2,7 @@
 
 The accepted Step2 V5 model was trained on its TrainFit rainfall groups, so those groups cannot be
 reused as the split-conformal calibration sample without weakening the intended held-out finite-
-sample argument.  Conversely, the historical Step2 holdout contains only four independent D3
+sample argument. Conversely, the historical Step2 holdout contains only four independent D3
 rainfall groups: useful as an audit, but insufficient for 90% one-sided split conformal calibration.
 
 This module therefore enforces three mutually disjoint Development roles:
@@ -12,7 +12,7 @@ This module therefore enforces three mutually disjoint Development roles:
 * original Step2 D3 holdout rainfall groups: independent admission audit only.
 
 The fresh calibration set is also kept disjoint from optimizer-replay calibration events and reserved
-post-calibration Development events.  No Validation/Final/Formal/Policy-Lock asset is permitted.
+post-calibration Development events. No Validation/Final/Formal/Policy-Lock asset is permitted.
 """
 from __future__ import annotations
 
@@ -27,6 +27,14 @@ DIRECT_TFV_FRESH_ADMISSION_SOURCE = "FRESH_DEVELOPMENT_D3_HOLD_NOT_STEP2_TRAIN"
 DIRECT_TFV_ADMISSION_AUDIT_SOURCE = "ORIGINAL_STEP2_D3_HOLDOUT"
 DEFAULT_RESERVED_POSTCALIBRATION_EVENT_TOKENS = ("T10_D180", "T20_D300")
 FORBIDDEN_EVALUATION_TOKENS = ("validation", "final", "formal", "policy_lock", "policylock")
+_RUNTIME_ZERO_OVERLAP_KEYS = (
+    "train_calibration_rainfall_overlap_count",
+    "calibration_audit_rainfall_overlap_count",
+    "train_audit_rainfall_overlap_count",
+    "train_calibration_event_overlap_count",
+    "calibration_audit_event_overlap_count",
+    "calibration_optimizer_replay_event_overlap_count",
+)
 
 
 def minimum_calibration_rainfall_groups(coverage: float) -> int:
@@ -194,6 +202,88 @@ def validate_fresh_admission_partition(
     }
 
 
+def validate_runtime_admission_partition(payload: Any) -> dict[str, Any]:
+    """Validate the current producer schema before an admission artifact is used online.
+
+    The calibration producer writes its scientific split evidence under ``partition``. Runtime must
+    consume that exact schema rather than the legacy ``split`` field used before fresh calibration
+    was introduced. The validator rechecks the stored role geometry instead of trusting a single
+    overlap summary field so a stale or partially migrated artifact fails closed.
+    """
+
+    if not isinstance(payload, dict):
+        raise ValueError("runtime admission artifact must be a JSON object")
+    partition = payload.get("partition")
+    if not isinstance(partition, dict):
+        raise ValueError("runtime admission artifact lacks the current fresh-calibration partition")
+    if str(payload.get("fresh_admission_data_contract", "")) != DIRECT_TFV_FRESH_ADMISSION_DATA_CONTRACT:
+        raise ValueError("runtime admission artifact has the wrong fresh-data contract")
+    if str(partition.get("contract", "")) != DIRECT_TFV_FRESH_ADMISSION_DATA_CONTRACT:
+        raise ValueError("runtime admission partition has the wrong contract")
+    if partition.get("development_only") is not True:
+        raise ValueError("runtime admission partition must be Development-only")
+    if str(partition.get("calibration_source_semantics", "")) != DIRECT_TFV_FRESH_ADMISSION_SOURCE:
+        raise ValueError("runtime admission partition has the wrong calibration source semantics")
+    if str(partition.get("audit_source_semantics", "")) != DIRECT_TFV_ADMISSION_AUDIT_SOURCE:
+        raise ValueError("runtime admission partition has the wrong audit source semantics")
+    if str(payload.get("calibration_source_semantics", "")) != DIRECT_TFV_FRESH_ADMISSION_SOURCE:
+        raise ValueError("runtime admission artifact has the wrong calibration source semantics")
+    if partition.get("ready_for_admission_calibration") is not True:
+        raise ValueError("runtime admission partition was not ready for calibration")
+
+    coverage = float(partition.get("requested_conformal_coverage", float("nan")))
+    minimum = minimum_calibration_rainfall_groups(coverage)
+    stored_minimum = int(partition.get("minimum_calibration_rainfall_groups", -1))
+    if stored_minimum != minimum:
+        raise ValueError("runtime admission partition has inconsistent conformal sample-size metadata")
+
+    train_rain = {str(value) for value in partition.get("step2_trainfit_rainfall_groups", ())}
+    fresh_rain = {str(value) for value in partition.get("fresh_calibration_rainfall_groups", ())}
+    audit_rain = {str(value) for value in partition.get("original_audit_rainfall_groups", ())}
+    fresh_events = {str(value) for value in partition.get("fresh_calibration_event_ids", ())}
+    replay_events = {str(value) for value in partition.get("optimizer_replay_event_ids", ())}
+    reserved_tokens = tuple(
+        str(value) for value in partition.get("reserved_postcalibration_event_tokens", ())
+    )
+
+    expected_counts = {
+        "step2_trainfit_rainfall_group_count": len(train_rain),
+        "fresh_calibration_rainfall_group_count": len(fresh_rain),
+        "original_audit_rainfall_group_count": len(audit_rain),
+    }
+    for key, actual in expected_counts.items():
+        if int(partition.get(key, -1)) != int(actual):
+            raise ValueError(f"runtime admission partition count mismatch: {key}")
+    if len(fresh_rain) < minimum:
+        raise ValueError(
+            "runtime admission partition has too few independent fresh calibration rainfall groups"
+        )
+    if not train_rain or not audit_rain:
+        raise ValueError("runtime admission partition must retain non-empty TrainFit and audit roles")
+
+    role_overlap = {
+        "train_calibration_rainfall": sorted(train_rain & fresh_rain),
+        "calibration_audit_rainfall": sorted(fresh_rain & audit_rain),
+        "train_audit_rainfall": sorted(train_rain & audit_rain),
+        "calibration_optimizer_replay_event": sorted(fresh_events & replay_events),
+    }
+    nonzero_roles = {key: values for key, values in role_overlap.items() if values}
+    if nonzero_roles:
+        raise ValueError(f"runtime admission partition role leakage detected: {nonzero_roles}")
+    for key in _RUNTIME_ZERO_OVERLAP_KEYS:
+        if int(partition.get(key, -1)) != 0:
+            raise ValueError(f"runtime admission partition reports nonzero overlap: {key}")
+
+    reserved_hits = sorted(event for event in fresh_events if _contains_token(event, reserved_tokens))
+    if reserved_hits:
+        raise ValueError(
+            "runtime admission partition reuses reserved post-calibration events: "
+            f"{reserved_hits}"
+        )
+    _require_development_only_identifiers(rainfall_groups=fresh_rain, event_ids=fresh_events)
+    return partition
+
+
 __all__ = [
     "DEFAULT_RESERVED_POSTCALIBRATION_EVENT_TOKENS",
     "DIRECT_TFV_ADMISSION_AUDIT_SOURCE",
@@ -202,4 +292,5 @@ __all__ = [
     "minimum_calibration_rainfall_groups",
     "optimizer_replay_event_ids",
     "validate_fresh_admission_partition",
+    "validate_runtime_admission_partition",
 ]
