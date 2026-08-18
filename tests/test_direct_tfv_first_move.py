@@ -59,6 +59,22 @@ class _DummyMPC:
         return torch.sum((first - desired) ** 2) - 1.0
 
 
+class _PruneDummyMPC(_DummyMPC):
+    @staticmethod
+    def score_sequence(
+        *,
+        current_state: torch.Tensor,
+        rainfall: torch.Tensor,
+        sequence: torch.Tensor,
+        previous_actuator_flow: torch.Tensor,
+        active_target: torch.Tensor,
+    ) -> torch.Tensor:
+        del current_state, rainfall, previous_actuator_flow
+        # Only actuator 0 has value. Actuator 1 is deliberately irrelevant, so objective-consistent
+        # pruning must return it to the previous target without any sparsity penalty.
+        return (sequence[0, 0] - (active_target[0] + 0.25)) ** 2 - 1.0
+
+
 def test_refiner_latches_new_target_and_never_expands_upstream_first_move() -> None:
     mpc = _DummyMPC()
     active = torch.zeros(109, dtype=torch.float32)
@@ -85,6 +101,28 @@ def test_refiner_latches_new_target_and_never_expands_upstream_first_move() -> N
     assert "LATCH_NEW_TARGET" in DIRECT_TFV_FIRST_MOVE_SEMANTICS
     assert refined.predicted_delta_tfv_m3 <= refined.base_prefix_predicted_delta_tfv_m3 + 1.0e-6
     assert refined.gain_vs_base_prefix_m3 >= -1.0e-6
+
+
+def test_refiner_prunes_facility_that_does_not_improve_tfv() -> None:
+    mpc = _PruneDummyMPC()
+    active = torch.zeros(109, dtype=torch.float32)
+    base = active[None].expand(72, -1).clone()
+    base[:2, :2] = 0.5
+    refined = refine_supported_first_move(
+        mpc=mpc,
+        base_candidate=base,
+        current_state=torch.zeros((1, 1, 1)),
+        rainfall=torch.zeros((1, 1, 1, 1)),
+        previous_actuator_flow=torch.zeros((1, 109)),
+        active_target=active,
+        maxiter=20,
+        deadline_seconds=10.0,
+    )
+    assert refined.pre_prune_changed_facility_count >= 2
+    assert refined.pruned_facility_count >= 1
+    assert refined.changed_facility_count == 1
+    assert abs(float(refined.sequence[0, 1])) <= 1.0e-7
+    assert torch.allclose(refined.sequence, refined.sequence[0][None].expand_as(refined.sequence))
 
 
 def _records(count: int) -> list[dict[str, object]]:
