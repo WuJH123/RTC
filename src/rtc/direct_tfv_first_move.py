@@ -7,10 +7,10 @@ Therefore the correct no-further-command counterfactual is not ``H10 new -> old 
 ``write the refined first target now -> keep that new target latched through H360``.
 
 This module refines the V6 first-move direction with one shrink factor per changed facility in [0,1].
-Unchanged facilities remain exactly at the previous target latch. Because refinement can only shrink
-the supported V6 first displacement, it never expands the first move outside the upstream support
-envelope. The resulting target is repeated through H360 solely as the no-further-command value
-counterfactual; the real controller still re-observes and may issue a new target after 10 minutes.
+Unchanged facilities remain exactly at the previous target latch. After continuous refinement, an
+objective-consistent backward pruning pass removes any facility whose return to the previous target
+does not worsen predicted TFV. The pruning introduces no action penalty or tuned sparsity weight:
+actual changed-facility count is selected by the learned TFV objective itself.
 """
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from scipy.optimize import minimize
 DIRECT_TFV_FIRST_MOVE_SEMANTICS = (
     "WRITE_REFINED_H10_TARGET_THEN_LATCH_NEW_TARGET_UNTIL_NEXT_COMMAND_H360"
 )
+_PRUNE_NUMERICAL_TOLERANCE_M3 = 1.0e-5
 
 
 @dataclass(frozen=True)
@@ -36,11 +37,17 @@ class DirectTFVFirstMoveRefinement:
     gain_vs_base_prefix_m3: float
     changed_facility_count: int
     changed_facility_ids: tuple[str, ...]
+    pre_prune_changed_facility_count: int
+    pruned_facility_count: int
     optimizer_success: bool
     optimizer_steps: int
     optimizer_starts: int
     elapsed_seconds: float
     scipy_message: str
+
+
+def _latched_target_sequence(target: torch.Tensor, horizon_steps: int) -> torch.Tensor:
+    return target[None].expand(int(horizon_steps), -1).clone()
 
 
 def _latched_first_move_sequence(
@@ -57,12 +64,109 @@ def _latched_first_move_sequence(
     target[changed_indices] = (
         active_target[changed_indices] + base_delta[changed_indices] * scales
     )
-    sequence = target[None].expand(int(mpc.design.prediction_horizon_steps), -1).clone()
+    sequence = _latched_target_sequence(target, int(mpc.design.prediction_horizon_steps))
     # The base first move is q95-supported. Shrink-only refinement cannot increase any per-facility
     # displacement, but retain the joint contraction as a fail-closed check on first-block/H120 mass.
     if hasattr(mpc, "_contract_to_joint_sequence_support"):
         sequence = mpc._contract_to_joint_sequence_support(sequence, active_target)
     return sequence
+
+
+def _score_sequence_batch(
+    *,
+    mpc: Any,
+    sequences: torch.Tensor,
+    current_state: torch.Tensor,
+    rainfall: torch.Tensor,
+    previous_actuator_flow: torch.Tensor,
+    active_target: torch.Tensor,
+) -> torch.Tensor:
+    if hasattr(mpc, "_score_sequences"):
+        return mpc._score_sequences(
+            current_state=current_state,
+            rainfall=rainfall,
+            sequences=sequences,
+            previous_actuator_flow=previous_actuator_flow,
+            active_target=active_target,
+        )
+    return torch.stack(
+        [
+            mpc.score_sequence(
+                current_state=current_state,
+                rainfall=rainfall,
+                sequence=sequence,
+                previous_actuator_flow=previous_actuator_flow,
+                active_target=active_target,
+            )
+            for sequence in sequences
+        ]
+    )
+
+
+def _prune_non_beneficial_facilities(
+    *,
+    mpc: Any,
+    sequence: torch.Tensor,
+    score_m3: float,
+    current_state: torch.Tensor,
+    rainfall: torch.Tensor,
+    previous_actuator_flow: torch.Tensor,
+    active_target: torch.Tensor,
+) -> tuple[torch.Tensor, float, int, int]:
+    """Greedily remove target changes that do not improve the predicted TFV objective.
+
+    Reverting one facility to the previous latch only shrinks the action, so every pruned candidate
+    remains inside the support envelope of the already-contracted sequence. Candidate removals are
+    scored as one GPU batch per pruning round. A facility is removed only when its removal is no worse
+    than the current candidate up to a fixed floating-point tolerance.
+    """
+
+    target = sequence[0].detach().clone()
+    active = torch.nonzero(
+        torch.abs(target - active_target) > 1.0e-7, as_tuple=False
+    ).reshape(-1)
+    before = int(active.numel())
+    if before == 0:
+        return sequence.detach(), float(score_m3), 0, 0
+
+    current_score = float(score_m3)
+    current_target = target
+    while int(active.numel()) > 0:
+        candidates: list[torch.Tensor] = []
+        for index in active.detach().cpu().tolist():
+            candidate_target = current_target.clone()
+            candidate_target[int(index)] = active_target[int(index)]
+            candidates.append(
+                _latched_target_sequence(
+                    candidate_target, int(mpc.design.prediction_horizon_steps)
+                )
+            )
+        with torch.no_grad():
+            scores = _score_sequence_batch(
+                mpc=mpc,
+                sequences=torch.stack(candidates),
+                current_state=current_state,
+                rainfall=rainfall,
+                previous_actuator_flow=previous_actuator_flow,
+                active_target=active_target,
+            ).detach()
+        best_position = int(torch.argmin(scores).item())
+        best_score = float(scores[best_position].cpu())
+        if best_score > current_score + _PRUNE_NUMERICAL_TOLERANCE_M3:
+            break
+        removed_index = int(active[best_position].item())
+        current_target = current_target.clone()
+        current_target[removed_index] = active_target[removed_index]
+        current_score = best_score
+        active = torch.nonzero(
+            torch.abs(current_target - active_target) > 1.0e-7, as_tuple=False
+        ).reshape(-1)
+
+    final_sequence = _latched_target_sequence(
+        current_target, int(mpc.design.prediction_horizon_steps)
+    )
+    after = int(active.numel())
+    return final_sequence.detach(), float(current_score), before, before - after
 
 
 def refine_supported_first_move(
@@ -76,7 +180,7 @@ def refine_supported_first_move(
     maxiter: int = 12,
     deadline_seconds: float = 30.0,
 ) -> DirectTFVFirstMoveRefinement:
-    """Refine the supported V6/V7 first target while preserving direction and latch semantics."""
+    """Refine, then objective-prune, the supported V6/V7 first target."""
 
     if tuple(base_candidate.shape) != (int(mpc.design.prediction_horizon_steps), 109):
         raise ValueError("first-move refinement requires a [H72,109] base candidate")
@@ -98,6 +202,8 @@ def refine_supported_first_move(
             gain_vs_base_prefix_m3=0.0,
             changed_facility_count=0,
             changed_facility_ids=(),
+            pre_prune_changed_facility_count=0,
+            pruned_facility_count=0,
             optimizer_success=True,
             optimizer_steps=0,
             optimizer_starts=0,
@@ -197,6 +303,15 @@ def refine_supported_first_move(
             best_sequence = sequence.detach()
             best_result = result
 
+    best_sequence, best_score, pre_prune_count, pruned_count = _prune_non_beneficial_facilities(
+        mpc=mpc,
+        sequence=best_sequence,
+        score_m3=best_score,
+        current_state=current_state,
+        rainfall=rainfall,
+        previous_actuator_flow=previous_actuator_flow,
+        active_target=active_target,
+    )
     first_target = best_sequence[0]
     final_changed = torch.nonzero(
         torch.abs(first_target - active_target) > 1.0e-7, as_tuple=False
@@ -212,6 +327,8 @@ def refine_supported_first_move(
         gain_vs_base_prefix_m3=float(base_score - best_score),
         changed_facility_count=int(final_changed.numel()),
         changed_facility_ids=changed_ids,
+        pre_prune_changed_facility_count=int(pre_prune_count),
+        pruned_facility_count=int(pruned_count),
         optimizer_success=True if chosen is None else bool(chosen.success),
         optimizer_steps=0 if chosen is None else int(getattr(chosen, "nit", 0)),
         optimizer_starts=len(starts),
