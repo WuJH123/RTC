@@ -1,14 +1,16 @@
-"""Receding-consistent refinement of the only Direct-TFV action actually executed.
+"""Target-latch-consistent refinement of the Direct-TFV action actually executed next.
 
 The upstream V6/V7 optimizer remains useful for discovering a coordinated H120 direction inside the
-q95 D3-HOLD support geometry.  However, the controller commits only the first 10-minute block before
-observing the network again.  This module therefore refines that first move *within* the already
-supported V6 direction: each changed facility receives an independent shrink factor in [0,1], the
-remaining H350 is HOLD_ACTIVE_TARGET, and Step2 scores the resulting H360 consequence.
+q95 D3-HOLD support geometry. The online controller, however, writes a *target latch*: once a new
+10-minute target is accepted it remains the supervisory command until a later decision changes it.
+Therefore the correct no-further-command counterfactual is not ``H10 new -> old target H350``. It is
+``write the refined first target now -> keep that new target latched through H360``.
 
-Because the refinement can only shrink the supported V6 first move, it never expands the action
-outside the upstream q95 query geometry.  It is a small K-dimensional differentiable optimization
-(K <= the frozen active-set ceiling), not another 12 x K H120 search.
+This module refines the V6 first-move direction with one shrink factor per changed facility in [0,1].
+Unchanged facilities remain exactly at the previous target latch. Because refinement can only shrink
+the supported V6 first displacement, it never expands the first move outside the upstream support
+envelope. The resulting target is repeated through H360 solely as the no-further-command value
+counterfactual; the real controller still re-observes and may issue a new target after 10 minutes.
 """
 from __future__ import annotations
 
@@ -21,7 +23,9 @@ import torch
 from scipy.optimize import minimize
 
 
-DIRECT_TFV_FIRST_MOVE_SEMANTICS = "REFINE_SUPPORTED_V6_FIRST_MOVE_THEN_HOLD_ACTIVE_TARGET_H350"
+DIRECT_TFV_FIRST_MOVE_SEMANTICS = (
+    "WRITE_REFINED_H10_TARGET_THEN_LATCH_NEW_TARGET_UNTIL_NEXT_COMMAND_H360"
+)
 
 
 @dataclass(frozen=True)
@@ -39,7 +43,7 @@ class DirectTFVFirstMoveRefinement:
     scipy_message: str
 
 
-def _prefix_sequence(
+def _latched_first_move_sequence(
     *,
     mpc: Any,
     active_target: torch.Tensor,
@@ -47,18 +51,18 @@ def _prefix_sequence(
     changed_indices: torch.Tensor,
     scales: torch.Tensor,
 ) -> torch.Tensor:
-    hold = mpc._hold_sequence(active_target).clone()
+    """Repeat the newly written target through H360 under no-further-command semantics."""
+
     target = active_target.clone()
     target[changed_indices] = (
         active_target[changed_indices] + base_delta[changed_indices] * scales
     )
-    hold[: int(mpc.design.control_block_steps)] = target[None]
-    # The base V6 first move is already q95-supported.  Independent shrink factors cannot exceed
-    # its per-facility displacement, but the radial contraction is retained as a fail-closed check
-    # on joint first-block/H120/TV geometry.
+    sequence = target[None].expand(int(mpc.design.prediction_horizon_steps), -1).clone()
+    # The base first move is q95-supported. Shrink-only refinement cannot increase any per-facility
+    # displacement, but retain the joint contraction as a fail-closed check on first-block/H120 mass.
     if hasattr(mpc, "_contract_to_joint_sequence_support"):
-        hold = mpc._contract_to_joint_sequence_support(hold, active_target)
-    return hold
+        sequence = mpc._contract_to_joint_sequence_support(sequence, active_target)
+    return sequence
 
 
 def refine_supported_first_move(
@@ -72,7 +76,7 @@ def refine_supported_first_move(
     maxiter: int = 12,
     deadline_seconds: float = 30.0,
 ) -> DirectTFVFirstMoveRefinement:
-    """Refine the V6/V7 first move while preserving its direction and support envelope."""
+    """Refine the supported V6/V7 first target while preserving direction and latch semantics."""
 
     if tuple(base_candidate.shape) != (int(mpc.design.prediction_horizon_steps), 109):
         raise ValueError("first-move refinement requires a [H72,109] base candidate")
@@ -102,12 +106,14 @@ def refine_supported_first_move(
         )
 
     with torch.no_grad():
-        base_prefix = _prefix_sequence(
+        base_prefix = _latched_first_move_sequence(
             mpc=mpc,
             active_target=active_target,
             base_delta=base_delta,
             changed_indices=changed,
-            scales=torch.ones(int(changed.numel()), dtype=active_target.dtype, device=active_target.device),
+            scales=torch.ones(
+                int(changed.numel()), dtype=active_target.dtype, device=active_target.device
+            ),
         )
         base_score = float(
             mpc.score_sequence(
@@ -139,7 +145,7 @@ def refine_supported_first_move(
                 device=active_target.device,
                 requires_grad=True,
             )
-            sequence = _prefix_sequence(
+            sequence = _latched_first_move_sequence(
                 mpc=mpc,
                 active_target=active_target,
                 base_delta=base_delta,
@@ -159,18 +165,17 @@ def refine_supported_first_move(
                 gradient.detach().cpu().numpy().astype(np.float64),
             )
 
-        remaining = max(1, int(maxiter))
         result = minimize(
             objective,
             start,
             method="L-BFGS-B",
             jac=True,
             bounds=[(0.0, 1.0)] * int(changed.numel()),
-            options={"maxiter": remaining, "ftol": 1.0e-7, "gtol": 1.0e-5},
+            options={"maxiter": int(maxiter), "ftol": 1.0e-7, "gtol": 1.0e-5},
         )
         raw = np.clip(np.asarray(result.x, dtype=np.float64), 0.0, 1.0)
         scales = torch.as_tensor(raw, dtype=active_target.dtype, device=active_target.device)
-        sequence = _prefix_sequence(
+        sequence = _latched_first_move_sequence(
             mpc=mpc,
             active_target=active_target,
             base_delta=base_delta,
@@ -192,7 +197,7 @@ def refine_supported_first_move(
             best_sequence = sequence.detach()
             best_result = result
 
-    first_target = best_sequence[:block_steps].mean(dim=0)
+    first_target = best_sequence[0]
     final_changed = torch.nonzero(
         torch.abs(first_target - active_target) > 1.0e-7, as_tuple=False
     ).reshape(-1)
@@ -212,7 +217,7 @@ def refine_supported_first_move(
         optimizer_starts=len(starts),
         elapsed_seconds=float(elapsed),
         scipy_message=(
-            "BASE_PREFIX_RETAINED"
+            "BASE_LATCHED_FIRST_MOVE_RETAINED"
             if chosen is None
             else str(getattr(chosen, "message", ""))[:1000]
         ),
