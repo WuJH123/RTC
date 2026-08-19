@@ -13,6 +13,7 @@ from .controller_direct_tfv_safe import MemorySafeDirectTFVAuthoritativeControll
 from .direct_tfv_first_move_admission import DIRECT_TFV_FIRST_MOVE_ADMISSION_CONTRACT
 from .direct_tfv_policy_admission import DIRECT_TFV_POLICY_ADMISSION_CONTRACT
 from .direct_tfv_sequence_support import validate_direct_tfv_sequence_support
+from .direct_tfv_v12_lineage import direct_tfv_v12_behavioral_sha256
 from .forecast import PersistenceDecayForecast
 from .production_cli import _controller_config, _load_graph, _load_lines
 from .runtime_controller_guard import ContinuityGuardController
@@ -25,7 +26,7 @@ from .step3_tfv_value_mpc_v10 import (
 )
 
 
-V12_FROZEN_CONTINUATION_FACTORY_CONTRACT = "PROJECT7_V12_FROZEN_CONTINUATION_FACTORY_V1"
+V12_FROZEN_CONTINUATION_FACTORY_CONTRACT = "PROJECT7_V12_FROZEN_CONTINUATION_FACTORY_V2_BEHAVIORAL_LINEAGE"
 
 
 def _sha(path: str | Path) -> str:
@@ -49,7 +50,6 @@ def build_frozen_v12_continuation_controller(
     first_move_maxiter: int = 12,
     first_move_deadline_seconds: float = 30.0,
 ) -> tuple[object, object, tuple[str, ...], dict]:
-    """Construct the exact V12 policy used as an immutable continuation in paired replay."""
     graph = _load_graph(graph_path)
     sensors = _load_lines(sensors_path)
     step1 = load_frozen_step1_v127(step1_path, device)
@@ -66,6 +66,13 @@ def build_frozen_v12_continuation_controller(
         raise ValueError("continuation first-move admission is not V12 scenario-matched")
     if str(first.get("rainfall_scenario_contract", "")) != DIRECT_TFV_CAUSAL_RAINFALL_SCENARIO_CONTRACT:
         raise ValueError("continuation rainfall scenario contract differs from V12")
+    lineage = first.get("lineage") if isinstance(first.get("lineage"), dict) else {}
+    calibrated_behavior = str(
+        first.get("v12_behavioral_source_sha256", lineage.get("v12_behavioral_source_sha256", ""))
+    ).lower()
+    current_behavior = direct_tfv_v12_behavioral_sha256()
+    if calibrated_behavior != current_behavior.lower():
+        raise ValueError("V12 continuation admission behavioral fingerprint differs from source")
     support = json.loads(Path(sequence_support_path).read_text(encoding="utf-8"))
     validate_direct_tfv_sequence_support(
         support,
@@ -128,6 +135,7 @@ def build_frozen_v12_continuation_controller(
         "sensors_sha256": _sha(sensors_path),
         "config_sha256": _sha(config_path),
         "step3_contract": DIRECT_TFV_SCENARIO_MEAN_STEP3_CONTRACT,
+        "v12_behavioral_source_sha256": current_behavior,
         "memory_safe_runtime": True,
     }
     return controller, graph, sensors, lineage
