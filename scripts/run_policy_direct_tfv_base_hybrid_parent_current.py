@@ -1,9 +1,8 @@
 """Run the frozen hybrid Base-H10 parent pi0 in authoritative Development SWMM.
 
-This creates the causal parent trajectory from which exact policy-return query prefixes are selected.
-It is Development data generation, not final evidence. The parent uses the same four-family H10
-proposal geometry as the paper method but ranks candidates only with frozen base Step2 because no
-policy-return critic exists yet.
+The parent keeps the pretrained 109-channel Step2 representation but changes only the native
+supervisory-control subspace from the asset manifest. This creates causal parent trajectories for
+exact policy-return queries without retraining Step1/base Step2.
 """
 from __future__ import annotations
 
@@ -23,7 +22,7 @@ from rtc.project7_contract import EFFECTIVE_WARMUP_MINUTES, validate_project7_ru
 
 
 BASE_HYBRID_PARENT_RUNTIME_CONTRACT = (
-    "PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_AUTHORITATIVE_DEVELOPMENT_V1"
+    "PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_AUTHORITATIVE_DEVELOPMENT_V2_82CONTROL_109REP"
 )
 
 
@@ -59,6 +58,7 @@ def main() -> None:
         config_path=config_path,
         step1_path=practical_asset_path(assets, "step1"),
         step2_path=practical_asset_path(assets, "step2"),
+        supervisory_control_path=practical_asset_path(assets, "supervisory_control"),
         sequence_support_path=practical_asset_path(assets, "sequence_support"),
         device=device,
         decision_runtime_budget_seconds=float(args.decision_runtime_budget_seconds),
@@ -70,6 +70,10 @@ def main() -> None:
         raise RuntimeError("hybrid parent unexpectedly resolved to L-BFGS-B")
     if lineage.get("projected_gradient_h10_enabled") is not True:
         raise RuntimeError("hybrid parent lacks the projected-gradient H10 proposer")
+    if int(lineage.get("supervisory_control_dimension", -1)) != 82:
+        raise RuntimeError("hybrid parent did not resolve to the frozen 82-control subspace")
+    if int(lineage.get("model_action_channel_count", -1)) != 109:
+        raise RuntimeError("hybrid parent lost the frozen 109-channel Step2 representation")
 
     out = Path(args.out_dir).resolve()
     runtime_inp = _controls_disabled_runtime(
@@ -105,7 +109,11 @@ def main() -> None:
             "online_swmm_candidate_search": False,
             "online_lbfgsb_used": False,
             "projected_gradient_h10_enabled": True,
+            "projected_gradient_free_dimension": 82,
+            "model_action_channel_count": 109,
             "candidate_portfolio_family_count_max": 4,
+            "step1_retrained_for_control_mask": False,
+            "base_step2_retrained_for_control_mask": False,
             "target_write_readback_audit": write_audit,
             "project7_runtime_contract": project_contract,
             "prepared_event_clock": clock,
@@ -121,6 +129,8 @@ def main() -> None:
                 "decision_path": result.decision_path,
                 "node_statistics_path": result.node_statistics_path,
                 "decisions": result.decisions,
+                "supervisory_control_dimension": 82,
+                "model_action_channel_count": 109,
                 "projected_gradient_h10_enabled": True,
                 "target_write_readback_passed": True,
                 "flow_routing_error_pct": result.flow_routing_error_pct,
