@@ -1,13 +1,14 @@
 """Fine-tune Direct-TFV representations on exact receding-policy first-action returns.
 
 Rainfall groups are the independent train/validation unit. Candidate ranking is defined only inside
-one ``query_set_id`` (same authoritative prefix). Model inputs use the same H10-candidate/H350-HOLD
-action token as runtime. With limited authoritative labels, the default keeps global state/rainfall
-encoders frozen and adapts only facility/action and interaction layers.
+one ``query_set_id`` (same authoritative prefix). Model inputs retain the pretrained 109-channel
+Step2 tensor and use the same H10-candidate/H350-HOLD token as runtime, while every dataset is bound
+to one frozen native supervisory mask (82 online control freedoms for the current Wuhan testbed).
 
-Checkpoint selection is control-first. Same-query decision metrics are HOLD-aware: the deployed
-action set is {HOLD plus generated candidates}, so an all-harmful query is correctly solved by HOLD
-and must not be counted as a false-beneficial selection.
+With limited authoritative labels, the default keeps global state/rainfall encoders frozen and adapts
+only facility/action and interaction layers. Checkpoint selection is HOLD-aware: the actual action set
+is {HOLD=0 plus generated candidates}, so correctly HOLDing an all-harmful query is not a false
+beneficial selection.
 """
 from __future__ import annotations
 
@@ -35,9 +36,7 @@ from rtc.direct_tfv_policy_return import (
     encode_policy_return_action_token,
     sha256_file,
 )
-from rtc.direct_tfv_policy_return_hybrid_portfolio import (
-    DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
-)
+from rtc.direct_tfv_policy_return_hybrid_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
 from rtc.production_cli import _load_graph
 
 
@@ -48,6 +47,15 @@ def _scalar_text(data: np.lib.npyio.NpzFile, key: str) -> str:
     if value.size != 1:
         raise ValueError(f"policy-return dataset field {key} must be scalar")
     return str(value.reshape(-1)[0])
+
+
+def _scalar_int(data: np.lib.npyio.NpzFile, key: str) -> int:
+    if key not in data:
+        raise ValueError(f"policy-return dataset lacks {key}")
+    value = np.asarray(data[key])
+    if value.size != 1:
+        raise ValueError(f"policy-return dataset field {key} must be scalar")
+    return int(value.reshape(-1)[0])
 
 
 def _load_dataset(path: str | Path, *, role: str) -> dict[str, Any]:
@@ -65,7 +73,14 @@ def _load_dataset(path: str | Path, *, role: str) -> dict[str, Any]:
         raise ValueError("policy-return dataset lacks continuation policy lineage")
     portfolio_contract = _scalar_text(data, "candidate_portfolio_contract")
     if portfolio_contract != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
-        raise ValueError("policy-return training requires the current hybrid H10 portfolio")
+        raise ValueError("policy-return training requires the current masked hybrid H10 portfolio")
+    supervisory_mask_sha256 = _scalar_text(data, "supervisory_mask_sha256").lower()
+    if len(supervisory_mask_sha256) != 64:
+        raise ValueError("policy-return dataset lacks supervisory-control mask lineage")
+    if _scalar_int(data, "supervisory_control_dimension") != 82:
+        raise ValueError("policy-return training requires the frozen 82-control subspace")
+    if _scalar_int(data, "model_action_channel_count") != 109:
+        raise ValueError("policy-return training must retain the 109-channel Step2 representation")
     required = (
         "current_state",
         "rainfall_scenarios",
@@ -73,6 +88,7 @@ def _load_dataset(path: str | Path, *, role: str) -> dict[str, Any]:
         "candidate_target",
         "previous_actuator_flow",
         "true_policy_return_delta_tfv_m3",
+        "base_step2_h10_score_m3",
         "rainfall_group",
         "query_set_id",
         "candidate_source",
@@ -93,9 +109,9 @@ def _load_dataset(path: str | Path, *, role: str) -> dict[str, Any]:
     if tuple(result["active_target"].shape[1:]) != (109,) or tuple(
         result["candidate_target"].shape[1:]
     ) != (109,):
-        raise ValueError("policy-return target arrays must contain 109 actuators")
+        raise ValueError("policy-return target arrays must retain 109 model channels")
     if tuple(result["previous_actuator_flow"].shape[1:]) != (109,):
-        raise ValueError("policy-return flow arrays must contain 109 actuators")
+        raise ValueError("policy-return flow arrays must retain 109 model channels")
     for key in (
         "current_state",
         "rainfall_scenarios",
@@ -103,6 +119,7 @@ def _load_dataset(path: str | Path, *, role: str) -> dict[str, Any]:
         "candidate_target",
         "previous_actuator_flow",
         "true_policy_return_delta_tfv_m3",
+        "base_step2_h10_score_m3",
     ):
         if not np.isfinite(result[key].astype(np.float64)).all():
             raise ValueError(f"policy-return dataset {key} contains non-finite values")
@@ -118,6 +135,9 @@ def _load_dataset(path: str | Path, *, role: str) -> dict[str, Any]:
             "continuation_policy_sha256": continuation,
             "candidate_portfolio_contract": portfolio_contract,
             "action_encoding_contract": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
+            "supervisory_control_dimension": 82,
+            "model_action_channel_count": 109,
+            "supervisory_mask_sha256": supervisory_mask_sha256,
         }
     )
     return result
@@ -128,17 +148,11 @@ def _normalization_tensors(
 ) -> dict[str, torch.Tensor]:
     return {
         "state_mean": torch.as_tensor(normalization.state_mean, dtype=dtype, device=device),
-        "state_std": torch.as_tensor(normalization.state_std, dtype=dtype, device=device).clamp_min(
-            1e-6
-        ),
+        "state_std": torch.as_tensor(normalization.state_std, dtype=dtype, device=device).clamp_min(1e-6),
         "rain_mean": torch.as_tensor(normalization.rainfall_mean, dtype=dtype, device=device),
-        "rain_std": torch.as_tensor(normalization.rainfall_std, dtype=dtype, device=device).clamp_min(
-            1e-6
-        ),
+        "rain_std": torch.as_tensor(normalization.rainfall_std, dtype=dtype, device=device).clamp_min(1e-6),
         "flow_mean": torch.as_tensor(normalization.flow_mean, dtype=dtype, device=device),
-        "flow_std": torch.as_tensor(normalization.flow_std, dtype=dtype, device=device).clamp_min(
-            1e-6
-        ),
+        "flow_std": torch.as_tensor(normalization.flow_std, dtype=dtype, device=device).clamp_min(1e-6),
     }
 
 
@@ -152,16 +166,10 @@ def _predict_group(
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     state = torch.as_tensor(dataset["current_state"][indices], dtype=torch.float32, device=device)
-    rain = torch.as_tensor(
-        dataset["rainfall_scenarios"][indices], dtype=torch.float32, device=device
-    )
+    rain = torch.as_tensor(dataset["rainfall_scenarios"][indices], dtype=torch.float32, device=device)
     active = torch.as_tensor(dataset["active_target"][indices], dtype=torch.float32, device=device)
-    target = torch.as_tensor(
-        dataset["candidate_target"][indices], dtype=torch.float32, device=device
-    )
-    flow = torch.as_tensor(
-        dataset["previous_actuator_flow"][indices], dtype=torch.float32, device=device
-    )
+    target = torch.as_tensor(dataset["candidate_target"][indices], dtype=torch.float32, device=device)
+    flow = torch.as_tensor(dataset["previous_actuator_flow"][indices], dtype=torch.float32, device=device)
     truth = torch.as_tensor(
         dataset["true_policy_return_delta_tfv_m3"][indices],
         dtype=torch.float32,
@@ -191,15 +199,9 @@ def _predict_group(
         reference_settings=reference,
         candidate_settings=candidate,
         previous_actuator_flow=flow,
-        actuator_upstream=torch.as_tensor(
-            graph.actuator_upstream, dtype=torch.long, device=device
-        ),
-        actuator_downstream=torch.as_tensor(
-            graph.actuator_downstream, dtype=torch.long, device=device
-        ),
-        actuator_physics=torch.as_tensor(
-            graph.actuator_physics, dtype=state.dtype, device=device
-        ),
+        actuator_upstream=torch.as_tensor(graph.actuator_upstream, dtype=torch.long, device=device),
+        actuator_downstream=torch.as_tensor(graph.actuator_downstream, dtype=torch.long, device=device),
+        actuator_physics=torch.as_tensor(graph.actuator_physics, dtype=state.dtype, device=device),
     )
     return output.total_delta_tfv_m3.reshape(b, scenarios).mean(dim=1), truth
 
@@ -234,7 +236,6 @@ def _hold_aware_query_decision_metrics(
         raise ValueError("HOLD-aware query metrics require aligned non-empty arrays")
     if not np.isfinite(pred).all() or not np.isfinite(true).all():
         raise ValueError("HOLD-aware query metrics require finite values")
-
     selected = int(np.argmin(pred))
     oracle = int(np.argmin(true))
     predicted_execute = bool(pred[selected] < 0.0)
@@ -242,7 +243,6 @@ def _hold_aware_query_decision_metrics(
     realized_value = float(true[selected]) if predicted_execute else 0.0
     oracle_value = min(0.0, float(true[oracle]))
     regret = max(0.0, realized_value - oracle_value)
-
     return {
         "predicted_execute": predicted_execute,
         "oracle_execute": oracle_execute,
@@ -290,7 +290,6 @@ def _same_query_statistics(
             )
             pred = pred_t.detach().cpu().numpy().astype(float)
             truth = truth_t.detach().cpu().numpy().astype(float)
-
             selected = int(np.argmin(pred))
             oracle = int(np.argmin(truth))
             candidate_top1 += int(selected == oracle)
@@ -301,7 +300,6 @@ def _same_query_statistics(
             predicted_hold += int(bool(decision["predicted_hold"]))
             oracle_hold += int(bool(decision["oracle_hold"]))
             regrets.append(float(decision["regret_m3"]))
-
             for left in range(len(pred)):
                 for right in range(left + 1, len(pred)):
                     if abs(truth[left] - truth[right]) <= 1.0:
@@ -312,23 +310,15 @@ def _same_query_statistics(
                         == np.sign(truth[left] - truth[right])
                     )
     return {
-        "within_query_pairwise_rank_accuracy": float(correct / comparisons)
-        if comparisons
-        else 1.0,
+        "within_query_pairwise_rank_accuracy": float(correct / comparisons) if comparisons else 1.0,
         "within_query_pairwise_comparison_count": float(comparisons),
         "multi_candidate_query_set_count": float(multi),
         "within_query_top1_accuracy": float(candidate_top1 / multi) if multi else 1.0,
-        "within_query_candidate_top1_accuracy": float(candidate_top1 / multi)
-        if multi
-        else 1.0,
+        "within_query_candidate_top1_accuracy": float(candidate_top1 / multi) if multi else 1.0,
         "hold_aware_decision_accuracy": float(decision_correct / multi) if multi else 1.0,
         "selected_action_mean_regret_m3": float(np.mean(regrets)) if regrets else 0.0,
-        "selected_action_false_beneficial_fraction": float(false_beneficial / multi)
-        if multi
-        else 0.0,
-        "selected_action_false_reject_fraction": float(false_reject / multi)
-        if multi
-        else 0.0,
+        "selected_action_false_beneficial_fraction": float(false_beneficial / multi) if multi else 0.0,
+        "selected_action_false_reject_fraction": float(false_reject / multi) if multi else 0.0,
         "predicted_hold_fraction": float(predicted_hold / multi) if multi else 0.0,
         "oracle_hold_optimal_fraction": float(oracle_hold / multi) if multi else 0.0,
     }
@@ -369,9 +359,7 @@ def _evaluate(
                 {
                     "mae_m3": float(np.mean(np.abs(pred - truth))),
                     "sign_accuracy": sign,
-                    "false_beneficial_rate": float(
-                        np.mean((pred < 0.0) & (truth >= 0.0))
-                    ),
+                    "false_beneficial_rate": float(np.mean((pred < 0.0) & (truth >= 0.0))),
                     "false_reject_rate": float(np.mean((pred >= 0.0) & (truth < 0.0))),
                 }
             )
@@ -381,12 +369,8 @@ def _evaluate(
     truth = np.asarray(all_truth, dtype=float)
     informative = np.abs(truth) > 1.0
     result = {
-        "event_balanced_mae_m3": float(
-            np.mean([row["mae_m3"] for row in group_metrics])
-        ),
-        "event_balanced_sign_accuracy": float(
-            np.mean([row["sign_accuracy"] for row in group_metrics])
-        ),
+        "event_balanced_mae_m3": float(np.mean([row["mae_m3"] for row in group_metrics])),
+        "event_balanced_sign_accuracy": float(np.mean([row["sign_accuracy"] for row in group_metrics])),
         "event_balanced_false_beneficial_rate": float(
             np.mean([row["false_beneficial_rate"] for row in group_metrics])
         ),
@@ -468,11 +452,11 @@ def main() -> None:
         raise ValueError("policy-return train/validation rainfall groups overlap")
     if train["continuation_policy_sha256"] != valid["continuation_policy_sha256"]:
         raise ValueError("policy-return train/validation use different continuation policies")
+    if train["supervisory_mask_sha256"] != valid["supervisory_mask_sha256"]:
+        raise ValueError("policy-return train/validation use different supervisory-control masks")
 
     trainable = _configure_trainable_scope(model, args.trainable_scope)
-    optimizer = torch.optim.AdamW(
-        trainable, lr=float(args.learning_rate), weight_decay=1e-5
-    )
+    optimizer = torch.optim.AdamW(trainable, lr=float(args.learning_rate), weight_decay=1e-5)
     scale = model.target_scale_m3.to(device).clamp_min(1.0)
     best_state = copy.deepcopy(model.state_dict())
     best_key: tuple[float, float, float, float] | None = None
@@ -483,9 +467,7 @@ def main() -> None:
         model.train()
         losses: list[float] = []
         for group in groups:
-            query_ids = sorted(
-                set(train["query_sets"][train["groups"] == group].tolist())
-            )
+            query_ids = sorted(set(train["query_sets"][train["groups"] == group].tolist()))
             query_losses = []
             for query in query_ids:
                 idx = np.flatnonzero(train["query_sets"] == query)
@@ -506,9 +488,7 @@ def main() -> None:
             torch.nn.utils.clip_grad_norm_(trainable, 5.0)
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
-        metrics = _evaluate(
-            model, valid, graph=graph, normalization=normalization, device=device
-        )
+        metrics = _evaluate(model, valid, graph=graph, normalization=normalization, device=device)
         key = (
             float(metrics["selected_action_false_beneficial_fraction"]),
             -float(metrics["within_query_pairwise_rank_accuracy"]),
@@ -527,9 +507,7 @@ def main() -> None:
             best_state = copy.deepcopy(model.state_dict())
 
     model.load_state_dict(best_state)
-    final_metrics = _evaluate(
-        model, valid, graph=graph, normalization=normalization, device=device
-    )
+    final_metrics = _evaluate(model, valid, graph=graph, normalization=normalization, device=device)
     train_query_counts = Counter(train["query_sets"].tolist())
     valid_query_counts = Counter(valid["query_sets"].tolist())
     payload = {
@@ -541,18 +519,18 @@ def main() -> None:
         "graph_sha256": sha256_file(args.graph),
         "continuation_policy_sha256": train["continuation_policy_sha256"],
         "candidate_portfolio_contract": train["candidate_portfolio_contract"],
+        "supervisory_control_dimension": 82,
+        "model_action_channel_count": 109,
+        "supervisory_mask_sha256": train["supervisory_mask_sha256"],
+        "passive_setting_channels_unchanged_in_training": True,
         "train_dataset_sha256": train["sha256"],
         "validation_dataset_sha256": valid["sha256"],
         "train_rainfall_group_count": len(train_groups),
         "validation_rainfall_group_count": len(valid_groups),
         "train_query_set_count": len(train_query_counts),
         "validation_query_set_count": len(valid_query_counts),
-        "train_multi_candidate_query_set_count": sum(
-            v >= 2 for v in train_query_counts.values()
-        ),
-        "validation_multi_candidate_query_set_count": sum(
-            v >= 2 for v in valid_query_counts.values()
-        ),
+        "train_multi_candidate_query_set_count": sum(v >= 2 for v in train_query_counts.values()),
+        "validation_multi_candidate_query_set_count": sum(v >= 2 for v in valid_query_counts.values()),
         "train_candidate_source_counts": dict(
             sorted(Counter(train["candidate_sources"].tolist()).items())
         ),
@@ -570,13 +548,14 @@ def main() -> None:
         "training_history": history,
         "validation_metrics": final_metrics,
         "trainable_scope": args.trainable_scope,
-        "ranking_unit": "SAME_AUTHORITATIVE_PREFIX_QUERY_SET",
+        "ranking_unit": "SAME_AUTHORITATIVE_PREFIX_QUERY_SET_WITH_HOLD_ZERO",
         "decision_set": "HOLD_ZERO_PLUS_GENERATED_CANDIDATES",
         "selection_rule": (
             "LEXICOGRAPHIC_HOLD_AWARE_FALSE_BENEFICIAL_THEN_RANK_"
             "THEN_HOLD_AWARE_SELECTED_REGRET_THEN_MAE"
         ),
         "future_realized_rainfall_used_as_model_input": False,
+        "base_step2_retrained": False,
     }
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
