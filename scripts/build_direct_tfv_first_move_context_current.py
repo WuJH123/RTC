@@ -209,7 +209,8 @@ def main() -> None:
         prefix_shas.append(prefix_sha)
         context_shas.append(context_digest.hexdigest())
 
-    out = Path(args.out).resolve(); out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(args.out).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
     data_path = out.with_suffix(".npz")
     np.savez_compressed(
         data_path,
