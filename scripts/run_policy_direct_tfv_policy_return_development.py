@@ -1,46 +1,38 @@
-"""Run Development-only Direct-TFV policy-return first-action control in authoritative SWMM."""
+"""Run the current Practical H10 policy-return controller in authoritative Development SWMM.
+
+This entrypoint is intentionally path-safe and optimizer-agnostic. All frozen base artifacts come from
+one SHA-verified absolute asset manifest. The policy-return checkpoint/admission must select the
+current Practical H10-probe portfolio; legacy V12/L-BFGS-B policy-return bridges are rejected here and
+remain available only to explicit offline parent-label tools.
+"""
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
 
 import torch
 
-from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
 from rtc.closed_loop import run_authoritative_closed_loop
-from rtc.controller_direct_tfv_safe import MemorySafeDirectTFVAuthoritativeController
-from rtc.direct_tfv_first_move_admission import DIRECT_TFV_FIRST_MOVE_ADMISSION_CONTRACT
-from rtc.direct_tfv_policy_admission import DIRECT_TFV_POLICY_ADMISSION_CONTRACT
 from rtc.direct_tfv_policy_return import (
+    DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
     DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT,
     load_policy_return_checkpoint,
 )
-from rtc.direct_tfv_sequence_support import validate_direct_tfv_sequence_support
-from rtc.direct_tfv_v12_lineage import direct_tfv_v12_behavioral_sha256
+from rtc.direct_tfv_policy_return_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+from rtc.direct_tfv_policy_return_runtime_factory import build_frozen_policy_return_continuation_controller
 from rtc.event_clock import inspect_prepared_event_clock
 from rtc.execution_audit_v127 import audit_target_write_readback_v127
-from rtc.forecast import PersistenceDecayForecast
-from rtc.production_cli import _controller_config, _controls_disabled_runtime, _load_graph, _load_lines
+from rtc.practical_rtc_assets import load_practical_rtc_asset_manifest, practical_asset_path
+from rtc.production_cli import _controls_disabled_runtime, _load_graph
 from rtc.project7_contract import EFFECTIVE_WARMUP_MINUTES, validate_project7_runtime_config
-from rtc.runtime_controller_guard import ContinuityGuardController
-from rtc.step1_runtime_v127 import load_frozen_step1_v127
 from rtc.step2_state_store_v127 import semantic_model_state_dict_sha256, semantic_sensor_layout_sha256
-from rtc.step3_tfv_value_mpc_v4 import DirectTFVMPCDesignV4
-from rtc.step3_tfv_value_mpc_v10 import (
-    DIRECT_TFV_CAUSAL_RAINFALL_SCENARIO_CONTRACT,
-    DIRECT_TFV_SCENARIO_MEAN_STEP3_CONTRACT,
-)
-from rtc.step3_tfv_value_mpc_v11 import (
-    DIRECT_TFV_POLICY_RETURN_STEP3_CONTRACT,
-    DirectTFVPolicyReturnMPCV11,
-)
+from rtc.step1_runtime_v127 import load_frozen_step1_v127
 
 
 DIRECT_TFV_POLICY_RETURN_RUNTIME_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_POLICY_RETURN_AUTHORITATIVE_DEVELOPMENT_RTC_V2_MEMORY_SAFE"
+    "PROJECT7_PRACTICAL_H10_POLICY_RETURN_AUTHORITATIVE_DEVELOPMENT_RTC_V1"
 )
 
 
@@ -48,19 +40,17 @@ def _sha(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def _load_json(path: str | Path, contract: str, label: str) -> dict:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or str(payload.get("contract", "")) != contract:
-        raise ValueError(f"policy-return runtime requires current {label}")
-    if payload.get("development_only") is not True:
-        raise ValueError(f"{label} must be Development-only")
-    return payload
+def _require_step1_lineage(*, step1_path: str, step2_path: str, sensors_path: str, graph_path: str, device: torch.device) -> None:
+    graph = _load_graph(graph_path)
+    step1 = load_frozen_step1_v127(step1_path, device)
+    from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
+    from rtc.production_cli import _load_lines
 
-
-def _require_step1_lineage(payload: dict, *, step1: torch.nn.Module, sensors: tuple[str, ...]) -> None:
-    lineage = payload.get("lineage")
+    _, _, checkpoint = load_direct_tfv_runtime_checkpoint(step2_path, graph=graph, device=device)
+    lineage = checkpoint.get("lineage")
     if not isinstance(lineage, dict):
-        raise ValueError("base Direct-TFV checkpoint lacks lineage")
+        raise ValueError("base Direct-TFV checkpoint lacks Step1/sensor lineage")
+    sensors = _load_lines(sensors_path)
     expected = {
         "step1_model_semantic_sha256": semantic_model_state_dict_sha256(step1),
         "sensor_layout_semantic_sha256": semantic_sensor_layout_sha256(sensors),
@@ -72,143 +62,88 @@ def _require_step1_lineage(payload: dict, *, step1: torch.nn.Module, sensors: tu
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--asset-manifest", required=True)
     p.add_argument("--inp", required=True)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--run-id", required=True)
-    p.add_argument("--sensors", required=True)
-    p.add_argument("--config", required=True)
-    p.add_argument("--graph", required=True)
-    p.add_argument("--step1", required=True)
-    p.add_argument("--step2", required=True)
-    p.add_argument("--policy-admission", required=True)
-    p.add_argument("--v12-first-move-admission", required=True)
-    p.add_argument("--sequence-support", required=True)
     p.add_argument("--policy-return-checkpoint", required=True)
     p.add_argument("--policy-return-admission", required=True)
     p.add_argument("--device", default="cuda")
-    p.add_argument("--lbfgsb-maxiter", type=int, default=30)
-    p.add_argument("--optimizer-deadline-seconds", type=float, default=120.0)
     p.add_argument("--decision-runtime-budget-seconds", type=float, default=180.0)
-    p.add_argument("--first-move-maxiter", type=int, default=12)
-    p.add_argument("--first-move-deadline-seconds", type=float, default=30.0)
     args = p.parse_args()
-    if not 0.0 < args.optimizer_deadline_seconds < args.decision_runtime_budget_seconds < 600.0:
-        raise ValueError("policy-return runtime budgets must fit inside one control update")
-    if args.optimizer_deadline_seconds + args.first_move_deadline_seconds >= args.decision_runtime_budget_seconds:
-        raise ValueError("policy-return full-plan plus first-move budgets exceed controller budget")
+    if not 0.0 < float(args.decision_runtime_budget_seconds) < 600.0:
+        raise ValueError("Practical controller runtime budget must fit inside one 600-s update")
 
+    assets = load_practical_rtc_asset_manifest(args.asset_manifest)
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
-    graph = _load_graph(args.graph)
-    sensors = _load_lines(args.sensors)
-    step1 = load_frozen_step1_v127(args.step1, device)
-    model, normalization, checkpoint = load_direct_tfv_runtime_checkpoint(
-        args.step2, graph=graph, device=device
-    )
-    _require_step1_lineage(checkpoint, step1=step1, sensors=sensors)
-    policy = _load_json(
-        args.policy_admission, DIRECT_TFV_POLICY_ADMISSION_CONTRACT, "V2 policy admission"
-    )
-    first = _load_json(
-        args.v12_first_move_admission,
-        DIRECT_TFV_FIRST_MOVE_ADMISSION_CONTRACT,
-        "V12 scenario-mean first-move admission",
-    )
-    if str(first.get("query_step3_contract", "")) != DIRECT_TFV_SCENARIO_MEAN_STEP3_CONTRACT:
-        raise ValueError("policy-return direction generator requires V12 scenario-matched admission")
-    if str(first.get("rainfall_scenario_contract", "")) != DIRECT_TFV_CAUSAL_RAINFALL_SCENARIO_CONTRACT:
-        raise ValueError("V12 direction admission has the wrong rainfall scenario contract")
-    first_lineage = first.get("lineage") if isinstance(first.get("lineage"), dict) else {}
-    calibrated_v12_behavior = str(
-        first.get("v12_behavioral_source_sha256", first_lineage.get("v12_behavioral_source_sha256", ""))
-    ).lower()
-    current_v12_behavior = direct_tfv_v12_behavioral_sha256()
-    if calibrated_v12_behavior != current_v12_behavior.lower():
-        raise ValueError("V12 direction admission behavioral fingerprint differs from runtime")
+    if args.device == "cuda" and device.type != "cuda":
+        raise RuntimeError("Practical RTC requested CUDA but CUDA is unavailable")
+    graph_path = practical_asset_path(assets, "graph")
+    sensors_path = practical_asset_path(assets, "sensors")
+    config_path = practical_asset_path(assets, "config")
+    step1_path = practical_asset_path(assets, "step1")
+    step2_path = practical_asset_path(assets, "step2")
+    sequence_support_path = practical_asset_path(assets, "sequence_support")
 
-    sequence_support = json.loads(Path(args.sequence_support).read_text(encoding="utf-8"))
-    validate_direct_tfv_sequence_support(
-        sequence_support,
-        actuator_ids=graph.actuator_ids,
-        step2_checkpoint_sha256=_sha(args.step2),
+    _require_step1_lineage(
+        step1_path=step1_path,
+        step2_path=step2_path,
+        sensors_path=sensors_path,
+        graph_path=graph_path,
+        device=device,
     )
-    return_model, return_norm, return_checkpoint = load_policy_return_checkpoint(
+    graph = _load_graph(graph_path)
+    return_model, _, return_checkpoint = load_policy_return_checkpoint(
         args.policy_return_checkpoint,
         graph=graph,
         device=device,
-        expected_base_step2_sha256=_sha(args.step2),
+        expected_base_step2_sha256=_sha(step2_path),
     )
-    return_admission = _load_json(
-        args.policy_return_admission,
-        DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT,
-        "policy-return admission",
-    )
-    return_checkpoint_sha = _sha(args.policy_return_checkpoint)
-    if str(return_admission.get("policy_return_checkpoint_sha256", "")).lower() != return_checkpoint_sha.lower():
-        raise ValueError("policy-return admission was calibrated on another critic checkpoint")
-    checkpoint_parent = str(return_checkpoint.get("continuation_policy_sha256", "")).lower()
-    admission_parent = str(return_admission.get("continuation_policy_sha256", "")).lower()
-    if len(checkpoint_parent) != 64 or checkpoint_parent != admission_parent:
-        raise ValueError("policy-return critic/admission continuation-policy lineage mismatch")
+    del return_model
+    if str(return_checkpoint.get("candidate_portfolio_contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
+        raise ValueError("current Development runtime accepts only the Practical H10 candidate portfolio")
+    if str(return_checkpoint.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
+        raise ValueError("current Development runtime critic has the wrong H10 action encoding")
+    admission = json.loads(Path(args.policy_return_admission).read_text(encoding="utf-8"))
+    if str(admission.get("contract", "")) != DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT:
+        raise ValueError("current Development runtime requires current policy-return admission")
+    if str(admission.get("candidate_portfolio_contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
+        raise ValueError("current Development runtime admission uses another candidate portfolio")
+    if str(admission.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
+        raise ValueError("current Development runtime admission uses another action encoding")
 
-    cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
+    cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
     project_contract = validate_project7_runtime_config(cfg)
     clock = inspect_prepared_event_clock(args.inp)
     if abs(float(clock["effective_warmup_minutes"]) - EFFECTIVE_WARMUP_MINUTES) > 1e-6:
-        raise ValueError("policy-return event violates common warm-up clock")
-    controller_cfg = replace(
-        _controller_config(dict(cfg["controller"]), control_block_steps=2),
-        horizon_steps=72,
-        control_block_steps=2,
-        max_setting_delta_per_update=0.5,
-        decision_runtime_budget_seconds=float(args.decision_runtime_budget_seconds),
-        fallback_policy_id="HOLD_DIRECT_TFV_POLICY_RETURN_RUNTIME_FALLBACK",
-    )
-    controller_cfg.validate()
-    design = DirectTFVMPCDesignV4(
-        maxiter=int(args.lbfgsb_maxiter),
-        deadline_seconds=float(args.optimizer_deadline_seconds),
-        active_facility_count=0,
-        active_support_quantile="q95",
-    )
-    mpc = DirectTFVPolicyReturnMPCV11(
-        model=model,
-        graph=graph,
-        normalization=normalization,
-        action_support=checkpoint["action_support"],
-        policy_admission_calibration=policy,
-        first_move_admission_calibration=first,
-        sequence_support=sequence_support,
-        design=design,
-        first_move_maxiter=int(args.first_move_maxiter),
-        first_move_deadline_seconds=float(args.first_move_deadline_seconds),
-        minimum_rainfall_scenarios=3,
-        policy_return_model=return_model,
-        policy_return_normalization=return_norm,
-        policy_return_admission=return_admission,
-        policy_return_checkpoint_sha256=return_checkpoint_sha,
-    )
-    controller = MemorySafeDirectTFVAuthoritativeController(
-        step1=step1,
-        mpc=mpc,
-        graph=graph,
-        sensor_nodes=sensors,
-        forecast=PersistenceDecayForecast(
-            decay_per_step=0.92,
-            scenario_multipliers=(0.8, 1.0, 1.2),
-            history_steps_for_level=3,
-        ),
-        config=controller_cfg,
+        raise ValueError("Practical event violates the common warm-up clock")
+
+    controller, _, sensors, lineage = build_frozen_policy_return_continuation_controller(
+        graph_path=graph_path,
+        sensors_path=sensors_path,
+        config_path=config_path,
+        step1_path=step1_path,
+        step2_path=step2_path,
+        policy_admission_path=practical_asset_path(assets, "policy_admission"),
+        v12_first_move_admission_path=practical_asset_path(assets, "v12_first_move_admission"),
+        sequence_support_path=sequence_support_path,
+        policy_return_checkpoint_path=args.policy_return_checkpoint,
+        policy_return_admission_path=args.policy_return_admission,
         device=device,
+        lbfgsb_maxiter=1,
+        optimizer_deadline_seconds=30.0,
+        decision_runtime_budget_seconds=float(args.decision_runtime_budget_seconds),
+        first_move_maxiter=1,
+        first_move_deadline_seconds=1.0,
     )
-    controller = ContinuityGuardController(
-        controller,
-        max_delta_per_update=0.5,
-        allow_projection=False,
-        enforce_current_delta=False,
-    )
+    if lineage.get("portfolio_mode") is not True or lineage.get("online_lbfgsb_used") is not False:
+        raise RuntimeError("current Development runtime unexpectedly resolved to a legacy optimizer path")
+    if lineage.get("legacy_v12_admission_required_online") is not False:
+        raise RuntimeError("Practical runtime must not depend on legacy V12 online admission")
+
     runtime_inp = _controls_disabled_runtime(
-        source_inp=Path(args.inp),
-        cache_dir=Path(args.out_dir) / "_runtime_inp",
+        source_inp=Path(args.inp).resolve(),
+        cache_dir=Path(args.out_dir).resolve() / "_runtime_inp",
         swmm_threads=int(cfg.get("swmm_threads", 1)),
     )
     result = run_authoritative_closed_loop(
@@ -225,26 +160,31 @@ def main() -> None:
     )
     write_audit = audit_target_write_readback_v127(metadata_path=result.metadata_path)
     if write_audit.get("passed") is not True:
-        raise RuntimeError("policy-return runtime failed target write/readback audit")
+        raise RuntimeError("Practical runtime failed target write/readback audit")
     metadata_path = Path(result.metadata_path)
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata.update(
         {
-            "strategy": "proposed_direct_tfv_policy_return",
+            "strategy": "proposed_practical_h10_policy_return",
             "direct_tfv_development_runtime_contract": DIRECT_TFV_POLICY_RETURN_RUNTIME_CONTRACT,
-            "direct_tfv_step3_contract": DIRECT_TFV_POLICY_RETURN_STEP3_CONTRACT,
+            "direct_tfv_step3_contract": lineage["policy_return_step3_contract"],
             "development_only": True,
             "tfv_primary": True,
-            "pfv_role": "report_only_secondary_not_optimization_objective",
+            "pfv_role": "secondary_authoritative_no_control_noninferiority_safety",
+            "pfv_default_safety_contract": "PFV_PROPOSED_LE_100_M3_PLUS_1P05_TIMES_PFV_NO_CONTROL",
             "global_peak_role": "report_only",
             "future_realized_rainfall_used_as_model_input": False,
-            "policy_return_checkpoint_sha256": return_checkpoint_sha,
+            "online_swmm_candidate_search": False,
+            "online_lbfgsb_used": False,
+            "policy_return_action_encoding": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
+            "policy_return_checkpoint_sha256": _sha(args.policy_return_checkpoint),
             "policy_return_admission_sha256": _sha(args.policy_return_admission),
-            "policy_return_parent_continuation_sha256": admission_parent,
-            "base_step2_sha256": _sha(args.step2),
-            "sequence_support_sha256": _sha(args.sequence_support),
-            "v12_behavioral_source_sha256": current_v12_behavior,
-            "v12_open_loop_first_move_margin_controls_execution": False,
+            "policy_return_parent_continuation_sha256": admission["continuation_policy_sha256"],
+            "base_step2_sha256": _sha(step2_path),
+            "sequence_support_sha256": _sha(sequence_support_path),
+            "asset_manifest_path": str(Path(args.asset_manifest).resolve()),
+            "asset_manifest_sha256": _sha(args.asset_manifest),
+            "legacy_v12_admission_required_online": False,
             "generic_d3_floor_controls_execution": False,
             "all_109_facilities_screened_each_decision": True,
             "target_latch_semantics": "LAST_COMMANDED_TARGET_PERSISTS_UNTIL_EXPLICITLY_CHANGED",
@@ -253,19 +193,26 @@ def main() -> None:
             "project7_runtime_contract": project_contract,
             "prepared_event_clock": clock,
             "policy_return_training_validation_metrics": return_checkpoint.get("validation_metrics", {}),
+            "runtime_factory_lineage": lineage,
         }
     )
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({
-        "strategy": metadata["strategy"],
-        "step3_contract": metadata["direct_tfv_step3_contract"],
-        "metadata_path": result.metadata_path,
-        "decision_path": result.decision_path,
-        "node_statistics_path": result.node_statistics_path,
-        "decisions": result.decisions,
-        "target_write_readback_passed": True,
-        "flow_routing_error_pct": result.flow_routing_error_pct,
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "strategy": metadata["strategy"],
+                "step3_contract": metadata["direct_tfv_step3_contract"],
+                "metadata_path": result.metadata_path,
+                "decision_path": result.decision_path,
+                "node_statistics_path": result.node_statistics_path,
+                "decisions": result.decisions,
+                "online_lbfgsb_used": False,
+                "target_write_readback_passed": True,
+                "flow_routing_error_pct": result.flow_routing_error_pct,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
