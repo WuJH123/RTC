@@ -75,17 +75,25 @@ BASELINES = {
     ),
 }
 
-# Competitive RTC comparison: operational references that represent plausible supervisory policies.
-# Numerical actuator extremes remain available and should still be reported as diagnostics, but a
-# Proposed controller is not required to beat an unconstrained ALL-MAX-SETTING extreme to be useful.
+# Keep the six-strategy evidence panel for compatibility and transparency.  Publication claims use
+# COMPETITIVE_BASELINE_IDS; the numerical setting extremes are always reported but are not policies
+# that the Proposed controller is required to beat.
 FORMAL_FIXED_BASELINE_IDS = (
+    "no_control",
+    "internal_rtc",
+    "auto_rbc",
+    "efd",
+    "all_open",
+    "all_closed",
+)
+COMPETITIVE_BASELINE_IDS = (
     "no_control",
     "internal_rtc",
     "auto_rbc",
     "efd",
 )
 DIAGNOSTIC_FIXED_BASELINE_IDS = ("all_open", "all_closed", "hold")
-SUPPORTED_FIXED_BASELINE_IDS = FORMAL_FIXED_BASELINE_IDS + DIAGNOSTIC_FIXED_BASELINE_IDS
+SUPPORTED_FIXED_BASELINE_IDS = FORMAL_FIXED_BASELINE_IDS + ("hold",)
 FIXED_BASELINE_IDS = FORMAL_FIXED_BASELINE_IDS
 
 LEGACY_BASELINE_ALIASES = {
