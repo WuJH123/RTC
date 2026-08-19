@@ -20,7 +20,7 @@ class _DifferentiableH10Value(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
         weights = torch.zeros(109, dtype=torch.float32)
-        weights[:4] = torch.tensor([4.0, -3.0, 2.0, -1.0])
+        weights[:6] = torch.tensor([4.0, -3.0, 2.0, -1.0, 5.0, -4.0])
         self.register_buffer("weights", weights)
 
     def forward(self, **kwargs):
@@ -80,7 +80,7 @@ def _inputs():
     return state, rainfall, flow, active
 
 
-def test_projected_gradient_is_109d_h10_only_and_support_bounded() -> None:
+def test_projected_gradient_is_109channel_h10_only_and_support_bounded() -> None:
     state, rainfall, flow, active = _inputs()
     proposal = build_projected_gradient_h10_proposal(
         model=_DifferentiableH10Value(),
@@ -134,4 +134,35 @@ def test_hybrid_portfolio_adds_one_distinct_gradient_candidate_without_lbfgsb() 
         assert candidate.changed_facility_count <= 4
         assert float(delta.max()) <= 0.150001
         assert bool(torch.all((candidate.target >= 0.0) & (candidate.target <= 1.0)))
-    assert DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT.endswith("H10_HYBRID_GRADIENT")
+    assert "82CONTROL_109REP" in DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+
+
+def test_masked_gradient_and_all_candidates_leave_passive_channels_at_hold() -> None:
+    state, rainfall, flow, active = _inputs()
+    mask = np.zeros(109, dtype=bool)
+    mask[:4] = True
+    # The differentiable surface also has strong gradients on channels 4/5, but those channels are
+    # deliberately passive and therefore may not move under the masked Practical controller.
+    result = build_hybrid_policy_return_portfolio(
+        model=_DifferentiableH10Value(),
+        normalization=_normalization(),
+        graph=_graph(),
+        current_state=state,
+        rainfall_scenarios=rainfall,
+        previous_actuator_flow=flow,
+        active_target=active,
+        first_radius=np.full(109, 0.15, dtype=np.float32),
+        max_changed_facilities=4,
+        max_delta_per_update=0.5,
+        probe_chunk_size=32,
+        gradient_steps=2,
+        gradient_step_fraction=0.25,
+        supervisory_mask=mask,
+    )
+    assert result.projected_gradient.produced_nonhold_candidate is True
+    assert result.learned_probe.probe_count <= 2 * int(mask.sum())
+    for candidate in result.candidates:
+        target = candidate.target.detach().cpu().numpy()
+        assert np.allclose(target[~mask], active.detach().cpu().numpy()[~mask])
+        changed = np.flatnonzero(np.abs(target - active.detach().cpu().numpy()) > 1.0e-7)
+        assert set(changed.tolist()).issubset(set(np.flatnonzero(mask).tolist()))
