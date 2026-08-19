@@ -1,16 +1,13 @@
 """HOLD-relative joint sequence support for optimizer-consistent Direct-TFV MPC.
 
-The Direct-TFV optimizer already respects per-facility q95 radii and a TrainFit-derived ceiling on
-how many facilities may change. Those constraints do not prevent an optimizer from combining many
-individually supported moves across twelve free control blocks into a joint temporal sequence that
-was never represented by authoritative SWMM counterfactuals.
-
-This module derives label-independent support geometry only from D3 TrainFit HOLD-reference joint
-branches. The resulting q90/q95/q99/max values are trust-region geometry, not performance-tuned
-thresholds. No TFV outcome is used to derive them.
+The pretrained Step2 keeps 109 hydraulic action channels. Current support derivation can additionally
+receive a native supervisory mask and then computes changed-facility and sequence geometry only on
+the enabled control subspace. This is label-independent and reuses existing D3 TrainFit actions, so
+changing 109 model channels to 82 online control freedoms does not require new SWMM simulation.
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -36,12 +33,22 @@ def _control_blocks(settings: np.ndarray, control_block_steps: int) -> np.ndarra
     ).mean(axis=1)
 
 
+def _mask_array(supervisory_mask: Sequence[bool] | np.ndarray | None, actuator_count: int) -> np.ndarray:
+    if supervisory_mask is None:
+        return np.ones(int(actuator_count), dtype=bool)
+    mask = np.asarray(supervisory_mask, dtype=bool).reshape(-1)
+    if mask.shape != (int(actuator_count),) or int(mask.sum()) <= 0:
+        raise ValueError("sequence support supervisory mask has the wrong shape or no enabled channel")
+    return mask
+
+
 def direct_tfv_sequence_geometry(
     candidate: np.ndarray,
     reference: np.ndarray,
     *,
     control_block_steps: int = 2,
     free_control_blocks: int = 12,
+    supervisory_mask: Sequence[bool] | np.ndarray | None = None,
 ) -> dict[str, float]:
     candidate_blocks = _control_blocks(candidate, control_block_steps)
     reference_blocks = _control_blocks(reference, control_block_steps)
@@ -49,7 +56,11 @@ def direct_tfv_sequence_geometry(
         raise ValueError("candidate/reference sequence shapes differ")
     if candidate_blocks.shape[0] < int(free_control_blocks):
         raise ValueError("sequence is shorter than the H120 free-control horizon")
-    delta = candidate_blocks[: int(free_control_blocks)] - reference_blocks[: int(free_control_blocks)]
+    mask = _mask_array(supervisory_mask, candidate_blocks.shape[1])
+    delta = (
+        candidate_blocks[: int(free_control_blocks)]
+        - reference_blocks[: int(free_control_blocks)]
+    )[:, mask]
     first = float(np.abs(delta[0]).sum())
     h120 = float(np.abs(delta).sum())
     previous = np.concatenate((np.zeros_like(delta[:1]), delta[:-1]), axis=0)
@@ -82,16 +93,21 @@ def derive_direct_tfv_sequence_support(
     control_block_steps: int = 2,
     free_control_blocks: int = 12,
     epsilon: float = 1.0e-7,
+    supervisory_mask: Sequence[bool] | np.ndarray | None = None,
+    supervisory_control_contract: str | None = None,
+    supervisory_mask_sha256: str | None = None,
 ) -> dict[str, Any]:
     ids = tuple(str(value) for value in actuator_ids)
     if len(ids) != 109 or len(set(ids)) != 109:
-        raise ValueError("Direct-TFV sequence support requires 109 unique actuators")
+        raise ValueError("Direct-TFV sequence support requires 109 unique model channels")
     if int(control_block_steps) <= 0 or int(free_control_blocks) <= 0:
         raise ValueError("control-block settings must be positive")
     if not names:
         raise ValueError("Direct-TFV sequence support requires D3 TrainFit groups")
+    mask = _mask_array(supervisory_mask, len(ids))
 
     metrics: dict[str, list[float]] = {key: [] for key in SEQUENCE_SUPPORT_METRICS}
+    changed_counts: list[float] = []
     rainfall_groups: set[str] = set()
     group_count = 0
     joint_branch_count = 0
@@ -119,22 +135,33 @@ def derive_direct_tfv_sequence_support(
                 continue
             candidate = np.asarray(arrays["settings"][index], dtype=np.float64)
             candidate_blocks = _control_blocks(candidate, control_block_steps)
-            free_delta = candidate_blocks[: int(free_control_blocks)] - reference_blocks[: int(free_control_blocks)]
+            free_delta = (
+                candidate_blocks[: int(free_control_blocks)]
+                - reference_blocks[: int(free_control_blocks)]
+            )[:, mask]
             changed = np.any(np.abs(free_delta) > float(epsilon), axis=0)
-            if int(np.sum(changed)) <= 1:
+            changed_count = int(np.sum(changed))
+            if changed_count <= 1:
                 continue
             geometry = direct_tfv_sequence_geometry(
                 candidate,
                 reference,
                 control_block_steps=control_block_steps,
                 free_control_blocks=free_control_blocks,
+                supervisory_mask=mask,
             )
             joint_branch_count += 1
+            changed_counts.append(float(changed_count))
             for key in SEQUENCE_SUPPORT_METRICS:
                 metrics[key].append(float(geometry[key]))
 
     if group_count <= 0 or joint_branch_count <= 0:
-        raise ValueError("D3 TrainFit contains no usable multi-facility H120 branches")
+        raise ValueError("D3 TrainFit contains no usable multi-facility branches on the control subspace")
+
+    mask_bytes = np.ascontiguousarray(mask.astype(np.uint8)).tobytes()
+    mask_sha = hashlib.sha256(mask_bytes).hexdigest()
+    if supervisory_mask_sha256 is not None and str(supervisory_mask_sha256).lower() != mask_sha:
+        raise ValueError("provided supervisory-mask SHA does not match the support mask")
 
     payload: dict[str, Any] = {
         "contract": DIRECT_TFV_SEQUENCE_SUPPORT_CONTRACT,
@@ -143,6 +170,11 @@ def derive_direct_tfv_sequence_support(
         "source_semantics": "D3_TRAINFIT_ONLY",
         "label_independent": True,
         "actuator_ids": list(ids),
+        "model_action_channel_count": len(ids),
+        "supervisory_control_dimension": int(mask.sum()),
+        "supervisory_mask": mask.astype(int).tolist(),
+        "supervisory_mask_sha256": mask_sha,
+        "supervisory_control_contract": str(supervisory_control_contract or "LEGACY_ALL_CHANNELS"),
         "control_block_steps": int(control_block_steps),
         "free_control_blocks": int(free_control_blocks),
         "group_count": int(group_count),
@@ -150,11 +182,12 @@ def derive_direct_tfv_sequence_support(
         "joint_branch_count": int(joint_branch_count),
         "maximum_reference_drift": float(maximum_reference_drift),
     }
+    payload.update(_quantile_fields(changed_counts, "joint_changed_facility_count"))
     for key in SEQUENCE_SUPPORT_METRICS:
         payload.update(_quantile_fields(metrics[key], key))
     payload["scientific_role"] = (
-        "D3 TrainFit HOLD-reference joint temporal action geometry. It limits optimizer extrapolation "
-        "without changing the TFV objective and without using performance outcomes to tune the limit."
+        "D3 TrainFit HOLD-reference joint temporal action geometry recomputed on the allowed online "
+        "control subspace. It is label-independent and does not require new SWMM truth."
     )
     return payload
 
@@ -164,6 +197,8 @@ def validate_direct_tfv_sequence_support(
     *,
     actuator_ids: Sequence[str],
     step2_checkpoint_sha256: str | None = None,
+    supervisory_mask: Sequence[bool] | np.ndarray | None = None,
+    supervisory_control_contract: str | None = None,
 ) -> None:
     if str(payload.get("contract")) != DIRECT_TFV_SEQUENCE_SUPPORT_CONTRACT:
         raise ValueError("wrong Direct-TFV joint-sequence support contract")
@@ -179,7 +214,24 @@ def validate_direct_tfv_sequence_support(
         raise ValueError("Direct-TFV sequence support does not match the frozen 10-min/H120 contract")
     if int(payload.get("joint_branch_count", 0)) <= 0:
         raise ValueError("Direct-TFV sequence support contains no joint branches")
-    for metric in SEQUENCE_SUPPORT_METRICS:
+
+    if supervisory_mask is not None:
+        mask = _mask_array(supervisory_mask, len(ids))
+        stored = np.asarray(payload.get("supervisory_mask", ()), dtype=np.int64).reshape(-1)
+        if stored.shape != (109,) or not np.array_equal(stored.astype(bool), mask):
+            raise ValueError("Direct-TFV sequence support was not built on the current supervisory mask")
+        expected_sha = hashlib.sha256(
+            np.ascontiguousarray(mask.astype(np.uint8)).tobytes()
+        ).hexdigest()
+        if str(payload.get("supervisory_mask_sha256", "")).lower() != expected_sha:
+            raise ValueError("Direct-TFV sequence support supervisory-mask SHA mismatch")
+        if int(payload.get("supervisory_control_dimension", -1)) != int(mask.sum()):
+            raise ValueError("Direct-TFV sequence support control dimension mismatch")
+    if supervisory_control_contract is not None:
+        if str(payload.get("supervisory_control_contract", "")) != str(supervisory_control_contract):
+            raise ValueError("Direct-TFV sequence support uses another supervisory-control contract")
+
+    for metric in ("joint_changed_facility_count", *SEQUENCE_SUPPORT_METRICS):
         maximum = float(payload.get(f"{metric}_max", float("nan")))
         if not np.isfinite(maximum) or maximum <= 0.0:
             raise ValueError(f"Direct-TFV sequence support has invalid {metric}_max")
@@ -206,10 +258,20 @@ def sequence_support_limit(payload: Mapping[str, Any], metric: str, quantile: st
     return float(min(value, maximum))
 
 
+def changed_facility_support_limit(payload: Mapping[str, Any], quantile: str = "q95") -> int:
+    if quantile not in SUPPORTED_SEQUENCE_QUANTILES:
+        raise ValueError(f"unsupported changed-facility support quantile: {quantile}")
+    value = float(payload[f"joint_changed_facility_count_{quantile}"])
+    maximum = float(payload["joint_changed_facility_count_max"])
+    dimension = int(payload.get("supervisory_control_dimension", 109))
+    return max(1, min(dimension, int(np.ceil(min(value, maximum)))))
+
+
 __all__ = [
     "DIRECT_TFV_SEQUENCE_SUPPORT_CONTRACT",
     "SEQUENCE_SUPPORT_METRICS",
     "SUPPORTED_SEQUENCE_QUANTILES",
+    "changed_facility_support_limit",
     "derive_direct_tfv_sequence_support",
     "direct_tfv_sequence_geometry",
     "sequence_support_limit",
