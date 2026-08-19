@@ -15,10 +15,10 @@ Every 10 minutes:
 
 ```text
 causal sparse hydraulic/rainfall history
-  -> Step1 full-network state reconstruction
-  -> frozen base Step2 over all 109 actuators
-  -> <=4 support-bounded H10 first-action candidates
-       [Step2 full / Step2 half / type-aware hydraulic / 109-D projected gradient]
+  -> frozen Step1 full-network state reconstruction
+  -> frozen 109-channel base Step2 representation
+  -> native 82-facility supervisory mask
+  -> <=4 masked/support-bounded H10 candidates
   -> receding-policy-return critic + one-sided admission
   -> execute first H10 target or HOLD
   -> authoritative SWMM target write/readback
@@ -28,36 +28,65 @@ causal sparse hydraulic/rainfall history
 Objective hierarchy:
 
 - **online primary:** system-wide cumulative TFV only;
-- **secondary authoritative safety:** Priority8 PFV non-inferiority versus No-control, currently
+- **secondary authoritative safety:** Priority8 PFV non-inferiority versus No-control,
   `PFV_proposed <= 100 m3 + 1.05 * PFV_no_control`;
 - **report-only:** Global Peak.
 
 No future realised rainfall/state/flooding, no online SWMM candidate search, no PFV/Peak penalty and
 no baseline imitation are permitted online.
 
-## Hybrid first-action search, not historical full-plan L-BFGS-B
+## 82 online control freedoms, 109 hydraulic model channels
 
-Historical Development found two distinct failure modes. A 12 x 109 continuous full-plan optimizer
-could exploit surrogate extrema/support edges, but an excessively conservative executable-prefix
-admission could also starve useful actions. The current controller therefore keeps differentiable
-search capacity without restoring the historical 1308-dimensional optimizer.
+Project7 now separates **hydraulic representation** from **supervisory controllability**.
 
-At each decision the candidate family is at most:
+The pretrained Step2 retains all 109 hydraulic setting/status channels. A deterministic artifact built
+from explicit action clauses in the source INP `[CONTROLS]` identifies the current 82 facilities that
+may actually change online. The other 27 channels remain part of the hydraulic/model representation,
+but every candidate must keep them identical to HOLD/reference.
+
+The current expected controlled set is 57 pumps, 16 orifices and 9 weirs. A different count fails
+closed rather than silently changing the research action space.
+
+This change **does not trigger Step1 or base-Step2 retraining**. The five added `RTC_ST_*` Storage nodes
+remain unchanged as hydraulic state/capacity information; they are not supervisory action dimensions.
+
+## Cheap support migration instead of new SWMM data
+
+Because the online control subspace changed, q95 changed-facility/L1/total-variation support is
+recomputed from the existing D3 TrainFit actions after masking passive channels. This is
+label-independent and requires **no new SWMM simulation**.
+
+Build:
+
+```text
+scripts/build_native_supervisory_control_current.py
+scripts/build_direct_tfv_sequence_support_current.py
+scripts/build_project7_practical_asset_manifest_current.py
+```
+
+The resulting asset manifest freezes graph, sensors, config, Step1, 109-channel base Step2, native
+supervisory mask, matching masked q95 support and Priority8 with absolute paths and SHA-256.
+
+## Hybrid first-action search
+
+Historical 12 x 109 L-BFGS-B full-plan optimization is archival. At most four current H10 candidates
+are generated:
 
 1. `STEP2_H10_PROBE_SCALE_1.00`;
 2. `STEP2_H10_PROBE_SCALE_0.50`;
 3. `TYPE_AWARE_HYDRAULIC_PRESSURE`;
 4. `SUPPORT_CONSTRAINED_GRADIENT_H10`.
 
-The fourth candidate is **109-dimensional and H10-only**. Autograd through frozen base Step2 proposes
-one first target; every trial is immediately projected to actuator bounds, <=0.5 target slew, the
-frozen per-facility q95 first-move radius and the q95 changed-facility ceiling. The gradient score
-cannot authorize execution. Every distinct candidate is subsequently contracted to q95 joint-
-sequence support and ranked by the separately trained receding-policy-return critic.
+The gradient tensor remains 109 channels but only 82 supervisory dimensions are free. Gradient values
+on passive channels are zeroed, and every trial is projected to the native mask, physical bounds,
+<=0.5 target slew, first-move q95 radius and masked q95 changed-K. Final candidates are contracted to
+masked q95 H10 sequence support.
+
+The gradient is only a proposer. Base-Step2 score never authorizes pi1 execution.
 
 ## Exact receding-policy first-action value
 
-The learned deployed target is:
+The deployed learning target is:
 
 ```text
 A^pi(x_t,u_t)
@@ -65,125 +94,68 @@ A^pi(x_t,u_t)
  - J(HOLD H10 -> the same frozen continuation pi)
 ```
 
-Candidate/HOLD SWMM branches use the same raw causal prefix and same frozen continuation. Training,
-calibration and runtime all encode the candidate identically as:
+Candidate/HOLD branches share the same raw causal prefix, forcing and frozen continuation. Training,
+calibration and runtime all encode:
 
 ```text
 H10 candidate target -> H350 HOLD target
 ```
 
-This is the critic representation of one first action, **not** an instruction to hold the real system
-for 350 minutes. The authoritative controller re-observes and replans after the executed H10 block.
+The query identity includes the supervisory-mask SHA. The real controller re-observes and replans after
+every executed H10.
 
-## Current first policy iteration
+## First policy iteration and current mechanism gate
 
-Historical V12/L-BFGS-B is archival evidence/ablation only. The first current paired-label round uses
-`PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_PI0_V2`: the same four-family H10 proposal/support geometry
-without a policy-return critic. Frozen base Step2 ranks pi0 proposals; exact paired SWMM then supplies
-`Q^pi0/A^pi0` labels. After critic training and matched calibration, pi1 uses policy-return UCB ranking.
-If pi1 materially changes the state/action distribution, a new role-disjoint `Q^pi1` round is required
-before Policy Lock.
+Historical V12/L-BFGS-B is archival. First-round labels use the masked hybrid parent:
 
-## Step1 / Step2 / critic roles
+`PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_PI0_V3_82CONTROL_109REP`.
 
-- **Step1:** sparse sensing -> causal full-network state.
-- **Base Step2 V5:** frozen TFV action-effect representation, H10 directional probe model and
-  differentiable first-action proposer; it is not the deployed closed-loop value oracle.
-- **Policy-return critic:** initialized from base Step2 and fine-tuned by default only in
-  facility/action/interaction layers on exact paired SWMM labels.
+The earlier T30 exact query under 109 free channels remains historical Development diagnostics: it
+showed that a numerically successful gradient can optimize a locally misaligned base-Step2 value
+surface, and that all-harmful candidates at one state make HOLD the local portfolio oracle rather than
+proving universal failure.
 
-Checkpoint selection is control-first: false-beneficial selection, same-query ranking, selected
-regret, then event-balanced MAE.
+Because the online policy changed, that old exact truth is **not current 82-control training or
+calibration evidence**. Before expensive 48/12/24 labels, rerun a small label-blind seen mechanism
+panel under the new mask: two frozen causal query points each from already-inspected T8, T30 and T80.
 
-## Engineering and support boundaries
+If at least one of six valid query sets contains an exact beneficial generated action, proceed to fresh
+role-disjoint policy-return learning. If none do, stop before bulk and inspect proposal/Step2
+representation instead of widening K/q95/gradient steps or adding more heuristic candidates.
 
-- 109 writable actuators screened every decision;
-- 300-s observation/model context and 600-s supervisory updates;
-- execute the first 10-min target only;
-- physical setting min/max;
-- target movement <=0.5 per 10-min update;
-- supervisory anchor = previous commanded `target_setting`;
-- q95 TrainFit changed-facility and joint-sequence support;
-- HOLD = retain the previous supervisory target;
-- unchanged facilities retain their previous target;
-- score == execute, with no material post-score projection;
-- target write/readback and causal-history readiness fail closed.
+## HOLD-aware critic
 
-## Actuator semantics and baselines
+The true action set is `{HOLD=0 + generated candidates}`. Critic model selection therefore reports
+HOLD-aware false-beneficial, false-reject, selected regret and decision accuracy in addition to
+same-query rank/top1 and event-balanced error/sign metrics. Correctly HOLDing an all-harmful query is
+not an error.
 
-Hydraulic release intent is mapped to actuator-specific SWMM SETTING semantics. Pump, orifice, weir
-and outlet settings are not interpreted as one universal opening coordinate.
+## Baselines and safety
 
-Authoritative comparison retains:
+Operational comparison remains No-control, Internal RTC, Auto-RBC and EFD. All-max-setting and
+all-min-setting are diagnostic extremes. Hydraulic release intent retains actuator-type-specific SWMM
+SETTING semantics.
 
-- No-control — primary reference;
-- Internal RTC — operational comparator;
-- Auto-RBC — operational type-aware rule comparator;
-- EFD — operational storage equal-filling comparator;
-- all-max-setting (`all_open`) — diagnostic extreme;
-- all-min-setting (`all_closed`) — diagnostic extreme.
+The Proposed policy is not required to beat every comparator on every event. Event-balanced TFV and
+Priority8 PFV safety are assessed on untouched authoritative SWMM events after Development is frozen.
 
-The Proposed policy is not required to beat every operational comparator on every event. Performance
-is assessed event-balanced on untouched authoritative SWMM events, with Priority8 PFV safety reported
-on the same events.
-
-## Efficient exact paired data generation
-
-Rainfall groups are role-disjoint: policy-return train >=48, model-selection validation >=12,
-conformal calibration >=24, plus separate new Development probes. Matched calibration must include
-the candidate families that can appear online, including the projected-gradient H10 family.
-
-The maintained workflow avoids unnecessary recomputation:
+## Current execution path
 
 ```text
-hybrid pi0 parent trajectory
-  -> prefix-only causal context capture
-  -> four-family Practical candidate portfolio
-  -> one shared HOLD authoritative branch
-  -> N sequential candidate authoritative branches
-  -> same-query paired labels
+build native control mask
+  -> rebuild masked q95 support from existing actions
+  -> freeze asset manifest
+  -> masked hybrid pi0 trajectory
+  -> exact causal context
+  -> masked four-family portfolio
+  -> 1 shared HOLD + N sequential candidate SWMM branches
+  -> seen mechanism audit
+  -> only if justified: fresh role-disjoint dataset / critic / calibration
+  -> new Development pi1 + unchanged baselines + TFV/PFV reporting
 ```
 
-Thus a query with N candidates requires `1 + N` full authoritative branches rather than `2N`.
+The old pair runner and historical V* admissions are not the current bulk label path. See
+`CODEX_START_HERE.md` and `PROJECT7_PRACTICAL_RTC_V14.md` for the full frozen contracts.
 
-## Path-safe current execution
-
-Historical V* directories remain evidence, not execution selectors. Local Codex first discovers the
-intended existing artifacts from `study_v069`, then freezes their **absolute paths and SHA-256** in one
-manifest:
-
-```text
-scripts/build_project7_practical_asset_manifest_current.py
-```
-
-The current manifest contains graph, sensors, config, Step1, base Step2, sequence support and
-Priority8 only. Historical V12 policy/first-move admissions are not current dependencies. Downstream
-current scripts must reuse the manifest; silent fallback to another historical path is forbidden.
-
-Current Practical scripts include:
-
-```text
-scripts/run_policy_direct_tfv_base_hybrid_parent_current.py
-scripts/capture_direct_tfv_policy_return_context_current.py
-scripts/design_direct_tfv_policy_return_portfolio_current.py
-scripts/run_direct_tfv_policy_return_query_current.py
-scripts/compile_direct_tfv_policy_return_dataset_current.py
-scripts/train_direct_tfv_policy_return_current.py
-scripts/score_direct_tfv_policy_return_calibration_current.py
-scripts/calibrate_direct_tfv_policy_return_portfolio_admission_current.py
-scripts/run_policy_direct_tfv_policy_return_development.py
-scripts/run_six_baselines_development_current.py
-scripts/compare_direct_tfv_baselines_current.py
-scripts/add_pfv_to_direct_tfv_comparison_current.py
-```
-
-See **`CODEX_START_HERE.md`** and **`PROJECT7_PRACTICAL_RTC_V14.md`** for the full scientific and local
-execution contracts.
-
-## Development boundary
-
-Near-all-HOLD behavior is treated as an admission/data failure mode, not a successful conservative
-RTC. `READY_FOR_POLICY_LOCK=false` by default. Validation, Final, Formal and Policy Lock remain
-inaccessible until role-disjoint policy-return training/validation/calibration, independent
-Development probes, useful non-starved TFV control, Priority8-PFV-safe positive claims and any
-necessary policy-iteration round are complete.
+`READY_FOR_POLICY_LOCK=false` until Development scientific gates are met. Validation, Final, Formal
+and Policy Lock remain inaccessible during policy development.
