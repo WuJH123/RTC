@@ -1,0 +1,1 @@
+This recovery is Development-only. It preserves Step1/Step2 V5, q95 support, TFV-only objective, target-latch semantics, and V12 causal rainfall scenarios. It does not authorize Validation, Final, Formal, or Policy Lock access.
