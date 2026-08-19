@@ -1,17 +1,14 @@
-# Project7 Direct-TFV — authoritative main workflow
+# Project7 Practical RTC — authoritative local execution guide
 
-This file is the single startup guide for local Codex after the web/GitHub review cycle.
+This is the single startup guide for local Codex after Web GPT merges the Practical refactor to
+`main`. Do not select a scientific path from historical V* filenames.
 
-## 0. Collaboration contract
+## 0. Collaboration and git contract
 
-The working model is deliberate:
-
-1. **Web GPT** reviews the scientific logic and edits/merges GitHub.
-2. **Local Codex** synchronizes `main`, runs the exact commands, monitors Windows/SWMM/CUDA, and reports evidence/errors.
-3. The user returns the run log to Web GPT.
-4. Web GPT fixes GitHub; local Codex then fast-forwards `main` and resumes.
-
-Do not create an independent local scientific fork. Do not choose a historical V8/V9/V10/V11/V12 branch by filename. `origin/main` is authoritative.
+1. **Web GPT** owns scientific/code changes and merges GitHub.
+2. **Local Codex** fast-forwards `main`, discovers existing local assets, runs/monitors the frozen
+   commands and returns evidence/errors.
+3. Never create an independent local scientific fork or redesign the objective from run outcomes.
 
 Before every run:
 
@@ -25,283 +22,299 @@ git rev-parse HEAD
 git rev-parse origin/main
 ```
 
-If local `main` is not a clean fast-forward of `origin/main`, stop before expensive work and report the exact diff/status. Never `git clean -fd`, `reset --hard`, or pop an old stash blindly.
+Preserve the user's existing documentation edits. Never use `reset --hard`, `clean`, `restore .`,
+`checkout .` or blind stash-pop to make the tree look clean.
 
-## 1. Research question is frozen
+## 1. Frozen paper question
 
 Every 600 s:
 
-`causal sparse observations -> Step1 state reconstruction -> Direct-TFV value/MPC -> 109-D supervisory target -> execute first 10 min -> SWMM -> observe again`.
+`causal sparse history -> Step1 full-state reconstruction -> frozen Step2 H10 probes -> <=3 supported
+first-action candidates -> policy-return critic/admission -> execute H10 or HOLD -> authoritative SWMM
+write/readback -> observe again`.
 
-Frozen physical/control contract:
+Frozen control contract:
 
-- model/observation step: 300 s;
-- control update: 600 s;
-- prediction horizon: H360;
-- free control horizon: H120 = 12 control blocks;
-- execute only the first 10-min target;
-- 109 writable actuators;
-- target movement <= 0.5 per update plus physical min/max;
-- supervisory slew anchor = previous `target_setting`, not physical `current_setting`;
-- unchanged facilities copy the previous commanded target exactly;
-- `HOLD` = latch previous supervisory target;
-- primary objective = system-wide cumulative TFV only;
-- Priority8 PFV and Global Peak = report only;
-- authoritative truth = SWMM;
-- no future realized rainfall/state/flooding/Internal trajectory online;
-- no online SWMM candidate search;
-- no Auto-RBC/EFD imitation or warm start.
+- model/observation step = 300 s;
+- supervisory update = 600 s;
+- value context horizon = H360;
+- only the first H10 command is executed;
+- 109 writable actuators are screened;
+- actuator min/max and target movement <= 0.5 per update;
+- supervisory slew anchor = previous `target_setting`, not lagged physical `current_setting`;
+- unchanged facilities retain their previous commanded target;
+- HOLD = latch the previous supervisory target;
+- q95 TrainFit changed-facility and joint-sequence support remain canonical;
+- authoritative truth = SWMM.
 
-## 2. What V8–V12 established
+Objective hierarchy:
 
-The historical versions are evidence, not alternative current entrypoints.
+- **online primary**: system-wide cumulative TFV only;
+- **authoritative secondary safety**: `Priority8 PFV_proposed <= 100 m3 + 1.05 * PFV_no_control` under
+  the current project-specific non-inferiority contract;
+- **report only**: Global Peak.
 
-- V8/V6 q95 joint support made continuous optimization much more reliable but conservative.
-- V9 policy-matched admission reduced over-conservatism but did not beat strong rule baselines.
-- V10 calibrated the wrong counterfactual (`H10 new -> old target H350`) and collapsed to all-HOLD.
-- V11 fixed the real supervisory target-latch semantics and restored actions.
-- V12 added a causal rainfall scenario ensemble `(0.8, 1.0, 1.2)`, history=3, decay=0.92 and scenario-mean TFV scoring. Exact accepted H360 replay was 9/9 sign-correct with 0/9 false-beneficial, but complete closed-loop TFV beat No-control on only 1/3 Development probes and Auto-RBC on 0/3.
+No online PFV surrogate, PFV/Peak penalty, future realised rainfall/state/flooding/Internal trajectory,
+online SWMM candidate search, Auto-RBC/EFD warm start or baseline imitation.
 
-Therefore the current scientific bottleneck is **OPEN_LOOP_VALUE_VS_RECEDING_CONTROL_MISMATCH**, not another scalar-margin problem.
+## 2. Why the old continuous optimizer is not current
 
-## 3. Stable base versus current Development experiment
+Historical Development established two separate problems:
 
-The stable engineering base remains:
+1. the 12 x 109 L-BFGS-B full-plan optimizer could bind q95 density/support, exploit surrogate extrema
+   and generate plans whose exact SWMM action effect was less reliable than their predicted value;
+2. even when accepted target-latched H360 samples were locally correct, repeated H10 replanning did not
+   reliably improve whole-event TFV.
 
-- frozen Step1;
-- frozen Direct-TFV V5 base Step2;
-- q95 support;
-- all-109 screening;
-- target-latch first-move refinement/pruning;
-- V12 causal rainfall scenario mean;
-- memory-safe runtime telemetry graph release.
+Therefore the current Practical online policy **does not call L-BFGS-B**. Historical V12 remains only
+an offline frozen parent `pi0` for the first paired policy-return label round and an ablation.
 
-The **current Development experiment** adds a receding-policy-return critic. It does not replace the stable base until evidence passes.
+## 3. Exact receding-policy estimand and tensor encoding
 
-Policy-return estimand:
+Authoritative label:
 
-`candidate H10 -> frozen continuation policy`
+`A^pi(x_t,u_t) = J(candidate H10 -> frozen pi) - J(HOLD H10 -> same frozen pi)`.
 
-minus
+Candidate/HOLD branches must share the same raw causal SWMM prefix and the same frozen continuation.
+The critic input uses the same intervention:
 
-`HOLD H10 -> the same frozen continuation policy`.
+`H10 candidate target -> H350 HOLD target`.
 
-The two SWMM branches must share the exact authoritative prefix and the exact same continuation policy after H10.
+The reference is HOLD H360. Persistent-H360 candidate encoding is forbidden for policy-return
+training, calibration and runtime.
 
-## 4. Cheap gates before any expensive run
+## 4. Practical online proposal layer
+
+At one causal state:
+
+1. batch-score +/- first-move probes for all 109 facilities with frozen base Step2;
+2. each probe is H10 candidate -> H350 HOLD and remains inside first-move support;
+3. combine only individually predicted-beneficial directions, capped by q95 changed-facility support;
+4. form at most three candidates after support/dedup:
+   - `STEP2_H10_PROBE_SCALE_1.00`;
+   - `STEP2_H10_PROBE_SCALE_0.50`;
+   - `TYPE_AWARE_HYDRAULIC_PRESSURE`;
+5. apply q95 joint-sequence support to the actual H10-pulse geometry;
+6. policy-return critic ranks candidates; execute the minimum upper-bound candidate only if its
+   one-sided upper bound is negative, otherwise HOLD.
+
+Auto-RBC, EFD, all-max-setting and all-min-setting are never candidate sources.
+
+## 5. Cheap gates
+
+Always run before expensive work:
 
 ```powershell
 python -m pip install -e ".[dev,swmm]"
 python -m compileall -q src scripts tests
 python scripts/lint_current_surface.py
-python -m pytest -q tests/test_direct_tfv_first_move.py tests/test_direct_tfv_first_move_cli.py tests/test_direct_tfv_robust_rainfall.py tests/test_direct_tfv_policy_return.py tests/test_current_step2_routing.py
 python -m pytest -q
 ```
 
-Then run `--help` for every script you are about to invoke. Never invent CLI arguments from memory.
+Then run `--help` for every script used in the current stage. Never invent CLI flags from memory.
 
-## 5. Do not regenerate generic D3 for first-move calibration
+## 6. Auto-discover existing assets once, then freeze paths
 
-The candidate-free path is mandatory:
-
-```text
-D0 no-control causal prefix
-  -> build_direct_tfv_first_move_context_current.py
-  -> FirstMoveCalibrationContextStore
-  -> HOLD + exactly one refined candidate per rainfall group
-  -> exact authoritative SWMM branches
-  -> matched admission
-```
-
-The first-move context store must report:
-
-- `candidate_rows_used=false`;
-- `generic_d3_candidate_dependency=false`;
-- `causal_future_rainfall_used=false`.
-
-If any script asks for generic D3 candidate rows as a context prerequisite, stop: that is a regression.
-
-## 6. V12 matched calibration/runtime regression path
-
-V12 is diagnostic/stable-base evidence, not a new acceptance event after its results have been read.
-
-Candidate-free V12 panel:
-
-```powershell
-python scripts/design_direct_tfv_robust_rainfall_first_move_calibration_current.py --help
-python scripts/merge_direct_tfv_robust_rainfall_first_move_panel_shards.py --help
-python scripts/calibrate_direct_tfv_robust_rainfall_first_move_admission_current.py --help
-python scripts/run_policy_direct_tfv_robust_rainfall_development.py --help
-```
-
-V12 admission must be bound to:
-
-- `PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V10_CAUSAL_RAINFALL_SCENARIO_MEAN`;
-- causal rainfall scenario contract;
-- V12 behavioral SHA;
-- Step2 SHA;
-- q95 sequence-support SHA.
-
-A V11 single-scenario admission must fail closed in V12.
-
-## 7. Policy-return data roles
-
-Before reading any paired branch outcome, preregister rainfall groups into four disjoint sets:
-
-1. `policy_return_train`: at least 48 independent rainfall groups;
-2. `policy_return_validation`: at least 12 independent rainfall groups for model selection only;
-3. `policy_return_calibration`: at least 24 independent rainfall groups for one-sided conformal calibration only;
-4. new Development probes: separate from all three sets.
-
-Do not use Validation/Final/Formal/Policy Lock data.
-
-T5, T8, T10, T20, T30, T80, P15/P35/P75, previous V10/V11/V12 probes and any already-observed mechanism events may be used only if explicitly downgraded to Development training/diagnostic roles; once used, never call them independent acceptance evidence again.
-
-## 8. Freeze the parent policy before generating policy-return labels
-
-Iteration 0 uses parent `pi_0 = frozen V12`.
-
-For every selected rainfall group:
-
-1. run the frozen parent policy closed loop and save its decision JSONL;
-2. select decision indices by a forcing/state/action rule fixed before reading paired truth;
-3. for each selected index run:
-
-```powershell
-python scripts/run_direct_tfv_policy_return_pair_current.py --help
-```
-
-with:
+Do **not** ask the user for paths before searching existing local evidence. Search:
 
 ```text
---continuation-kind v12
+E:\RTC_sewer\Project7\study_v069
+E:\RTC_sewer\Project7\repo
+existing JSON/report/manifest files
 ```
 
-Each pair produces:
+Resolve by content contract/SHA/semantic lineage, not by newest-looking V* filename. Prefer already
+frozen compatible assets and do not regenerate expensive SWMM/Step1/Step2 data merely because an
+older filename is present.
 
-- exact CANDIDATE branch;
-- exact HOLD branch;
-- identical-prefix verification;
-- the same frozen continuation policy after H10;
-- causal Step1 state at the branch point;
-- causal rainfall scenarios at the branch point;
-- authoritative `candidate TFV - HOLD TFV` label.
+Required frozen assets:
 
-Do not infer this label from the old open-loop H360 replay.
+- graph;
+- sensors;
+- runtime config;
+- Step1;
+- base Step2 V5;
+- historical policy admission and V12 first-move admission **only for offline pi0 label generation**;
+- q95 sequence support;
+- Priority8 list.
+
+After discovery write exactly one path manifest:
+
+```powershell
+python scripts/build_project7_practical_asset_manifest_current.py --help
+```
+
+The resulting `PRACTICAL_RTC_ASSETS.json` contains absolute paths + SHA-256 and forbids silent path
+fallback. Reuse it for all subsequent commands. If a recorded file disappears or its SHA changes,
+stop and report the exact asset; never search for a replacement mid-run.
+
+## 7. One-query mechanism smoke before bulk labels
+
+Use the already-seen T30 decision-3 mechanism case first. It is engineering/scientific debugging, not
+independent acceptance evidence.
+
+### 7.1 Capture causal context without full paired truth
+
+```powershell
+python scripts/capture_direct_tfv_policy_return_context_current.py --help
+```
+
+This replays only until the selected branch point, captures the pre-action Step1/rain/target context
+and intentionally stops. It produces no TFV truth.
+
+### 7.2 Design the Practical portfolio
+
+```powershell
+python scripts/design_direct_tfv_policy_return_portfolio_current.py --help
+```
+
+Require:
+
+- 2-3 distinct supported candidates when physically available;
+- `lbfgsb_used=false`;
+- no future rainfall;
+- no online SWMM;
+- H10 action semantics;
+- q95 density/joint support.
+
+### 7.3 Run exact same-query truth efficiently
+
+```powershell
+python scripts/run_direct_tfv_policy_return_query_current.py --help
+```
+
+This runner executes one shared HOLD branch and each candidate sequentially. All candidate records
+must have the same `query_set_id`, raw causal prefix and continuation-policy SHA. It should use
+`1 + N_candidates` full authoritative branches, not `2 * N_candidates`.
+
+Report each candidate's true `candidate TFV - HOLD TFV`, changed-K and true rank. If raw prefix,
+continuation, causality, engineering or support checks fail, stop. If all three candidate families are
+consistently harmful in the mechanism query, stop before bulk generation and report a proposal/
+representation bottleneck instead of tuning admission margins.
+
+## 8. Role-disjoint policy-return data
+
+Before reading new paired outcomes, freeze rainfall-group roles:
+
+1. `policy_return_train`: >=48 independent groups;
+2. `policy_return_validation`: >=12 model-selection groups;
+3. `policy_return_calibration`: >=24 conformal-calibration groups;
+4. separate new Development probes.
+
+Use existing untouched Development rainfall groups when sufficient. New synthetic forcing is needed
+only if the existing role-pure pool is insufficient. Validation/Final/Formal/Policy Lock data remain
+inaccessible.
+
+For each selected prefix:
+
+`prefix-only context capture -> Practical candidate design -> shared-HOLD multi-candidate SWMM query`.
+
+Do not generate generic D3 candidates for this workflow.
 
 ## 9. Compile and train the policy-return critic
 
-Compile role-pure datasets:
-
 ```powershell
 python scripts/compile_direct_tfv_policy_return_dataset_current.py --help
-```
-
-Then train:
-
-```powershell
 python scripts/train_direct_tfv_policy_return_current.py --help
 ```
 
-The first policy-return experiment intentionally keeps the same `DirectFacilityTFVValueModel` architecture and initializes from frozen V5. The first scientific change is the target/estimand, not network size.
+The base Step2 representation is reused. Default fine-tuning adapts only facility/action/interaction
+layers, not the full expensive representation.
 
-Primary validation metrics are event-balanced:
+Model selection priority is:
 
-- policy-return MAE;
-- sign accuracy;
-- false-beneficial rate;
-- false-reject rate;
-- within-group ranking.
+1. selected-action false-beneficial fraction;
+2. same-query pairwise ranking;
+3. selected-action regret;
+4. event-balanced MAE.
 
-Do not select a checkpoint from calibration labels.
+Also report sign accuracy, false reject and within-query top1. Do not promote a critic merely because
+scalar MAE improved.
 
-## 10. Freeze critic, score untouched calibration, then calibrate
+## 10. Freeze critic, score calibration, calibrate one-sided admission
 
 ```powershell
 python scripts/score_direct_tfv_policy_return_calibration_current.py --help
-python scripts/calibrate_direct_tfv_policy_return_admission_current.py --help
+python scripts/calibrate_direct_tfv_policy_return_portfolio_admission_current.py --help
 ```
 
-The critic is frozen before calibration scoring. Admission uses rainfall-group one-sided residuals normalized by `sqrt(actual changed-facility count)`.
+The critic is frozen before calibration. Admission uses rainfall-group residuals normalized by
+`sqrt(actual first-move changed K)` and must be calibrated on the same Practical multi-candidate query
+family/action encoding used online.
 
-The old V11/V12 first-move margin and generic-D3 floor must not secretly control policy-return execution.
+## 11. Authoritative Practical Development closed loop
 
-## 11. Run policy-return closed loop
+Run only:
 
 ```powershell
 python scripts/run_policy_direct_tfv_policy_return_development.py --help
 ```
 
-Run only preregistered, previously unread Development probes.
+This current runtime requires `PRACTICAL_RTC_ASSETS.json`, the H10 policy-return checkpoint and matched
+portfolio admission. It must report:
 
-For every event report:
+- `portfolio_mode=true`;
+- `online_lbfgsb_used=false`;
+- `legacy_v12_admission_required_online=false`;
+- 109 facilities screened;
+- ACTION/HOLD counts and changed-K distribution;
+- runtime p50/p95/max and every guarded callback <600 s;
+- score==execute, target write/readback, support and engineering checks;
+- routing error and fallback/deadline counts.
 
-- Proposed TFV;
-- No-control;
-- Internal RTC;
-- Auto-RBC;
-- storage-volume EFD;
-- All-open;
-- All-closed;
-- PFV report only;
-- Global Peak report only;
-- ACTION/HOLD count;
-- actual changed-K distribution;
-- runtime p50/p95/max;
-- target write/readback;
-- score==execute;
-- support/engineering violations;
-- routing error;
-- fallback/deadline count.
+## 12. Baselines and PFV safety
 
-Do not weaken any baseline because Proposed loses.
+For the exact same event/INP/clock/SWMM engine, report:
 
-## 12. Policy iteration, not one-shot overfitting
+- No-control — primary reference;
+- Internal RTC — operational comparator;
+- Auto-RBC — type-aware operational comparator;
+- EFD — type-aware storage equal-filling comparator;
+- all-max-setting (`all_open`) — diagnostic extreme;
+- all-min-setting (`all_closed`) — diagnostic extreme.
 
-If `pi_1` materially differs from frozen V12, the labels are Q-like values under `pi_0`, not yet a fixed-point value for `pi_1`.
+Do not weaken baselines because Proposed loses. All-max/min are not universal physical max/min release
+policies and are not mandatory wins.
 
-Generate a new role-disjoint Development round using:
+Compute TFV and Priority8 PFV from authoritative node statistics. Apply:
 
-```text
---continuation-kind policy-return
---policy-return-checkpoint <Q_pi0 checkpoint>
---policy-return-admission <pi1 admission>
+```powershell
+python scripts/add_pfv_to_direct_tfv_comparison_current.py --help
 ```
 
-This evaluates `pi_1`, learns `Q^{pi_1}`, and defines `pi_2`.
+A positive method-performance claim on an event requires the frozen PFV non-inferiority envelope.
+Global Peak remains report-only.
 
-Repeat only while Development evidence shows a material policy shift. Stop when preregistered fixed-point audits show stable action agreement and policy-return residuals. Do not tune on the final new probes.
+## 13. Policy iteration
 
-## 13. Resource rules
+First label round uses frozen historical V12 as `pi0`. After training/calibration, define Practical
+`pi1`. If pi1 materially differs from pi0, generate a **new role-disjoint** round using pi1 as the
+shared continuation and learn Q^pi1. Continue only while action/return behavior materially changes.
+Do not claim a fixed deployed value from Q^pi0 after the policy has materially changed.
 
-Local target: RTX 4060 Laptop 8 GB, RAM 16 GB.
+## 14. Resource rules
 
-- One GPU training process at a time.
-- Policy-return paired replays contain neural continuation MPC; do not blindly launch 24 GPU copies.
-- Benchmark 1 then 2 concurrent pair runners. Increase only with actual VRAM/RAM evidence.
-- Pure independent SWMM branches without neural continuation may use higher process counts if their real `--help` supports it.
-- One SWMM simulation per Python process.
-- Set child BLAS/OpenMP thread counts to 1 during process-level parallelism.
-- Event-matrix parallelism is throughput evidence only; serial controller latency is the real-time evidence.
+Target workstation: RTX 4060 Laptop 8 GB, 16 GB RAM.
 
-## 14. Stop rules
+- one neural GPU controller/trainer per process;
+- candidate/HOLD continuation branches run sequentially on the GPU;
+- branch controllers must be released between branches;
+- shared-HOLD query runner is preferred to repeated pair runs;
+- no full base Step2 retrain unless later evidence identifies representation error;
+- pure independent CPU/SWMM work may use process parallelism only after real RAM/I/O preflight;
+- one PySWMM Simulation per Python process; BLAS/OpenMP threads = 1 under process parallelism.
 
-Stop expensive downstream work on:
+## 15. Stop and promotion rules
 
-- code/CLI/test/lint failure;
-- causal leakage;
-- source/artifact lineage mismatch;
-- candidate/HOLD prefix mismatch;
-- continuation-policy mismatch;
-- CUDA OOM or paging that invalidates the intended runtime;
-- Step2 policy-return sign/ranking scientific gate failure;
-- engineering/support/readback/score-execute failure;
-- new closed-loop Proposed worse than No-control on any preregistered acceptance probe.
+Stop expensive downstream work for code/test/CLI failures, future-information leakage, raw-prefix or
+continuation mismatch, irrecoverable asset SHA drift, CUDA OOM/paging that invalidates intended
+execution, severe policy-return false-beneficial/ranking failure, or engineering/support/readback/
+score-execute violations.
 
-Do not respond to a failure by lowering a margin, raising q95 to q99, increasing K, adding PFV/Peak penalties, or weakening baselines without separate preregistered evidence.
+A single storm losing to an operational comparator is **not** by itself a code failure and must not
+trigger baseline weakening or objective redesign. Judge TFV benefit event-balanced against No-control,
+report Internal/Auto-RBC/EFD honestly, and enforce PFV non-inferiority for positive method claims.
 
-## 15. Promotion boundary
-
-`READY_FOR_POLICY_LOCK=false` by default.
-
-Do not enter Validation, Final, Formal or Policy Lock until a later explicit Web-GPT-reviewed change updates the promotion contract after all Development gates pass.
+`READY_FOR_POLICY_LOCK=false` until role-disjoint training/validation/calibration, independent new
+Development probes, PFV-safe authoritative comparison and any necessary policy-iteration round are
+complete. Do not enter Validation, Final, Formal or Policy Lock automatically.
