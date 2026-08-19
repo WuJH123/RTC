@@ -11,9 +11,12 @@ from rtc.actuator_release_semantics import (
     release_setting_sign,
 )
 from rtc.direct_tfv_policy_return import DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING
+from rtc.direct_tfv_policy_return_hybrid_portfolio import (
+    DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
+    PROJECTED_GRADIENT_SOURCE,
+)
 from rtc.direct_tfv_policy_return_portfolio import (
     DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT,
-    DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
     build_policy_return_candidate_portfolio,
     hydraulic_pressure_setting_delta,
 )
@@ -82,7 +85,7 @@ def test_hydraulic_pressure_candidate_reverses_weir_setting_direction() -> None:
     assert delta[3] > 0.0
 
 
-def test_candidate_portfolio_is_three_family_supported_and_not_baseline_imitation() -> None:
+def test_base_candidate_portfolio_remains_three_family_supported_and_not_baseline_imitation() -> None:
     graph = _graph()
     state = torch.tensor([[[1.8, 0.0, 0.0, 900.0], [0.2, 0.0, 0.0, 100.0]]], dtype=torch.float32)
     rainfall = torch.ones((3, 72, 2, 1), dtype=torch.float32)
@@ -200,7 +203,7 @@ def _calibration_record(group: str, source: str, truth: float, prediction: float
     }
 
 
-def test_portfolio_admission_requires_and_records_multi_candidate_query_sets() -> None:
+def test_portfolio_admission_requires_all_hybrid_candidate_families() -> None:
     records = []
     groups = [f"G{i:02d}" for i in range(24)]
     for i, group in enumerate(groups):
@@ -220,6 +223,14 @@ def test_portfolio_admission_requires_and_records_multi_candidate_query_sets() -
                 prediction=-90.0 - i,
             )
         )
+        records.append(
+            _calibration_record(
+                group,
+                PROJECTED_GRADIENT_SOURCE,
+                truth=-120.0 - i,
+                prediction=-125.0 - i,
+            )
+        )
     payload = derive_policy_return_portfolio_admission(
         records=records,
         expected_rainfall_groups=groups,
@@ -232,6 +243,8 @@ def test_portfolio_admission_requires_and_records_multi_candidate_query_sets() -
     assert payload["action_encoding_contract"] == DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING
     assert payload["query_set_count"] == 24
     assert payload["multi_candidate_query_set_count"] == 24
-    assert payload["candidate_source_counts"]["TYPE_AWARE_HYDRAULIC_PRESSURE"] == 24
+    assert payload["candidate_source_counts"][PROJECTED_GRADIENT_SOURCE] == 24
     assert payload["required_candidate_families_present"]["step2_h10_probe_direction"] is True
+    assert payload["required_candidate_families_present"]["type_aware_hydraulic_pressure"] is True
+    assert payload["required_candidate_families_present"]["support_constrained_gradient_h10"] is True
     assert DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT
