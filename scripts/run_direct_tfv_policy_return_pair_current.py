@@ -1,8 +1,10 @@
 """Run one exact-prefix CANDIDATE/HOLD pair followed by the same frozen continuation policy.
 
-Offline label generation only. The continuation can be the frozen V12 parent policy or a frozen
-policy-return policy from a later policy-iteration round. Candidate and HOLD branches always replay
-the identical parent prefix, inject exactly one H10 target, then use the same continuation artifacts.
+Offline label generation only.  Besides the parent policy's own first move, Development portfolio
+experiments may supply an explicit 109-target JSON produced by the causal portfolio designer.  The
+candidate and HOLD branches always replay the identical parent prefix, inject exactly one H10 target,
+then use the same frozen continuation artifacts.  Extra portfolio metadata changes neither SWMM nor
+the continuation policy; it identifies actions that belong to the same-state ranking query set.
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ from rtc.direct_tfv_policy_return import (
     DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT,
     DIRECT_TFV_POLICY_RETURN_ESTIMAND,
 )
+from rtc.direct_tfv_policy_return_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
 from rtc.direct_tfv_policy_return_runtime_factory import (
     build_frozen_policy_return_continuation_controller,
 )
@@ -78,6 +81,33 @@ def _targets(row: dict[str, Any]) -> tuple[tuple[str, ...], np.ndarray, np.ndarr
     if not np.isfinite(candidate).all() or not np.isfinite(hold_target).all():
         raise ValueError("selected policy-return targets contain non-finite values")
     return ids, candidate, hold_target
+
+
+def _candidate_override(
+    path: str | Path | None,
+    *,
+    ids: tuple[str, ...],
+    parent_candidate: np.ndarray,
+) -> tuple[np.ndarray, str, str]:
+    if path is None:
+        return parent_candidate, "V12_REFINED_PARENT", ""
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("candidate target JSON must contain one object")
+    if str(payload.get("contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
+        raise ValueError("candidate target JSON has the wrong portfolio contract")
+    payload_ids = tuple(str(value) for value in payload.get("actuator_ids", ()))
+    if payload_ids and payload_ids != ids:
+        raise ValueError("candidate target JSON actuator order differs from parent decision")
+    target = np.asarray(payload.get("target_settings", ()), dtype=float).reshape(-1)
+    if target.shape != (109,) or not np.isfinite(target).all():
+        raise ValueError("candidate target JSON must contain 109 finite settings")
+    if np.any(target < -1.0e-7) or np.any(target > 1.0 + 1.0e-7):
+        raise ValueError("candidate target JSON leaves physical [0,1] bounds")
+    source = str(payload.get("candidate_source", "")).strip()
+    if not source:
+        raise ValueError("candidate target JSON lacks candidate_source")
+    return target, source, DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
 
 
 def _build_delegate(args: argparse.Namespace, device: torch.device):
@@ -172,6 +202,7 @@ def main() -> None:
         required=True,
     )
     p.add_argument("--continuation-kind", choices=("v12", "policy-return"), default="v12")
+    p.add_argument("--candidate-target-json")
     p.add_argument("--out-dir", required=True)
     p.add_argument("--run-id", required=True)
     p.add_argument("--sensors", required=True)
@@ -196,7 +227,12 @@ def main() -> None:
     if args.decision_index < 0 or args.decision_index >= len(rows):
         raise ValueError("decision-index lies outside parent decision JSONL")
     selected = rows[args.decision_index]
-    ids, candidate_target, hold_target = _targets(selected)
+    ids, parent_candidate, hold_target = _targets(selected)
+    candidate_target, candidate_source, portfolio_contract = _candidate_override(
+        args.candidate_target_json,
+        ids=ids,
+        parent_candidate=parent_candidate,
+    )
     branch_elapsed = int(selected["elapsed_seconds"])
     if branch_elapsed <= 0:
         raise ValueError("policy-return branch must occur after the initial causal warm-up")
@@ -210,6 +246,7 @@ def main() -> None:
         if not isinstance(settings, dict) or set(settings) != set(ids):
             raise ValueError("parent prefix decision lacks a complete 109-target action")
         prefix_actions[elapsed] = {aid: float(settings[aid]) for aid in ids}
+    prefix_sha = _canonical_sha({str(k): prefix_actions[k] for k in sorted(prefix_actions)})
 
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
     out_root = Path(args.out_dir)
@@ -252,7 +289,17 @@ def main() -> None:
     continuation_policy_sha = _canonical_sha(
         {"continuation_kind": args.continuation_kind, "lineage": candidate_lineage}
     )
-    prefix_sha = _canonical_sha({str(k): prefix_actions[k] for k in sorted(prefix_actions)})
+    query_set_id = _canonical_sha(
+        {
+            "event_id": args.event_id,
+            "rainfall_group": args.rainfall_group,
+            "decision_index": int(args.decision_index),
+            "decision_elapsed_seconds": branch_elapsed,
+            "prefix_sha256": prefix_sha,
+            "hold_first_target_sha256": _array_sha(hold_target),
+            "continuation_policy_sha256": continuation_policy_sha,
+        }
+    )
     context_path = out_root / f"{args.run_id}.policy_return_context.npz"
     np.savez_compressed(
         context_path,
@@ -266,6 +313,9 @@ def main() -> None:
         previous_actuator_flow=candidate_context["previous_actuator_flow"][None],
         true_policy_return_delta_tfv_m3=np.asarray([truth], dtype=np.float64),
         rainfall_group=np.asarray([args.rainfall_group]),
+        query_set_id=np.asarray([query_set_id]),
+        candidate_source=np.asarray([candidate_source]),
+        candidate_portfolio_contract=np.asarray(portfolio_contract),
     )
     record = {
         "estimand": DIRECT_TFV_POLICY_RETURN_ESTIMAND,
@@ -274,6 +324,9 @@ def main() -> None:
         "event_id": args.event_id,
         "decision_index": int(args.decision_index),
         "decision_elapsed_seconds": branch_elapsed,
+        "query_set_id": query_set_id,
+        "candidate_source": candidate_source,
+        "candidate_portfolio_contract": portfolio_contract,
         "first_move_changed_facility_count": changed,
         "true_policy_return_delta_tfv_m3": truth,
         "candidate_branch_tfv_m3": candidate_tfv,
