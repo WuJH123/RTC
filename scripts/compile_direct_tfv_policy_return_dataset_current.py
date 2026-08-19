@@ -99,7 +99,8 @@ def main() -> None:
         changed_counts.append(int(row["first_move_changed_facility_count"]))
         context_shas.append(expected_sha)
 
-    out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         out,
         contract=np.asarray(DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT),
@@ -129,7 +130,10 @@ def main() -> None:
         "output_sha256": sha256_file(out),
         "records_jsonl_sha256": sha256_file(args.records_jsonl),
     }
-    out.with_suffix(".json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    out.with_suffix(".json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 
