@@ -71,7 +71,9 @@ def main() -> None:
     counts = merged.groupby("rainfall_group").size()
     if not bool((counts == 2).all()):
         raise ValueError("merged V12 panel must contain exactly HOLD+candidate per rainfall group")
-    out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True); merged.to_csv(out, index=False)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_csv(out, index=False)
     payload = {
         "contract": MERGE_CONTRACT,
         "development_only": True,
@@ -89,7 +91,8 @@ def main() -> None:
         "rainfall_history_steps": first["rainfall_history_steps"],
         "rainfall_decay_per_step": first["rainfall_decay_per_step"],
     }
-    summary_out = Path(args.summary_out); summary_out.parent.mkdir(parents=True, exist_ok=True)
+    summary_out = Path(args.summary_out)
+    summary_out.parent.mkdir(parents=True, exist_ok=True)
     summary_out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(payload, indent=2, sort_keys=True))
 
