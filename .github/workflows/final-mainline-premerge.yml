@@ -40,6 +40,7 @@ jobs:
             tests/test_direct_tfv_robust_rainfall.py \
             tests/test_direct_tfv_policy_return.py \
             tests/test_direct_tfv_policy_return_portfolio.py \
+            tests/test_direct_tfv_hybrid_gradient_portfolio.py \
             tests/test_direct_tfv_runtime_adapter.py \
             tests/test_practical_rtc_assets.py \
             tests/test_practical_rtc_v14_contract.py \
@@ -50,6 +51,7 @@ jobs:
       - name: Practical RTC CLI help gates
         run: |
           python scripts/build_project7_practical_asset_manifest_current.py --help >/dev/null
+          python scripts/run_policy_direct_tfv_base_hybrid_parent_current.py --help >/dev/null
           python scripts/capture_direct_tfv_policy_return_context_current.py --help >/dev/null
           python scripts/design_direct_tfv_policy_return_portfolio_current.py --help >/dev/null
           python scripts/run_direct_tfv_policy_return_pair_current.py --help >/dev/null
