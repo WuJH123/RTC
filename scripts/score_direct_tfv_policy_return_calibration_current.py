@@ -1,4 +1,4 @@
-"""Score untouched policy-return calibration contexts with a frozen selected critic."""
+"""Score untouched policy-return calibration contexts with a frozen H10-aligned critic."""
 from __future__ import annotations
 
 import argparse
@@ -9,8 +9,10 @@ import numpy as np
 import torch
 
 from rtc.direct_tfv_policy_return import (
+    DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
     DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT,
     DIRECT_TFV_POLICY_RETURN_ESTIMAND,
+    encode_policy_return_action_token,
     load_policy_return_checkpoint,
     sha256_file,
     validate_policy_return_record,
@@ -35,12 +37,14 @@ def _score(model, normalization, graph, context_path: Path, device: torch.device
         raise ValueError("calibration context has the wrong dataset contract")
     if str(np.asarray(data["estimand"]).reshape(-1)[0]) != DIRECT_TFV_POLICY_RETURN_ESTIMAND:
         raise ValueError("calibration context has the wrong estimand")
+    if str(np.asarray(data["action_encoding_contract"]).reshape(-1)[0]) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
+        raise ValueError("calibration context has the wrong H10 action encoding")
     if str(np.asarray(data["data_role"]).reshape(-1)[0]) != "policy_return_calibration":
         raise ValueError("critic scorer accepts only policy_return_calibration contexts")
     state = torch.as_tensor(data["current_state"], dtype=torch.float32, device=device)
     rain = torch.as_tensor(data["rainfall_scenarios"], dtype=torch.float32, device=device)
     active = torch.as_tensor(data["active_target"], dtype=torch.float32, device=device)
-    candidate_target = torch.as_tensor(data["candidate_target"], dtype=torch.float32, device=device)
+    target = torch.as_tensor(data["candidate_target"], dtype=torch.float32, device=device)
     flow = torch.as_tensor(data["previous_actuator_flow"], dtype=torch.float32, device=device)
     if rain.ndim != 5 or int(rain.shape[0]) != 1 or int(rain.shape[1]) < 2:
         raise ValueError("calibration rainfall must be [1,scenario,H,node,feature]")
@@ -52,8 +56,14 @@ def _score(model, normalization, graph, context_path: Path, device: torch.device
     state = state.expand(scenarios, -1, -1)
     rain = rain.reshape(scenarios, horizon, nodes, features)
     flow = flow.expand(scenarios, -1)
-    reference = active.reshape(1, 1, 109).expand(scenarios, horizon, 109)
-    candidate = candidate_target.reshape(1, 1, 109).expand(scenarios, horizon, 109)
+    active = active.expand(scenarios, -1)
+    target = target.expand(scenarios, -1)
+    reference, candidate = encode_policy_return_action_token(
+        active,
+        target,
+        horizon_steps=int(horizon),
+        first_action_steps=2,
+    )
     with torch.no_grad():
         output = model(
             current_state=state,
@@ -98,7 +108,7 @@ def main() -> None:
         if not isinstance(row, dict):
             raise ValueError(f"calibration record {line_number} is not an object")
         if str(row.get("data_role", "")) != "policy_return_calibration":
-            raise ValueError("critic scorer received a non-calibration policy-return record")
+            raise ValueError("critic scorer received a non-calibration record")
         probe = dict(row)
         probe["predicted_policy_return_delta_tfv_m3"] = 0.0
         validate_policy_return_record(probe)
@@ -123,6 +133,7 @@ def main() -> None:
         "records": len(rows),
         "rainfall_group_count": len(groups),
         "rainfall_groups": sorted(groups),
+        "action_encoding_contract": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
         "policy_return_checkpoint_sha256": sha256_file(args.policy_return_checkpoint),
         "continuation_policy_sha256": parent_sha,
         "scored_records_sha256": sha256_file(out),
