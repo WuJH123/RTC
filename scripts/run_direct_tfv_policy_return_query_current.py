@@ -1,14 +1,9 @@
-"""Run one same-prefix practical policy-return query with a single shared HOLD SWMM branch.
+"""Run one same-prefix Practical policy-return query with a single shared HOLD SWMM branch.
 
-A query is one authoritative hydraulic prefix and a finite candidate portfolio. HOLD truth and HOLD
-causal context are identical for every candidate, so recomputing HOLD N times wastes SWMM/GPU time
-without adding independent evidence. This runner therefore executes HOLD once, releases its CUDA
-controller, then executes each candidate sequentially. Every candidate is independently checked
-against the cached HOLD raw causal prefix and the same frozen continuation lineage.
-
-The output JSONL contains one valid policy-return record per candidate, all sharing the same
-``query_set_id``. This is the preferred bulk-label generator; the single-pair script remains useful
-for engineering smoke/debugging.
+The default first-round continuation is the current hybrid Base-H10 parent pi0. After a critic is
+trained, ``policy-return`` uses frozen pi1. Historical V12 optimizer/admission artifacts are not part
+of this current label path. HOLD truth is computed once and reused across all candidates in the same
+query, reducing authoritative work from 2N to 1+N branches.
 """
 from __future__ import annotations
 
@@ -24,6 +19,7 @@ import numpy as np
 import torch
 
 from rtc.closed_loop import run_authoritative_closed_loop
+from rtc.direct_tfv_base_probe_runtime_factory import build_frozen_base_probe_parent_controller
 from rtc.direct_tfv_policy_return import (
     DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
     DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT,
@@ -31,9 +27,12 @@ from rtc.direct_tfv_policy_return import (
     sha256_file,
     validate_policy_return_record,
 )
-from rtc.direct_tfv_policy_return_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
-from rtc.direct_tfv_policy_return_runtime_factory import build_frozen_policy_return_continuation_controller
-from rtc.direct_tfv_runtime_factory import build_frozen_v12_continuation_controller
+from rtc.direct_tfv_policy_return_hybrid_portfolio import (
+    DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
+)
+from rtc.direct_tfv_policy_return_runtime_factory import (
+    build_frozen_policy_return_continuation_controller,
+)
 from rtc.policy_return_replay import (
     ExactPrefixThenFrozenPolicyController,
     audit_policy_return_prefix_contexts,
@@ -43,7 +42,9 @@ from rtc.practical_rtc_assets import load_practical_rtc_asset_manifest, practica
 from rtc.production_cli import _controls_disabled_runtime
 
 
-PRACTICAL_POLICY_RETURN_QUERY_RUNNER_CONTRACT = "PROJECT7_PRACTICAL_POLICY_RETURN_SHARED_HOLD_QUERY_RUNNER_V1"
+PRACTICAL_POLICY_RETURN_QUERY_RUNNER_CONTRACT = (
+    "PROJECT7_PRACTICAL_POLICY_RETURN_SHARED_HOLD_QUERY_RUNNER_V2_HYBRID_PI0"
+)
 
 
 def _canonical_sha(value: Any) -> str:
@@ -73,10 +74,10 @@ def _load_rows(path: Path) -> list[dict[str, Any]]:
 def _load_portfolio(path: Path, ids: tuple[str, ...]) -> list[tuple[str, np.ndarray]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("contract") != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
-        raise ValueError("candidate manifest has the wrong Practical portfolio contract")
+        raise ValueError("candidate manifest has the wrong current hybrid portfolio contract")
     rows = payload.get("candidates")
-    if not isinstance(rows, list) or not 1 <= len(rows) <= 3:
-        raise ValueError("Practical candidate manifest must contain 1-3 candidates")
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 4:
+        raise ValueError("current Practical candidate manifest must contain 1-4 candidates")
     result: list[tuple[str, np.ndarray]] = []
     seen: set[bytes] = set()
     for row in rows:
@@ -108,27 +109,21 @@ def _build_delegate(args: argparse.Namespace, assets: dict, device: torch.device
         config_path=practical_asset_path(assets, "config"),
         step1_path=practical_asset_path(assets, "step1"),
         step2_path=practical_asset_path(assets, "step2"),
-        policy_admission_path=practical_asset_path(assets, "policy_admission"),
         sequence_support_path=practical_asset_path(assets, "sequence_support"),
         device=device,
-        lbfgsb_maxiter=int(args.lbfgsb_maxiter),
-        optimizer_deadline_seconds=float(args.optimizer_deadline_seconds),
         decision_runtime_budget_seconds=float(args.decision_runtime_budget_seconds),
-        first_move_maxiter=int(args.first_move_maxiter),
-        first_move_deadline_seconds=float(args.first_move_deadline_seconds),
+        proposal_probe_chunk_size=int(args.probe_chunk_size),
+        projected_gradient_steps=int(args.projected_gradient_steps),
+        projected_gradient_step_fraction=float(args.projected_gradient_step_fraction),
     )
-    if args.continuation_kind == "v12":
+    if args.continuation_kind == "base-probe":
         if args.policy_return_checkpoint or args.policy_return_admission:
-            raise ValueError("V12 pi0 query must not receive policy-return critic/admission")
-        return build_frozen_v12_continuation_controller(
-            **common,
-            first_move_admission_path=practical_asset_path(assets, "v12_first_move_admission"),
-        )
+            raise ValueError("base-probe pi0 must not receive policy-return critic/admission")
+        return build_frozen_base_probe_parent_controller(**common)
     if not args.policy_return_checkpoint or not args.policy_return_admission:
-        raise ValueError("policy-return continuation requires critic and matched admission")
+        raise ValueError("policy-return pi1 requires critic and matched admission")
     return build_frozen_policy_return_continuation_controller(
         **common,
-        v12_first_move_admission_path=practical_asset_path(assets, "v12_first_move_admission"),
         policy_return_checkpoint_path=args.policy_return_checkpoint,
         policy_return_admission_path=args.policy_return_admission,
     )
@@ -189,18 +184,25 @@ def main() -> None:
     p.add_argument("--decision-index", type=int, required=True)
     p.add_argument("--rainfall-group", required=True)
     p.add_argument("--event-id", required=True)
-    p.add_argument("--data-role", choices=("policy_return_train", "policy_return_validation", "policy_return_calibration"), required=True)
-    p.add_argument("--continuation-kind", choices=("v12", "policy-return"), default="v12")
+    p.add_argument(
+        "--data-role",
+        choices=("policy_return_train", "policy_return_validation", "policy_return_calibration"),
+        required=True,
+    )
+    p.add_argument(
+        "--continuation-kind",
+        choices=("base-probe", "policy-return"),
+        default="base-probe",
+    )
     p.add_argument("--policy-return-checkpoint")
     p.add_argument("--policy-return-admission")
     p.add_argument("--out-dir", required=True)
     p.add_argument("--run-id", required=True)
     p.add_argument("--device", default="cuda")
-    p.add_argument("--lbfgsb-maxiter", type=int, default=30)
-    p.add_argument("--optimizer-deadline-seconds", type=float, default=120.0)
     p.add_argument("--decision-runtime-budget-seconds", type=float, default=180.0)
-    p.add_argument("--first-move-maxiter", type=int, default=12)
-    p.add_argument("--first-move-deadline-seconds", type=float, default=30.0)
+    p.add_argument("--probe-chunk-size", type=int, default=24)
+    p.add_argument("--projected-gradient-steps", type=int, default=6)
+    p.add_argument("--projected-gradient-step-fraction", type=float, default=0.25)
     args = p.parse_args()
 
     assets = load_practical_rtc_asset_manifest(args.asset_manifest)
@@ -246,10 +248,14 @@ def main() -> None:
         out_root=out_root,
         suffix="hold_shared",
     )
-    hold_context, hold_release = snapshot_and_release_policy_return_branch(hold_wrapper, device=device)
+    hold_context, hold_release = snapshot_and_release_policy_return_branch(
+        hold_wrapper, device=device
+    )
     del hold_wrapper
     hold_tfv = _tfv(hold_result.node_statistics_path)
-    continuation_policy_sha = _canonical_sha({"continuation_kind": args.continuation_kind, "lineage": hold_lineage})
+    continuation_policy_sha = _canonical_sha(
+        {"continuation_kind": args.continuation_kind, "lineage": hold_lineage}
+    )
     query_set_id = _canonical_sha(
         {
             "event_id": args.event_id,
@@ -327,7 +333,9 @@ def main() -> None:
             "shared_hold_branch": True,
             "same_prefix_verified": True,
             "same_prefix_definition": "RAW_CAUSAL_INPUTS_AND_RECORDED_SUPERVISORY_PREFIX",
-            "same_prefix_derived_step1_reconstruction_max_abs": float(audit["derived_step1_reconstruction_max_abs"]),
+            "same_prefix_derived_step1_reconstruction_max_abs": float(
+                audit["derived_step1_reconstruction_max_abs"]
+            ),
             "same_continuation_policy_verified": True,
             "future_realized_rainfall_used_online": False,
             "continuation_kind": args.continuation_kind,
@@ -344,28 +352,37 @@ def main() -> None:
             "prefix_context_audit": audit,
             "continuation_lineage": candidate_lineage,
         }
-        validate_policy_return_record({**record, **({"predicted_policy_return_delta_tfv_m3": 0.0} if args.data_role == "policy_return_calibration" else {})})
+        validate_policy_return_record(record)
         records.append(record)
 
     if not records:
         raise RuntimeError("query runner produced no non-HOLD candidate records")
     records_path = out_root / f"{args.run_id}.policy_return_records.jsonl"
-    records_path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in records), encoding="utf-8")
+    records_path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in records),
+        encoding="utf-8",
+    )
     lifecycle_path = out_root / f"{args.run_id}.branch_memory_lifecycle.json"
-    lifecycle_path.write_text(json.dumps(lifecycle, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    lifecycle_path.write_text(
+        json.dumps(lifecycle, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     summary = {
         "contract": PRACTICAL_POLICY_RETURN_QUERY_RUNNER_CONTRACT,
         "event_id": args.event_id,
         "rainfall_group": args.rainfall_group,
         "decision_index": int(args.decision_index),
         "query_set_id": query_set_id,
+        "continuation_kind": args.continuation_kind,
         "candidate_count": len(records),
         "candidate_sources": [row["candidate_source"] for row in records],
         "shared_hold_branch_count": 1,
         "candidate_branch_count": len(records),
         "authoritative_branch_count": 1 + len(records),
         "hold_tfv_m3": hold_tfv,
-        "true_policy_return_delta_tfv_m3": {row["candidate_source"]: row["true_policy_return_delta_tfv_m3"] for row in records},
+        "true_policy_return_delta_tfv_m3": {
+            row["candidate_source"]: row["true_policy_return_delta_tfv_m3"]
+            for row in records
+        },
         "all_same_prefix_verified": True,
         "same_continuation_policy_verified": True,
         "asset_manifest": str(Path(args.asset_manifest).resolve()),
@@ -374,9 +391,12 @@ def main() -> None:
         "records_jsonl_sha256": sha256_file(records_path),
         "lifecycle_path": str(lifecycle_path),
         "future_realized_rainfall_used_online": False,
+        "legacy_v12_assets_used": False,
     }
     summary_path = out_root / f"{args.run_id}.policy_return_query_summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary_path.write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 
