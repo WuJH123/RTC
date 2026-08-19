@@ -1,15 +1,16 @@
-"""Practical first-round parent pi0 with the current four-family H10 proposal geometry.
+"""Practical first-round parent pi0 with the current masked hybrid H10 proposal geometry.
 
-The parent remains deterministic and does not use a learned policy-return critic. It ranks the same
-finite/support-constrained candidate family used by the deployed policy with frozen base Step2 H10
-scores. This keeps Q^pi0 data on-policy enough for the first policy-improvement round without
-reintroducing historical V12/L-BFGS-B admissions.
+The parent keeps the frozen 109-channel Step2 representation, but only the native supervisory mask
+may change online. The current Wuhan contract therefore screens 82 control freedoms while retaining
+all 109 channels in state/action tensors. Masked q95 support is read from the recomputed sequence-
+support artifact; no Step1/base-Step2 retraining is required.
 """
 from __future__ import annotations
 
 import time
 from typing import Any
 
+import numpy as np
 import torch
 
 from .direct_tfv_policy_return import DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING, encode_policy_return_action_token
@@ -19,17 +20,20 @@ from .direct_tfv_policy_return_hybrid_portfolio import (
     build_hybrid_policy_return_portfolio,
 )
 from .direct_tfv_policy_return_portfolio import score_h10_first_action_targets
+from .direct_tfv_sequence_support import changed_facility_support_limit
 from .step3_tfv_base_probe_parent import (
     DirectTFVBaseProbeParentMPC,
     DirectTFVBaseProbeParentResult,
 )
 
 
-DIRECT_TFV_BASE_PROBE_PARENT_CONTRACT = "PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_PI0_V2"
+DIRECT_TFV_BASE_PROBE_PARENT_CONTRACT = (
+    "PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_PI0_V3_82CONTROL_109REP"
+)
 
 
 class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
-    """Deterministic pi0: hybrid H10 proposals ranked only by frozen base-Step2 score."""
+    """Deterministic pi0 on the native supervisory-control subspace."""
 
     policy_mode = "practical_base_h10_hybrid_parent_pi0"
     policy_mode_contract = DIRECT_TFV_BASE_PROBE_PARENT_CONTRACT
@@ -37,15 +41,21 @@ class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
     def __init__(
         self,
         *args: Any,
+        supervisory_mask: np.ndarray,
         projected_gradient_steps: int = 6,
         projected_gradient_step_fraction: float = 0.25,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
+        mask = np.asarray(supervisory_mask, dtype=bool).reshape(-1)
+        if mask.shape != (109,) or int(mask.sum()) <= 0:
+            raise ValueError("base hybrid parent requires a valid 109-channel supervisory mask")
         if int(projected_gradient_steps) <= 0:
             raise ValueError("projected_gradient_steps must be positive")
         if not 0.0 < float(projected_gradient_step_fraction) <= 1.0:
             raise ValueError("projected_gradient_step_fraction must lie in (0,1]")
+        self.supervisory_mask = mask
+        self.supervisory_control_dimension = int(mask.sum())
         self.projected_gradient_steps = int(projected_gradient_steps)
         self.projected_gradient_step_fraction = float(projected_gradient_step_fraction)
 
@@ -57,7 +67,7 @@ class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
         active = kwargs.get("active_target")
         if not isinstance(active, torch.Tensor) or active.shape != (109,):
             raise ValueError("base hybrid parent requires active_target [109]")
-        ceiling = int(self.active_support_ceiling())
+        ceiling = changed_facility_support_limit(self.sequence_support, "q95")
         hybrid = build_hybrid_policy_return_portfolio(
             model=self.model,
             normalization=self.normalization,
@@ -72,6 +82,7 @@ class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
             probe_chunk_size=self.proposal_probe_chunk_size,
             gradient_steps=self.projected_gradient_steps,
             gradient_step_fraction=self.projected_gradient_step_fraction,
+            supervisory_mask=self.supervisory_mask,
         )
         learned = hybrid.learned_probe
         evaluated: list[
@@ -90,6 +101,9 @@ class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
             changed = int(torch.count_nonzero(torch.abs(target - active) > 1.0e-7).item())
             if changed <= 0:
                 continue
+            passive = torch.as_tensor(~self.supervisory_mask, dtype=torch.bool, device=target.device)
+            if bool(torch.any(torch.abs(target[passive] - active[passive]) > 1.0e-7)):
+                raise RuntimeError("hybrid parent changed a passive 109-channel setting")
             key = target.detach().cpu().to(torch.float32).contiguous().numpy().tobytes()
             if key in seen:
                 continue
@@ -170,7 +184,7 @@ class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
             admission_passed=passed,
             calibrated_admission_contract="NONE_PARENT_PI0_ONLY",
             elapsed_seconds=float(time.perf_counter() - started),
-            screened_facility_count=109,
+            screened_facility_count=self.supervisory_control_dimension,
             predicted_beneficial_facility_count=int(learned.predicted_beneficial_facility_count),
             active_facility_count=changed if evaluated else 0,
             active_facility_ids=changed_ids,
@@ -193,9 +207,7 @@ class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
             policy_return_portfolio_sources=tuple(row[0] for row in evaluated),
             policy_return_portfolio_scores_m3=tuple(float(row[4]) for row in evaluated),
             policy_return_portfolio_upper_bounds_m3=tuple(float(row[4]) for row in evaluated),
-            policy_return_portfolio_base_step2_scores_m3=tuple(
-                float(row[4]) for row in evaluated
-            ),
+            policy_return_portfolio_base_step2_scores_m3=tuple(float(row[4]) for row in evaluated),
             h10_probe_generator_contract=DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT,
             h10_probe_count=int(learned.probe_count),
             policy_mode=self.policy_mode,
