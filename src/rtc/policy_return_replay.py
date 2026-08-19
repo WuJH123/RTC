@@ -4,20 +4,16 @@ from __future__ import annotations
 from typing import Mapping
 
 import numpy as np
+import torch
 
 from .closed_loop import CausalObservation, ControllerAction
 
 
-POLICY_RETURN_REPLAY_CONTRACT = "PROJECT7_RECEDING_POLICY_RETURN_EXACT_PREFIX_REPLAY_V1"
+POLICY_RETURN_REPLAY_CONTRACT = "PROJECT7_RECEDING_POLICY_RETURN_EXACT_PREFIX_REPLAY_V2_CAUSAL_CONTEXT"
 
 
 def _sync_supervisory_latch(controller: object, target: np.ndarray) -> None:
-    """Synchronize known controller wrappers after an externally replayed target command.
-
-    This is used only by offline authoritative replay.  It does not alter online policy logic; it
-    makes the continuation controller's readback bookkeeping match the target actually written by
-    the replay wrapper before the continuation policy takes control.
-    """
+    """Synchronize known controller wrappers after an externally replayed target command."""
     value = np.asarray(target, dtype=float).copy()
     if hasattr(controller, "last_requested"):
         setattr(controller, "last_requested", value.copy())
@@ -26,6 +22,62 @@ def _sync_supervisory_latch(controller: object, target: np.ndarray) -> None:
     inner = getattr(controller, "controller", None)
     if inner is not None and inner is not controller:
         _sync_supervisory_latch(inner, value)
+
+
+def _causal_torch_controller(controller: object) -> object:
+    """Find the inner Torch controller without depending on a particular wrapper depth."""
+    current = controller
+    seen: set[int] = set()
+    while id(current) not in seen:
+        seen.add(id(current))
+        if all(
+            hasattr(current, name)
+            for name in (
+                "step1", "graph", "forecast", "observed_history", "mask_history",
+                "context_history", "rainfall_history", "device", "config",
+            )
+        ):
+            return current
+        next_controller = getattr(current, "controller", None)
+        if next_controller is None:
+            break
+        current = next_controller
+    raise TypeError("could not locate causal Torch controller inside replay delegate")
+
+
+def _capture_online_context(controller: object, obs: CausalObservation) -> dict[str, np.ndarray]:
+    """Reproduce exactly the causal Step1/forecast inputs available to the online controller."""
+    inner = _causal_torch_controller(controller)
+    history_steps = int(inner.config.history_steps)
+    if len(inner.observed_history) < history_steps:
+        raise RuntimeError("policy-return branch point lacks complete causal Step1 history")
+    static = torch.as_tensor(
+        inner.graph.static_node_features, dtype=torch.float32, device=inner.device
+    )
+    edges = torch.as_tensor(inner.graph.edge_index, dtype=torch.long, device=inner.device)
+    with torch.no_grad():
+        state = inner.step1(
+            torch.as_tensor(
+                np.stack(inner.observed_history)[None], dtype=torch.float32, device=inner.device
+            ),
+            torch.as_tensor(
+                np.stack(inner.mask_history)[None], dtype=torch.float32, device=inner.device
+            ),
+            static,
+            edges,
+            torch.as_tensor(
+                np.stack(inner.context_history)[None], dtype=torch.float32, device=inner.device
+            ),
+        )
+    rainfall = inner.forecast.forecast(
+        np.stack(inner.rainfall_history), horizon_steps=int(inner.config.horizon_steps)
+    )
+    return {
+        "current_state": state.detach().cpu().numpy()[0].astype(np.float32),
+        "rainfall_scenarios": np.asarray(rainfall, dtype=np.float32),
+        "active_target": np.asarray(obs.actuator_target_setting, dtype=np.float32).reshape(109),
+        "previous_actuator_flow": np.asarray(obs.actuator_flow_m3s, dtype=np.float32).reshape(109),
+    }
 
 
 class ExactPrefixThenFrozenPolicyController:
@@ -57,6 +109,7 @@ class ExactPrefixThenFrozenPolicyController:
             raise ValueError("branch_kind must be CANDIDATE or HOLD")
         self.branch_kind = branch_kind
         self.continuation_started = False
+        self.branch_context: dict[str, np.ndarray] | None = None
 
     def observe(self, obs: CausalObservation) -> None:
         if hasattr(self.delegate, "observe"):
@@ -89,6 +142,7 @@ class ExactPrefixThenFrozenPolicyController:
                 self.prefix_actions[elapsed], "POLICY_RETURN_EXACT_PREFIX_REPLAY"
             )
         if elapsed == self.branch_elapsed_seconds:
+            self.branch_context = _capture_online_context(self.delegate, obs)
             return self._external_action(
                 self.branch_target,
                 f"POLICY_RETURN_{self.branch_kind}_FIRST_ACTION",
