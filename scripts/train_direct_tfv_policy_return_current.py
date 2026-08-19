@@ -1,11 +1,13 @@
-"""Fine-tune Direct-TFV Step2 on paired receding-policy-return labels.
+"""Fine-tune frozen Direct-TFV representations on exact receding-policy first-action returns.
 
-Rainfall groups are the independent train/validation split unit.  Candidate ranking is trained only
-inside a query_set_id, i.e. actions evaluated from the same authoritative hydraulic prefix.  This
-avoids the previous statistical error of ranking actions from different states merely because they
-belonged to the same rainfall event.  For small policy-return datasets the default trainable scope
-keeps the global state/rainfall representation frozen and adapts the facility/action and interaction
-layers; ``--trainable-scope all`` remains available as a Development ablation.
+Rainfall groups are the independent train/validation unit. Candidate ranking is defined only inside a
+``query_set_id``: actions evaluated from the same authoritative prefix. Model inputs use the same
+H10-candidate/H350-HOLD action token as runtime. With limited authoritative labels, the default keeps
+global state/rainfall encoders frozen and adapts only facility/action and interaction layers.
+
+Checkpoint selection is control-first rather than RMSE-first: false-beneficial selection, same-query
+ranking, selected-action regret, then MAE. This prevents a numerically lower regression error from
+winning while selecting hydraulically harmful actions.
 """
 from __future__ import annotations
 
@@ -24,11 +26,13 @@ import torch.nn.functional as F
 
 from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
 from rtc.direct_tfv_policy_return import (
+    DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
     DIRECT_TFV_POLICY_RETURN_CHECKPOINT_CONTRACT,
     DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT,
     DIRECT_TFV_POLICY_RETURN_ESTIMAND,
     DIRECT_TFV_POLICY_RETURN_MIN_TRAIN_GROUPS,
     DIRECT_TFV_POLICY_RETURN_MIN_VALIDATION_GROUPS,
+    encode_policy_return_action_token,
     sha256_file,
 )
 from rtc.direct_tfv_policy_return_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
@@ -50,14 +54,16 @@ def _load_dataset(path: str | Path, *, role: str) -> dict[str, Any]:
         raise ValueError("policy-return dataset has the wrong contract")
     if _scalar_text(data, "estimand") != DIRECT_TFV_POLICY_RETURN_ESTIMAND:
         raise ValueError("policy-return dataset has the wrong estimand")
+    if _scalar_text(data, "action_encoding_contract") != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
+        raise ValueError("policy-return dataset has the wrong H10 action encoding")
     if _scalar_text(data, "data_role") != role:
         raise ValueError(f"policy-return dataset role must be {role}")
-    continuation_policy_sha256 = _scalar_text(data, "continuation_policy_sha256").lower()
-    if len(continuation_policy_sha256) != 64:
+    continuation = _scalar_text(data, "continuation_policy_sha256").lower()
+    if len(continuation) != 64:
         raise ValueError("policy-return dataset lacks continuation policy lineage")
-    portfolio_contract = _scalar_text(data, "candidate_portfolio_contract") if "candidate_portfolio_contract" in data else ""
-    if portfolio_contract and portfolio_contract != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
-        raise ValueError("policy-return dataset has an unknown candidate portfolio contract")
+    portfolio_contract = _scalar_text(data, "candidate_portfolio_contract")
+    if portfolio_contract != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
+        raise ValueError("policy-return training requires the current practical portfolio")
     required = (
         "current_state",
         "rainfall_scenarios",
@@ -78,23 +84,20 @@ def _load_dataset(path: str | Path, *, role: str) -> dict[str, Any]:
         raise ValueError("policy-return dataset arrays have inconsistent sample counts")
     if result["current_state"].ndim != 3:
         raise ValueError("current_state must be [sample,node,state_feature]")
-    if result["rainfall_scenarios"].ndim != 5:
-        raise ValueError("rainfall_scenarios must be [sample,scenario,H,node,rain_feature]")
-    if int(result["rainfall_scenarios"].shape[1]) < 2:
-        raise ValueError("policy-return training requires at least two causal rainfall scenarios")
+    if result["rainfall_scenarios"].ndim != 5 or int(result["rainfall_scenarios"].shape[1]) < 2:
+        raise ValueError("rainfall_scenarios must be [sample,scenario,H,node,feature] with >=2 scenarios")
     if tuple(result["active_target"].shape[1:]) != (109,) or tuple(result["candidate_target"].shape[1:]) != (109,):
         raise ValueError("policy-return target arrays must contain 109 actuators")
     if tuple(result["previous_actuator_flow"].shape[1:]) != (109,):
-        raise ValueError("policy-return flow array must contain 109 actuators")
-    numeric = (
+        raise ValueError("policy-return flow arrays must contain 109 actuators")
+    for key in (
         "current_state",
         "rainfall_scenarios",
         "active_target",
         "candidate_target",
         "previous_actuator_flow",
         "true_policy_return_delta_tfv_m3",
-    )
-    for key in numeric:
+    ):
         if not np.isfinite(result[key].astype(np.float64)).all():
             raise ValueError(f"policy-return dataset {key} contains non-finite values")
     result["groups"] = np.asarray(result.pop("rainfall_group")).astype(str)
@@ -102,16 +105,19 @@ def _load_dataset(path: str | Path, *, role: str) -> dict[str, Any]:
     result["candidate_sources"] = np.asarray(result.pop("candidate_source")).astype(str)
     if any(len(value) != 64 for value in result["query_sets"].tolist()):
         raise ValueError("policy-return query_set_id values must be sha256 strings")
-    result["path"] = str(Path(path).resolve())
-    result["sha256"] = sha256_file(path)
-    result["continuation_policy_sha256"] = continuation_policy_sha256
-    result["candidate_portfolio_contract"] = portfolio_contract
+    result.update(
+        {
+            "path": str(Path(path).resolve()),
+            "sha256": sha256_file(path),
+            "continuation_policy_sha256": continuation,
+            "candidate_portfolio_contract": portfolio_contract,
+            "action_encoding_contract": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
+        }
+    )
     return result
 
 
-def _normalization_tensors(
-    normalization: Any, *, dtype: torch.dtype, device: torch.device
-) -> dict[str, torch.Tensor]:
+def _normalization_tensors(normalization: Any, *, dtype: torch.dtype, device: torch.device) -> dict[str, torch.Tensor]:
     return {
         "state_mean": torch.as_tensor(normalization.state_mean, dtype=dtype, device=device),
         "state_std": torch.as_tensor(normalization.state_std, dtype=dtype, device=device).clamp_min(1e-6),
@@ -134,26 +140,24 @@ def _predict_group(
     state = torch.as_tensor(dataset["current_state"][indices], dtype=torch.float32, device=device)
     rain = torch.as_tensor(dataset["rainfall_scenarios"][indices], dtype=torch.float32, device=device)
     active = torch.as_tensor(dataset["active_target"][indices], dtype=torch.float32, device=device)
-    candidate_target = torch.as_tensor(dataset["candidate_target"][indices], dtype=torch.float32, device=device)
+    target = torch.as_tensor(dataset["candidate_target"][indices], dtype=torch.float32, device=device)
     flow = torch.as_tensor(dataset["previous_actuator_flow"][indices], dtype=torch.float32, device=device)
-    truth = torch.as_tensor(
-        dataset["true_policy_return_delta_tfv_m3"][indices], dtype=torch.float32, device=device
-    )
+    truth = torch.as_tensor(dataset["true_policy_return_delta_tfv_m3"][indices], dtype=torch.float32, device=device)
     b, scenarios, horizon, nodes, rain_features = rain.shape
     norm = _normalization_tensors(normalization, dtype=state.dtype, device=device)
     state = (state - norm["state_mean"]) / norm["state_std"]
     rain = (rain - norm["rain_mean"]) / norm["rain_std"]
     flow = (flow - norm["flow_mean"]) / norm["flow_std"]
-    state = state[:, None].expand(-1, scenarios, -1, -1).reshape(
-        b * scenarios, *state.shape[1:]
-    )
+    state = state[:, None].expand(-1, scenarios, -1, -1).reshape(b * scenarios, *state.shape[1:])
     rain = rain.reshape(b * scenarios, horizon, nodes, rain_features)
     flow = flow[:, None].expand(-1, scenarios, -1).reshape(b * scenarios, 109)
-    reference = active[:, None, None].expand(-1, scenarios, horizon, -1).reshape(
-        b * scenarios, horizon, 109
-    )
-    candidate = candidate_target[:, None, None].expand(-1, scenarios, horizon, -1).reshape(
-        b * scenarios, horizon, 109
+    active = active[:, None, :].expand(-1, scenarios, -1).reshape(b * scenarios, 109)
+    target = target[:, None, :].expand(-1, scenarios, -1).reshape(b * scenarios, 109)
+    reference, candidate = encode_policy_return_action_token(
+        active,
+        target,
+        horizon_steps=int(horizon),
+        first_action_steps=2,
     )
     output = model(
         current_state=state,
@@ -165,13 +169,10 @@ def _predict_group(
         actuator_downstream=torch.as_tensor(graph.actuator_downstream, dtype=torch.long, device=device),
         actuator_physics=torch.as_tensor(graph.actuator_physics, dtype=state.dtype, device=device),
     )
-    prediction = output.total_delta_tfv_m3.reshape(b, scenarios).mean(dim=1)
-    return prediction, truth
+    return output.total_delta_tfv_m3.reshape(b, scenarios).mean(dim=1), truth
 
 
-def _query_loss(
-    prediction: torch.Tensor, truth: torch.Tensor, *, scale: torch.Tensor
-) -> torch.Tensor:
+def _query_loss(prediction: torch.Tensor, truth: torch.Tensor, *, scale: torch.Tensor) -> torch.Tensor:
     regression = F.smooth_l1_loss(prediction / scale, truth / scale)
     informative = torch.abs(truth) > 1.0
     sign_loss = prediction.new_zeros(())
@@ -185,10 +186,10 @@ def _query_loss(
         mask = torch.triu(torch.abs(ti) > 1.0, diagonal=1)
         if bool(mask.any()):
             ranking = F.softplus(-(pi[mask] / scale) * torch.sign(ti[mask])).mean()
-    return regression + 0.25 * sign_loss + 0.35 * ranking
+    return regression + 0.35 * sign_loss + 0.45 * ranking
 
 
-def _ranking_statistics(
+def _same_query_statistics(
     model: torch.nn.Module,
     dataset: dict[str, Any],
     *,
@@ -196,20 +197,23 @@ def _ranking_statistics(
     normalization: Any,
     device: torch.device,
 ) -> dict[str, float]:
-    correct = 0
-    comparisons = 0
-    multi = 0
+    correct = comparisons = multi = top1 = 0
+    regrets: list[float] = []
+    selected_harmful = 0
     with torch.no_grad():
         for query in sorted(set(dataset["query_sets"].tolist())):
             idx = np.flatnonzero(dataset["query_sets"] == query)
             if idx.size < 2:
                 continue
             multi += 1
-            pred_t, truth_t = _predict_group(
-                model, dataset, idx, graph=graph, normalization=normalization, device=device
-            )
+            pred_t, truth_t = _predict_group(model, dataset, idx, graph=graph, normalization=normalization, device=device)
             pred = pred_t.detach().cpu().numpy().astype(float)
             truth = truth_t.detach().cpu().numpy().astype(float)
+            selected = int(np.argmin(pred))
+            oracle = int(np.argmin(truth))
+            top1 += int(selected == oracle)
+            regrets.append(float(truth[selected] - truth[oracle]))
+            selected_harmful += int(truth[selected] >= 0.0)
             for left in range(len(pred)):
                 for right in range(left + 1, len(pred)):
                     if abs(truth[left] - truth[right]) <= 1.0:
@@ -220,6 +224,9 @@ def _ranking_statistics(
         "within_query_pairwise_rank_accuracy": float(correct / comparisons) if comparisons else 1.0,
         "within_query_pairwise_comparison_count": float(comparisons),
         "multi_candidate_query_set_count": float(multi),
+        "within_query_top1_accuracy": float(top1 / multi) if multi else 1.0,
+        "selected_action_mean_regret_m3": float(np.mean(regrets)) if regrets else 0.0,
+        "selected_action_false_beneficial_fraction": float(selected_harmful / multi) if multi else 0.0,
     }
 
 
@@ -238,21 +245,15 @@ def _evaluate(
     with torch.no_grad():
         for group in sorted(set(dataset["groups"].tolist())):
             idx = np.flatnonzero(dataset["groups"] == group)
-            pred_t, truth_t = _predict_group(
-                model, dataset, idx, graph=graph, normalization=normalization, device=device
-            )
+            pred_t, truth_t = _predict_group(model, dataset, idx, graph=graph, normalization=normalization, device=device)
             pred = pred_t.detach().cpu().numpy().astype(float)
             truth = truth_t.detach().cpu().numpy().astype(float)
             informative = np.abs(truth) > 1.0
-            sign_accuracy = (
-                float(np.mean(np.sign(pred[informative]) == np.sign(truth[informative])))
-                if np.any(informative)
-                else 1.0
-            )
+            sign = float(np.mean(np.sign(pred[informative]) == np.sign(truth[informative]))) if np.any(informative) else 1.0
             group_metrics.append(
                 {
                     "mae_m3": float(np.mean(np.abs(pred - truth))),
-                    "sign_accuracy": sign_accuracy,
+                    "sign_accuracy": sign,
                     "false_beneficial_rate": float(np.mean((pred < 0.0) & (truth >= 0.0))),
                     "false_reject_rate": float(np.mean((pred >= 0.0) & (truth < 0.0))),
                 }
@@ -265,26 +266,14 @@ def _evaluate(
     result = {
         "event_balanced_mae_m3": float(np.mean([row["mae_m3"] for row in group_metrics])),
         "event_balanced_sign_accuracy": float(np.mean([row["sign_accuracy"] for row in group_metrics])),
-        "event_balanced_false_beneficial_rate": float(
-            np.mean([row["false_beneficial_rate"] for row in group_metrics])
-        ),
-        "event_balanced_false_reject_rate": float(
-            np.mean([row["false_reject_rate"] for row in group_metrics])
-        ),
+        "event_balanced_false_beneficial_rate": float(np.mean([row["false_beneficial_rate"] for row in group_metrics])),
+        "event_balanced_false_reject_rate": float(np.mean([row["false_reject_rate"] for row in group_metrics])),
         "sample_mae_m3": float(np.mean(np.abs(prediction - truth))),
-        "sample_sign_accuracy": (
-            float(np.mean(np.sign(prediction[informative]) == np.sign(truth[informative])))
-            if np.any(informative)
-            else 1.0
-        ),
+        "sample_sign_accuracy": float(np.mean(np.sign(prediction[informative]) == np.sign(truth[informative]))) if np.any(informative) else 1.0,
         "sample_count": float(len(prediction)),
         "rainfall_group_count": float(len(group_metrics)),
     }
-    result.update(
-        _ranking_statistics(
-            model, dataset, graph=graph, normalization=normalization, device=device
-        )
-    )
+    result.update(_same_query_statistics(model, dataset, graph=graph, normalization=normalization, device=device))
     return result
 
 
@@ -293,8 +282,7 @@ def _configure_trainable_scope(model: torch.nn.Module, scope: str) -> list[torch
         parameter.requires_grad_(scope == "all")
     if scope == "control-heads":
         for module_name in ("facility_encoder", "facility_head", "interaction_head"):
-            module = getattr(model, module_name)
-            for parameter in module.parameters():
+            for parameter in getattr(model, module_name).parameters():
                 parameter.requires_grad_(True)
     parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
     if not parameters:
@@ -322,9 +310,7 @@ def main() -> None:
     torch.manual_seed(args.seed)
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
     graph = _load_graph(args.graph)
-    model, normalization, base = load_direct_tfv_runtime_checkpoint(
-        args.base_step2, graph=graph, device=device
-    )
+    model, normalization, base = load_direct_tfv_runtime_checkpoint(args.base_step2, graph=graph, device=device)
     train = _load_dataset(args.train_dataset, role="policy_return_train")
     valid = _load_dataset(args.validation_dataset, role="policy_return_validation")
     train_groups = set(train["groups"].tolist())
@@ -337,28 +323,24 @@ def main() -> None:
         raise ValueError("policy-return train/validation rainfall groups overlap")
     if train["continuation_policy_sha256"] != valid["continuation_policy_sha256"]:
         raise ValueError("policy-return train/validation use different continuation policies")
-    if train["candidate_portfolio_contract"] != valid["candidate_portfolio_contract"]:
-        raise ValueError("policy-return train/validation use different candidate query families")
 
     trainable = _configure_trainable_scope(model, args.trainable_scope)
     optimizer = torch.optim.AdamW(trainable, lr=float(args.learning_rate), weight_decay=1e-5)
     scale = model.target_scale_m3.to(device).clamp_min(1.0)
     best_state = copy.deepcopy(model.state_dict())
-    best_metric = float("inf")
-    history = []
+    best_key: tuple[float, float, float, float] | None = None
+    history: list[dict[str, float | int]] = []
     groups = sorted(train_groups)
     for epoch in range(1, int(args.epochs) + 1):
         random.Random(args.seed + epoch).shuffle(groups)
         model.train()
-        losses = []
+        losses: list[float] = []
         for group in groups:
             query_ids = sorted(set(train["query_sets"][train["groups"] == group].tolist()))
             query_losses = []
             for query in query_ids:
                 idx = np.flatnonzero(train["query_sets"] == query)
-                prediction, truth = _predict_group(
-                    model, train, idx, graph=graph, normalization=normalization, device=device
-                )
+                prediction, truth = _predict_group(model, train, idx, graph=graph, normalization=normalization, device=device)
                 query_losses.append(_query_loss(prediction, truth, scale=scale))
             if not query_losses:
                 continue
@@ -369,20 +351,17 @@ def main() -> None:
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
         metrics = _evaluate(model, valid, graph=graph, normalization=normalization, device=device)
-        rank_factor = (
-            2.0 - metrics["within_query_pairwise_rank_accuracy"]
-            if metrics["within_query_pairwise_comparison_count"] > 0
-            else 1.0
+        key = (
+            float(metrics["selected_action_false_beneficial_fraction"]),
+            -float(metrics["within_query_pairwise_rank_accuracy"]),
+            float(metrics["selected_action_mean_regret_m3"]),
+            float(metrics["event_balanced_mae_m3"]),
         )
-        selection = (
-            metrics["event_balanced_mae_m3"]
-            * (1.0 + metrics["event_balanced_false_beneficial_rate"])
-            * rank_factor
-        )
-        history.append({"epoch": epoch, "train_loss": float(np.mean(losses)), **metrics})
-        if selection < best_metric:
-            best_metric = selection
+        history.append({"epoch": epoch, "train_loss": float(np.mean(losses)) if losses else 0.0, **metrics})
+        if best_key is None or key < best_key:
+            best_key = key
             best_state = copy.deepcopy(model.state_dict())
+
     model.load_state_dict(best_state)
     final_metrics = _evaluate(model, valid, graph=graph, normalization=normalization, device=device)
     train_query_counts = Counter(train["query_sets"].tolist())
@@ -391,6 +370,7 @@ def main() -> None:
         "contract": DIRECT_TFV_POLICY_RETURN_CHECKPOINT_CONTRACT,
         "development_only": True,
         "estimand": DIRECT_TFV_POLICY_RETURN_ESTIMAND,
+        "action_encoding_contract": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
         "base_step2_sha256": sha256_file(args.base_step2),
         "graph_sha256": sha256_file(args.graph),
         "continuation_policy_sha256": train["continuation_policy_sha256"],
@@ -417,22 +397,15 @@ def main() -> None:
         "validation_metrics": final_metrics,
         "trainable_scope": args.trainable_scope,
         "ranking_unit": "SAME_AUTHORITATIVE_PREFIX_QUERY_SET",
-        "selection_rule": (
-            "event_balanced_MAE_times_one_plus_false_beneficial_times_"
-            "one_plus_within_query_rank_error"
-        ),
+        "selection_rule": "LEXICOGRAPHIC_FALSE_BENEFICIAL_THEN_RANK_THEN_SELECTED_REGRET_THEN_MAE",
         "future_realized_rainfall_used_as_model_input": False,
     }
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, out)
-    report = {
-        key: value for key, value in payload.items() if key not in {"model_state_dict", "normalization"}
-    }
+    report = {key: value for key, value in payload.items() if key not in {"model_state_dict", "normalization"}}
     report["checkpoint_sha256"] = hashlib.sha256(out.read_bytes()).hexdigest()
-    out.with_suffix(".json").write_text(
-        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    out.with_suffix(".json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2, sort_keys=True))
 
 
