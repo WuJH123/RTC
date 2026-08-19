@@ -1,6 +1,6 @@
 {
   "contract": "PROJECT7_CURRENT_LINT_SURFACE_PRACTICAL_RTC_V1",
-  "purpose": "Fail closed on the maintained Practical H10 policy-return RTC, exact-prefix label generation, path-safe assets, type-aware baselines and authoritative PFV safety reporting.",
+  "purpose": "Fail closed on the maintained Practical H10 hybrid policy-return RTC, exact-prefix label generation, path-safe assets, type-aware baselines and authoritative PFV safety reporting.",
   "full_repository_ruff_is_gate": false,
   "current_surface_ruff_is_gate": true,
   "rule_select": ["E4", "E7", "E9", "F"],
@@ -27,6 +27,7 @@
     "scripts/run_policy_direct_tfv_robust_rainfall_development.py",
     "scripts/plan_direct_tfv_first_move_counterfactual_current.py",
     "scripts/build_project7_practical_asset_manifest_current.py",
+    "scripts/run_policy_direct_tfv_base_hybrid_parent_current.py",
     "scripts/capture_direct_tfv_policy_return_context_current.py",
     "scripts/design_direct_tfv_policy_return_portfolio_current.py",
     "scripts/run_direct_tfv_policy_return_pair_current.py",
@@ -63,8 +64,10 @@
     "src/rtc/direct_tfv_v12_lineage.py",
     "src/rtc/direct_tfv_policy_return.py",
     "src/rtc/direct_tfv_policy_return_portfolio.py",
+    "src/rtc/direct_tfv_policy_return_hybrid_portfolio.py",
     "src/rtc/direct_tfv_policy_return_portfolio_admission.py",
     "src/rtc/direct_tfv_runtime_factory.py",
+    "src/rtc/direct_tfv_base_probe_runtime_factory.py",
     "src/rtc/direct_tfv_policy_return_runtime_factory.py",
     "src/rtc/policy_return_replay.py",
     "src/rtc/practical_rtc_assets.py",
@@ -86,6 +89,9 @@
     "src/rtc/step3_tfv_value_mpc_v10.py",
     "src/rtc/step3_tfv_value_mpc_v11.py",
     "src/rtc/step3_tfv_value_mpc_v12.py",
+    "src/rtc/step3_tfv_value_mpc_v13.py",
+    "src/rtc/step3_tfv_base_probe_parent.py",
+    "src/rtc/step3_tfv_base_probe_parent_v2.py",
     "src/rtc/step2_state_store_v127.py",
     "src/rtc/step2_causal_rainfall_v123.py",
     "src/rtc/production_cli.py",
@@ -110,6 +116,7 @@
     "tests/test_direct_tfv_sequence_support.py",
     "tests/test_direct_tfv_policy_return.py",
     "tests/test_direct_tfv_policy_return_portfolio.py",
+    "tests/test_direct_tfv_hybrid_gradient_portfolio.py",
     "tests/test_practical_rtc_v14_contract.py",
     "tests/test_direct_tfv_robust_rainfall.py",
     "tests/test_direct_tfv_baseline_provenance.py",
@@ -118,6 +125,6 @@
     "tests/test_facility_tfv_influence.py",
     "tests/test_facility_tfv_influence_cli.py"
   ],
-  "legacy_policy": "Historical V8-V12 files are evidence/ablation only. V12 may be used as frozen offline pi0 for exact paired labels, but no Practical online entry may require its optimizer/admission or silently route back to L-BFGS-B.",
+  "legacy_policy": "Historical V8-V12 files are evidence/ablation only. Current Practical execution and first-round pi0 generation may not require historical V12 optimizer/admission artifacts or silently route back to L-BFGS-B.",
   "non_gate_historical_debt_policy": "Do not mass-format archival code while changing the maintained Practical execution surface."
 }
