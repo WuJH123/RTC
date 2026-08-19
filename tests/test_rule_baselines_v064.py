@@ -87,9 +87,10 @@ def test_auto_rbc_opens_high_upstream_storage_more(tmp_path: Path) -> None:
     obs = _obs(sensors, [depth_map[n] for n in sensors])
     controller = fixed_baseline_controller("auto_rbc", inp_path=path)
     action = controller(obs)
-    assert action.source == "AUTO_RBC_V2_TARGET_LATCH"
+    assert action.source == "AUTO_RBC_V3_TYPE_AWARE_TARGET_LATCH"
     assert action.diagnostics is not None
     assert action.diagnostics["rule_contract"] == AUTO_RBC_CONTRACT
+    assert action.diagnostics["release_setting_semantics_contract"]
     assert action.settings["P1"] > action.settings["P2"]
     assert all(0.0 <= value <= 1.0 for value in action.settings.values())
 
@@ -101,9 +102,10 @@ def test_efd_gives_more_discharge_to_more_volume_filled_storage(tmp_path: Path) 
     obs = _obs(sensors, [1.8, 0.6])
     controller = fixed_baseline_controller("efd", inp_path=path)
     action = controller(obs)
-    assert action.source == "EFD_V3_TARGET_LATCH"
+    assert action.source == "EFD_V4_TYPE_AWARE_TARGET_LATCH"
     assert action.diagnostics is not None
     assert action.diagnostics["rule_contract"] == EFD_CONTRACT
+    assert action.diagnostics["release_setting_semantics_contract"]
     assert action.settings["P1"] > action.settings["P2"]
     assert action.settings["O1"] == 0.5
     assert float(action.diagnostics["filling_degree_std"]) > 0.0
@@ -121,8 +123,6 @@ def test_rule_baseline_preserves_uncontrolled_target_when_current_lags(tmp_path:
         current=(0.2, 0.3, 0.1),
     )
     action = fixed_baseline_controller("efd", inp_path=path)(obs)
-    # O1 is not a storage outflow in the EFD controller; preserve the command latch rather
-    # than overwriting it with the lagged physical readback.
     assert action.settings["O1"] == 0.8
     assert action.diagnostics is not None
     assert float(action.diagnostics["current_tracking_lag_max"]) == pytest.approx(0.7)
