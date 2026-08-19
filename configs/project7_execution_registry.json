@@ -63,7 +63,7 @@
     "candidate-free first-move context comes from authoritative D0 prefixes and never requires generic D3 candidate rows",
     "behavioral source fingerprint controls calibration validity; full-byte source hash is provenance only",
     "V12 rainfall scenarios use only causal rainfall history and never future realized rainfall",
-    "policy-return CANDIDATE and HOLD branches must share the exact prefix and exact frozen continuation policy after H10",
+    "policy-return CANDIDATE and HOLD branches must share the exact prefix and same frozen continuation policy after H10",
     "policy-return train, model-selection validation and conformal calibration rainfall groups must be disjoint",
     "SWMM is never called inside online candidate search",
     "Auto-RBC, EFD and other baselines are never weakened, imitated or used as warm starts",
