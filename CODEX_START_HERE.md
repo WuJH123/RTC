@@ -1,168 +1,307 @@
-# Project7 current execution guide
+# Project7 Direct-TFV — authoritative main workflow
 
-GitHub `main` is the code source of truth after PR #95 is merged. While PR #95 is under Development review, use branch `agent/direct-tfv-optimizer-consistency-v7`. Project7 is an **idealized EPA-SWMM methodology testbed**, not a field digital twin.
+This file is the single startup guide for local Codex after the web/GitHub review cycle.
 
-## Frozen research problem
+## 0. Collaboration contract
 
-```text
-sparse causal sensors
- -> Step1 reconstruct CURRENT full-network hydraulic state
- -> Step2 Direct-TFV action-value model for all 109 facilities
- -> Step3 screen all 109 facilities relative to HOLD
- -> optimize a q95-supported H120 action sequence for H360 TFV
- -> contract the decoded sequence inside D3-HOLD joint temporal support
- -> admit only when optimizer-aware one-sided TFV residual upper bound < 0
- -> execute first 10-minute target only
- -> re-observe and repeat
+The working model is deliberate:
+
+1. **Web GPT** reviews the scientific logic and edits/merges GitHub.
+2. **Local Codex** synchronizes `main`, runs the exact commands, monitors Windows/SWMM/CUDA, and reports evidence/errors.
+3. The user returns the run log to Web GPT.
+4. Web GPT fixes GitHub; local Codex then fast-forwards `main` and resumes.
+
+Do not create an independent local scientific fork. Do not choose a historical V8/V9/V10/V11/V12 branch by filename. `origin/main` is authoritative.
+
+Before every run:
+
+```powershell
+cd E:\RTC_sewer\Project7\repo
+git fetch origin --prune
+git switch main
+git pull --ff-only
+git status --short --branch
+git rev-parse HEAD
+git rev-parse origin/main
 ```
 
-Primary objective remains **system-wide cumulative TFV minimization**. SWMM is authoritative offline truth. No PFV/Global Peak objective or gate is added. No future realised rainfall, future SWMM state, future flooding, Validation, Final or Formal truth is available online.
+If local `main` is not a clean fast-forward of `origin/main`, stop before expensive work and report the exact diff/status. Never `git clean -fd`, `reset --hard`, or pop an old stash blindly.
 
-Frozen clock/action contract:
-- model/state step = 300 s;
-- control update = 600 s;
-- H360 prediction = 72 five-minute steps;
-- H120 free control = 12 ten-minute blocks;
-- writable facilities = 109;
-- all 109 are screened every decision;
-- setting movement <= 0.5 per 10-minute update;
-- execute first 10-minute target only, then re-observe.
+## 1. Research question is frozen
 
-## Current evidence and scientific bottleneck
+Every 600 s:
 
-Step2 V5 has useful D3 HOLD-reference cached-candidate ranking. The old threshold-free Step3 V5/q95 closed-loop evidence was inconsistent:
+`causal sparse observations -> Step1 state reconstruction -> Direct-TFV value/MPC -> 109-D supervisory target -> execute first 10 min -> SWMM -> observe again`.
 
-```text
-T5_D120   TFV reduction vs No-control  +11.547%
-T10_D180                              +0.615%
-T20_D300                              -1.396%
+Frozen physical/control contract:
+
+- model/observation step: 300 s;
+- control update: 600 s;
+- prediction horizon: H360;
+- free control horizon: H120 = 12 control blocks;
+- execute only the first 10-min target;
+- 109 writable actuators;
+- target movement <= 0.5 per update plus physical min/max;
+- supervisory slew anchor = previous `target_setting`, not physical `current_setting`;
+- unchanged facilities copy the previous commanded target exactly;
+- `HOLD` = latch previous supervisory target;
+- primary objective = system-wide cumulative TFV only;
+- Priority8 PFV and Global Peak = report only;
+- authoritative truth = SWMM;
+- no future realized rainfall/state/flooding/Internal trajectory online;
+- no online SWMM candidate search;
+- no Auto-RBC/EFD imitation or warm start.
+
+## 2. What V8–V12 established
+
+The historical versions are evidence, not alternative current entrypoints.
+
+- V8/V6 q95 joint support made continuous optimization much more reliable but conservative.
+- V9 policy-matched admission reduced over-conservatism but did not beat strong rule baselines.
+- V10 calibrated the wrong counterfactual (`H10 new -> old target H350`) and collapsed to all-HOLD.
+- V11 fixed the real supervisory target-latch semantics and restored actions.
+- V12 added a causal rainfall scenario ensemble `(0.8, 1.0, 1.2)`, history=3, decay=0.92 and scenario-mean TFV scoring. Exact accepted H360 replay was 9/9 sign-correct with 0/9 false-beneficial, but complete closed-loop TFV beat No-control on only 1/3 Development probes and Auto-RBC on 0/3.
+
+Therefore the current scientific bottleneck is **OPEN_LOOP_VALUE_VS_RECEDING_CONTROL_MISMATCH**, not another scalar-margin problem.
+
+## 3. Stable base versus current Development experiment
+
+The stable engineering base remains:
+
+- frozen Step1;
+- frozen Direct-TFV V5 base Step2;
+- q95 support;
+- all-109 screening;
+- target-latch first-move refinement/pruning;
+- V12 causal rainfall scenario mean;
+- memory-safe runtime telemetry graph release.
+
+The **current Development experiment** adds a receding-policy-return critic. It does not replace the stable base until evidence passes.
+
+Policy-return estimand:
+
+`candidate H10 -> frozen continuation policy`
+
+minus
+
+`HOLD H10 -> the same frozen continuation policy`.
+
+The two SWMM branches must share the exact authoritative prefix and the exact same continuation policy after H10.
+
+## 4. Cheap gates before any expensive run
+
+```powershell
+python -m pip install -e ".[dev,swmm]"
+python -m compileall -q src scripts tests
+python scripts/lint_current_surface.py
+python -m pytest -q tests/test_direct_tfv_first_move.py tests/test_direct_tfv_first_move_cli.py tests/test_direct_tfv_robust_rainfall.py tests/test_direct_tfv_policy_return.py tests/test_current_step2_routing.py
+python -m pytest -q
 ```
 
-Exact same-prefix T5 H360 replay had zero prefix/routing mismatch but only 3/6 correct signs and 3/6 false-beneficial optimizer-selected plans. Therefore the active scientific problem is not runtime execution, 109-facility coverage or simply increasing K. It is **optimizer-induced distribution shift**: a continuous optimizer can exploit action-value error and combine individually supported actuator moves into joint temporal sequences not represented by authoritative SWMM training branches.
+Then run `--help` for every script you are about to invoke. Never invent CLI arguments from memory.
 
-Current classification:
+## 5. Do not regenerate generic D3 for first-move calibration
 
-```text
-DEVELOPMENT_OPTIMIZER_CONSISTENCY_UNDER_TEST
-```
-
-## Step2 — keep accepted V5 weights frozen for this experiment
-
-Current training contract:
+The candidate-free path is mandatory:
 
 ```text
-PROJECT7_DIRECT_TFV_CORE_TRAINING_V5
+D0 no-control causal prefix
+  -> build_direct_tfv_first_move_context_current.py
+  -> FirstMoveCalibrationContextStore
+  -> HOLD + exactly one refined candidate per rainfall group
+  -> exact authoritative SWMM branches
+  -> matched admission
 ```
 
-Do not retrain Step2 merely to attach action-support geometry. The accepted pairwise `V(candidate)-V(reference)` model remains the current evaluator. If the new optimizer-consistency experiment fails, the next Step2 change may be optimizer-aware hard-negative fine-tuning, but only after exact same-prefix SWMM evidence identifies that need.
+The first-move context store must report:
 
-## Step3 V6 — D3-HOLD joint temporal trust region + V5 residual admission
+- `candidate_rows_used=false`;
+- `generic_d3_candidate_dependency=false`;
+- `causal_future_rainfall_used=false`.
 
-Canonical contracts:
+If any script asks for generic D3 candidate rows as a context prerequisite, stop: that is a regression.
+
+## 6. V12 matched calibration/runtime regression path
+
+V12 is diagnostic/stable-base evidence, not a new acceptance event after its results have been read.
+
+Candidate-free V12 panel:
+
+```powershell
+python scripts/design_direct_tfv_robust_rainfall_first_move_calibration_current.py --help
+python scripts/merge_direct_tfv_robust_rainfall_first_move_panel_shards.py --help
+python scripts/calibrate_direct_tfv_robust_rainfall_first_move_admission_current.py --help
+python scripts/run_policy_direct_tfv_robust_rainfall_development.py --help
+```
+
+V12 admission must be bound to:
+
+- `PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V10_CAUSAL_RAINFALL_SCENARIO_MEAN`;
+- causal rainfall scenario contract;
+- V12 behavioral SHA;
+- Step2 SHA;
+- q95 sequence-support SHA.
+
+A V11 single-scenario admission must fail closed in V12.
+
+## 7. Policy-return data roles
+
+Before reading any paired branch outcome, preregister rainfall groups into four disjoint sets:
+
+1. `policy_return_train`: at least 48 independent rainfall groups;
+2. `policy_return_validation`: at least 12 independent rainfall groups for model selection only;
+3. `policy_return_calibration`: at least 24 independent rainfall groups for one-sided conformal calibration only;
+4. new Development probes: separate from all three sets.
+
+Do not use Validation/Final/Formal/Policy Lock data.
+
+T5, T8, T10, T20, T30, T80, P15/P35/P75, previous V10/V11/V12 probes and any already-observed mechanism events may be used only if explicitly downgraded to Development training/diagnostic roles; once used, never call them independent acceptance evidence again.
+
+## 8. Freeze the parent policy before generating policy-return labels
+
+Iteration 0 uses parent `pi_0 = frozen V12`.
+
+For every selected rainfall group:
+
+1. run the frozen parent policy closed loop and save its decision JSONL;
+2. select decision indices by a forcing/state/action rule fixed before reading paired truth;
+3. for each selected index run:
+
+```powershell
+python scripts/run_direct_tfv_policy_return_pair_current.py --help
+```
+
+with:
 
 ```text
-PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V6
-PROJECT7_DIRECT_TFV_D3_HOLD_JOINT_SEQUENCE_SUPPORT_V1
-PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1
+--continuation-kind v12
 ```
 
-Existing support is retained:
-- per-facility TrainFit q95 first-move/sequence radii;
-- D3-HOLD q95 changed-facility count ceiling;
-- q90 conservative ablation; q99 diagnostic only.
+Each pair produces:
 
-V6 adds label-independent support for the **complete H120 joint temporal sequence**, derived only from D3 TrainFit HOLD-reference multi-facility branches:
-- first-block L1 action mass;
-- cumulative H120 L1 action mass;
-- H120 temporal total variation, including departure from HOLD at the first block.
+- exact CANDIDATE branch;
+- exact HOLD branch;
+- identical-prefix verification;
+- the same frozen continuation policy after H10;
+- causal Step1 state at the branch point;
+- causal rainfall scenarios at the branch point;
+- authoritative `candidate TFV - HOLD TFV` label.
 
-For every differentiable decoder call, the decoded sequence is radially contracted toward the current HOLD target until all three metrics are inside the selected D3 support quantile. The contracted sequence is the sequence scored by Step2 and the sequence sent to runtime, so `score == execute` is preserved. This is a support/trust-region constraint, not a TFV-performance threshold.
+Do not infer this label from the old open-loop H360 replay.
 
-After optimization, V5 optimizer-aware one-sided admission is still applied:
+## 9. Compile and train the policy-return critic
+
+Compile role-pure datasets:
+
+```powershell
+python scripts/compile_direct_tfv_policy_return_dataset_current.py --help
+```
+
+Then train:
+
+```powershell
+python scripts/train_direct_tfv_policy_return_current.py --help
+```
+
+The first policy-return experiment intentionally keeps the same `DirectFacilityTFVValueModel` architecture and initializes from frozen V5. The first scientific change is the target/estimand, not network size.
+
+Primary validation metrics are event-balanced:
+
+- policy-return MAE;
+- sign accuracy;
+- false-beneficial rate;
+- false-reject rate;
+- within-group ranking.
+
+Do not select a checkpoint from calibration labels.
+
+## 10. Freeze critic, score untouched calibration, then calibrate
+
+```powershell
+python scripts/score_direct_tfv_policy_return_calibration_current.py --help
+python scripts/calibrate_direct_tfv_policy_return_admission_current.py --help
+```
+
+The critic is frozen before calibration scoring. Admission uses rainfall-group one-sided residuals normalized by `sqrt(actual changed-facility count)`.
+
+The old V11/V12 first-move margin and generic-D3 floor must not secretly control policy-return execution.
+
+## 11. Run policy-return closed loop
+
+```powershell
+python scripts/run_policy_direct_tfv_policy_return_development.py --help
+```
+
+Run only preregistered, previously unread Development probes.
+
+For every event report:
+
+- Proposed TFV;
+- No-control;
+- Internal RTC;
+- Auto-RBC;
+- storage-volume EFD;
+- All-open;
+- All-closed;
+- PFV report only;
+- Global Peak report only;
+- ACTION/HOLD count;
+- actual changed-K distribution;
+- runtime p50/p95/max;
+- target write/readback;
+- score==execute;
+- support/engineering violations;
+- routing error;
+- fallback/deadline count.
+
+Do not weaken any baseline because Proposed loses.
+
+## 12. Policy iteration, not one-shot overfitting
+
+If `pi_1` materially differs from frozen V12, the labels are Q-like values under `pi_0`, not yet a fixed-point value for `pi_1`.
+
+Generate a new role-disjoint Development round using:
 
 ```text
-upper = predicted_delta_TFV + calibrated_one_sided_residual_margin
-if upper < 0 and first 10-minute block changes:
-    execute first block
-else:
-    HOLD
+--continuation-kind policy-return
+--policy-return-checkpoint <Q_pi0 checkpoint>
+--policy-return-admission <pi1 admission>
 ```
 
-The residual margin combines rainfall-disjoint D3 HOLD cached residuals and exact same-prefix optimizer-selected Development replay residuals. The small optimizer replay sample contributes only its empirical maximum residual and makes no coverage claim.
+This evaluates `pi_1`, learns `Q^{pi_1}`, and defines `pi_2`.
 
-## Counterfactual replay
+Repeat only while Development evidence shows a material policy shift. Stop when preregistered fixed-point audits show stable action agreement and policy-return residuals. Do not tune on the final new probes.
 
-Runtime telemetry intentionally keeps `PROJECT7_DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_V2` for compatibility with the existing V2 selector. New joint-support fields are additive. The selector must retain both accepted and rejected raw optimizer plans for exact same-prefix H360 replay.
+## 13. Resource rules
 
-The replay should test:
-- true-beneficial fraction among admitted plans;
-- true-beneficial / false-beneficial fraction among rejected plans;
-- prediction-vs-SWMM sign accuracy and MAE;
-- prefix state/target/current/statistics equality;
-- HOLD target equality;
-- routing error.
+Local target: RTX 4060 Laptop 8 GB, RAM 16 GB.
 
-Any prefix mismatch remains `COUNTERFACTUAL_REPLAY_P0`.
+- One GPU training process at a time.
+- Policy-return paired replays contain neural continuation MPC; do not blindly launch 24 GPU copies.
+- Benchmark 1 then 2 concurrent pair runners. Increase only with actual VRAM/RAM evidence.
+- Pure independent SWMM branches without neural continuation may use higher process counts if their real `--help` supports it.
+- One SWMM simulation per Python process.
+- Set child BLAS/OpenMP thread counts to 1 during process-level parallelism.
+- Event-matrix parallelism is throughput evidence only; serial controller latency is the real-time evidence.
 
-## Frozen Development assets
+## 14. Stop rules
 
-```text
-GRAPH
-E:\RTC_sewer\Project7\study_v069\formal_assets\graph_schema.npz
+Stop expensive downstream work on:
 
-BASE_CACHE
-E:\RTC_sewer\Project7\study_v069\step2_v60_control_latent_rebuild\training_cache_v60\CACHE_MANIFEST.json
+- code/CLI/test/lint failure;
+- causal leakage;
+- source/artifact lineage mismatch;
+- candidate/HOLD prefix mismatch;
+- continuation-policy mismatch;
+- CUDA OOM or paging that invalidates the intended runtime;
+- Step2 policy-return sign/ranking scientific gate failure;
+- engineering/support/readback/score-execute failure;
+- new closed-loop Proposed worse than No-control on any preregistered acceptance probe.
 
-RAIN
-E:\RTC_sewer\Project7\study_v069\step2_v123_tfv_pfv_knowledge_guided_mpc\addbbd3\STEP2_V123_CAUSAL_FORECAST_STORE.npz
+Do not respond to a failure by lowering a margin, raising q95 to q99, increasing K, adding PFV/Peak penalties, or weakening baselines without separate preregistered evidence.
 
-STATE
-E:\RTC_sewer\Project7\study_v069\step2_v127_corrected_base_7634cd9\STEP2_V127_CAUSAL_STATE_STORE_V2.npz
+## 15. Promotion boundary
 
-STEP1
-E:\RTC_sewer\Project7\study_v069\models\step1\step1_model.pt
+`READY_FOR_POLICY_LOCK=false` by default.
 
-SENSORS
-E:\RTC_sewer\Project7\inputs\contracts\sensor_nodes.txt
-
-CONFIG
-E:\RTC_sewer\Project7\study_v069\contracts\controller_resolved.json
-```
-
-Auto-discover and SHA/contract-validate the accepted Step2 V5 checkpoint and the existing PR #94 admission artifact. Do not guess lineage and do not regenerate large SWMM datasets just because a filename contains an older version tag.
-
-## Canonical Development order
-
-1. Protect local uncommitted replay-runner work before syncing GitHub. Do not blindly `git clean` or pop a stash over a changed tree.
-2. Sync the PR #95 branch (or merged descendant), record HEAD, install, run full pytest and current Ruff gate.
-3. Verify CUDA, but do **not** retrain Step2.
-4. Build the checkpoint-bound D3-HOLD joint-sequence support artifact with `scripts/build_direct_tfv_sequence_support_current.py`.
-5. Reuse the existing optimizer-aware admission artifact only if its Step2 checkpoint SHA and split contract match; otherwise rebuild it from the existing exact T5 H360 replay plus rainfall-disjoint D3 residuals.
-6. Run `scripts/run_step3_direct_tfv_solver_calibrated_current.py` with both `--admission-calibration` and `--sequence-support`, canonical q95.
-7. Require zero engineering, per-facility support and joint-sequence-support violations. Report how often the new joint-sequence support is binding.
-8. T5 may be rerun only as calibration/engineering consistency smoke because its prior optimizer replay contributed to admission calibration.
-9. Run T10_D180 and T20_D300 as fresh post-calibration Development closed loops.
-10. Audit each closed loop with `scripts/audit_direct_tfv_calibrated_closed_loop_current.py`.
-11. Generate V2 counterfactual manifests from fresh T10/T20 metadata and exact same-prefix H360 SWMM replay for accepted and rejected optimizer plans.
-12. Primary scientific gate: both fresh events must be non-inferior to No-control in TFV, with zero execution/support violations and materially reduced false-beneficial optimizer actions.
-13. Only after No-control consistency is restored should Internal/Auto-RBC competitiveness be reassessed.
-14. Stop before Validation/Final/Formal/Policy Lock.
-
-## If V6 still fails
-
-Do not add PFV, Global Peak, q99 canonical, unrestricted K, future rainfall truth, RBC imitation/fallback, or weaker baselines. First classify the remaining failure:
-
-- if support contraction is frequently binding and fresh exact replay becomes reliable but event TFV remains poor: inspect H360 value-estimand vs 10-minute receding-control mismatch and run a preregistered horizon ablation;
-- if admitted optimizer plans remain false-beneficial inside support: create a small optimizer-aware hard-negative SWMM dataset from fresh Development replays and fine-tune Step2 against those optimizer-query examples;
-- if both are reliable but Auto-RBC still wins: classify baseline competitiveness separately rather than changing the objective to force a win.
-
-## Scientific boundaries
-
-- TFV remains the only optimization objective in this Development experiment;
-- PFV and Global Peak remain diagnostics/reporting only;
-- no online SWMM candidate evaluation;
-- no future realised rainfall online;
-- no q99 canonical promotion from surrogate predictions alone;
-- no event-wise Auto-RBC/EFD tuning;
-- no use of Validation/Final/Formal/Policy Lock for support/admission calibration;
-- no production promotion until fresh Development evidence supports optimizer consistency and No-control non-inferiority.
+Do not enter Validation, Final, Formal or Policy Lock until a later explicit Web-GPT-reviewed change updates the promotion contract after all Development gates pass.
