@@ -32,6 +32,10 @@ jobs:
       - name: Current lint gate
         run: |
           python scripts/lint_current_surface.py
+          python -m ruff check \
+            scripts/audit_direct_tfv_policy_return_mechanism_panel_current.py \
+            tests/test_direct_tfv_policy_return_hold_aware_metrics.py \
+            --select E4,E7,E9,F
       - name: High-signal Practical RTC tests
         run: |
           python -m pytest -q \
@@ -41,6 +45,7 @@ jobs:
             tests/test_direct_tfv_policy_return.py \
             tests/test_direct_tfv_policy_return_portfolio.py \
             tests/test_direct_tfv_hybrid_gradient_portfolio.py \
+            tests/test_direct_tfv_policy_return_hold_aware_metrics.py \
             tests/test_direct_tfv_runtime_adapter.py \
             tests/test_practical_rtc_assets.py \
             tests/test_practical_rtc_v14_contract.py \
@@ -56,6 +61,7 @@ jobs:
           python scripts/design_direct_tfv_policy_return_portfolio_current.py --help >/dev/null
           python scripts/run_direct_tfv_policy_return_pair_current.py --help >/dev/null
           python scripts/run_direct_tfv_policy_return_query_current.py --help >/dev/null
+          python scripts/audit_direct_tfv_policy_return_mechanism_panel_current.py --help >/dev/null
           python scripts/compile_direct_tfv_policy_return_dataset_current.py --help >/dev/null
           python scripts/train_direct_tfv_policy_return_current.py --help >/dev/null
           python scripts/score_direct_tfv_policy_return_calibration_current.py --help >/dev/null
