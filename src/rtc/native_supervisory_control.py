@@ -2,12 +2,13 @@
 
 Project7 keeps the frozen 109-channel hydraulic action representation used by the pretrained Step2,
 but only facilities with explicit actions in the source SWMM ``[CONTROLS]`` section are allowed to
-change online.  The remaining setting channels stay in the model/hydraulic representation while
+change online. The remaining setting channels stay in the model/hydraulic representation while
 candidate and reference targets are forced equal on those channels.
 
-This is intentionally a *control-space mask*, not a new hydraulic model.  It therefore does not
-change the network topology, the five added storage nodes, Step1, or the 109-channel Step2 tensor
-contract.
+This is intentionally a *control-space mask*, not a new hydraulic model. It therefore does not change
+the network topology, the five added storage nodes, Step1, or the 109-channel Step2 tensor contract.
+The mask is matched case-insensitively to INP identifiers and serialized in the frozen graph order so
+its SHA is stable even when native control-rule ordering differs from link ordering.
 """
 from __future__ import annotations
 
@@ -65,35 +66,49 @@ def derive_native_supervisory_control(
         raise ValueError("Project7 native supervisory control requires 109 unique model channels")
 
     catalog = discover_actuators(inp_path)
-    kind_by_id = {row.actuator_id: row.kind for row in catalog.actuators}
-    if set(ids) - set(kind_by_id):
-        missing = sorted(set(ids) - set(kind_by_id))
+    catalog_by_fold = {row.actuator_id.casefold(): row for row in catalog.actuators}
+    graph_by_fold = {value.casefold(): value for value in ids}
+    if len(graph_by_fold) != len(ids):
+        raise ValueError("Project7 graph actuator IDs are not unique under case-insensitive matching")
+    missing = sorted(value for value in ids if value.casefold() not in catalog_by_fold)
+    if missing:
         raise ValueError(f"source INP does not contain graph action channels: {missing[:10]}")
 
-    controlled_raw: list[str] = []
+    controlled_fold: set[str] = set()
+    action_kind_by_fold: dict[str, str] = {}
     non_model_actions: list[dict[str, str]] = []
-    id_set = set(ids)
-    for obj, actuator_id in _iter_control_actions(inp_path):
-        if actuator_id in id_set:
-            controlled_raw.append(actuator_id)
-        else:
-            non_model_actions.append({"object": obj, "id": actuator_id})
+    for obj, raw_actuator_id in _iter_control_actions(inp_path):
+        key = raw_actuator_id.casefold()
+        graph_id = graph_by_fold.get(key)
+        if graph_id is None:
+            non_model_actions.append({"object": obj, "id": raw_actuator_id})
+            continue
+        previous_kind = action_kind_by_fold.get(key)
+        if previous_kind is not None and previous_kind != obj:
+            raise ValueError(
+                f"native control target {raw_actuator_id!r} appears with multiple object kinds"
+            )
+        controlled_fold.add(key)
+        action_kind_by_fold[key] = obj
 
-    controlled = tuple(dict.fromkeys(controlled_raw))
-    if not controlled:
+    if not controlled_fold:
         raise ValueError("source INP [CONTROLS] contains no actions on Project7 model channels")
-    if expected_control_dimension is not None and len(controlled) != int(expected_control_dimension):
+
+    # Canonicalize all current artifacts to the pretrained/frozen graph order. This guarantees that
+    # candidate masks, support statistics and lineage hashes do not depend on rule-file ordering.
+    mask = np.asarray([value.casefold() in controlled_fold for value in ids], dtype=bool)
+    controlled = tuple(value for value, enabled in zip(ids, mask.tolist(), strict=True) if enabled)
+    passive = tuple(value for value, enabled in zip(ids, mask.tolist(), strict=True) if not enabled)
+    dimension = int(mask.sum())
+    if expected_control_dimension is not None and dimension != int(expected_control_dimension):
         raise ValueError(
             "native supervisory-control dimension differs from the frozen Project7 contract: "
-            f"observed={len(controlled)} expected={int(expected_control_dimension)}"
+            f"observed={dimension} expected={int(expected_control_dimension)}"
         )
 
-    controlled_set = set(controlled)
-    mask = np.asarray([actuator_id in controlled_set for actuator_id in ids], dtype=bool)
-    passive = tuple(actuator_id for actuator_id, enabled in zip(ids, mask.tolist(), strict=True) if not enabled)
     kind_counts: dict[str, int] = {}
     for actuator_id in controlled:
-        kind = str(kind_by_id[actuator_id])
+        kind = str(catalog_by_fold[actuator_id.casefold()].kind)
         kind_counts[kind] = kind_counts.get(kind, 0) + 1
 
     mask_bytes = np.ascontiguousarray(mask.astype(np.uint8)).tobytes()
@@ -102,7 +117,7 @@ def derive_native_supervisory_control(
         "development_only": True,
         "source_semantics": "FACILITY_HAS_EXPLICIT_ACTION_IN_SOURCE_INP_CONTROLS",
         "model_action_channel_count": PROJECT7_MODEL_ACTION_CHANNEL_COUNT,
-        "supervisory_control_dimension": int(mask.sum()),
+        "supervisory_control_dimension": dimension,
         "passive_setting_channel_count": int((~mask).sum()),
         "actuator_ids": list(ids),
         "supervisory_mask": mask.astype(int).tolist(),
