@@ -31,6 +31,7 @@ CURRENT_FIRST_MOVE_ADMISSION_RUN_CONTRACT = (
 )
 HOLD_ROLE = "D3_V60_HOLD_REFERENCE"
 FIRST_MOVE_CANDIDATE_ROLE = "D3_V9_REFINED_FIRST_MOVE_CALIBRATION_CANDIDATE"
+_TRUE_TEXT = {"true", "1", "yes", "y"}
 
 
 def _sha(path: str | Path) -> str:
@@ -108,9 +109,12 @@ def main() -> None:
     }
     if missing := sorted(required - set(design.columns)):
         raise ValueError(f"first-move design manifest missing columns: {missing}")
-    if design["candidate_rows_used"].astype(bool).any() or design[
-        "generic_d3_candidate_dependency"
-    ].astype(bool).any():
+    if any(str(value).strip().lower() in _TRUE_TEXT for value in design["candidate_rows_used"]):
+        raise ValueError("current first-move calibration refuses candidate-row context dependency")
+    if any(
+        str(value).strip().lower() in _TRUE_TEXT
+        for value in design["generic_d3_candidate_dependency"]
+    ):
         raise ValueError("current first-move calibration refuses generic D3 candidate dependency")
     if set(design["first_move_panel_contract"].astype(str)) != {DIRECT_TFV_FIRST_MOVE_PANEL_CONTRACT}:
         raise ValueError("first-move design has the wrong panel contract")
@@ -192,7 +196,8 @@ def main() -> None:
             "target-latched refined first-move SWMM branches."
         ),
     }
-    out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(payload, indent=2, sort_keys=True))
 
