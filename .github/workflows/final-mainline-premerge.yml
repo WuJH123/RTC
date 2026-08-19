@@ -32,28 +32,33 @@ jobs:
       - name: Current lint gate
         run: |
           python scripts/lint_current_surface.py
-      - name: High-signal Direct-TFV tests
+      - name: High-signal Practical RTC tests
         run: |
           python -m pytest -q \
             tests/test_direct_tfv_first_move.py \
             tests/test_direct_tfv_first_move_cli.py \
             tests/test_direct_tfv_robust_rainfall.py \
             tests/test_direct_tfv_policy_return.py \
+            tests/test_direct_tfv_policy_return_portfolio.py \
+            tests/test_direct_tfv_runtime_adapter.py \
+            tests/test_practical_rtc_assets.py \
+            tests/test_practical_rtc_v14_contract.py \
             tests/test_current_step2_routing.py
       - name: Full pytest
         run: |
           python -m pytest -q
-      - name: CLI help gates
+      - name: Practical RTC CLI help gates
         run: |
-          python scripts/build_direct_tfv_first_move_context_current.py --help >/dev/null
-          python scripts/design_direct_tfv_first_move_calibration_current.py --help >/dev/null
-          python scripts/calibrate_direct_tfv_first_move_admission_current.py --help >/dev/null
-          python scripts/design_direct_tfv_robust_rainfall_first_move_calibration_current.py --help >/dev/null
-          python scripts/calibrate_direct_tfv_robust_rainfall_first_move_admission_current.py --help >/dev/null
-          python scripts/run_policy_direct_tfv_robust_rainfall_development.py --help >/dev/null
+          python scripts/build_project7_practical_asset_manifest_current.py --help >/dev/null
+          python scripts/capture_direct_tfv_policy_return_context_current.py --help >/dev/null
+          python scripts/design_direct_tfv_policy_return_portfolio_current.py --help >/dev/null
           python scripts/run_direct_tfv_policy_return_pair_current.py --help >/dev/null
+          python scripts/run_direct_tfv_policy_return_query_current.py --help >/dev/null
           python scripts/compile_direct_tfv_policy_return_dataset_current.py --help >/dev/null
           python scripts/train_direct_tfv_policy_return_current.py --help >/dev/null
           python scripts/score_direct_tfv_policy_return_calibration_current.py --help >/dev/null
-          python scripts/calibrate_direct_tfv_policy_return_admission_current.py --help >/dev/null
+          python scripts/calibrate_direct_tfv_policy_return_portfolio_admission_current.py --help >/dev/null
           python scripts/run_policy_direct_tfv_policy_return_development.py --help >/dev/null
+          python scripts/run_six_baselines_development_current.py --help >/dev/null
+          python scripts/compare_direct_tfv_baselines_current.py --help >/dev/null
+          python scripts/add_pfv_to_direct_tfv_comparison_current.py --help >/dev/null
