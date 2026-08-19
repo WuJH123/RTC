@@ -1,6 +1,7 @@
 """Offline controller wrapper for paired receding-policy return SWMM branches."""
 from __future__ import annotations
 
+import gc
 from typing import Mapping
 
 import numpy as np
@@ -10,6 +11,9 @@ from .closed_loop import CausalObservation, ControllerAction
 
 
 POLICY_RETURN_REPLAY_CONTRACT = "PROJECT7_RECEDING_POLICY_RETURN_EXACT_PREFIX_REPLAY_V2_CAUSAL_CONTEXT"
+POLICY_RETURN_BRANCH_RELEASE_CONTRACT = (
+    "PROJECT7_POLICY_RETURN_BRANCH_GPU_LIFECYCLE_RELEASE_V1"
+)
 
 
 def _sync_supervisory_latch(controller: object, target: np.ndarray) -> None:
@@ -33,8 +37,15 @@ def _causal_torch_controller(controller: object) -> object:
         if all(
             hasattr(current, name)
             for name in (
-                "step1", "graph", "forecast", "observed_history", "mask_history",
-                "context_history", "rainfall_history", "device", "config",
+                "step1",
+                "graph",
+                "forecast",
+                "observed_history",
+                "mask_history",
+                "context_history",
+                "rainfall_history",
+                "device",
+                "config",
             )
         ):
             return current
@@ -78,6 +89,50 @@ def _capture_online_context(controller: object, obs: CausalObservation) -> dict[
         "active_target": np.asarray(obs.actuator_target_setting, dtype=np.float32).reshape(109),
         "previous_actuator_flow": np.asarray(obs.actuator_flow_m3s, dtype=np.float32).reshape(109),
     }
+
+
+def snapshot_and_release_policy_return_branch(
+    wrapper: "ExactPrefixThenFrozenPolicyController",
+    *,
+    device: torch.device,
+) -> tuple[dict[str, np.ndarray], dict[str, int | str]]:
+    """Copy the causal branch context and release the completed branch controller.
+
+    A replay wrapper owns its complete frozen continuation delegate, including Step1/Step2 models on
+    CUDA.  Paired CANDIDATE/HOLD replay is sequential, so retaining the first wrapper while loading the
+    second creates two model stacks in GPU memory.  The scientific information needed after a branch
+    is only its CPU causal context and lineage/result paths.  Copy that context, sever the delegate
+    reference, collect Python cycles, and finally release *unoccupied* allocator cache before the next
+    branch is constructed.
+    """
+    if wrapper.branch_context is None:
+        raise RuntimeError("cannot release policy-return branch before causal context capture")
+    context = {
+        str(key): np.asarray(value).copy()
+        for key, value in wrapper.branch_context.items()
+    }
+    telemetry: dict[str, int | str] = {
+        "contract": POLICY_RETURN_BRANCH_RELEASE_CONTRACT,
+        "cuda_device_type": str(device.type),
+        "allocated_before_bytes": 0,
+        "reserved_before_bytes": 0,
+        "allocated_after_bytes": 0,
+        "reserved_after_bytes": 0,
+    }
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+        telemetry["allocated_before_bytes"] = int(torch.cuda.memory_allocated(device))
+        telemetry["reserved_before_bytes"] = int(torch.cuda.memory_reserved(device))
+
+    # This reference is the critical ownership edge: delegate -> wrapped runtime -> CUDA models.
+    wrapper.delegate = None
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize(device)
+        telemetry["allocated_after_bytes"] = int(torch.cuda.memory_allocated(device))
+        telemetry["reserved_after_bytes"] = int(torch.cuda.memory_reserved(device))
+    return context, telemetry
 
 
 class ExactPrefixThenFrozenPolicyController:
@@ -168,6 +223,8 @@ class ExactPrefixThenFrozenPolicyController:
 
 
 __all__ = [
+    "POLICY_RETURN_BRANCH_RELEASE_CONTRACT",
     "POLICY_RETURN_REPLAY_CONTRACT",
     "ExactPrefixThenFrozenPolicyController",
+    "snapshot_and_release_policy_return_branch",
 ]
