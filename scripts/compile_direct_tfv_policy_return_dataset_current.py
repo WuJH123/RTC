@@ -1,12 +1,4 @@
-"""Compile policy-return replay contexts into a role-pure, query-set-aware training dataset.
-
-Rainfall groups remain the independent scientific split unit.  Candidate ranking, however, is only
-well-defined among actions evaluated from the *same hydraulic prefix*.  Earlier code grouped the
-ranking loss by rainfall_group, which can compare candidates from different states when more than
-one decision is sampled from an event.  The compiler therefore carries a stable query_set_id and
-candidate source into the dataset while remaining backward-compatible with legacy single-candidate
-records.
-"""
+"""Compile exact paired policy-return records into role-pure, same-query datasets."""
 from __future__ import annotations
 
 import argparse
@@ -18,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from rtc.direct_tfv_policy_return import (
+    DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
     DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT,
     DIRECT_TFV_POLICY_RETURN_ESTIMAND,
     DIRECT_TFV_POLICY_RETURN_MIN_CALIBRATION_GROUPS,
@@ -62,8 +55,6 @@ def _query_set_id(row: dict) -> str:
         if len(supplied) != 64 or any(ch not in "0123456789abcdef" for ch in supplied):
             raise ValueError("policy-return query_set_id must be a canonical sha256")
         return supplied
-    # Legacy one-candidate records did not carry an explicit query-set ID.  Derive one from fields
-    # that uniquely identify the same authoritative decision prefix; never use candidate identity.
     return _canonical_sha(
         {
             "event_id": str(row["event_id"]),
@@ -92,40 +83,28 @@ def main() -> None:
         raise ValueError("dataset compiler received mixed or wrong policy-return roles")
     groups = {str(row["rainfall_group"]) for row in records}
     if len(groups) < _MIN_GROUPS[args.data_role]:
-        raise ValueError(
-            f"{args.data_role} requires >= {_MIN_GROUPS[args.data_role]} independent rainfall groups"
-        )
+        raise ValueError(f"{args.data_role} requires >= {_MIN_GROUPS[args.data_role]} independent rainfall groups")
     continuation = {str(row["continuation_policy_sha256"]).lower() for row in records}
     if len(continuation) != 1:
         raise ValueError("policy-return dataset mixes continuation-policy lineages")
+    if {str(row.get("action_encoding_contract", "")) for row in records} != {DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING}:
+        raise ValueError("policy-return dataset mixes H10 action encodings")
+    if {str(row.get("candidate_portfolio_contract", "")) for row in records} != {DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT}:
+        raise ValueError("policy-return dataset must use the current practical candidate portfolio")
 
-    portfolio_contracts = {
-        str(row.get("candidate_portfolio_contract", "")).strip()
-        for row in records
-        if str(row.get("candidate_portfolio_contract", "")).strip()
-    }
-    if portfolio_contracts and portfolio_contracts != {DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT}:
-        raise ValueError("policy-return dataset mixes or uses an unknown candidate portfolio contract")
-    if portfolio_contracts and any(
-        str(row.get("candidate_portfolio_contract", "")).strip() != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
-        for row in records
-    ):
-        raise ValueError("portfolio dataset must not mix legacy and portfolio candidate records")
-    portfolio_contract = next(iter(portfolio_contracts), "")
-
-    current_states = []
-    rainfall = []
-    active_targets = []
-    candidate_targets = []
-    flows = []
-    truth = []
-    rainfall_groups = []
-    event_ids = []
-    decision_indices = []
-    changed_counts = []
-    context_shas = []
-    query_set_ids = []
-    candidate_sources = []
+    current_states: list[np.ndarray] = []
+    rainfall: list[np.ndarray] = []
+    active_targets: list[np.ndarray] = []
+    candidate_targets: list[np.ndarray] = []
+    flows: list[np.ndarray] = []
+    truth: list[float] = []
+    rainfall_groups: list[str] = []
+    event_ids: list[str] = []
+    decision_indices: list[int] = []
+    changed_counts: list[int] = []
+    context_shas: list[str] = []
+    query_set_ids: list[str] = []
+    candidate_sources: list[str] = []
     for row in records:
         context_path = Path(str(row.get("context_npz", "")))
         if not context_path.is_file():
@@ -138,6 +117,8 @@ def main() -> None:
             raise ValueError("policy-return context has the wrong contract")
         if str(np.asarray(data["estimand"]).reshape(-1)[0]) != DIRECT_TFV_POLICY_RETURN_ESTIMAND:
             raise ValueError("policy-return context has the wrong estimand")
+        if str(np.asarray(data["action_encoding_contract"]).reshape(-1)[0]) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
+            raise ValueError("policy-return context has the wrong H10 action encoding")
         if str(np.asarray(data["data_role"]).reshape(-1)[0]) != args.data_role:
             raise ValueError("policy-return context role differs from compiler role")
         current_states.append(np.asarray(data["current_state"])[0].astype(np.float32))
@@ -152,13 +133,13 @@ def main() -> None:
         changed_counts.append(int(row["first_move_changed_facility_count"]))
         context_shas.append(expected_sha)
         query_set_ids.append(_query_set_id(row))
-        candidate_sources.append(str(row.get("candidate_source", "LEGACY_SINGLE_CANDIDATE")))
+        candidate_sources.append(str(row["candidate_source"]))
 
     query_counts = Counter(query_set_ids)
     source_counts = Counter(candidate_sources)
     multi_query_sets = sum(count >= 2 for count in query_counts.values())
-    if portfolio_contract and multi_query_sets <= 0:
-        raise ValueError("portfolio dataset requires at least one same-prefix multi-candidate query set")
+    if multi_query_sets <= 0:
+        raise ValueError("practical portfolio dataset requires same-prefix multi-candidate query sets")
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -166,9 +147,10 @@ def main() -> None:
         out,
         contract=np.asarray(DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT),
         estimand=np.asarray(DIRECT_TFV_POLICY_RETURN_ESTIMAND),
+        action_encoding_contract=np.asarray(DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING),
         data_role=np.asarray(args.data_role),
         continuation_policy_sha256=np.asarray(next(iter(continuation))),
-        candidate_portfolio_contract=np.asarray(portfolio_contract),
+        candidate_portfolio_contract=np.asarray(DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT),
         current_state=np.stack(current_states),
         rainfall_scenarios=np.stack(rainfall),
         active_target=np.stack(active_targets),
@@ -186,6 +168,7 @@ def main() -> None:
     summary = {
         "contract": DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT,
         "estimand": DIRECT_TFV_POLICY_RETURN_ESTIMAND,
+        "action_encoding_contract": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
         "data_role": args.data_role,
         "sample_count": len(records),
         "rainfall_group_count": len(groups),
@@ -193,17 +176,14 @@ def main() -> None:
         "query_set_count": len(query_counts),
         "multi_candidate_query_set_count": int(multi_query_sets),
         "candidate_source_counts": dict(sorted(source_counts.items())),
-        "candidate_portfolio_contract": portfolio_contract,
+        "candidate_portfolio_contract": DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
         "ranking_unit": "SAME_AUTHORITATIVE_PREFIX_QUERY_SET",
         "scientific_split_unit": "RAINFALL_GROUP",
         "continuation_policy_sha256": next(iter(continuation)),
         "output_sha256": sha256_file(out),
         "records_jsonl_sha256": sha256_file(args.records_jsonl),
     }
-    out.with_suffix(".json").write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    out.with_suffix(".json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 
