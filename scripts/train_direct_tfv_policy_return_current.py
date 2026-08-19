@@ -35,7 +35,9 @@ from rtc.direct_tfv_policy_return import (
     encode_policy_return_action_token,
     sha256_file,
 )
-from rtc.direct_tfv_policy_return_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+from rtc.direct_tfv_policy_return_hybrid_portfolio import (
+    DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
+)
 from rtc.production_cli import _load_graph
 
 
@@ -63,7 +65,7 @@ def _load_dataset(path: str | Path, *, role: str) -> dict[str, Any]:
         raise ValueError("policy-return dataset lacks continuation policy lineage")
     portfolio_contract = _scalar_text(data, "candidate_portfolio_contract")
     if portfolio_contract != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
-        raise ValueError("policy-return training requires the current practical portfolio")
+        raise ValueError("policy-return training requires the current hybrid H10 portfolio")
     required = (
         "current_state",
         "rainfall_scenarios",
