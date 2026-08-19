@@ -1,9 +1,8 @@
 """Freeze one path-safe absolute artifact manifest for current Project7 Practical RTC.
 
-Local Codex first discovers the intended existing study assets from manifests/reports, then calls this
-script once. It never searches for replacements. Historical V12 admission files are deliberately not
-part of the current manifest because the first paired-label parent is the Practical base-H10-probe
-policy and the deployed policy uses only its H10 policy-return critic/admission.
+Local Codex first discovers the intended existing frozen assets, then builds the label-independent
+native supervisory-control artifact and masked q95 sequence support. The resulting manifest is the
+only downstream path source. Historical V12 admissions remain excluded.
 """
 from __future__ import annotations
 
@@ -22,6 +21,7 @@ def main() -> None:
         "config",
         "step1",
         "step2",
+        "supervisory-control",
         "sequence-support",
         "priority8",
     ):
@@ -35,6 +35,7 @@ def main() -> None:
             "config": args.config,
             "step1": args.step1,
             "step2": args.step2,
+            "supervisory_control": args.supervisory_control,
             "sequence_support": args.sequence_support,
             "priority8": args.priority8,
         }
