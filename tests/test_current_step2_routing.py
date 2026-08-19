@@ -17,6 +17,10 @@ FIRST_MOVE_ADMISSION = ROOT / "scripts" / "calibrate_direct_tfv_first_move_admis
 V11_RUNTIME = ROOT / "scripts" / "run_policy_direct_tfv_first_move_development.py"
 V12_RUNTIME = ROOT / "scripts" / "run_policy_direct_tfv_robust_rainfall_development.py"
 POLICY_RETURN_PAIR = ROOT / "scripts" / "run_direct_tfv_policy_return_pair_current.py"
+BASE_HYBRID_PARENT = ROOT / "scripts" / "run_policy_direct_tfv_base_hybrid_parent_current.py"
+POLICY_RETURN_CAPTURE = ROOT / "scripts" / "capture_direct_tfv_policy_return_context_current.py"
+POLICY_RETURN_DESIGN = ROOT / "scripts" / "design_direct_tfv_policy_return_portfolio_current.py"
+POLICY_RETURN_QUERY = ROOT / "scripts" / "run_direct_tfv_policy_return_query_current.py"
 POLICY_RETURN_TRAIN = ROOT / "scripts" / "train_direct_tfv_policy_return_current.py"
 POLICY_RETURN_RUNTIME = ROOT / "scripts" / "run_policy_direct_tfv_policy_return_development.py"
 CURRENT_POLICY = ROOT / "scripts" / "run_policy_current.py"
@@ -32,33 +36,19 @@ def _help(path: Path) -> str:
     return result.stdout
 
 
-def test_current_contract_preserves_v11_base_and_records_v12_policy_return_stage() -> None:
+def test_archival_step2_contract_remains_frozen_history_not_current_router() -> None:
     payload = json.loads(CURRENT.read_text(encoding="utf-8"))
     assert payload["contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V11"
     assert payload["training_contract"] == "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5"
-    assert payload["step3_contract"] == "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V9"
-    assert payload["v12_step3_contract"] == (
-        "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V10_CAUSAL_RAINFALL_SCENARIO_MEAN"
-    )
-    assert payload["next_step3_contract"] == (
-        "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V11_POLICY_RETURN_FIRST_ACTION"
-    )
     assert payload["objective_contract"]["online_primary_objective"] == (
         "SYSTEM_WIDE_CUMULATIVE_TFV_MINIMIZATION"
     )
-    assert payload["objective_contract"]["pfv_role"] == "REPORT_ONLY_SECONDARY_RISK_METRIC"
-    assert payload["objective_contract"]["pfv_enters_step3_objective"] is False
     assert payload["action_contract"]["hold_online_reference_semantics"] == (
         "LATCH_PREVIOUS_SUPERVISORY_TARGET_NOT_NO_CONTROL_NOT_RESET"
-    )
-    assert payload["action_contract"]["unchanged_facility_semantics"] == (
-        "COPY_PREVIOUS_COMMANDED_TARGET_EXACTLY"
     )
     assert payload["time_contract"]["cross_decision_target_semantics"] == (
         "LAST_COMMANDED_TARGET_PERSISTS_UNTIL_EXPLICITLY_CHANGED"
     )
-    assert payload["first_move_data_contract"]["context_contract"].startswith("CANDIDATE_FREE")
-    assert payload["first_move_data_contract"]["source_fingerprint"].startswith("BEHAVIORAL_")
     assert payload["scientific_bottleneck"]["classification"] == (
         "OPEN_LOOP_VALUE_VS_RECEDING_CONTROL_MISMATCH"
     )
@@ -67,18 +57,36 @@ def test_current_contract_preserves_v11_base_and_records_v12_policy_return_stage
     assert payload["next_scientific_stage"]["policy_iteration_required"] is True
 
 
-def test_execution_registry_routes_policy_return_development_workflow() -> None:
+def test_execution_registry_routes_current_hybrid_policy_return_workflow() -> None:
     payload = json.loads(REGISTRY.read_text(encoding="utf-8"))
     current = payload["current"]
-    assert payload["contract"] == "PROJECT7_EXECUTION_REGISTRY_DIRECT_TFV_V14_POLICY_RETURN"
-    assert current["research_contract"] == "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V11"
-    assert current["training_contract"] == "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5"
-    assert current["first_move_context_build"] == "scripts/build_direct_tfv_first_move_context_current.py"
-    assert current["v12_development_runtime"] == (
-        "scripts/run_policy_direct_tfv_robust_rainfall_development.py"
+    assert payload["contract"] == (
+        "PROJECT7_EXECUTION_REGISTRY_PRACTICAL_RTC_H10_HYBRID_POLICY_RETURN_V2"
     )
-    assert current["policy_return_pair_truth"] == (
-        "scripts/run_direct_tfv_policy_return_pair_current.py"
+    assert current["research_contract"] == "PROJECT7_PRACTICAL_RTC_V14"
+    assert current["base_step2_training_contract"] == "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5"
+    assert current["first_round_parent_policy"] == (
+        "PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_PI0_V2"
+    )
+    assert current["online_step3_contract"] == (
+        "PROJECT7_PRACTICAL_RTC_H10_POLICY_RETURN_HYBRID_GRADIENT_V13"
+    )
+    assert current["online_candidate_portfolio_contract"].endswith(
+        "V4_H10_HYBRID_GRADIENT"
+    )
+    assert current["projected_gradient_dimension"] == 109
+    assert current["projected_gradient_action_horizon"] == "H10_ONLY"
+    assert current["base_parent_runtime"] == (
+        "scripts/run_policy_direct_tfv_base_hybrid_parent_current.py"
+    )
+    assert current["policy_return_context_capture"] == (
+        "scripts/capture_direct_tfv_policy_return_context_current.py"
+    )
+    assert current["policy_return_portfolio_design"] == (
+        "scripts/design_direct_tfv_policy_return_portfolio_current.py"
+    )
+    assert current["policy_return_query_truth"] == (
+        "scripts/run_direct_tfv_policy_return_query_current.py"
     )
     assert current["policy_return_train"] == "scripts/train_direct_tfv_policy_return_current.py"
     assert current["policy_return_development_runtime"] == (
@@ -89,8 +97,9 @@ def test_execution_registry_routes_policy_return_development_workflow() -> None:
     assert current["final_enabled"] is False
     assert current["formal_enabled"] is False
     assert current["policy_lock_enabled"] is False
-    assert any("candidate-free first-move context" in rule for rule in payload["hard_rules"])
-    assert any("same frozen continuation policy" in rule for rule in payload["hard_rules"])
+    assert any("same raw causal prefix" in rule for rule in payload["hard_rules"])
+    assert any("projected-gradient proposer" in rule for rule in payload["hard_rules"])
+    assert any("near-all-HOLD" in rule for rule in payload["hard_rules"])
 
 
 def test_step2_base_remains_frozen_v5() -> None:
@@ -101,48 +110,59 @@ def test_step2_base_remains_frozen_v5() -> None:
     assert "single_facility_coverage_count" in direct
 
 
-def test_candidate_free_and_policy_return_clis_are_exposed() -> None:
+def test_archival_and_current_policy_return_clis_are_explicitly_separated() -> None:
     context = _help(CONTEXT)
     assert "--run-index" in context and "--event-registry" in context
     panel = _help(FIRST_MOVE_PANEL)
     assert "--context-store" in panel
-    assert "--fresh-cache-manifest" not in panel
-    assert "--template-d3-manifest" not in panel
     calibration = _help(FIRST_MOVE_ADMISSION)
     assert "--first-move-run-dir" in calibration
-    assert "--first-move-cache-manifest" not in calibration
     v11 = _help(V11_RUNTIME)
     assert "--first-move-admission-calibration" in v11
     v12 = _help(V12_RUNTIME)
     assert "--first-move-admission" in v12
     pair = _help(POLICY_RETURN_PAIR)
     assert "--continuation-kind" in pair
-    assert "--policy-return-checkpoint" in pair
+
+    parent = _help(BASE_HYBRID_PARENT)
+    assert "--projected-gradient-steps" in parent
+    capture = _help(POLICY_RETURN_CAPTURE)
+    assert "--continuation-kind" in capture
+    design = _help(POLICY_RETURN_DESIGN)
+    assert "--projected-gradient-steps" in design
+    query = _help(POLICY_RETURN_QUERY)
+    assert "--candidate-manifest" in query
+    assert "--continuation-kind" in query
+    assert "--projected-gradient-steps" in query
     train = _help(POLICY_RETURN_TRAIN)
     assert "--train-dataset" in train and "--validation-dataset" in train
     runtime = _help(POLICY_RETURN_RUNTIME)
     assert "--policy-return-checkpoint" in runtime
     assert "--policy-return-admission" in runtime
+    assert "--projected-gradient-steps" in runtime
 
 
-def test_current_lint_surface_tracks_complete_policy_return_paths() -> None:
+def test_current_lint_surface_tracks_complete_hybrid_policy_return_paths() -> None:
     payload = json.loads(LINT.read_text(encoding="utf-8"))
-    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V16"
+    assert payload["contract"] == "PROJECT7_CURRENT_LINT_SURFACE_PRACTICAL_RTC_V1"
     paths = set(payload["paths"])
     required = {
-        "src/rtc/direct_tfv_first_move_context.py",
-        "src/rtc/controller_direct_tfv_safe.py",
-        "src/rtc/direct_tfv_v12_lineage.py",
         "src/rtc/direct_tfv_policy_return.py",
+        "src/rtc/direct_tfv_policy_return_hybrid_portfolio.py",
+        "src/rtc/direct_tfv_policy_return_portfolio_admission.py",
+        "src/rtc/direct_tfv_base_probe_runtime_factory.py",
         "src/rtc/direct_tfv_policy_return_runtime_factory.py",
-        "src/rtc/step3_tfv_value_mpc_v11.py",
-        "scripts/build_direct_tfv_first_move_context_current.py",
-        "scripts/design_direct_tfv_robust_rainfall_first_move_calibration_current.py",
-        "scripts/calibrate_direct_tfv_robust_rainfall_first_move_admission_current.py",
-        "scripts/run_direct_tfv_policy_return_pair_current.py",
+        "src/rtc/step3_tfv_base_probe_parent_v2.py",
+        "src/rtc/step3_tfv_value_mpc_v13.py",
+        "scripts/run_policy_direct_tfv_base_hybrid_parent_current.py",
+        "scripts/capture_direct_tfv_policy_return_context_current.py",
+        "scripts/design_direct_tfv_policy_return_portfolio_current.py",
+        "scripts/run_direct_tfv_policy_return_query_current.py",
+        "scripts/compile_direct_tfv_policy_return_dataset_current.py",
         "scripts/train_direct_tfv_policy_return_current.py",
         "scripts/run_policy_direct_tfv_policy_return_development.py",
-        "tests/test_direct_tfv_policy_return.py",
+        "tests/test_direct_tfv_hybrid_gradient_portfolio.py",
+        "tests/test_direct_tfv_policy_return_portfolio.py",
     }
     assert required <= paths
     assert all((ROOT / path).is_file() for path in paths)
