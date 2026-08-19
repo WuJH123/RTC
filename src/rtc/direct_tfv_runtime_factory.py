@@ -1,10 +1,11 @@
 """Factories for offline policy-return replay using a frozen V12 continuation policy.
 
 The policy-return estimand only requires CANDIDATE and HOLD branches to use the exact same frozen
-continuation policy.  A historical V12 first-move admission fingerprint is useful provenance, but a
-mismatch does not invalidate a Development paired counterfactual when the *actual loaded parent*
-is frozen identically for both branches.  Production/current-policy construction remains strict by
-default; offline policy-iteration experiments must opt in explicitly to provenance-only parent use.
+continuation policy. A historical V12 first-move admission fingerprint is useful provenance, but a
+mismatch does not invalidate a Development paired counterfactual when the actual loaded parent is
+frozen identically for both branches. This factory is used for offline policy-iteration labels, so
+provenance-only parent use is the default; callers that need a strict current-V12 identity check can
+set ``require_behavioral_match=True`` explicitly.
 """
 from __future__ import annotations
 
@@ -58,7 +59,7 @@ def build_frozen_v12_continuation_controller(
     decision_runtime_budget_seconds: float = 180.0,
     first_move_maxiter: int = 12,
     first_move_deadline_seconds: float = 30.0,
-    require_behavioral_match: bool = True,
+    require_behavioral_match: bool = False,
 ) -> tuple[object, object, tuple[str, ...], dict]:
     graph = _load_graph(graph_path)
     sensors = _load_lines(sensors_path)
