@@ -1,15 +1,19 @@
-"""Calibration helpers for the V14 policy-return candidate portfolio."""
+"""Calibration helpers for the practical policy-return candidate portfolio."""
 from __future__ import annotations
 
 from collections import Counter
 from typing import Any, Mapping, Sequence
 
-from .direct_tfv_policy_return import derive_policy_return_admission, validate_policy_return_record
+from .direct_tfv_policy_return import (
+    DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
+    derive_policy_return_admission,
+    validate_policy_return_record,
+)
 from .direct_tfv_policy_return_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
 
 
 DIRECT_TFV_POLICY_RETURN_PORTFOLIO_ADMISSION_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_POLICY_RETURN_PORTFOLIO_MATCHED_ADMISSION_V1"
+    "PROJECT7_DIRECT_TFV_POLICY_RETURN_PORTFOLIO_MATCHED_ADMISSION_V2_H10_PROBE"
 )
 
 
@@ -17,6 +21,8 @@ def validate_policy_return_portfolio_record(record: Mapping[str, Any]) -> None:
     validate_policy_return_record(record)
     if str(record.get("candidate_portfolio_contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
         raise ValueError("policy-return portfolio record has the wrong candidate portfolio contract")
+    if str(record.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
+        raise ValueError("policy-return portfolio record has the wrong H10 action encoding")
     source = str(record.get("candidate_source", "")).strip()
     query_set = str(record.get("query_set_id", "")).strip().lower()
     if not source:
@@ -33,8 +39,7 @@ def derive_policy_return_portfolio_admission(
     continuation_policy_sha256: str,
     coverage: float,
 ) -> dict[str, Any]:
-    """Calibrate one-sided residuals on the same multi-candidate query family used online."""
-
+    """Calibrate one-sided residuals on the same multi-candidate H10 family used online."""
     if not records:
         raise ValueError("portfolio admission received no calibration records")
     query_counts: Counter[str] = Counter()
@@ -45,12 +50,12 @@ def derive_policy_return_portfolio_admission(
         source_counts[str(row["candidate_source"])] += 1
     multi = sum(count >= 2 for count in query_counts.values())
     if multi <= 0:
-        raise ValueError("portfolio admission requires at least one same-prefix multi-candidate query set")
+        raise ValueError("portfolio admission requires same-prefix multi-candidate query sets")
     sources = set(source_counts)
     if "TYPE_AWARE_HYDRAULIC_PRESSURE" not in sources:
         raise ValueError("portfolio calibration lacks the type-aware hydraulic-pressure family")
-    if not any(source.startswith("V12_DIRECTION_SCALE_") for source in sources):
-        raise ValueError("portfolio calibration lacks a supported learned V12-direction family")
+    if not any(source.startswith("STEP2_H10_PROBE_SCALE_") for source in sources):
+        raise ValueError("portfolio calibration lacks the supported Step2 H10-probe family")
 
     payload = derive_policy_return_admission(
         records=records,
@@ -63,16 +68,17 @@ def derive_policy_return_portfolio_admission(
         {
             "portfolio_admission_contract": DIRECT_TFV_POLICY_RETURN_PORTFOLIO_ADMISSION_CONTRACT,
             "candidate_portfolio_contract": DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
+            "action_encoding_contract": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
             "query_set_count": len(query_counts),
             "multi_candidate_query_set_count": int(multi),
             "candidate_source_counts": dict(sorted(source_counts.items())),
             "required_candidate_families_present": {
-                "learned_v12_direction": True,
+                "step2_h10_probe_direction": True,
                 "type_aware_hydraulic_pressure": True,
             },
             "ranking_calibration_scope": (
-                "same-prefix multi-candidate portfolio after engineering/support projection and "
-                "deduplication; rainfall-group max residual remains the independent split-conformal unit"
+                "same-prefix H10 candidate portfolio after engineering/support projection and "
+                "deduplication; rainfall-group max residual is the independent split-conformal unit"
             ),
         }
     )
