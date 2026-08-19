@@ -1,9 +1,9 @@
-"""Freeze one path-safe absolute artifact manifest for Project7 Practical RTC.
+"""Freeze one path-safe absolute artifact manifest for current Project7 Practical RTC.
 
-The local supervisor is expected to discover the intended existing study assets from manifests and
-prior reports, then call this script once. It never searches for replacements. Downstream commands
-should reuse the generated manifest so a missing/stale path fails closed instead of falling back into
-an older V* directory.
+Local Codex first discovers the intended existing study assets from manifests/reports, then calls this
+script once. It never searches for replacements. Historical V12 admission files are deliberately not
+part of the current manifest because the first paired-label parent is the Practical base-H10-probe
+policy and the deployed policy uses only its H10 policy-return critic/admission.
 """
 from __future__ import annotations
 
@@ -22,8 +22,6 @@ def main() -> None:
         "config",
         "step1",
         "step2",
-        "policy-admission",
-        "v12-first-move-admission",
         "sequence-support",
         "priority8",
     ):
@@ -37,8 +35,6 @@ def main() -> None:
             "config": args.config,
             "step1": args.step1,
             "step2": args.step2,
-            "policy_admission": args.policy_admission,
-            "v12_first_move_admission": args.v12_first_move_admission,
             "sequence_support": args.sequence_support,
             "priority8": args.priority8,
         }
