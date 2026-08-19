@@ -19,7 +19,9 @@ from rtc.direct_tfv_policy_return import (
     sha256_file,
     validate_policy_return_record,
 )
-from rtc.direct_tfv_policy_return_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+from rtc.direct_tfv_policy_return_hybrid_portfolio import (
+    DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
+)
 
 
 _MIN_GROUPS = {
@@ -90,7 +92,7 @@ def main() -> None:
     if {str(row.get("action_encoding_contract", "")) for row in records} != {DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING}:
         raise ValueError("policy-return dataset mixes H10 action encodings")
     if {str(row.get("candidate_portfolio_contract", "")) for row in records} != {DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT}:
-        raise ValueError("policy-return dataset must use the current practical candidate portfolio")
+        raise ValueError("policy-return dataset must use the current hybrid H10 candidate portfolio")
 
     current_states: list[np.ndarray] = []
     rainfall: list[np.ndarray] = []
@@ -139,7 +141,7 @@ def main() -> None:
     source_counts = Counter(candidate_sources)
     multi_query_sets = sum(count >= 2 for count in query_counts.values())
     if multi_query_sets <= 0:
-        raise ValueError("practical portfolio dataset requires same-prefix multi-candidate query sets")
+        raise ValueError("hybrid portfolio dataset requires same-prefix multi-candidate query sets")
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
