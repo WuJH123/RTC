@@ -1,20 +1,19 @@
-"""Causal candidate portfolio for policy-return-aligned Direct-TFV control.
+"""Causal first-action proposal portfolio for practical Project7 RTC.
 
-The historical policy-return layer only judged the single target supplied by the V12 open-loop
-direction generator. That can reject a bad action but cannot discover a better executable action
-when the V12 direction is wrong. For the practical Project7 RTC path we intentionally keep the
-portfolio small:
+The proposal layer deliberately avoids high-dimensional continuous optimization. Historical
+Development evidence showed that a 12x109 L-BFGS-B search could leave the reliable Step2 query
+geometry and that even locally correct H360 plans did not guarantee good repeated H10 control.
 
-* the learned V12 first-move direction at full magnitude;
-* the same learned direction at half magnitude; and
-* one topology/volume/headroom-aware, actuator-type-aware hydraulic-pressure target.
+The practical proposal layer therefore uses the frozen base Step2 only as a *directional probe
+model*: for every actuator it batch-scores positive/negative H10 pulses followed by HOLD for H350,
+selects individually beneficial directions, and combines at most the TrainFit q95 changed-facility
+count. The resulting learned direction is offered at full and half magnitude alongside one
+hydraulically interpretable, actuator-type-aware pressure direction. The policy-return critic, not
+the base Step2 score, ranks/admits the final executable action.
 
-This three-family set is sufficient to test whether the learned direction, its magnitude, or the
-hydraulic release logic is the control bottleneck without multiplying authoritative SWMM branches.
-No baseline action, future realised rainfall, online SWMM call, PFV/peak objective or action penalty
-is used. Every target is clipped to frozen first-move support, the 0.5 target slew, actuator bounds
-and the caller-supplied q95 changed-facility ceiling. Final joint sequence support remains the
-responsibility of Step3.
+No future realised rainfall, online SWMM, PFV/peak objective, rule baseline warm start, or action
+penalty is used. All targets stay inside frozen first-move support, the 0.5 target slew and actuator
+bounds before the runtime applies its H10 joint-sequence trust region.
 """
 from __future__ import annotations
 
@@ -25,12 +24,19 @@ import numpy as np
 import torch
 
 from .actuator_release_semantics import graph_release_setting_signs
+from .direct_tfv_policy_return import encode_policy_return_action_token
 
 
 DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_POLICY_RETURN_CAUSAL_CANDIDATE_PORTFOLIO_V2_PRACTICAL_THREE_FAMILY"
+    "PROJECT7_DIRECT_TFV_POLICY_RETURN_CAUSAL_CANDIDATE_PORTFOLIO_V3_H10_PROBE_THREE_FAMILY"
 )
-DEFAULT_V12_SHRINK_SCALES = (0.50, 1.00)
+DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT = (
+    "PROJECT7_DIRECT_TFV_SUPPORTED_H10_PROBE_DIRECTION_GENERATOR_V1"
+)
+DEFAULT_LEARNED_SHRINK_SCALES = (0.50, 1.00)
+# Compatibility alias for callers/tests that have not yet renamed the symbol. The scientific source
+# labels no longer call the proposal a V12 direction.
+DEFAULT_V12_SHRINK_SCALES = DEFAULT_LEARNED_SHRINK_SCALES
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,16 @@ class PolicyReturnPortfolioCandidate:
     source: str
     target: torch.Tensor
     changed_facility_count: int
+
+
+@dataclass(frozen=True)
+class LearnedH10ProbeProposal:
+    target: torch.Tensor | None
+    facility_best_scores_m3: tuple[float, ...]
+    predicted_beneficial_facility_count: int
+    selected_facility_indices: tuple[int, ...]
+    probe_count: int
+    generator_contract: str = DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT
 
 
 def _node_feature(graph: Any, name: str, default: float) -> np.ndarray:
@@ -66,11 +82,9 @@ def _actuator_bounds(graph: Any) -> tuple[np.ndarray, np.ndarray]:
 
 def _rain_level(rainfall_scenarios: np.ndarray) -> float:
     rain = np.asarray(rainfall_scenarios, dtype=np.float64)
-    if rain.ndim == 4:
-        pass
-    elif rain.ndim == 3:
+    if rain.ndim == 3:
         rain = rain[None]
-    else:
+    if rain.ndim != 4:
         raise ValueError("portfolio rainfall must be [scenario,H,node,feature] or [H,node,feature]")
     if not np.isfinite(rain).all():
         raise ValueError("portfolio rainfall contains non-finite values")
@@ -149,19 +163,199 @@ def _bounded_supported_target(
     return target.astype(np.float32)
 
 
+def _normalization_tensors(normalization: Any, *, dtype: torch.dtype, device: torch.device) -> dict[str, torch.Tensor]:
+    return {
+        "state_mean": torch.as_tensor(normalization.state_mean, dtype=dtype, device=device),
+        "state_std": torch.as_tensor(normalization.state_std, dtype=dtype, device=device).clamp_min(1.0e-6),
+        "rain_mean": torch.as_tensor(normalization.rainfall_mean, dtype=dtype, device=device),
+        "rain_std": torch.as_tensor(normalization.rainfall_std, dtype=dtype, device=device).clamp_min(1.0e-6),
+        "flow_mean": torch.as_tensor(normalization.flow_mean, dtype=dtype, device=device),
+        "flow_std": torch.as_tensor(normalization.flow_std, dtype=dtype, device=device).clamp_min(1.0e-6),
+    }
+
+
+def score_h10_first_action_targets(
+    *,
+    model: torch.nn.Module,
+    normalization: Any,
+    graph: Any,
+    current_state: torch.Tensor,
+    rainfall_scenarios: torch.Tensor,
+    previous_actuator_flow: torch.Tensor,
+    active_target: torch.Tensor,
+    candidate_targets: torch.Tensor,
+    probe_chunk_size: int = 24,
+) -> torch.Tensor:
+    """Batch-score H10 candidate -> H350 HOLD probes with the frozen base Step2."""
+    if current_state.ndim != 3 or int(current_state.shape[0]) != 1:
+        raise ValueError("H10 probe scorer expects current_state [1,node,state]")
+    if rainfall_scenarios.ndim != 4 or int(rainfall_scenarios.shape[0]) < 1:
+        raise ValueError("H10 probe scorer expects rainfall [scenario,H,node,feature]")
+    if previous_actuator_flow.shape != (1, 109):
+        raise ValueError("H10 probe scorer expects previous flow [1,109]")
+    if active_target.shape != (109,):
+        raise ValueError("H10 probe scorer expects active target [109]")
+    if candidate_targets.ndim != 2 or int(candidate_targets.shape[1]) != 109:
+        raise ValueError("H10 probe candidates must be [candidate,109]")
+    if int(probe_chunk_size) <= 0:
+        raise ValueError("probe_chunk_size must be positive")
+    if int(candidate_targets.shape[0]) == 0:
+        return candidate_targets.new_empty((0,))
+
+    device = current_state.device
+    dtype = current_state.dtype
+    scenarios, horizon, nodes, rain_features = rainfall_scenarios.shape
+    norm = _normalization_tensors(normalization, dtype=dtype, device=device)
+    state0 = (current_state - norm["state_mean"]) / norm["state_std"]
+    rain0 = (rainfall_scenarios - norm["rain_mean"]) / norm["rain_std"]
+    flow0 = (previous_actuator_flow - norm["flow_mean"]) / norm["flow_std"]
+    up = torch.as_tensor(graph.actuator_upstream, dtype=torch.long, device=device)
+    down = torch.as_tensor(graph.actuator_downstream, dtype=torch.long, device=device)
+    physics = torch.as_tensor(graph.actuator_physics, dtype=dtype, device=device)
+
+    scores: list[torch.Tensor] = []
+    model.eval()
+    with torch.no_grad():
+        for start in range(0, int(candidate_targets.shape[0]), int(probe_chunk_size)):
+            targets = candidate_targets[start : start + int(probe_chunk_size)]
+            count = int(targets.shape[0])
+            batch = count * int(scenarios)
+            state = state0.expand(batch, -1, -1)
+            rain = rain0.unsqueeze(0).expand(count, -1, -1, -1, -1).reshape(
+                batch, horizon, nodes, rain_features
+            )
+            flow = flow0.expand(batch, -1)
+            active = active_target.reshape(1, 1, 109).expand(count, scenarios, -1).reshape(batch, 109)
+            target = targets[:, None, :].expand(-1, scenarios, -1).reshape(batch, 109)
+            reference, candidate = encode_policy_return_action_token(
+                active,
+                target,
+                horizon_steps=int(horizon),
+                first_action_steps=2,
+            )
+            output = model(
+                current_state=state,
+                rainfall=rain,
+                reference_settings=reference,
+                candidate_settings=candidate,
+                previous_actuator_flow=flow,
+                actuator_upstream=up,
+                actuator_downstream=down,
+                actuator_physics=physics,
+            )
+            value = output.total_delta_tfv_m3.reshape(count, scenarios).mean(dim=1)
+            if not bool(torch.isfinite(value).all()):
+                raise RuntimeError("base Step2 H10 probe scorer produced non-finite values")
+            scores.append(value.detach())
+    return torch.cat(scores, dim=0)
+
+
+def build_learned_h10_probe_proposal(
+    *,
+    model: torch.nn.Module,
+    normalization: Any,
+    graph: Any,
+    current_state: torch.Tensor,
+    rainfall_scenarios: torch.Tensor,
+    previous_actuator_flow: torch.Tensor,
+    active_target: torch.Tensor,
+    first_radius: np.ndarray,
+    max_changed_facilities: int,
+    max_delta_per_update: float = 0.5,
+    probe_chunk_size: int = 24,
+) -> LearnedH10ProbeProposal:
+    """Generate a coordinated direction from finite, support-bounded single-actuator H10 probes."""
+    active = active_target.detach().cpu().numpy().astype(np.float64).reshape(-1)
+    radius = np.asarray(first_radius, dtype=np.float64).reshape(-1)
+    if active.shape != (109,) or radius.shape != (109,):
+        raise ValueError("learned H10 proposal requires 109-dimensional targets/support")
+    lower, upper = _actuator_bounds(graph)
+    allowed = np.minimum(np.maximum(radius, 0.0), float(max_delta_per_update))
+
+    probe_targets: list[np.ndarray] = []
+    probe_meta: list[tuple[int, float]] = []
+    for index in range(109):
+        plus = min(float(allowed[index]), float(upper[index] - active[index]))
+        minus = min(float(allowed[index]), float(active[index] - lower[index]))
+        if plus > 1.0e-7:
+            target = active.copy()
+            target[index] += plus
+            probe_targets.append(target)
+            probe_meta.append((index, plus))
+        if minus > 1.0e-7:
+            target = active.copy()
+            target[index] -= minus
+            probe_targets.append(target)
+            probe_meta.append((index, -minus))
+
+    best_score = np.full(109, np.inf, dtype=np.float64)
+    best_delta = np.zeros(109, dtype=np.float64)
+    if probe_targets:
+        tensor = torch.as_tensor(
+            np.stack(probe_targets).astype(np.float32),
+            dtype=active_target.dtype,
+            device=active_target.device,
+        )
+        scores = score_h10_first_action_targets(
+            model=model,
+            normalization=normalization,
+            graph=graph,
+            current_state=current_state,
+            rainfall_scenarios=rainfall_scenarios,
+            previous_actuator_flow=previous_actuator_flow,
+            active_target=active_target,
+            candidate_targets=tensor,
+            probe_chunk_size=probe_chunk_size,
+        ).detach().cpu().numpy().astype(np.float64)
+        for score, (index, delta) in zip(scores.tolist(), probe_meta, strict=True):
+            if score < best_score[index]:
+                best_score[index] = float(score)
+                best_delta[index] = float(delta)
+
+    beneficial = np.flatnonzero(np.isfinite(best_score) & (best_score < 0.0) & (np.abs(best_delta) > 1.0e-7))
+    order = beneficial[np.argsort(best_score[beneficial], kind="mergesort")]
+    selected = order[: int(max_changed_facilities)]
+    if selected.size == 0:
+        return LearnedH10ProbeProposal(
+            target=None,
+            facility_best_scores_m3=tuple(float(x) for x in best_score),
+            predicted_beneficial_facility_count=int(beneficial.size),
+            selected_facility_indices=(),
+            probe_count=len(probe_meta),
+        )
+    raw_delta = np.zeros(109, dtype=np.float64)
+    raw_delta[selected] = best_delta[selected]
+    target_np = _bounded_supported_target(
+        active_target=active,
+        raw_delta=raw_delta,
+        graph=graph,
+        first_radius=radius,
+        max_changed_facilities=int(max_changed_facilities),
+        max_delta_per_update=float(max_delta_per_update),
+    )
+    return LearnedH10ProbeProposal(
+        target=torch.as_tensor(target_np, dtype=active_target.dtype, device=active_target.device),
+        facility_best_scores_m3=tuple(float(x) for x in best_score),
+        predicted_beneficial_facility_count=int(beneficial.size),
+        selected_facility_indices=tuple(int(x) for x in selected.tolist()),
+        probe_count=len(probe_meta),
+    )
+
+
 def build_policy_return_candidate_portfolio(
     *,
     current_state: torch.Tensor,
     rainfall_scenarios: torch.Tensor,
     active_target: torch.Tensor,
-    v12_target: torch.Tensor | None,
     graph: Any,
     first_radius: np.ndarray,
     max_changed_facilities: int,
+    learned_target: torch.Tensor | None = None,
+    v12_target: torch.Tensor | None = None,
     max_delta_per_update: float = 0.5,
-    shrink_scales: Iterable[float] = DEFAULT_V12_SHRINK_SCALES,
+    shrink_scales: Iterable[float] = DEFAULT_LEARNED_SHRINK_SCALES,
 ) -> tuple[PolicyReturnPortfolioCandidate, ...]:
-    """Build the small deterministic supported first-target portfolio."""
+    """Build at most three deterministic, engineering-supported first targets."""
     active = active_target.detach().cpu().numpy().astype(np.float64).reshape(-1)
     if active.shape != (109,):
         raise ValueError("portfolio requires a 109-dimensional active target")
@@ -170,17 +364,20 @@ def build_policy_return_candidate_portfolio(
         state = state[0]
     rain = rainfall_scenarios.detach().cpu().numpy()
 
+    # ``v12_target`` remains a compatibility input for old unit callers only. New runtime/design code
+    # supplies ``learned_target`` from the H10 probe generator and never calls the full-plan optimizer.
+    learned_tensor = learned_target if isinstance(learned_target, torch.Tensor) else v12_target
     raw: list[tuple[str, np.ndarray]] = []
-    if isinstance(v12_target, torch.Tensor):
-        learned = v12_target.detach().cpu().numpy().astype(np.float64).reshape(-1)
+    if isinstance(learned_tensor, torch.Tensor):
+        learned = learned_tensor.detach().cpu().numpy().astype(np.float64).reshape(-1)
         if learned.shape != (109,):
-            raise ValueError("portfolio V12 target must contain 109 settings")
+            raise ValueError("portfolio learned target must contain 109 settings")
         learned_delta = learned - active
         for value in shrink_scales:
             scale = float(value)
             if not 0.0 < scale <= 1.0:
                 raise ValueError("portfolio shrink scales must lie in (0,1]")
-            raw.append((f"V12_DIRECTION_SCALE_{scale:.2f}", scale * learned_delta))
+            raw.append((f"STEP2_H10_PROBE_SCALE_{scale:.2f}", scale * learned_delta))
 
     raw.append(
         (
@@ -219,13 +416,18 @@ def build_policy_return_candidate_portfolio(
                 changed_facility_count=changed,
             )
         )
-    return tuple(candidates)
+    return tuple(candidates[:3])
 
 
 __all__ = [
+    "DEFAULT_LEARNED_SHRINK_SCALES",
     "DEFAULT_V12_SHRINK_SCALES",
+    "DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT",
     "DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT",
+    "LearnedH10ProbeProposal",
     "PolicyReturnPortfolioCandidate",
+    "build_learned_h10_probe_proposal",
     "build_policy_return_candidate_portfolio",
     "hydraulic_pressure_setting_delta",
+    "score_h10_first_action_targets",
 ]
