@@ -1,8 +1,9 @@
-"""Run the current Practical hybrid H10 policy-return controller in authoritative Development SWMM.
+"""Run the current Practical masked hybrid H10 policy-return controller in authoritative Development SWMM.
 
-All frozen base artifacts come from one SHA-verified absolute asset manifest. The policy-return
-checkpoint/admission must match the four-family H10 portfolio. Historical V12 admissions and the
-12x109 L-BFGS-B optimizer are rejected from this current execution surface.
+Frozen Step1 and base Step2 remain unchanged. Online control is restricted to the native 82-facility
+supervisory subspace while all 109 hydraulic action channels remain in the pretrained representation.
+The critic/admission must match the same control-mask SHA and candidate portfolio. Historical V12
+admissions and 12x109 L-BFGS-B remain rejected.
 """
 from __future__ import annotations
 
@@ -19,14 +20,11 @@ from rtc.direct_tfv_policy_return import (
     DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT,
     load_policy_return_checkpoint,
 )
-from rtc.direct_tfv_policy_return_hybrid_portfolio import (
-    DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
-)
-from rtc.direct_tfv_policy_return_runtime_factory import (
-    build_frozen_policy_return_continuation_controller,
-)
+from rtc.direct_tfv_policy_return_hybrid_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+from rtc.direct_tfv_policy_return_runtime_factory import build_frozen_policy_return_continuation_controller
 from rtc.event_clock import inspect_prepared_event_clock
 from rtc.execution_audit_v127 import audit_target_write_readback_v127
+from rtc.native_supervisory_control import load_native_supervisory_control
 from rtc.practical_rtc_assets import load_practical_rtc_asset_manifest, practical_asset_path
 from rtc.production_cli import _controls_disabled_runtime, _load_graph
 from rtc.project7_contract import EFFECTIVE_WARMUP_MINUTES, validate_project7_runtime_config
@@ -35,7 +33,7 @@ from rtc.step1_runtime_v127 import load_frozen_step1_v127
 
 
 DIRECT_TFV_POLICY_RETURN_RUNTIME_CONTRACT = (
-    "PROJECT7_PRACTICAL_H10_HYBRID_POLICY_RETURN_AUTHORITATIVE_DEVELOPMENT_RTC_V2"
+    "PROJECT7_PRACTICAL_H10_HYBRID_POLICY_RETURN_AUTHORITATIVE_DEVELOPMENT_RTC_V3_82CONTROL_109REP"
 )
 
 
@@ -98,6 +96,7 @@ def main() -> None:
     config_path = practical_asset_path(assets, "config")
     step1_path = practical_asset_path(assets, "step1")
     step2_path = practical_asset_path(assets, "step2")
+    supervisory_control_path = practical_asset_path(assets, "supervisory_control")
     sequence_support_path = practical_asset_path(assets, "sequence_support")
 
     _require_step1_lineage(
@@ -108,6 +107,10 @@ def main() -> None:
         device=device,
     )
     graph = _load_graph(graph_path)
+    control, mask = load_native_supervisory_control(
+        supervisory_control_path,
+        actuator_ids=graph.actuator_ids,
+    )
     return_model, _, return_checkpoint = load_policy_return_checkpoint(
         args.policy_return_checkpoint,
         graph=graph,
@@ -116,9 +119,11 @@ def main() -> None:
     )
     del return_model
     if str(return_checkpoint.get("candidate_portfolio_contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
-        raise ValueError("current Development runtime accepts only the hybrid H10 candidate portfolio")
+        raise ValueError("current Development runtime accepts only the masked hybrid H10 portfolio")
     if str(return_checkpoint.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
         raise ValueError("current Development runtime critic has the wrong H10 action encoding")
+    if str(return_checkpoint.get("supervisory_mask_sha256", "")).lower() != str(control["supervisory_mask_sha256"]).lower():
+        raise ValueError("current Development critic uses another supervisory-control mask")
     admission = json.loads(Path(args.policy_return_admission).read_text(encoding="utf-8"))
     if str(admission.get("contract", "")) != DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT:
         raise ValueError("current Development runtime requires current policy-return admission")
@@ -126,6 +131,8 @@ def main() -> None:
         raise ValueError("current Development runtime admission uses another candidate portfolio")
     if str(admission.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
         raise ValueError("current Development runtime admission uses another action encoding")
+    if str(admission.get("supervisory_mask_sha256", "")).lower() != str(control["supervisory_mask_sha256"]).lower():
+        raise ValueError("current Development admission uses another supervisory-control mask")
 
     cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
     project_contract = validate_project7_runtime_config(cfg)
@@ -139,6 +146,7 @@ def main() -> None:
         config_path=config_path,
         step1_path=step1_path,
         step2_path=step2_path,
+        supervisory_control_path=supervisory_control_path,
         sequence_support_path=sequence_support_path,
         policy_return_checkpoint_path=args.policy_return_checkpoint,
         policy_return_admission_path=args.policy_return_admission,
@@ -153,7 +161,11 @@ def main() -> None:
     if lineage.get("legacy_v12_admission_required_online") is not False:
         raise RuntimeError("Practical runtime must not depend on legacy V12 online admission")
     if lineage.get("projected_gradient_h10_enabled") is not True:
-        raise RuntimeError("current Development runtime lacks the 109-D H10 projected-gradient proposer")
+        raise RuntimeError("current Development runtime lacks the masked H10 projected-gradient proposer")
+    if int(lineage.get("supervisory_control_dimension", -1)) != 82 or int(mask.sum()) != 82:
+        raise RuntimeError("current Development runtime did not resolve the 82-control subspace")
+    if int(lineage.get("model_action_channel_count", -1)) != 109:
+        raise RuntimeError("current Development runtime lost the 109-channel representation")
 
     runtime_inp = _controls_disabled_runtime(
         source_inp=Path(args.inp).resolve(),
@@ -190,8 +202,13 @@ def main() -> None:
             "future_realized_rainfall_used_as_model_input": False,
             "online_swmm_candidate_search": False,
             "online_lbfgsb_used": False,
+            "supervisory_control_dimension": 82,
+            "model_action_channel_count": 109,
+            "passive_setting_channel_count": 27,
+            "supervisory_mask_sha256": control["supervisory_mask_sha256"],
             "projected_gradient_h10_enabled": True,
-            "projected_gradient_dimension": 109,
+            "projected_gradient_free_dimension": 82,
+            "projected_gradient_tensor_channels": 109,
             "projected_gradient_action_horizon": "H10_ONLY",
             "candidate_portfolio_family_count_max": 4,
             "policy_return_action_encoding": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
@@ -204,7 +221,8 @@ def main() -> None:
             "asset_manifest_sha256": _sha(args.asset_manifest),
             "legacy_v12_admission_required_online": False,
             "generic_d3_floor_controls_execution": False,
-            "all_109_facilities_screened_each_decision": True,
+            "step1_retrained_for_control_mask": False,
+            "base_step2_retrained_for_control_mask": False,
             "target_latch_semantics": "LAST_COMMANDED_TARGET_PERSISTS_UNTIL_EXPLICITLY_CHANGED",
             "runtime_telemetry_graph_release": True,
             "target_write_readback_audit": write_audit,
@@ -224,6 +242,8 @@ def main() -> None:
                 "decision_path": result.decision_path,
                 "node_statistics_path": result.node_statistics_path,
                 "decisions": result.decisions,
+                "supervisory_control_dimension": 82,
+                "model_action_channel_count": 109,
                 "online_lbfgsb_used": False,
                 "projected_gradient_h10_enabled": True,
                 "target_write_readback_passed": True,
