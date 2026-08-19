@@ -1,12 +1,12 @@
 """Development V13: policy-return-aligned first-action selection.
 
-The V12 scenario-mean/open-loop model remains the coordinated direction generator.  A second value
+The V12 scenario-mean/open-loop model remains the coordinated direction generator. A second value
 model, initialized from the frozen Direct-TFV Step2 checkpoint and fine-tuned only on paired
-same-prefix SWMM *policy-return* labels, judges the action that is actually committed for H10.
+same-prefix SWMM policy-return labels, judges the action actually committed for H10.
 
-This is deliberately a policy-improvement layer rather than a replacement for the H120 search:
-V12 proposes and refines a q95-supported target; the policy-return critic decides whether that target
-has negative TFV advantage when followed by the frozen continuation policy used to create its labels.
+This is a policy-improvement layer rather than a replacement for H120 search: V12 proposes and
+refines a q95-supported target; the policy-return critic decides whether that exact target has
+negative TFV advantage when followed by the frozen continuation policy used to create its labels.
 The old open-loop first-move conformal margin does not control execution here.
 """
 from __future__ import annotations
@@ -14,9 +14,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-import numpy as np
 import torch
 
+from .direct_tfv_first_move import DIRECT_TFV_FIRST_MOVE_SEMANTICS
 from .direct_tfv_policy_return import (
     DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT,
     DIRECT_TFV_POLICY_RETURN_ESTIMAND,
@@ -43,7 +43,7 @@ class DirectTFVMPCResultV11(DirectTFVMPCResultV9):
 
 
 class DirectTFVPolicyReturnMPCV11(DirectTFVScenarioMeanMPCV10):
-    """Scenario-mean V12 direction generation plus a deployed-policy-return first-action critic."""
+    """V12 direction generation plus a deployed-policy-return first-action critic."""
 
     policy_mode = "direct_tfv_all109_receding_mpc_v11_policy_return"
     policy_mode_contract = DIRECT_TFV_POLICY_RETURN_STEP3_CONTRACT
@@ -119,12 +119,11 @@ class DirectTFVPolicyReturnMPCV11(DirectTFVScenarioMeanMPCV10):
         active_target: torch.Tensor,
         candidate_target: torch.Tensor,
     ) -> torch.Tensor:
-        """Score one executable first target using the causal rainfall scenario ensemble."""
-
+        """Score one executable target with only causal rainfall scenarios."""
         if rainfall.ndim != 4 or int(rainfall.shape[0]) < 2:
-            raise ValueError("policy-return critic requires causal rainfall scenarios [S,H,N,R]")
+            raise ValueError("policy-return critic requires rainfall [scenario,H,node,feature]")
         if tuple(active_target.shape) != (109,) or tuple(candidate_target.shape) != (109,):
-            raise ValueError("policy-return critic requires 109-dimensional active/candidate targets")
+            raise ValueError("policy-return critic requires 109-dimensional targets")
         scenarios = int(rainfall.shape[0])
         horizon = int(self.design.prediction_horizon_steps)
         state = self._policy_return_normalize_state(current_state).expand(scenarios, -1, -1)
@@ -153,39 +152,46 @@ class DirectTFVPolicyReturnMPCV11(DirectTFVScenarioMeanMPCV10):
             raise RuntimeError("policy-return critic produced non-finite values")
         return scores.mean()
 
+    def _hold_result(self, base: DirectTFVMPCResultV9, active_target: torch.Tensor, source: str) -> DirectTFVMPCResultV11:
+        values = dict(vars(base))
+        values.update(
+            {
+                "settings": self._hold_sequence(active_target).detach(),
+                "predicted_delta_tfv_m3": 0.0,
+                "selected_source": source,
+                "admission_margin_m3": 0.0,
+                "admission_upper_bound_m3": 0.0,
+                "admission_passed": False,
+                "calibrated_admission_contract": DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT,
+                "policy_mode": self.policy_mode,
+                "policy_mode_contract": self.policy_mode_contract,
+                "policy_return_parent_continuation_sha256": self.policy_return_parent_continuation_sha256,
+            }
+        )
+        return DirectTFVMPCResultV11(**values)
+
     def optimize(self, **kwargs: Any) -> DirectTFVMPCResultV11:
-        # V12 remains the support-aware coordinated proposal/refinement mechanism.  Its own
-        # first-move admission is diagnostic only after this point.
+        # V12 generates/refines the supported candidate. Its open-loop admission is diagnostic only.
         base = super().optimize(**kwargs)
         active_target = kwargs.get("active_target")
         if not isinstance(active_target, torch.Tensor):
             raise ValueError("V13 requires active_target")
         candidate = getattr(base, "optimized_candidate_settings", None)
-        values = dict(vars(base))
-        defaults = {
-            "policy_mode": self.policy_mode,
-            "policy_mode_contract": self.policy_mode_contract,
-            "policy_return_parent_continuation_sha256": self.policy_return_parent_continuation_sha256,
-        }
-        if candidate is None:
-            values.update(defaults)
-            return DirectTFVMPCResultV11(**values)
+        refined_count = int(getattr(base, "refined_first_move_changed_facility_count", 0))
+        refined_semantics = str(getattr(base, "refined_first_move_semantics", ""))
+        if candidate is None or refined_count <= 0:
+            return self._hold_result(base, active_target, "LATCH_PREVIOUS_TARGET_NO_REFINED_POLICY_RETURN_QUERY")
+        if refined_semantics != DIRECT_TFV_FIRST_MOVE_SEMANTICS:
+            raise RuntimeError("V13 refuses to score a non-target-latch refined first-move query")
+
         target = candidate[0].detach()
         changed = int(torch.count_nonzero(torch.abs(target - active_target) > 1.0e-7).item())
-        if changed == 0:
-            values.update(defaults)
-            values.update(
-                {
-                    "settings": self._hold_sequence(active_target),
-                    "predicted_delta_tfv_m3": 0.0,
-                    "selected_source": "LATCH_PREVIOUS_TARGET_NO_POLICY_RETURN_CHANGE",
-                    "admission_margin_m3": 0.0,
-                    "admission_upper_bound_m3": 0.0,
-                    "admission_passed": False,
-                    "calibrated_admission_contract": DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT,
-                }
+        if changed != refined_count:
+            raise RuntimeError(
+                "V13 score/execute changed-facility count differs from V12 refined first move"
             )
-            return DirectTFVMPCResultV11(**values)
+        if changed == 0:
+            return self._hold_result(base, active_target, "LATCH_PREVIOUS_TARGET_NO_POLICY_RETURN_CHANGE")
 
         score = self._score_policy_return_target(
             current_state=kwargs["current_state"],
@@ -199,14 +205,15 @@ class DirectTFVPolicyReturnMPCV11(DirectTFVScenarioMeanMPCV10):
         upper = score_m3 + margin
         passed = bool(upper < 0.0)
         executed = candidate.detach() if passed else self._hold_sequence(active_target).detach()
-        values.update(defaults)
+        values = dict(vars(base))
         values.update(
             {
                 "settings": executed,
                 "predicted_delta_tfv_m3": score_m3 if passed else 0.0,
                 "raw_optimized_predicted_delta_tfv_m3": score_m3,
                 "selected_source": (
-                    "DIRECT_TFV_RECEDING_LBFGSB" if passed
+                    "DIRECT_TFV_RECEDING_LBFGSB"
+                    if passed
                     else "LATCH_PREVIOUS_TARGET_POLICY_RETURN_UPPER_BOUND_NONNEGATIVE"
                 ),
                 "admission_margin_m3": float(margin),
@@ -219,12 +226,15 @@ class DirectTFVPolicyReturnMPCV11(DirectTFVScenarioMeanMPCV10):
                 "refined_first_move_upper_bound_m3": float(upper),
                 "refined_first_move_admission_passed": passed,
                 "refined_first_move_admission_contract": DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT,
+                "policy_mode": self.policy_mode,
+                "policy_mode_contract": self.policy_mode_contract,
                 "policy_return_predicted_delta_tfv_m3": score_m3,
                 "policy_return_margin_m3": float(margin),
                 "policy_return_upper_bound_m3": float(upper),
                 "policy_return_admission_passed": passed,
                 "policy_return_admission_contract": DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT,
                 "policy_return_estimand": DIRECT_TFV_POLICY_RETURN_ESTIMAND,
+                "policy_return_parent_continuation_sha256": self.policy_return_parent_continuation_sha256,
             }
         )
         return DirectTFVMPCResultV11(**values)
