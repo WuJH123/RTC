@@ -57,6 +57,12 @@ class _Inner:
             active_facility_screening_scores_m3=tuple(-1000.0 + i for i in range(23)),
             first_move_changed_facility_count=5,
             maximum_support_ratio=0.8,
+            joint_sequence_support_quantile="q95",
+            joint_sequence_first_block_l1=0.5,
+            joint_sequence_h120_l1=6.0,
+            joint_sequence_h120_total_variation_l1=0.5,
+            joint_sequence_support_max_ratio=0.9,
+            joint_sequence_support_binding=False,
             training_joint_changed_facility_q90=20.0,
             scipy_message="ok",
         )
@@ -100,6 +106,8 @@ def test_runtime_adapter_maps_calibrated_step3_and_preserves_raw_plan() -> None:
     assert result.active_support_quantile_effective == "q95"
     assert result.active_support_ceiling == 23
     assert result.active_set_ceiling_binding is True
+    assert result.joint_sequence_support_quantile == "q95"
+    assert result.joint_sequence_support_max_ratio == 0.9
     assert result.counterfactual_actuator_ids == tuple(f"A{i:03d}" for i in range(109))
     assert len(result.optimized_free_control_blocks) == 12
     assert all(len(block) == 109 for block in result.optimized_free_control_blocks)

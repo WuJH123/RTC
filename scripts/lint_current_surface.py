@@ -6,10 +6,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "configs" / "project7_current_lint_surface.json"
-EXPECTED_CONTRACT = "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V9"
+EXPECTED_CONTRACT = "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V16"
 EXPECTED_RULES = ("E4", "E7", "E9", "F")
 
 

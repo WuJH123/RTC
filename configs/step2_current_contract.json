@@ -1,66 +1,108 @@
 {
-  "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V6",
-  "status": "CURRENT_DEVELOPMENT_CALIBRATED_STEP3_NOT_POLICY_LOCKED",
+  "contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V11",
+  "status": "STABLE_TARGET_LATCH_BASE_WITH_V12_EVIDENCE_AND_V13_POLICY_RETURN_DEVELOPMENT_NOT_POLICY_LOCKED",
   "selected_implementation_contract": "PROJECT7_DIRECT_109ACT_PAIRWISE_VALUE_TO_DELTA_TFV_V2",
   "training_contract": "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5",
-  "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V5",
-  "admission_contract": "PROJECT7_DIRECT_TFV_OPTIMIZER_AWARE_ONE_SIDED_ADMISSION_V1",
+  "step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V9",
+  "v12_step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V10_CAUSAL_RAINFALL_SCENARIO_MEAN",
+  "next_step3_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V11_POLICY_RETURN_FIRST_ACTION",
+  "raw_optimizer_query_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V6",
+  "first_move_admission_contract": "PROJECT7_DIRECT_TFV_REFINED_FIRST_MOVE_NORMALIZED_ONE_SIDED_ADMISSION_V1",
+  "first_move_panel_contract": "PROJECT7_DIRECT_TFV_REFINED_FIRST_MOVE_CALIBRATION_PANEL_V1",
+  "policy_admission_contract": "PROJECT7_DIRECT_TFV_POLICY_MATCHED_ONE_SIDED_ADMISSION_V2",
+  "sequence_support_contract": "PROJECT7_DIRECT_TFV_D3_HOLD_JOINT_SEQUENCE_SUPPORT_V1",
+  "policy_return_checkpoint_contract": "PROJECT7_DIRECT_TFV_RECEDING_POLICY_RETURN_VALUE_CHECKPOINT_V1",
+  "policy_return_admission_contract": "PROJECT7_DIRECT_TFV_RECEDING_POLICY_RETURN_ONE_SIDED_ADMISSION_V1",
   "authoritative_truth": "SWMM",
-  "research_goal": "every 10 minutes reconstruct the current hydraulic state from sparse causal sensing, learn all-109 action effects on future system-wide cumulative TFV, optimize inside D3-HOLD TrainFit support, execute only when an optimizer-aware one-sided H360 residual upper margin remains beneficial, then re-observe",
-  "core_pipeline": {
-    "step1": "causal sparse sensing -> current full-network hydraulic reconstruction",
-    "step2": "causal current state + causal rainfall + complete H360 reference/candidate actions -> authoritative exact delta TFV",
-    "admission_calibration": "combine a finite-sample 90% one-sided D3 HOLD cached-residual bound with the maximum observed exact same-prefix H360 residual from optimizer-selected Development plans",
-    "step3": "screen all 109 facilities, optimize q95-supported joint actions, execute iff predicted delta TFV + calibrated one-sided residual margin < 0 and the first 10-minute block changes; otherwise HOLD",
-    "swmm": "authoritative offline label/evaluation/calibration truth only; never called inside online candidate search"
+  "research_goal": "under sparse causal sensing, every 10 minutes choose which subset of 109 supervisory targets to change and by how much, latch all unchanged targets, and minimize system-wide cumulative TFV; SWMM is offline authoritative truth only",
+  "objective_contract": {
+    "online_primary_objective": "SYSTEM_WIDE_CUMULATIVE_TFV_MINIMIZATION",
+    "pfv_role": "REPORT_ONLY_SECONDARY_RISK_METRIC",
+    "global_peak_role": "REPORT_ONLY",
+    "pfv_enters_step2_training": false,
+    "pfv_enters_step3_objective": false,
+    "performance_tuned_threshold": false
   },
   "time_contract": {
     "model_step_seconds": 300,
     "control_update_seconds": 600,
     "prediction_horizon_minutes": 360,
     "free_control_horizon_minutes": 120,
-    "execute_minutes": 10
+    "execute_minutes": 10,
+    "execution_value_semantics": "WRITE_REFINED_H10_TARGET_THEN_LATCH_NEW_TARGET_UNTIL_NEXT_COMMAND_H360",
+    "cross_decision_target_semantics": "LAST_COMMANDED_TARGET_PERSISTS_UNTIL_EXPLICITLY_CHANGED"
   },
   "action_contract": {
     "actuators": 109,
     "all_writable_actuators_screened_every_decision": true,
-    "engineering_bounds": "physical min/max plus <=0.5 setting movement per 10-minute update",
-    "support_bounds": "per-facility TrainFit q95 action magnitude plus D3-HOLD joint-density q95, never above observed D3-HOLD joint maximum",
-    "performance_tuned_threshold": false,
-    "statistical_admission": "D3 HOLD cached residuals use a finite-sample 90% one-sided split-conformal upper bound when sample size supports it; the small optimizer-replay sample contributes only its maximum observed true-minus-predicted residual and makes no coverage claim"
+    "engineering_bounds": "physical min/max plus <=0.5 target movement per 10-minute update",
+    "per_facility_support": "TrainFit q95 first-move and sequence magnitude",
+    "joint_density_support": "D3-HOLD q95 changed-facility count",
+    "joint_temporal_support": "D3-HOLD q95 first-block L1, H120 L1 and H120 temporal total variation",
+    "first_move_refinement": "SHRINK_ONLY_SAME_DIRECTION_NO_SUPPORT_EXPANSION_PLUS_TFV_OBJECTIVE_BACKWARD_PRUNING",
+    "actual_changed_facility_count": "MODEL_OUTPUT_FROM_DIFFERENCE_BETWEEN_NEW_TARGET_AND_PREVIOUS_TARGET_NOT_ACTIVE_K",
+    "unchanged_facility_semantics": "COPY_PREVIOUS_COMMANDED_TARGET_EXACTLY",
+    "score_equals_execute_first_move": true,
+    "hold_online_reference_semantics": "LATCH_PREVIOUS_SUPERVISORY_TARGET_NOT_NO_CONTROL_NOT_RESET"
   },
-  "scientific_bottleneck": {
-    "classification": "DEVELOPMENT_NO_CONTROL_BENEFIT_INCONSISTENT",
-    "mechanism": "continuous optimizer selection-induced optimism / false-beneficial actions",
-    "evidence": "T5 exact same-prefix H360 replay had 3/6 false-beneficial despite zero prefix mismatch; T10 benefit nearly vanished and T20 exceeded no-control under threshold-free V5/V4",
-    "not_primary": ["runtime execution", "109-facility coverage", "q95 active-set size", "D4 reference shift"]
+  "initial_condition_contract": {
+    "current_default": "AUTHORITATIVE_ACTUATOR_TARGET_READBACK_AT_FIRST_COMMON_CONTROL_DECISION_AFTER_WARMUP_WITH_NO_PRIOR_PYTHON_SUPERVISORY_WRITE",
+    "precontrol_semantics": "SOURCE_INP_PLUS_INTRINSIC_SWMM_PHYSICS_WITH_NATIVE_SUPERVISORY_CONTROLS_DISABLED_FOR_PROPOSED",
+    "all_open_is_not_default": true
   },
-  "step3_current": {
-    "module": "src/rtc/step3_tfv_value_mpc_v5.py",
-    "admission_module": "src/rtc/direct_tfv_admission.py",
-    "calibration_runner": "scripts/calibrate_direct_tfv_admission_current.py",
-    "solver_audit_runner": "scripts/run_step3_direct_tfv_solver_calibrated_current.py",
-    "development_runtime": "scripts/run_policy_direct_tfv_development.py",
-    "development_audit": "scripts/audit_direct_tfv_calibrated_closed_loop_current.py",
-    "active_support": "q95 canonical; q90 conservative ablation; q99 diagnostic only",
-    "admission": "optimizer-aware upper margin < 0; weak/uncertain extrema HOLD",
-    "first_move_contract": "future-only no-op plan is HOLD",
-    "runtime_promoted": false
-  },
-  "data_boundaries": {
-    "D2": "training/development only",
-    "D3": "training plus rainfall-disjoint internal residual calibration/audit",
-    "optimizer_replay": "Development-only exact same-prefix H360 calibration; its event IDs cannot be counted as independent post-calibration evidence; small replay sample makes no formal coverage claim",
-    "D4_AUDIT": "reference-shift diagnostic only",
+  "first_move_data_contract": {
+    "coverage": 0.9,
+    "independent_unit": "rainfall_group",
+    "minimum_calibration_rainfall_groups": 24,
+    "normalization": "SQRT_FIRST_MOVE_CHANGED_FACILITY_COUNT",
+    "source_fingerprint": "BEHAVIORAL_DIRECT_TFV_FIRST_MOVE_SHA256_CONTROLS_CALIBRATION_VALIDITY_FULL_BYTE_SHA_PROVENANCE_ONLY",
+    "context_contract": "CANDIDATE_FREE_D0_PREFIX_CONTEXT_NO_GENERIC_D3_CANDIDATE_ROWS",
+    "calibration_role": "TARGET_LATCH_REFINED_FIRST_MOVE_ONLY_NOT_STEP2_TRAIN",
+    "generic_d3_floor_role": "DIAGNOSTIC_ONLY_NOT_EXECUTION_FLOOR",
     "Validation_access": false,
     "Final_access": false,
     "Formal_access": false,
     "Policy_Lock_access": false
   },
-  "legacy": {
-    "Step3_V4": "threshold-free ablation that exposed optimizer selection-induced optimism",
-    "V4_training": "legacy checkpoint compatibility only",
-    "V128_hydraulic_world_model": "ablation/history only"
+  "v12_evidence": {
+    "status": "DEVELOPMENT_ONLY_OBSERVED_NOT_ACCEPTED",
+    "causal_rainfall_scenarios": [0.8, 1.0, 1.2],
+    "rainfall_history_steps": 3,
+    "accepted_h360_replay_sign_correct": "9/9",
+    "accepted_h360_false_beneficial": "0/9",
+    "event_level_no_control_consistency": "1/3",
+    "auto_rbc_wins_for_proposed": "0/3",
+    "interpretation": "local target-latched H360 sign reliability improved, but repeated 10-minute replanning still produced worse event-level TFV on two of three probes"
   },
-  "promotion_rule": "first restore event-balanced no-control non-inferiority and reduce exact same-prefix false-beneficial decisions on post-calibration Development events; only then reassess Internal/Auto-RBC competitiveness and untouched Validation"
+  "scientific_bottleneck": {
+    "classification": "OPEN_LOOP_VALUE_VS_RECEDING_CONTROL_MISMATCH",
+    "evidence": "V12 exact same-prefix accepted first-move H360 replay was directionally correct on 9/9 sampled decisions with zero false-beneficial, yet the complete closed-loop policy beat No-control on only one of three preregistered Development probes and Auto-RBC on none.",
+    "not_supported_as_primary_fix": [
+      "reduce conformal margin until more actions execute",
+      "raise q95 to q99",
+      "increase active K",
+      "add PFV or Global Peak to the objective",
+      "imitate or warm-start from Auto-RBC",
+      "regenerate generic D3"
+    ],
+    "next_scientific_test": "learn paired receding-policy first-action return: candidate H10 then frozen continuation policy versus HOLD H10 then the same frozen continuation policy, using role-disjoint Development train/validation/calibration sets and policy iteration"
+  },
+  "next_scientific_stage": {
+    "experiment_contract": "PROJECT7_DIRECT_TFV_RECEDING_POLICY_RETURN_EXPERIMENT_V1",
+    "estimand": "EXECUTE_CANDIDATE_H10_THEN_FROZEN_POLICY_VS_HOLD_H10_THEN_SAME_FROZEN_POLICY",
+    "base_direction_generator": "frozen V12 scenario-mean q95-supported H120/H360 search",
+    "step2_change": "initialize the same DirectFacilityTFVValueModel from frozen V5 and fine-tune only supervision to paired policy-return labels before considering architecture changes",
+    "minimum_train_rainfall_groups": 48,
+    "minimum_validation_rainfall_groups": 12,
+    "minimum_calibration_rainfall_groups": 24,
+    "roles_disjoint": true,
+    "policy_iteration_required": true,
+    "runtime_promoted": false
+  },
+  "data_boundaries": {
+    "Validation_access": false,
+    "Final_access": false,
+    "Formal_access": false,
+    "Policy_Lock_access": false
+  }
 }

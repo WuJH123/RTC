@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import fields
+import hashlib
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,74 @@ from .step2_train_response_v60 import InputNormalizationV60
 
 DIRECT_TFV_RUNTIME_CHECKPOINT_CONTRACT = "PROJECT7_DIRECT_TFV_RUNTIME_CHECKPOINT_V3"
 LEGACY_DIRECT_TFV_TRAINING_CONTRACT = "PROJECT7_DIRECT_TFV_CORE_TRAINING_V4"
+
+# Full-byte provenance: intentionally sensitive to any implementation-file edit.
+_DIRECT_TFV_FIRST_MOVE_SOURCE_FILES = (
+    "step2_tfv_value.py",
+    "step2_tfv_support.py",
+    "direct_tfv_admission.py",
+    "direct_tfv_sequence_support.py",
+    "direct_tfv_policy_admission.py",
+    "step3_tfv_value_mpc_v3.py",
+    "step3_tfv_value_mpc_v4.py",
+    "step3_tfv_value_mpc_v5.py",
+    "step3_tfv_value_mpc_v6.py",
+    "step3_tfv_value_mpc_v7.py",
+    "direct_tfv_first_move.py",
+    "direct_tfv_first_move_admission.py",
+    "step3_tfv_value_mpc_v9.py",
+    "controller_v122.py",
+    "controller_direct_tfv.py",
+    "closed_loop.py",
+)
+
+# Calibration-behavior provenance: only numerical query/support/admission code is byte-bound.
+# Runtime target-latch semantics are bound separately to the small reassertion function source and
+# explicit semantic tokens, so adding telemetry or resource diagnostics does not invalidate labels.
+_DIRECT_TFV_FIRST_MOVE_BEHAVIORAL_FILES = (
+    "step2_tfv_value.py",
+    "step2_tfv_support.py",
+    "direct_tfv_admission.py",
+    "direct_tfv_sequence_support.py",
+    "direct_tfv_policy_admission.py",
+    "step3_tfv_value_mpc_v3.py",
+    "step3_tfv_value_mpc_v4.py",
+    "step3_tfv_value_mpc_v5.py",
+    "step3_tfv_value_mpc_v6.py",
+    "step3_tfv_value_mpc_v7.py",
+    "direct_tfv_first_move.py",
+    "direct_tfv_first_move_admission.py",
+    "step3_tfv_value_mpc_v9.py",
+)
+
+
+def _hash_named_files(names: tuple[str, ...]) -> hashlib._Hash:
+    root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for name in names:
+        path = root / name
+        if not path.is_file():
+            raise RuntimeError(f"Direct-TFV source file is missing: {path}")
+        digest.update(name.encode("utf-8"))
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest
+
+
+def direct_tfv_first_move_source_sha256() -> str:
+    """Hash complete V11 implementation bytes for audit/provenance only."""
+    return _hash_named_files(_DIRECT_TFV_FIRST_MOVE_SOURCE_FILES).hexdigest()
+
+
+def direct_tfv_first_move_behavioral_source_sha256() -> str:
+    """Hash only code/semantics that can change calibrated first-move numerical behavior."""
+    digest = _hash_named_files(_DIRECT_TFV_FIRST_MOVE_BEHAVIORAL_FILES)
+    from .closed_loop import _reassert_target_latch
+
+    digest.update(inspect.getsource(_reassert_target_latch).encode("utf-8"))
+    digest.update(b"LAST_COMMANDED_TARGET_PERSISTS_UNTIL_EXPLICITLY_CHANGED")
+    digest.update(b"WRITE_REFINED_H10_TARGET_THEN_LATCH_NEW_TARGET_UNTIL_NEXT_COMMAND_H360")
+    digest.update(b"SCORE_EQUALS_EXECUTE_FIRST_MOVE")
+    return digest.hexdigest()
 
 
 def _design_from_payload(payload: dict[str, Any]) -> DirectTFVValueDesign:
@@ -80,5 +150,7 @@ def load_direct_tfv_runtime_checkpoint(
 __all__ = [
     "DIRECT_TFV_RUNTIME_CHECKPOINT_CONTRACT",
     "LEGACY_DIRECT_TFV_TRAINING_CONTRACT",
+    "direct_tfv_first_move_behavioral_source_sha256",
+    "direct_tfv_first_move_source_sha256",
     "load_direct_tfv_runtime_checkpoint",
 ]

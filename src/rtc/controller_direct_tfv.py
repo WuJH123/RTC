@@ -1,4 +1,4 @@
-"""Authoritative-runtime adapter for calibrated Project7 Direct-TFV MPC."""
+"""Authoritative-runtime adapter for optimizer-consistent Project7 Direct-TFV MPC."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,11 +9,10 @@ import torch
 
 from .closed_loop import CausalObservation, ControllerAction
 from .controller_v122 import V122TorchMPCController
-from .step3_tfv_value_mpc_v5 import DIRECT_TFV_STEP3_CONTRACT, DirectTFVRecedingMPCV5
+from .step3_tfv_value_mpc_v6 import DIRECT_TFV_STEP3_CONTRACT, DirectTFVRecedingMPCV6
 
-
-DIRECT_TFV_CONTROLLER_CONTRACT = "PROJECT7_DIRECT_TFV_TARGET_LATCH_CONTROLLER_V4"
-DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT = "PROJECT7_DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_V2"
+DIRECT_TFV_CONTROLLER_CONTRACT = "PROJECT7_DIRECT_TFV_TARGET_LATCH_CONTROLLER_V6"
+DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT = "PROJECT7_DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_V3"
 
 
 @dataclass(frozen=True)
@@ -40,6 +39,12 @@ class _RuntimeMPCResult:
     active_facility_screening_scores_m3: tuple[float, ...]
     first_move_changed_facility_count: int
     maximum_support_ratio: float
+    joint_sequence_support_quantile: str
+    joint_sequence_first_block_l1: float
+    joint_sequence_h120_l1: float
+    joint_sequence_h120_total_variation_l1: float
+    joint_sequence_support_max_ratio: float
+    joint_sequence_support_binding: bool
     best_screening_predicted_delta_tfv_m3: float
     optimizer_gain_beyond_best_screening_m3: float
     active_set_ceiling_binding: bool
@@ -49,11 +54,31 @@ class _RuntimeMPCResult:
     counterfactual_actuator_ids: tuple[str, ...]
     optimized_free_control_blocks: tuple[tuple[float, ...], ...]
     hold_reference_settings: tuple[float, ...]
+    counterfactual_candidate_semantics: str
     scipy_message: str
+    receding_prefix_predicted_delta_tfv_m3: float
+    receding_prefix_margin_m3: float
+    receding_prefix_upper_bound_m3: float
+    receding_prefix_admission_passed: bool
+    receding_prefix_admission_contract: str
+    receding_prefix_candidate_semantics: str
+    full_plan_policy_admission_passed: bool
+    full_plan_policy_upper_bound_m3: float
+    refined_first_move_predicted_delta_tfv_m3: float
+    refined_first_move_margin_m3: float
+    refined_first_move_upper_bound_m3: float
+    refined_first_move_admission_passed: bool
+    refined_first_move_admission_contract: str
+    refined_first_move_semantics: str
+    refined_first_move_changed_facility_count: int
+    refined_first_move_changed_facility_ids: tuple[str, ...]
+    first_move_refinement_gain_m3: float
+    first_move_refiner_elapsed_seconds: float
+    first_move_refiner_steps: int
 
 
 class DirectTFVRuntimeMPCAdapter:
-    def __init__(self, inner: DirectTFVRecedingMPCV5) -> None:
+    def __init__(self, inner: DirectTFVRecedingMPCV6) -> None:
         self.inner = inner
         self.last_result: _RuntimeMPCResult | None = None
 
@@ -120,6 +145,11 @@ class DirectTFVRuntimeMPCAdapter:
             result.predicted_beneficial_facility_count > result.active_facility_count
             and result.active_facility_count >= min(109, support_ceiling)
         )
+        refined_semantics = str(getattr(result, "refined_first_move_semantics", ""))
+        if refined_semantics:
+            candidate_semantics = refined_semantics
+        else:
+            candidate_semantics = "SUPPORT_CONTRACTED_H120_FREE_BLOCKS_THEN_TERMINAL_TARGET_LATCH_H360"
         wrapped = _RuntimeMPCResult(
             settings=result.settings,
             predicted_delta_tfv_m3=float(result.predicted_delta_tfv_m3),
@@ -143,6 +173,12 @@ class DirectTFVRuntimeMPCAdapter:
             active_facility_screening_scores_m3=active_scores,
             first_move_changed_facility_count=int(result.first_move_changed_facility_count),
             maximum_support_ratio=float(result.maximum_support_ratio),
+            joint_sequence_support_quantile=str(result.joint_sequence_support_quantile),
+            joint_sequence_first_block_l1=float(result.joint_sequence_first_block_l1),
+            joint_sequence_h120_l1=float(result.joint_sequence_h120_l1),
+            joint_sequence_h120_total_variation_l1=float(result.joint_sequence_h120_total_variation_l1),
+            joint_sequence_support_max_ratio=float(result.joint_sequence_support_max_ratio),
+            joint_sequence_support_binding=bool(result.joint_sequence_support_binding),
             best_screening_predicted_delta_tfv_m3=float(best_screening),
             optimizer_gain_beyond_best_screening_m3=optimizer_gain,
             active_set_ceiling_binding=ceiling_binding,
@@ -152,30 +188,89 @@ class DirectTFVRuntimeMPCAdapter:
             counterfactual_actuator_ids=actuator_ids,
             optimized_free_control_blocks=free_blocks,
             hold_reference_settings=hold_reference,
+            counterfactual_candidate_semantics=candidate_semantics,
             scipy_message=str(result.scipy_message),
+            receding_prefix_predicted_delta_tfv_m3=float(
+                getattr(result, "receding_prefix_predicted_delta_tfv_m3", result.predicted_delta_tfv_m3)
+            ),
+            receding_prefix_margin_m3=float(
+                getattr(result, "receding_prefix_margin_m3", getattr(result, "admission_margin_m3", 0.0))
+            ),
+            receding_prefix_upper_bound_m3=float(
+                getattr(result, "receding_prefix_upper_bound_m3", getattr(result, "admission_upper_bound_m3", raw_pred))
+            ),
+            receding_prefix_admission_passed=bool(
+                getattr(result, "receding_prefix_admission_passed", getattr(result, "admission_passed", valid))
+            ),
+            receding_prefix_admission_contract=str(
+                getattr(result, "receding_prefix_admission_contract", "")
+            ),
+            receding_prefix_candidate_semantics=str(
+                getattr(result, "receding_prefix_candidate_semantics", "")
+            ),
+            full_plan_policy_admission_passed=bool(
+                getattr(result, "full_plan_policy_admission_passed", getattr(result, "admission_passed", valid))
+            ),
+            full_plan_policy_upper_bound_m3=float(
+                getattr(result, "full_plan_policy_upper_bound_m3", getattr(result, "admission_upper_bound_m3", raw_pred))
+            ),
+            refined_first_move_predicted_delta_tfv_m3=float(
+                getattr(result, "refined_first_move_predicted_delta_tfv_m3", raw_pred)
+            ),
+            refined_first_move_margin_m3=float(
+                getattr(result, "refined_first_move_margin_m3", getattr(result, "admission_margin_m3", 0.0))
+            ),
+            refined_first_move_upper_bound_m3=float(
+                getattr(result, "refined_first_move_upper_bound_m3", getattr(result, "admission_upper_bound_m3", raw_pred))
+            ),
+            refined_first_move_admission_passed=bool(
+                getattr(result, "refined_first_move_admission_passed", getattr(result, "admission_passed", valid))
+            ),
+            refined_first_move_admission_contract=str(
+                getattr(result, "refined_first_move_admission_contract", "")
+            ),
+            refined_first_move_semantics=refined_semantics,
+            refined_first_move_changed_facility_count=int(
+                getattr(result, "refined_first_move_changed_facility_count", result.first_move_changed_facility_count)
+            ),
+            refined_first_move_changed_facility_ids=tuple(
+                getattr(result, "refined_first_move_changed_facility_ids", ())
+            ),
+            first_move_refinement_gain_m3=float(
+                getattr(result, "first_move_refinement_gain_m3", 0.0)
+            ),
+            first_move_refiner_elapsed_seconds=float(
+                getattr(result, "first_move_refiner_elapsed_seconds", 0.0)
+            ),
+            first_move_refiner_steps=int(getattr(result, "first_move_refiner_steps", 0)),
         )
         self.last_result = wrapped
         return wrapped
 
 
 class DirectTFVAuthoritativeController(V122TorchMPCController):
-    def __init__(self, *args: Any, mpc: DirectTFVRecedingMPCV5, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, mpc: DirectTFVRecedingMPCV6, **kwargs: Any) -> None:
         adapter = DirectTFVRuntimeMPCAdapter(mpc)
         super().__init__(*args, mpc=adapter, **kwargs)
         self._direct_mpc_adapter = adapter
 
     def decide(
-        self,
-        obs: CausalObservation,
-        *,
-        observation_already_recorded: bool = False,
+        self, obs: CausalObservation, *, observation_already_recorded: bool = False
     ) -> ControllerAction:
         action = super().decide(obs, observation_already_recorded=observation_already_recorded)
         diagnostics = dict(action.diagnostics or {})
-        diagnostics["direct_tfv_controller_contract"] = DIRECT_TFV_CONTROLLER_CONTRACT
-        diagnostics["direct_tfv_step3_contract"] = DIRECT_TFV_STEP3_CONTRACT
-        diagnostics["all_109_facilities_screened_contract"] = True
-        diagnostics["calibrated_one_sided_admission_used"] = True
+        diagnostics.update(
+            {
+                "direct_tfv_controller_contract": DIRECT_TFV_CONTROLLER_CONTRACT,
+                "direct_tfv_step3_contract": str(
+                    getattr(self._direct_mpc_adapter.inner, "policy_mode_contract", DIRECT_TFV_STEP3_CONTRACT)
+                ),
+                "all_109_facilities_screened_contract": True,
+                "calibrated_one_sided_admission_used": True,
+                "joint_sequence_support_used": True,
+                "target_latch_semantics": "LAST_COMMANDED_TARGET_PERSISTS_UNTIL_EXPLICITLY_CHANGED",
+            }
+        )
         result = self._direct_mpc_adapter.last_result
         if result is not None:
             diagnostics.update(
@@ -190,64 +285,79 @@ class DirectTFVAuthoritativeController(V122TorchMPCController):
                     "predicted_beneficial_facility_count": result.predicted_beneficial_facility_count,
                     "active_facility_count": result.active_facility_count,
                     "active_facility_ids": list(result.active_facility_ids),
-                    "active_facility_screening_scores_m3": list(
-                        result.active_facility_screening_scores_m3
-                    ),
+                    "active_facility_screening_scores_m3": list(result.active_facility_screening_scores_m3),
                     "first_move_changed_facility_count": result.first_move_changed_facility_count,
                     "maximum_support_ratio": result.maximum_support_ratio,
-                    "best_screening_predicted_delta_tfv_m3": (
-                        result.best_screening_predicted_delta_tfv_m3
-                    ),
-                    "optimizer_gain_beyond_best_screening_m3": (
-                        result.optimizer_gain_beyond_best_screening_m3
-                    ),
+                    "joint_sequence_support_quantile": result.joint_sequence_support_quantile,
+                    "joint_sequence_first_block_l1": result.joint_sequence_first_block_l1,
+                    "joint_sequence_h120_l1": result.joint_sequence_h120_l1,
+                    "joint_sequence_h120_total_variation_l1": result.joint_sequence_h120_total_variation_l1,
+                    "joint_sequence_support_max_ratio": result.joint_sequence_support_max_ratio,
+                    "joint_sequence_support_binding": result.joint_sequence_support_binding,
+                    "best_screening_predicted_delta_tfv_m3": result.best_screening_predicted_delta_tfv_m3,
+                    "optimizer_gain_beyond_best_screening_m3": result.optimizer_gain_beyond_best_screening_m3,
                     "active_set_ceiling_binding": result.active_set_ceiling_binding,
                     "active_support_quantile_requested": result.active_support_quantile_requested,
                     "active_support_quantile_effective": result.active_support_quantile_effective,
                     "active_support_ceiling": result.active_support_ceiling,
-                    "raw_optimized_predicted_delta_tfv_m3": (
-                        result.raw_optimized_predicted_delta_tfv_m3
-                    ),
+                    "raw_optimized_predicted_delta_tfv_m3": result.raw_optimized_predicted_delta_tfv_m3,
                     "admission_margin_m3": result.admission_margin_m3,
                     "admission_upper_bound_m3": result.admission_upper_bound_m3,
                     "admission_margin_kind": result.admission_margin_kind,
                     "admission_passed": result.admission_passed,
                     "calibrated_admission_contract": result.calibrated_admission_contract,
-                    "counterfactual_plan_telemetry_contract": (
-                        DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT
-                    ),
-                    "counterfactual_reference_semantics": "HOLD_ACTIVE_TARGET_H360",
-                    "counterfactual_candidate_semantics": (
-                        "RAW_OPTIMIZED_H120_FREE_BLOCKS_THEN_TERMINAL_HOLD_H360"
-                    ),
+                    "receding_prefix_predicted_delta_tfv_m3": result.receding_prefix_predicted_delta_tfv_m3,
+                    "receding_prefix_margin_m3": result.receding_prefix_margin_m3,
+                    "receding_prefix_upper_bound_m3": result.receding_prefix_upper_bound_m3,
+                    "receding_prefix_admission_passed": result.receding_prefix_admission_passed,
+                    "receding_prefix_admission_contract": result.receding_prefix_admission_contract,
+                    "receding_prefix_candidate_semantics": result.receding_prefix_candidate_semantics,
+                    "full_plan_policy_admission_passed": result.full_plan_policy_admission_passed,
+                    "full_plan_policy_upper_bound_m3": result.full_plan_policy_upper_bound_m3,
+                    "refined_first_move_predicted_delta_tfv_m3": result.refined_first_move_predicted_delta_tfv_m3,
+                    "refined_first_move_margin_m3": result.refined_first_move_margin_m3,
+                    "refined_first_move_upper_bound_m3": result.refined_first_move_upper_bound_m3,
+                    "refined_first_move_admission_passed": result.refined_first_move_admission_passed,
+                    "refined_first_move_admission_contract": result.refined_first_move_admission_contract,
+                    "refined_first_move_semantics": result.refined_first_move_semantics,
+                    "refined_first_move_changed_facility_count": result.refined_first_move_changed_facility_count,
+                    "refined_first_move_changed_facility_ids": list(result.refined_first_move_changed_facility_ids),
+                    "first_move_refinement_gain_m3": result.first_move_refinement_gain_m3,
+                    "first_move_refiner_elapsed_seconds": result.first_move_refiner_elapsed_seconds,
+                    "first_move_refiner_steps": result.first_move_refiner_steps,
+                    "counterfactual_plan_telemetry_contract": DIRECT_TFV_COUNTERFACTUAL_PLAN_TELEMETRY_CONTRACT,
+                    "counterfactual_reference_semantics": "LATCH_PREVIOUS_TARGET_H360",
+                    "counterfactual_candidate_semantics": result.counterfactual_candidate_semantics,
                     "counterfactual_actuator_ids": list(result.counterfactual_actuator_ids),
-                    "optimized_free_control_blocks": [
-                        list(row) for row in result.optimized_free_control_blocks
-                    ],
+                    "optimized_free_control_blocks": [list(row) for row in result.optimized_free_control_blocks],
                     "hold_reference_settings": list(result.hold_reference_settings),
                     "scipy_message": result.scipy_message[:2000],
                 }
             )
-
         source = str(action.source)
         if source == "MPC_V122" and result is not None:
             if result.selected_source == "DIRECT_TFV_RECEDING_LBFGSB":
                 source = "MPC_DIRECT_TFV_RECEDING"
-            elif result.selected_source == "HOLD_CALIBRATED_TFV_UPPER_BOUND_NONNEGATIVE":
-                source = "HOLD_DIRECT_TFV_CALIBRATED_UPPER_BOUND"
+            elif result.selected_source in {
+                "HOLD_CALIBRATED_TFV_UPPER_BOUND_NONNEGATIVE",
+                "HOLD_REFINED_FIRST_MOVE_UPPER_BOUND_NONNEGATIVE",
+                "LATCH_PREVIOUS_TARGET_FIRST_MOVE_UPPER_BOUND_NONNEGATIVE",
+            }:
+                source = "LATCH_PREVIOUS_TARGET_DIRECT_TFV_UPPER_BOUND"
             elif result.selected_source == "HOLD_NO_EXECUTABLE_FIRST_MOVE":
-                source = "HOLD_DIRECT_TFV_NO_EXECUTABLE_FIRST_MOVE"
+                source = "LATCH_PREVIOUS_TARGET_DIRECT_TFV_NO_CHANGE"
             else:
-                source = "HOLD_DIRECT_TFV_NO_PREDICTED_BENEFIT"
+                source = "LATCH_PREVIOUS_TARGET_DIRECT_TFV_NO_PREDICTED_BENEFIT"
         elif source == "MPC_V122":
             source = "MPC_DIRECT_TFV_RECEDING"
         elif source == "PASSIVE_MPC_NO_PREDICTED_BENEFIT":
-            source = "HOLD_DIRECT_TFV_CALIBRATED_OR_NO_BENEFIT"
+            source = "LATCH_PREVIOUS_TARGET_DIRECT_TFV"
         elif source.endswith("_V122"):
             source = source[:-5] + "_DIRECT_TFV"
         diagnostics["calibrated_runtime_action_class"] = (
             "ACTION" if source == "MPC_DIRECT_TFV_RECEDING" else "HOLD"
         )
+        diagnostics["hold_semantics"] = "LATCH_PREVIOUS_COMMANDED_TARGET"
         return ControllerAction(settings=action.settings, source=source, diagnostics=diagnostics)
 
 

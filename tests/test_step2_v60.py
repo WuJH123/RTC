@@ -20,12 +20,24 @@ from rtc.step2_d3_lineage_v60 import stamp_d3_v60_lineage
 from rtc.step2_optimization_v60 import event_balance_summary_v60
 from rtc.step2_train_response_v60 import (
     TargetScalesV60,
+    V60TrainCache,
     event_balanced_mean_v60,
     hydraulic_critical_weights_v60,
     listwise_loss_v60,
     magnitude_strata_partition_v60,
     response_collapse_v60,
 )
+
+
+def test_v60_cache_recognizes_policy_calibration_candidate_role():
+    cache = object.__new__(V60TrainCache)
+    cache._index = {
+        "D3::fresh::event::checkpoint": SimpleNamespace(
+            source_kind="D3",
+            candidate_roles=("D3_V6_POLICY_CALIBRATION_CANDIDATE",),
+        )
+    }
+    assert cache.is_targeted_d3_v60("D3::fresh::event::checkpoint")
 
 
 def _graph():

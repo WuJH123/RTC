@@ -1,0 +1,52 @@
+{
+  "contract": "PROJECT7_DIRECT_TFV_ROBUST_RAINFALL_EXPERIMENT_V1",
+  "status": "DEVELOPMENT_ONLY_NOT_CURRENT_NOT_POLICY_LOCKED",
+  "base_policy_contract": "PROJECT7_CURRENT_DIRECT_TFV_CONTROL_V11",
+  "step3_experiment_contract": "PROJECT7_DIRECT_TFV_109ACT_RECEDING_MPC_V10_CAUSAL_RAINFALL_SCENARIO_MEAN",
+  "rainfall_scenario_contract": "PROJECT7_CAUSAL_RAINFALL_PERSISTENCE_DECAY_MULTIPLIER_ENSEMBLE_V1",
+  "scientific_hypothesis": "The V11 target-latch execution semantics are correct, but single-scenario causal rainfall forcing contributes to first-move value error under long-duration/high-intensity events. Mean-over-causal-scenarios TFV scoring should reduce rainfall-forecast sensitivity without adding a non-TFV objective.",
+  "frozen_from_v11": {
+    "step1_architecture": true,
+    "step2_architecture": true,
+    "tfv_only_objective": true,
+    "all_109_screened": true,
+    "q95_action_and_sequence_support": true,
+    "target_latch_execution": true,
+    "ten_minute_receding_decision": true,
+    "engineering_slew_max_per_update": 0.5,
+    "baseline_policies_unchanged": true
+  },
+  "must_not_reuse": {
+    "single_scenario_v11_first_move_admission": true,
+    "v10_h10_then_old_target_admission": true,
+    "generic_d3_margin_as_execution_floor": true,
+    "observed_probe_events_as_independent_acceptance": true
+  },
+  "required_before_runtime": [
+    "Freeze a label-independent causal rainfall scenario multiplier set before reading new SWMM labels.",
+    "Generate at least 24 role-disjoint Development rainfall groups for exact scenario-mean first-move calibration.",
+    "Calibrate the same target-latched refined first-move query produced by the scenario-mean Step3 contract.",
+    "Verify score==execute, target-latch readback, q95 support and engineering feasibility.",
+    "Run new preregistered Development probes not used by V11/T8/T30/T80 diagnostics."
+  ],
+  "canonical_initial_scenario_design_for_sensitivity_only": {
+    "decay_per_step": 0.92,
+    "scenario_multipliers": [0.8, 1.0, 1.2],
+    "history_steps_for_level": 3,
+    "aggregation": "mean_delta_tfv",
+    "performance_tuned": false
+  },
+  "promotion_gates": {
+    "no_control_event_level_noninferiority": "3/3 on new Development probes before untouched evaluation",
+    "exact_replay_false_beneficial_rate": "must improve materially versus V11 mechanism sample",
+    "auto_rbc_comparison": "report transparently; do not weaken or retune baseline",
+    "runtime_budget_seconds": 180,
+    "support_engineering_readback_violations": 0
+  },
+  "data_boundaries": {
+    "Validation_access": false,
+    "Final_access": false,
+    "Formal_access": false,
+    "Policy_Lock_access": false
+  }
+}

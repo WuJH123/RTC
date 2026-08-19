@@ -1,0 +1,69 @@
+{
+  "contract": "PROJECT7_DIRECT_TFV_RECEDING_POLICY_RETURN_EXPERIMENT_V1",
+  "status": "DEVELOPMENT_ONLY_NOT_POLICY_LOCKED",
+  "scientific_diagnosis": "OPEN_LOOP_VALUE_VS_RECEDING_CONTROL_MISMATCH",
+  "evidence_basis": {
+    "v12_accepted_h360_replay_sign_correct": "9/9",
+    "v12_accepted_h360_false_beneficial": "0/9",
+    "v12_event_level_no_control_consistency": "1/3",
+    "v12_auto_rbc_wins_for_proposed": "0/3",
+    "interpretation": "Locally correct target-latched H360 value is insufficient to guarantee lower cumulative TFV under repeated 10-minute replanning."
+  },
+  "frozen_components": {
+    "authoritative_truth": "SWMM",
+    "step1": "frozen",
+    "base_step2_v5": "frozen coordinated direction generator",
+    "all_109_screened": true,
+    "q95_support": true,
+    "tfv_only_objective": true,
+    "model_step_seconds": 300,
+    "control_update_seconds": 600,
+    "prediction_horizon_minutes": 360,
+    "free_control_horizon_minutes": 120,
+    "execute_minutes": 10,
+    "target_latch_semantics": "LAST_COMMANDED_TARGET_PERSISTS_UNTIL_EXPLICITLY_CHANGED",
+    "max_target_delta_per_update": 0.5,
+    "pfv_role": "REPORT_ONLY",
+    "global_peak_role": "REPORT_ONLY"
+  },
+  "new_estimand": "EXECUTE_CANDIDATE_H10_THEN_FROZEN_POLICY_VS_HOLD_H10_THEN_SAME_FROZEN_POLICY",
+  "policy_iteration": {
+    "parent_policy": "freeze exact policy SHA before label generation",
+    "paired_branch_rule": "candidate and HOLD share exact SWMM prefix and the exact same continuation policy after t+10",
+    "minimum_training_rainfall_groups": 48,
+    "minimum_model_selection_rainfall_groups": 12,
+    "minimum_calibration_rainfall_groups": 24,
+    "all_three_role_sets_disjoint": true,
+    "iterate_until": "policy action agreement and event-balanced policy-return residuals stabilize on Development-only fixed-point audit"
+  },
+  "step2_improvement": {
+    "architecture": "initialize the same DirectFacilityTFVValueModel from frozen V5; do not enlarge the network in the first policy-return experiment",
+    "target": "paired authoritative receding-policy delta TFV",
+    "loss": "event-balanced SmoothL1 + sign + within-prefix/rainfall-group ranking",
+    "causal_rainfall": "forecast scenarios only; never future realized rainfall online",
+    "hard_examples": "add only after independent policy-return labels demonstrate sign/ranking failure"
+  },
+  "step3": {
+    "module": "src/rtc/step3_tfv_value_mpc_v11.py",
+    "base_direction": "V12 scenario-mean q95-supported coordinated direction",
+    "execution_gate": "policy-return critic plus matched one-sided rainfall-group conformal margin",
+    "old_open_loop_margin_controls_execution": false,
+    "generic_d3_floor_controls_execution": false
+  },
+  "promotion_gates": {
+    "technical": "zero support/engineering/readback/score-execute violations and every serial decision < 600 s",
+    "policy_return_replay": "low false-beneficial and event-balanced sign/ranking accuracy on role-disjoint Development audit",
+    "closed_loop": "Proposed TFV <= No-control on every preregistered Development probe before untouched evaluation",
+    "baseline_reporting": "Internal, Auto-RBC, EFD, All-open and All-closed remain unchanged and fully reported",
+    "ready_for_policy_lock": false
+  },
+  "forbidden": [
+    "Validation/Final/Formal/Policy-Lock data for tuning",
+    "future realized rainfall online",
+    "online SWMM candidate search",
+    "PFV or Global Peak added to the objective",
+    "Auto-RBC imitation/warm-start",
+    "performance-tuned q99/K/margin",
+    "generic D3 regeneration unless an existing frozen asset is truly incompatible"
+  ]
+}
