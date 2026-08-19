@@ -30,7 +30,6 @@ from .direct_tfv_policy_return_portfolio import (
     DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT,
     LearnedH10ProbeProposal,
     PolicyReturnPortfolioCandidate,
-    _actuator_bounds,
     _bounded_supported_target,
     _normalization_tensors,
     build_learned_h10_probe_proposal,
@@ -148,11 +147,12 @@ def build_projected_gradient_h10_proposal(
 ) -> ProjectedGradientH10Proposal:
     """Generate one bounded 109-D H10 proposal using deterministic projected gradient descent.
 
-    The algorithm is deliberately small: gradients are normalized before stepping, three fixed
-    backtracking fractions are considered per iteration, and every trial is projected to the frozen
-    engineering/training-support envelope. Even when the base Step2 score does not improve, the best
-    finite non-HOLD projected trial is retained as an exploratory proposal; the policy-return critic,
-    not this proposer, decides whether it is beneficial enough to execute.
+    Gradients are normalized before stepping, three fixed backtracking fractions are tested per
+    iteration, and every trial is projected relative to the active supervisory target. The projection
+    itself handles one-sided physical headroom at bounds, so an actuator at setting 1 can still move
+    downward and an actuator at setting 0 can still move upward. Even when the base Step2 score does
+    not improve, the best finite non-HOLD projected trial is retained as an exploratory proposal; the
+    policy-return critic, not this proposer, decides whether it is beneficial enough to execute.
     """
     if int(gradient_steps) <= 0:
         raise ValueError("gradient_steps must be positive")
@@ -168,9 +168,6 @@ def build_projected_gradient_h10_proposal(
     if radius.shape != (109,) or not np.isfinite(radius).all():
         raise ValueError("projected-gradient first-move radius must contain 109 finite entries")
     allowed = np.minimum(np.maximum(radius, 0.0), float(max_delta_per_update))
-    lower, upper = _actuator_bounds(graph)
-    allowed = np.minimum(allowed, np.maximum(upper - active_np, 0.0))
-    allowed = np.minimum(allowed, np.maximum(active_np - lower, 0.0) + np.maximum(upper - active_np, 0.0))
     if int(np.count_nonzero(allowed > 1.0e-7)) == 0:
         return ProjectedGradientH10Proposal(
             target=None,
