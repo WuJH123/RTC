@@ -1,0 +1,1 @@
+Run the V12 admission lineage audit before policy-return continuation. A stale behavioral fingerprint remains incompatible. Reuse role-pure V12 calibration rainfall groups; do not synthesize rainfall or regenerate generic D3 solely for lineage refresh.
