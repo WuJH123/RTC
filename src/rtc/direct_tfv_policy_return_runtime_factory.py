@@ -1,8 +1,8 @@
 """Build the current Practical H10 policy-return controller.
 
-This factory is intentionally **current-only**. It has no historical V12 policy/first-move admission
-arguments and no L-BFGS-B branch. Historical parent/ablation code remains in archival modules; the
-first current paired-label round instead uses ``direct_tfv_base_probe_runtime_factory``.
+The current online policy uses a four-family first-action portfolio: two frozen-Step2 probe scales,
+one type-aware hydraulic direction and one 109-D support-constrained projected-gradient proposal. The
+historical 12x109 L-BFGS-B optimizer and V12 admissions remain archival only.
 """
 from __future__ import annotations
 
@@ -20,9 +20,10 @@ from .direct_tfv_policy_return import (
     DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT,
     load_policy_return_checkpoint,
 )
-from .direct_tfv_policy_return_portfolio import (
+from .direct_tfv_policy_return_hybrid_portfolio import (
     DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT,
     DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
+    DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT,
 )
 from .direct_tfv_sequence_support import validate_direct_tfv_sequence_support
 from .forecast import PersistenceDecayForecast
@@ -30,14 +31,14 @@ from .production_cli import _controller_config, _load_graph, _load_lines
 from .runtime_controller_guard import ContinuityGuardController
 from .step1_runtime_v127 import load_frozen_step1_v127
 from .step3_tfv_value_mpc_v4 import DirectTFVMPCDesignV4
-from .step3_tfv_value_mpc_v12 import (
-    DIRECT_TFV_POLICY_RETURN_PORTFOLIO_STEP3_CONTRACT,
-    DirectTFVPolicyReturnPortfolioMPCV12,
+from .step3_tfv_value_mpc_v13 import (
+    DIRECT_TFV_HYBRID_POLICY_RETURN_STEP3_CONTRACT,
+    DirectTFVHybridPolicyReturnMPCV13,
 )
 
 
 POLICY_RETURN_FROZEN_CONTINUATION_FACTORY_CONTRACT = (
-    "PROJECT7_PRACTICAL_POLICY_RETURN_FACTORY_V5_NO_LEGACY_V12"
+    "PROJECT7_PRACTICAL_POLICY_RETURN_FACTORY_V6_H10_HYBRID_GRADIENT"
 )
 
 
@@ -58,11 +59,15 @@ def build_frozen_policy_return_continuation_controller(
     device: torch.device,
     decision_runtime_budget_seconds: float = 180.0,
     proposal_probe_chunk_size: int = 24,
+    projected_gradient_steps: int = 6,
+    projected_gradient_step_fraction: float = 0.25,
 ) -> tuple[object, object, tuple[str, ...], dict]:
     graph = _load_graph(graph_path)
     sensors = _load_lines(sensors_path)
     step1 = load_frozen_step1_v127(step1_path, device)
-    base_model, base_norm, base = load_direct_tfv_runtime_checkpoint(step2_path, graph=graph, device=device)
+    base_model, base_norm, base = load_direct_tfv_runtime_checkpoint(
+        step2_path, graph=graph, device=device
+    )
     support = json.loads(Path(sequence_support_path).read_text(encoding="utf-8"))
     validate_direct_tfv_sequence_support(
         support,
@@ -90,7 +95,7 @@ def build_frozen_policy_return_continuation_controller(
     checkpoint_portfolio = str(return_checkpoint.get("candidate_portfolio_contract", ""))
     admission_portfolio = str(return_admission.get("candidate_portfolio_contract", ""))
     if checkpoint_portfolio != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT or admission_portfolio != checkpoint_portfolio:
-        raise ValueError("Practical critic/admission must use the current H10 candidate portfolio")
+        raise ValueError("Practical critic/admission must use the current hybrid H10 candidate portfolio")
 
     cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
     controller_cfg = replace(
@@ -99,7 +104,7 @@ def build_frozen_policy_return_continuation_controller(
         control_block_steps=2,
         max_setting_delta_per_update=0.5,
         decision_runtime_budget_seconds=float(decision_runtime_budget_seconds),
-        fallback_policy_id="HOLD_PRACTICAL_POLICY_RETURN_FALLBACK",
+        fallback_policy_id="HOLD_PRACTICAL_HYBRID_POLICY_RETURN_FALLBACK",
     )
     controller_cfg.validate()
     design = DirectTFVMPCDesignV4(
@@ -108,7 +113,7 @@ def build_frozen_policy_return_continuation_controller(
         active_facility_count=0,
         active_support_quantile="q95",
     )
-    mpc = DirectTFVPolicyReturnPortfolioMPCV12(
+    mpc = DirectTFVHybridPolicyReturnMPCV13(
         model=base_model,
         graph=graph,
         normalization=base_norm,
@@ -120,6 +125,8 @@ def build_frozen_policy_return_continuation_controller(
         policy_return_checkpoint_sha256=checkpoint_sha,
         design=design,
         proposal_probe_chunk_size=int(proposal_probe_chunk_size),
+        projected_gradient_steps=int(projected_gradient_steps),
+        projected_gradient_step_fraction=float(projected_gradient_step_fraction),
     )
     inner = PortfolioMemorySafeDirectTFVAuthoritativeController(
         step1=step1,
@@ -140,19 +147,24 @@ def build_frozen_policy_return_continuation_controller(
         allow_projection=False,
         enforce_current_delta=False,
     )
-    step3_path = Path(__file__).resolve().parent / "step3_tfv_value_mpc_v12.py"
+    step3_path = Path(__file__).resolve().parent / "step3_tfv_value_mpc_v13.py"
     lineage = {
         "factory_contract": POLICY_RETURN_FROZEN_CONTINUATION_FACTORY_CONTRACT,
         "step1_sha256": _sha(step1_path),
         "base_step2_sha256": _sha(step2_path),
         "sequence_support_sha256": _sha(sequence_support_path),
         "policy_return_step3_source_sha256": _sha(step3_path),
-        "policy_return_step3_contract": DIRECT_TFV_POLICY_RETURN_PORTFOLIO_STEP3_CONTRACT,
+        "policy_return_step3_contract": DIRECT_TFV_HYBRID_POLICY_RETURN_STEP3_CONTRACT,
         "policy_return_checkpoint_sha256": checkpoint_sha,
         "policy_return_admission_sha256": _sha(policy_return_admission_path),
         "policy_return_action_encoding": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
         "critic_parent_continuation_policy_sha256": checkpoint_parent,
         "candidate_portfolio_contract": checkpoint_portfolio,
+        "candidate_portfolio_family_count_max": 4,
+        "projected_gradient_h10_enabled": True,
+        "projected_gradient_generator_contract": DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT,
+        "projected_gradient_steps": int(projected_gradient_steps),
+        "projected_gradient_step_fraction": float(projected_gradient_step_fraction),
         "portfolio_mode": True,
         "online_lbfgsb_used": False,
         "h10_probe_generator_contract": DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT,
