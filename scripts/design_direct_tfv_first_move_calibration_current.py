@@ -225,7 +225,9 @@ def main() -> None:
     frame = pd.DataFrame.from_records(output_rows)
     if len(frame) != 2 * len(groups):
         raise RuntimeError("first-move panel must have exactly HOLD+candidate per rainfall group")
-    out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True); frame.to_csv(out, index=False)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(out, index=False)
     payload = {
         "contract": CURRENT_FIRST_MOVE_PANEL_RUN_CONTRACT,
         "development_only": True,
