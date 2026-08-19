@@ -1,4 +1,4 @@
-"""Run the high-signal Ruff gate for the maintained Project7 surface."""
+"""Run the high-signal Ruff gate for the maintained Project7 Practical RTC surface."""
 from __future__ import annotations
 
 import json
@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "configs" / "project7_current_lint_surface.json"
-EXPECTED_CONTRACT = "PROJECT7_CURRENT_LINT_SURFACE_DIRECT_TFV_V16"
+EXPECTED_CONTRACT = "PROJECT7_CURRENT_LINT_SURFACE_PRACTICAL_RTC_V1"
 EXPECTED_RULES = ("E4", "E7", "E9", "F")
 
 
