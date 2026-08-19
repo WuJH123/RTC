@@ -120,8 +120,10 @@ def main() -> None:
         candidate = rows[rows["data_role"].astype(str) == CANDIDATE_ROLE]
         if len(hold) != 1 or len(candidate) != 1:
             raise ValueError(f"{group}: V12 panel requires exactly HOLD+candidate")
-        h = hold.iloc[0]; c = candidate.iloc[0]
-        hkey = (group, str(h["sequence_sha256"])); ckey = (group, str(c["sequence_sha256"]))
+        h = hold.iloc[0]
+        c = candidate.iloc[0]
+        hkey = (group, str(h["sequence_sha256"]))
+        ckey = (group, str(c["sequence_sha256"]))
         if hkey not in truth or ckey not in truth:
             raise ValueError(f"{group}: V12 SWMM truth missing HOLD/candidate")
         records.append(
@@ -159,7 +161,8 @@ def main() -> None:
             },
         }
     )
-    out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(payload, indent=2, sort_keys=True))
 
