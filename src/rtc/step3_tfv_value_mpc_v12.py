@@ -16,7 +16,6 @@ from dataclasses import dataclass
 import time
 from typing import Any, Mapping
 
-import numpy as np
 import torch
 
 from .direct_tfv_policy_return import (
