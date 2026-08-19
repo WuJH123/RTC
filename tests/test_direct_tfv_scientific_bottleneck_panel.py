@@ -77,11 +77,16 @@ def test_clean_proposed_is_compared_against_all_six_verified_baselines(tmp_path:
     assert payload["baseline_provenance_verified_all"] is True
     assert payload["proposed_beats_no_control"] is True
     assert payload["classification"] == "DEVELOPMENT_EVENT_METHOD_ADVANTAGE_SUPPORTED"
-    wins = payload["proposed_beats_scientific_comparator"]
+    wins = payload["proposed_beats_operational_comparator"]
     assert set(wins) == set(SCIENTIFIC_COMPARATOR_IDS)
     assert all(wins.values())
+    assert payload["diagnostic_extremes"] == ["all_open", "all_closed"]
+    assert payload["universal_comparator_superiority_required"] is False
     rows = payload["rows"]
     assert isinstance(rows, list) and len(rows) == 7
+    role_by_strategy = {row["strategy"]: row["role"] for row in rows}
+    assert role_by_strategy["all_open"] == "diagnostic_extreme"
+    assert role_by_strategy["all_closed"] == "diagnostic_extreme"
 
 
 def test_accelerator_fallback_is_not_mislabeled_as_scientific_policy_failure() -> None:
