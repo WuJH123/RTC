@@ -1,10 +1,15 @@
 """Run one exact-prefix CANDIDATE/HOLD pair followed by the same frozen continuation policy.
 
-Offline label generation only.  Besides the parent policy's own first move, Development portfolio
-experiments may supply an explicit 109-target JSON produced by the causal portfolio designer.  The
+Offline label generation only. Besides the parent policy's own first move, Development portfolio
+experiments may supply an explicit 109-target JSON produced by the causal portfolio designer. The
 candidate and HOLD branches always replay the identical parent prefix, inject exactly one H10 target,
-then use the same frozen continuation artifacts.  Extra portfolio metadata changes neither SWMM nor
+then use the same frozen continuation artifacts. Extra portfolio metadata changes neither SWMM nor
 the continuation policy; it identifies actions that belong to the same-state ranking query set.
+
+The two authoritative branches are intentionally sequential. After each completed branch, only the
+CPU causal context and scalar/path evidence are retained; the wrapper->delegate ownership edge is
+released before constructing the next CUDA controller. This prevents an 8-GB GPU from accidentally
+holding two complete continuation-policy model stacks at once.
 """
 from __future__ import annotations
 
@@ -29,7 +34,10 @@ from rtc.direct_tfv_policy_return_runtime_factory import (
     build_frozen_policy_return_continuation_controller,
 )
 from rtc.direct_tfv_runtime_factory import build_frozen_v12_continuation_controller
-from rtc.policy_return_replay import ExactPrefixThenFrozenPolicyController
+from rtc.policy_return_replay import (
+    ExactPrefixThenFrozenPolicyController,
+    snapshot_and_release_policy_return_branch,
+)
 from rtc.production_cli import _controls_disabled_runtime
 
 
@@ -189,6 +197,10 @@ def _run_branch(
     return result, wrapper, lineage
 
 
+def _write_lifecycle(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--inp", required=True)
@@ -251,6 +263,8 @@ def main() -> None:
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
     out_root = Path(args.out_dir)
     out_root.mkdir(parents=True, exist_ok=True)
+    lifecycle_path = out_root / f"{args.run_id}.branch_memory_lifecycle.json"
+
     candidate_result, candidate_wrapper, candidate_lineage = _run_branch(
         args=args,
         branch_kind="CANDIDATE",
@@ -261,6 +275,19 @@ def main() -> None:
         device=device,
         out_root=out_root,
     )
+    candidate_context, candidate_release = snapshot_and_release_policy_return_branch(
+        candidate_wrapper,
+        device=device,
+    )
+    del candidate_wrapper
+    lifecycle: dict[str, Any] = {
+        "candidate_release": candidate_release,
+        "hold_release": None,
+        "sequential_branch_controller_residency": True,
+        "scientific_action_changed_by_cleanup": False,
+    }
+    _write_lifecycle(lifecycle_path, lifecycle)
+
     hold_result, hold_wrapper, hold_lineage = _run_branch(
         args=args,
         branch_kind="HOLD",
@@ -271,11 +298,16 @@ def main() -> None:
         device=device,
         out_root=out_root,
     )
+    hold_context, hold_release = snapshot_and_release_policy_return_branch(
+        hold_wrapper,
+        device=device,
+    )
+    del hold_wrapper
+    lifecycle["hold_release"] = hold_release
+    _write_lifecycle(lifecycle_path, lifecycle)
+
     if candidate_lineage != hold_lineage:
         raise RuntimeError("candidate/HOLD branches used different continuation-policy artifacts")
-    candidate_context = candidate_wrapper.branch_context
-    hold_context = hold_wrapper.branch_context
-    assert candidate_context is not None and hold_context is not None
     max_prefix_difference = max(
         float(np.max(np.abs(candidate_context[key].astype(float) - hold_context[key].astype(float))))
         for key in candidate_context
@@ -346,6 +378,8 @@ def main() -> None:
         "hold_metadata_path": hold_result.metadata_path,
         "candidate_node_statistics_path": candidate_result.node_statistics_path,
         "hold_node_statistics_path": hold_result.node_statistics_path,
+        "branch_memory_lifecycle_path": str(lifecycle_path.resolve()),
+        "branch_memory_lifecycle": lifecycle,
         "continuation_lineage": candidate_lineage,
     }
     record_path = out_root / f"{args.run_id}.policy_return_record.json"
