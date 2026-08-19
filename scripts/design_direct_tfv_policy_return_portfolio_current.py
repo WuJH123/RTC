@@ -17,7 +17,6 @@ import numpy as np
 import torch
 
 from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
-from rtc.direct_tfv_policy_return import encode_policy_return_action_token
 from rtc.direct_tfv_policy_return_portfolio import (
     DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT,
     DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
@@ -53,8 +52,6 @@ def _joint_contract_h10_target(
     """Contract the actual H10 pulse geometry to the frozen joint-sequence trust region."""
     delta = np.asarray(target, dtype=np.float64) - np.asarray(active, dtype=np.float64)
     l1 = float(np.sum(np.abs(delta)))
-    # H10 candidate -> HOLD means only the first control block is displaced. Returning to HOLD at the
-    # next block contributes the second variation term.
     geometry = {
         "first_block_l1": l1,
         "h120_l1": l1,
@@ -96,7 +93,11 @@ def main() -> None:
     action_support = dict(checkpoint["action_support"])
     first_radius = np.asarray(action_support["first_move_abs_q95_per_facility"], dtype=np.float32)
     support = json.loads(Path(args.sequence_support).read_text(encoding="utf-8"))
-    validate_direct_tfv_sequence_support(support, actuator_ids=graph.actuator_ids, step2_checkpoint_sha256=None)
+    validate_direct_tfv_sequence_support(
+        support,
+        actuator_ids=graph.actuator_ids,
+        step2_checkpoint_sha256=None,
+    )
 
     data = np.load(args.context, allow_pickle=False)
     for key in ("current_state", "rainfall_scenarios", "active_target", "previous_actuator_flow"):
@@ -105,9 +106,15 @@ def main() -> None:
     state = torch.as_tensor(np.asarray(data["current_state"]), dtype=torch.float32, device=device)
     if state.ndim != 3 or int(state.shape[0]) != 1:
         raise ValueError("context current_state must be [1,node,state]")
-    rain = torch.as_tensor(np.asarray(data["rainfall_scenarios"])[0], dtype=torch.float32, device=device)
-    active = torch.as_tensor(np.asarray(data["active_target"])[0], dtype=torch.float32, device=device)
-    flow = torch.as_tensor(np.asarray(data["previous_actuator_flow"]), dtype=torch.float32, device=device)
+    rain = torch.as_tensor(
+        np.asarray(data["rainfall_scenarios"])[0], dtype=torch.float32, device=device
+    )
+    active = torch.as_tensor(
+        np.asarray(data["active_target"])[0], dtype=torch.float32, device=device
+    )
+    flow = torch.as_tensor(
+        np.asarray(data["previous_actuator_flow"]), dtype=torch.float32, device=device
+    )
     ceiling = _active_ceiling(action_support)
 
     learned = build_learned_h10_probe_proposal(
@@ -141,9 +148,14 @@ def main() -> None:
     seen: set[bytes] = set()
     for candidate in candidates:
         supported, contraction, geometry = _joint_contract_h10_target(
-            candidate.target.detach().cpu().numpy(), active_np, support=support, quantile="q95"
+            candidate.target.detach().cpu().numpy(),
+            active_np,
+            support=support,
+            quantile="q95",
         )
-        changed = int(np.count_nonzero(np.abs(supported.astype(np.float64) - active_np) > 1.0e-7))
+        changed = int(
+            np.count_nonzero(np.abs(supported.astype(np.float64) - active_np) > 1.0e-7)
+        )
         if changed <= 0:
             continue
         key = np.ascontiguousarray(supported, dtype=np.float32).tobytes()
@@ -165,10 +177,14 @@ def main() -> None:
             "online_swmm_called": False,
         }
         path = out / f"candidate_{len(rows):02d}_{candidate.source.lower()}.json"
-        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         rows.append({"path": str(path.resolve()), **payload})
     if len(rows) < 2:
-        raise RuntimeError("practical policy-return portfolio produced fewer than two distinct candidates")
+        raise RuntimeError(
+            "practical policy-return portfolio produced fewer than two distinct candidates"
+        )
     manifest = {
         "contract": DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
         "h10_probe_generator_contract": DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT,
@@ -184,7 +200,9 @@ def main() -> None:
         "online_swmm_called": False,
     }
     manifest_path = out / "POLICY_RETURN_CANDIDATE_PORTFOLIO.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(json.dumps(manifest, indent=2, sort_keys=True))
 
 
