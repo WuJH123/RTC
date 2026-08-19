@@ -22,7 +22,9 @@ def main() -> None:
     p.add_argument("--coverage", type=float, default=0.90)
     args = p.parse_args()
     records = []
-    for line_number, raw in enumerate(Path(args.records_jsonl).read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, raw in enumerate(
+        Path(args.records_jsonl).read_text(encoding="utf-8").splitlines(), 1
+    ):
         if not raw.strip():
             continue
         row = json.loads(raw)
@@ -41,10 +43,17 @@ def main() -> None:
         coverage=float(args.coverage),
     )
     payload["records_jsonl_sha256"] = sha256_file(args.records_jsonl)
-    payload["policy_return_checkpoint_path"] = str(Path(args.policy_return_checkpoint).resolve())
-    payload["contract_verified"] = payload["contract"] == DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT
-    out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    payload["policy_return_checkpoint_path"] = str(
+        Path(args.policy_return_checkpoint).resolve()
+    )
+    payload["contract_verified"] = (
+        payload["contract"] == DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT
+    )
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
