@@ -1,14 +1,12 @@
 """Strict file manifest for the Project7 Practical RTC execution surface.
 
-The project accumulated many historical V* directories. Current scientific scripts must never guess
-a path or silently fall back to an older artifact because a preferred file is absent. A local
-supervisor first discovers the intended existing files, writes this manifest once, and every
-downstream current command verifies both the absolute path and SHA-256 before use.
+Current Project7 keeps the frozen 109-channel Step2 representation but requires one additional
+label-independent artifact: the native supervisory-control mask derived from the source INP
+``[CONTROLS]``. The current Wuhan testbed resolves to 82 online control freedoms; passive setting
+channels remain in the hydraulic representation but cannot differ between candidate and reference.
 
-Historical V12 policy/first-move admissions are intentionally absent: the current first policy-return
-round uses the hash-independent Practical base-H10-probe parent pi0, and the deployed Practical policy
-uses only the H10 policy-return critic/admission. Old V12 admissions therefore cannot block current
-execution through stale lineage.
+Every current script verifies absolute paths and SHA-256. Silent fallback to historical V* artifacts
+or legacy V12 admissions remains forbidden.
 """
 from __future__ import annotations
 
@@ -18,13 +16,16 @@ from pathlib import Path
 from typing import Mapping
 
 
-PRACTICAL_RTC_ASSET_MANIFEST_CONTRACT = "PROJECT7_PRACTICAL_RTC_ABSOLUTE_ASSET_MANIFEST_V2_NO_LEGACY_V12"
+PRACTICAL_RTC_ASSET_MANIFEST_CONTRACT = (
+    "PROJECT7_PRACTICAL_RTC_ABSOLUTE_ASSET_MANIFEST_V3_NATIVE_CONTROL_SUBSPACE"
+)
 PRACTICAL_RTC_REQUIRED_ASSETS = (
     "graph",
     "sensors",
     "config",
     "step1",
     "step2",
+    "supervisory_control",
     "sequence_support",
     "priority8",
 )
@@ -50,6 +51,10 @@ def build_practical_rtc_asset_manifest(paths: Mapping[str, str | Path]) -> dict:
         "absolute_paths_only": True,
         "silent_path_fallback_allowed": False,
         "legacy_v12_admissions_required": False,
+        "model_action_channel_count": 109,
+        "online_control_dimension_expected": 82,
+        "step1_retraining_required": False,
+        "base_step2_retraining_required": False,
         "assets": assets,
     }
 
@@ -63,6 +68,12 @@ def load_practical_rtc_asset_manifest(path: str | Path) -> dict:
         raise ValueError("Practical RTC asset manifest does not prohibit path fallback")
     if payload.get("legacy_v12_admissions_required") is not False:
         raise ValueError("current Practical RTC manifest must not require legacy V12 admissions")
+    if int(payload.get("model_action_channel_count", -1)) != 109:
+        raise ValueError("current Practical RTC manifest must retain the 109-channel model representation")
+    if int(payload.get("online_control_dimension_expected", -1)) != 82:
+        raise ValueError("current Practical RTC manifest must freeze the 82-control online subspace")
+    if payload.get("step1_retraining_required") is not False or payload.get("base_step2_retraining_required") is not False:
+        raise ValueError("current Practical asset contract must reuse frozen Step1/base Step2")
     assets = payload.get("assets")
     if not isinstance(assets, dict) or set(assets) != set(PRACTICAL_RTC_REQUIRED_ASSETS):
         raise ValueError("Practical RTC asset manifest has incomplete/extra assets")
