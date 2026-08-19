@@ -46,10 +46,11 @@ def derive_policy_return_portfolio_admission(
     multi = sum(count >= 2 for count in query_counts.values())
     if multi <= 0:
         raise ValueError("portfolio admission requires at least one same-prefix multi-candidate query set")
-    required_sources = {"TYPE_AWARE_HYDRAULIC_PRESSURE", "V12_DIRECTION_SCALE_1.00"}
-    missing = sorted(required_sources - set(source_counts))
-    if missing:
-        raise ValueError(f"portfolio calibration lacks required candidate families: {missing}")
+    sources = set(source_counts)
+    if "TYPE_AWARE_HYDRAULIC_PRESSURE" not in sources:
+        raise ValueError("portfolio calibration lacks the type-aware hydraulic-pressure family")
+    if not any(source.startswith("V12_DIRECTION_SCALE_") for source in sources):
+        raise ValueError("portfolio calibration lacks a supported learned V12-direction family")
 
     payload = derive_policy_return_admission(
         records=records,
@@ -65,9 +66,13 @@ def derive_policy_return_portfolio_admission(
             "query_set_count": len(query_counts),
             "multi_candidate_query_set_count": int(multi),
             "candidate_source_counts": dict(sorted(source_counts.items())),
+            "required_candidate_families_present": {
+                "learned_v12_direction": True,
+                "type_aware_hydraulic_pressure": True,
+            },
             "ranking_calibration_scope": (
-                "same-prefix multi-candidate portfolio; rainfall-group max residual remains the "
-                "independent split-conformal unit"
+                "same-prefix multi-candidate portfolio after engineering/support projection and "
+                "deduplication; rainfall-group max residual remains the independent split-conformal unit"
             ),
         }
     )
