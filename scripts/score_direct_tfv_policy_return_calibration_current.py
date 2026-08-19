@@ -116,7 +116,8 @@ def main() -> None:
         groups.add(str(scored["rainfall_group"]))
     if not rows:
         raise ValueError("no policy-return calibration records were scored")
-    out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
     summary = {
         "records": len(rows),
