@@ -1,21 +1,14 @@
 """Hybrid Practical H10 proposal portfolio for Project7 RTC.
 
-The historical Project7 optimizer searched a 12 x 109 control plan with L-BFGS-B. Development
-replays showed that such high-dimensional optimization could exploit surrogate extrema outside the
-reliable training-support geometry. The current paper method keeps the finite H10 probe/hydraulic
-candidates, but adds exactly one *first-action-only* differentiable proposal:
+The pretrained Step2 remains a 109-channel hydraulic action representation. Current online control is
+a strict subspace: only channels enabled by the native SWMM supervisory mask may differ from HOLD.
+For the Wuhan testbed this is an 82-dimensional supervisory action embedded in the frozen 109-channel
+Step2 tensor. The other 27 channels remain hydraulically represented but candidate == reference.
 
-    SUPPORT_CONSTRAINED_GRADIENT_H10
-
-Only the current 109-dimensional H10 supervisory target is optimized. Every projected-gradient trial
-is immediately projected to the frozen first-move q95 radius, 0.5 target slew, actuator bounds and
-q95 changed-facility ceiling. The differentiable objective is the frozen base-Step2 H10 action-effect
-score with the exact ``H10 candidate -> H350 HOLD`` token. The projected-gradient proposal is only a
-candidate proposer: the separately trained receding-policy-return critic remains the final ranker and
-one-sided admission gate.
-
-No future realised rainfall, online SWMM candidate search, PFV/peak objective, rule-baseline warm
-start or action penalty is introduced here.
+The projected-gradient proposal therefore optimizes only the current H10 first action on the enabled
+subspace. Every trial is projected to the native supervisory mask, first-move q95 radius, 0.5 target
+slew, actuator bounds and masked q95 changed-facility ceiling. It remains only a candidate proposer;
+the receding-policy-return critic and one-sided admission gate decide execution.
 """
 from __future__ import annotations
 
@@ -32,6 +25,7 @@ from .direct_tfv_policy_return_portfolio import (
     PolicyReturnPortfolioCandidate,
     _bounded_supported_target,
     _normalization_tensors,
+    _validated_supervisory_mask,
     build_learned_h10_probe_proposal,
     build_policy_return_candidate_portfolio,
     score_h10_first_action_targets,
@@ -39,10 +33,10 @@ from .direct_tfv_policy_return_portfolio import (
 
 
 DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_POLICY_RETURN_CAUSAL_CANDIDATE_PORTFOLIO_V4_H10_HYBRID_GRADIENT"
+    "PROJECT7_DIRECT_TFV_POLICY_RETURN_CAUSAL_CANDIDATE_PORTFOLIO_V5_H10_HYBRID_82CONTROL_109REP"
 )
 DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_SUPPORTED_109D_H10_PROJECTED_GRADIENT_GENERATOR_V1"
+    "PROJECT7_DIRECT_TFV_SUPPORTED_82D_IN_109CHANNEL_H10_PROJECTED_GRADIENT_GENERATOR_V2"
 )
 PROJECTED_GRADIENT_SOURCE = "SUPPORT_CONSTRAINED_GRADIENT_H10"
 
@@ -77,7 +71,6 @@ def _score_single_h10_target_with_grad(
     active_target: torch.Tensor,
     candidate_target: torch.Tensor,
 ) -> torch.Tensor:
-    """Differentiable frozen-Step2 mean score for one H10 target under causal rain scenarios."""
     if current_state.ndim != 3 or int(current_state.shape[0]) != 1:
         raise ValueError("projected-gradient scorer expects current_state [1,node,state]")
     if rainfall_scenarios.ndim != 4 or int(rainfall_scenarios.shape[0]) < 1:
@@ -85,7 +78,7 @@ def _score_single_h10_target_with_grad(
     if previous_actuator_flow.shape != (1, 109):
         raise ValueError("projected-gradient scorer expects previous flow [1,109]")
     if active_target.shape != (109,) or candidate_target.shape != (109,):
-        raise ValueError("projected-gradient scorer expects 109-dimensional targets")
+        raise ValueError("projected-gradient scorer expects 109-channel targets")
 
     device = current_state.device
     dtype = current_state.dtype
@@ -144,30 +137,25 @@ def build_projected_gradient_h10_proposal(
     max_delta_per_update: float = 0.5,
     gradient_steps: int = 6,
     step_fraction: float = 0.25,
+    supervisory_mask: np.ndarray | None = None,
 ) -> ProjectedGradientH10Proposal:
-    """Generate one bounded 109-D H10 proposal using deterministic projected gradient descent.
-
-    Gradients are normalized before stepping, three fixed backtracking fractions are tested per
-    iteration, and every trial is projected relative to the active supervisory target. The projection
-    itself handles one-sided physical headroom at bounds, so an actuator at setting 1 can still move
-    downward and an actuator at setting 0 can still move upward. Even when the base Step2 score does
-    not improve, the best finite non-HOLD projected trial is retained as an exploratory proposal; the
-    policy-return critic, not this proposer, decides whether it is beneficial enough to execute.
-    """
+    """Generate one bounded H10 proposal on the enabled supervisory-control subspace."""
     if int(gradient_steps) <= 0:
         raise ValueError("gradient_steps must be positive")
     if not 0.0 < float(step_fraction) <= 1.0:
         raise ValueError("step_fraction must lie in (0,1]")
-    if not 1 <= int(max_changed_facilities) <= 109:
-        raise ValueError("projected-gradient changed-facility ceiling must lie in [1,109]")
     if active_target.shape != (109,):
-        raise ValueError("projected-gradient active target must contain 109 settings")
+        raise ValueError("projected-gradient active target must contain 109 channels")
 
+    mask = _validated_supervisory_mask(supervisory_mask)
+    if not 1 <= int(max_changed_facilities) <= int(mask.sum()):
+        raise ValueError("projected-gradient changed-facility ceiling exceeds supervisory dimension")
     active_np = active_target.detach().cpu().numpy().astype(np.float64)
     radius = np.asarray(first_radius, dtype=np.float64).reshape(-1)
     if radius.shape != (109,) or not np.isfinite(radius).all():
         raise ValueError("projected-gradient first-move radius must contain 109 finite entries")
     allowed = np.minimum(np.maximum(radius, 0.0), float(max_delta_per_update))
+    allowed = np.where(mask, allowed, 0.0)
     if int(np.count_nonzero(allowed > 1.0e-7)) == 0:
         return ProjectedGradientH10Proposal(
             target=None,
@@ -225,11 +213,14 @@ def build_projected_gradient_h10_proposal(
                 )[0]
             if not bool(torch.isfinite(gradient).all()):
                 break
+            mask_tensor = torch.as_tensor(mask, dtype=gradient.dtype, device=gradient.device)
+            gradient = gradient * mask_tensor
             final_gradient_l2 = float(torch.linalg.vector_norm(gradient).detach().cpu())
             grad_scale = float(torch.max(torch.abs(gradient)).detach().cpu())
             if not np.isfinite(grad_scale) or grad_scale <= 1.0e-12:
                 break
             direction = -gradient.detach().cpu().numpy().astype(np.float64) / grad_scale
+            direction = np.where(mask, direction, 0.0)
             trial_targets: list[np.ndarray] = []
             for backtrack in (1.0, 0.5, 0.25):
                 raw = (
@@ -243,6 +234,7 @@ def build_projected_gradient_h10_proposal(
                     first_radius=radius,
                     max_changed_facilities=int(max_changed_facilities),
                     max_delta_per_update=float(max_delta_per_update),
+                    supervisory_mask=mask,
                 )
                 if np.count_nonzero(np.abs(projected.astype(np.float64) - active_np) > 1.0e-7) <= 0:
                     continue
@@ -312,8 +304,10 @@ def build_hybrid_policy_return_portfolio(
     probe_chunk_size: int = 24,
     gradient_steps: int = 6,
     gradient_step_fraction: float = 0.25,
+    supervisory_mask: np.ndarray | None = None,
 ) -> HybridPolicyReturnPortfolio:
-    """Build the current at-most-four-candidate Practical H10 portfolio."""
+    """Build the current at-most-four-candidate H10 portfolio on the masked control subspace."""
+    mask = _validated_supervisory_mask(supervisory_mask)
     learned = build_learned_h10_probe_proposal(
         model=model,
         normalization=normalization,
@@ -326,6 +320,7 @@ def build_hybrid_policy_return_portfolio(
         max_changed_facilities=int(max_changed_facilities),
         max_delta_per_update=float(max_delta_per_update),
         probe_chunk_size=int(probe_chunk_size),
+        supervisory_mask=mask,
     )
     deterministic = list(
         build_policy_return_candidate_portfolio(
@@ -337,6 +332,7 @@ def build_hybrid_policy_return_portfolio(
             first_radius=first_radius,
             max_changed_facilities=int(max_changed_facilities),
             max_delta_per_update=float(max_delta_per_update),
+            supervisory_mask=mask,
         )
     )
     gradient = build_projected_gradient_h10_proposal(
@@ -352,6 +348,7 @@ def build_hybrid_policy_return_portfolio(
         max_delta_per_update=float(max_delta_per_update),
         gradient_steps=int(gradient_steps),
         step_fraction=float(gradient_step_fraction),
+        supervisory_mask=mask,
     )
     candidates = list(deterministic)
     if gradient.target is not None:
