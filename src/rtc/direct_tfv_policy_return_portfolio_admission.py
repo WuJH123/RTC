@@ -1,4 +1,4 @@
-"""Calibration helpers for the practical policy-return candidate portfolio."""
+"""Calibration helpers for the current hybrid H10 policy-return candidate portfolio."""
 from __future__ import annotations
 
 from collections import Counter
@@ -9,18 +9,21 @@ from .direct_tfv_policy_return import (
     derive_policy_return_admission,
     validate_policy_return_record,
 )
-from .direct_tfv_policy_return_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+from .direct_tfv_policy_return_hybrid_portfolio import (
+    DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
+    PROJECTED_GRADIENT_SOURCE,
+)
 
 
 DIRECT_TFV_POLICY_RETURN_PORTFOLIO_ADMISSION_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_POLICY_RETURN_PORTFOLIO_MATCHED_ADMISSION_V2_H10_PROBE"
+    "PROJECT7_DIRECT_TFV_POLICY_RETURN_PORTFOLIO_MATCHED_ADMISSION_V3_H10_HYBRID_GRADIENT"
 )
 
 
 def validate_policy_return_portfolio_record(record: Mapping[str, Any]) -> None:
     validate_policy_return_record(record)
     if str(record.get("candidate_portfolio_contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
-        raise ValueError("policy-return portfolio record has the wrong candidate portfolio contract")
+        raise ValueError("policy-return portfolio record has the wrong hybrid candidate contract")
     if str(record.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
         raise ValueError("policy-return portfolio record has the wrong H10 action encoding")
     source = str(record.get("candidate_source", "")).strip()
@@ -39,7 +42,7 @@ def derive_policy_return_portfolio_admission(
     continuation_policy_sha256: str,
     coverage: float,
 ) -> dict[str, Any]:
-    """Calibrate one-sided residuals on the same multi-candidate H10 family used online."""
+    """Calibrate one-sided residuals on the same hybrid H10 family used online."""
     if not records:
         raise ValueError("portfolio admission received no calibration records")
     query_counts: Counter[str] = Counter()
@@ -56,6 +59,8 @@ def derive_policy_return_portfolio_admission(
         raise ValueError("portfolio calibration lacks the type-aware hydraulic-pressure family")
     if not any(source.startswith("STEP2_H10_PROBE_SCALE_") for source in sources):
         raise ValueError("portfolio calibration lacks the supported Step2 H10-probe family")
+    if PROJECTED_GRADIENT_SOURCE not in sources:
+        raise ValueError("portfolio calibration lacks the 109-D support-constrained H10 gradient family")
 
     payload = derive_policy_return_admission(
         records=records,
@@ -75,11 +80,16 @@ def derive_policy_return_portfolio_admission(
             "required_candidate_families_present": {
                 "step2_h10_probe_direction": True,
                 "type_aware_hydraulic_pressure": True,
+                "support_constrained_gradient_h10": True,
             },
             "ranking_calibration_scope": (
-                "same-prefix H10 candidate portfolio after engineering/support projection and "
-                "deduplication; rainfall-group max residual is the independent split-conformal unit"
+                "same-prefix H10 hybrid candidate portfolio after first-move engineering/support "
+                "projection, q95 joint-sequence contraction and deduplication; rainfall-group max "
+                "residual is the independent split-conformal unit"
             ),
+            "gradient_dimension": 109,
+            "gradient_action_horizon": "H10_ONLY",
+            "online_lbfgsb_used": False,
         }
     )
     return payload
