@@ -1,19 +1,20 @@
 """Causal candidate portfolio for policy-return-aligned Direct-TFV control.
 
 The historical policy-return layer only judged the single target supplied by the V12 open-loop
-direction generator.  That can reject a bad action but cannot discover a better executable action
-when the V12 direction is wrong.  This module constructs a small, deterministic portfolio that
-preserves the Proposed method's information budget:
+direction generator. That can reject a bad action but cannot discover a better executable action
+when the V12 direction is wrong. For the practical Project7 RTC path we intentionally keep the
+portfolio small:
 
-* several magnitudes of the learned V12 target;
-* a topology/volume/headroom-aware hydraulic-pressure target; and
-* one blend of the learned and hydraulic directions.
+* the learned V12 first-move direction at full magnitude;
+* the same learned direction at half magnitude; and
+* one topology/volume/headroom-aware, actuator-type-aware hydraulic-pressure target.
 
+This three-family set is sufficient to test whether the learned direction, its magnitude, or the
+hydraulic release logic is the control bottleneck without multiplying authoritative SWMM branches.
 No baseline action, future realised rainfall, online SWMM call, PFV/peak objective or action penalty
-is used.  Every target is clipped to the frozen per-facility first-move support, the engineering
-0.5 target slew, actuator bounds and the caller-supplied q95 changed-facility ceiling.  Final joint
-sequence support remains the responsibility of the Step3 controller, which has the authoritative
-D3-HOLD geometry.
+is used. Every target is clipped to frozen first-move support, the 0.5 target slew, actuator bounds
+and the caller-supplied q95 changed-facility ceiling. Final joint sequence support remains the
+responsibility of Step3.
 """
 from __future__ import annotations
 
@@ -27,9 +28,9 @@ from .actuator_release_semantics import graph_release_setting_signs
 
 
 DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_POLICY_RETURN_CAUSAL_CANDIDATE_PORTFOLIO_V1"
+    "PROJECT7_DIRECT_TFV_POLICY_RETURN_CAUSAL_CANDIDATE_PORTFOLIO_V2_PRACTICAL_THREE_FAMILY"
 )
-DEFAULT_V12_SHRINK_SCALES = (0.25, 0.50, 0.75, 1.00)
+DEFAULT_V12_SHRINK_SCALES = (0.50, 1.00)
 
 
 @dataclass(frozen=True)
@@ -65,9 +66,9 @@ def _actuator_bounds(graph: Any) -> tuple[np.ndarray, np.ndarray]:
 
 def _rain_level(rainfall_scenarios: np.ndarray) -> float:
     rain = np.asarray(rainfall_scenarios, dtype=np.float64)
-    if rain.ndim == 4:  # [scenario,H,node,feature]
+    if rain.ndim == 4:
         pass
-    elif rain.ndim == 3:  # [H,node,feature]
+    elif rain.ndim == 3:
         rain = rain[None]
     else:
         raise ValueError("portfolio rainfall must be [scenario,H,node,feature] or [H,node,feature]")
@@ -83,14 +84,7 @@ def hydraulic_pressure_setting_delta(
     graph: Any,
     max_delta_per_update: float = 0.5,
 ) -> np.ndarray:
-    """Return a type-aware local hydraulic release direction from causal state only.
-
-    State columns follow the frozen Project7 six-state contract used by the existing knowledge seed:
-    depth is column 0, flooding rate/state is column 2 and storage volume is column 3.  Storage
-    capacity and maximum depth are static graph features, so the pressure signal represents current
-    hydraulic headroom rather than a generic 0..1 actuator preference.
-    """
-
+    """Return a type-aware local hydraulic release direction from causal state only."""
     state = np.asarray(current_state, dtype=np.float64)
     if state.ndim != 2 or state.shape[0] != len(graph.node_ids) or state.shape[1] < 4:
         raise ValueError("portfolio hydraulic state must be [node,>=4]")
@@ -167,8 +161,7 @@ def build_policy_return_candidate_portfolio(
     max_delta_per_update: float = 0.5,
     shrink_scales: Iterable[float] = DEFAULT_V12_SHRINK_SCALES,
 ) -> tuple[PolicyReturnPortfolioCandidate, ...]:
-    """Build deterministic supported first-target alternatives for the policy-return critic."""
-
+    """Build the small deterministic supported first-target portfolio."""
     active = active_target.detach().cpu().numpy().astype(np.float64).reshape(-1)
     if active.shape != (109,):
         raise ValueError("portfolio requires a 109-dimensional active target")
@@ -178,7 +171,6 @@ def build_policy_return_candidate_portfolio(
     rain = rainfall_scenarios.detach().cpu().numpy()
 
     raw: list[tuple[str, np.ndarray]] = []
-    learned_delta: np.ndarray | None = None
     if isinstance(v12_target, torch.Tensor):
         learned = v12_target.detach().cpu().numpy().astype(np.float64).reshape(-1)
         if learned.shape != (109,):
@@ -190,15 +182,17 @@ def build_policy_return_candidate_portfolio(
                 raise ValueError("portfolio shrink scales must lie in (0,1]")
             raw.append((f"V12_DIRECTION_SCALE_{scale:.2f}", scale * learned_delta))
 
-    pressure_delta = hydraulic_pressure_setting_delta(
-        current_state=state,
-        rainfall_scenarios=rain,
-        graph=graph,
-        max_delta_per_update=max_delta_per_update,
+    raw.append(
+        (
+            "TYPE_AWARE_HYDRAULIC_PRESSURE",
+            hydraulic_pressure_setting_delta(
+                current_state=state,
+                rainfall_scenarios=rain,
+                graph=graph,
+                max_delta_per_update=max_delta_per_update,
+            ),
+        )
     )
-    raw.append(("TYPE_AWARE_HYDRAULIC_PRESSURE", pressure_delta))
-    if learned_delta is not None:
-        raw.append(("V12_HYDRAULIC_BLEND_50", 0.5 * learned_delta + 0.5 * pressure_delta))
 
     candidates: list[PolicyReturnPortfolioCandidate] = []
     seen: set[bytes] = set()
