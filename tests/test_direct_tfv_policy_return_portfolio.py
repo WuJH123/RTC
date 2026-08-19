@@ -19,6 +19,10 @@ from rtc.direct_tfv_policy_return_portfolio_admission import (
     DIRECT_TFV_POLICY_RETURN_PORTFOLIO_ADMISSION_CONTRACT,
     derive_policy_return_portfolio_admission,
 )
+from rtc.policy_return_replay import (
+    POLICY_RETURN_BRANCH_RELEASE_CONTRACT,
+    snapshot_and_release_policy_return_branch,
+)
 
 
 def _graph() -> SimpleNamespace:
@@ -110,6 +114,30 @@ def test_candidate_portfolio_is_supported_bounded_and_not_baseline_imitation() -
         assert row.changed_facility_count <= 4
         assert float(delta.max()) <= 0.150001
         assert bool(torch.all((row.target >= 0.0) & (row.target <= 1.0)))
+
+
+def test_policy_return_branch_release_copies_context_and_severs_delegate() -> None:
+    original = np.arange(12, dtype=np.float32).reshape(3, 4)
+    wrapper = SimpleNamespace(
+        branch_context={
+            "current_state": original,
+            "rainfall_scenarios": np.ones((3, 2, 2, 1), dtype=np.float32),
+            "active_target": np.full(109, 0.5, dtype=np.float32),
+            "previous_actuator_flow": np.zeros(109, dtype=np.float32),
+        },
+        delegate=SimpleNamespace(model=torch.nn.Linear(4, 2)),
+    )
+    context, telemetry = snapshot_and_release_policy_return_branch(
+        wrapper,
+        device=torch.device("cpu"),
+    )
+    assert wrapper.delegate is None
+    assert np.array_equal(context["current_state"], original)
+    assert not np.shares_memory(context["current_state"], original)
+    assert telemetry["contract"] == POLICY_RETURN_BRANCH_RELEASE_CONTRACT
+    assert telemetry["cuda_device_type"] == "cpu"
+    assert telemetry["allocated_before_bytes"] == 0
+    assert telemetry["reserved_after_bytes"] == 0
 
 
 def _calibration_record(group: str, source: str, truth: float, prediction: float) -> dict:
