@@ -3,15 +3,13 @@
 The historical Direct-TFV Step2 predicts an open-loop/no-further-command H360 value difference.
 That remains useful for generating a coordinated H120 direction, but Development V12 evidence shows
 that a locally correct H360 first-move sign is not sufficient to guarantee lower event-level TFV
-under repeated 10-minute replanning.  This module defines the *deployed-policy* estimand used by the
-next scientific stage:
+under repeated 10-minute replanning. This module defines the deployed-policy estimand:
 
     A^pi(x_t, u_t) = J(x_t, u_t for H10, then frozen pi)
                      - J(x_t, HOLD for H10, then the same frozen pi)
 
 Both counterfactual branches must use the same frozen continuation policy after t+10 min and must
-start from an identical authoritative SWMM prefix.  SWMM remains offline truth only; it is never
-called by the online optimizer.
+start from an identical authoritative SWMM prefix. SWMM remains offline truth only.
 """
 from __future__ import annotations
 
@@ -42,8 +40,14 @@ DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT = (
     "PROJECT7_DIRECT_TFV_RECEDING_POLICY_RETURN_PAIRED_SWMM_DATASET_V1"
 )
 DIRECT_TFV_POLICY_RETURN_MIN_TRAIN_GROUPS = 48
+DIRECT_TFV_POLICY_RETURN_MIN_VALIDATION_GROUPS = 12
 DIRECT_TFV_POLICY_RETURN_MIN_CALIBRATION_GROUPS = 24
 DIRECT_TFV_POLICY_RETURN_NORMALIZATION = "SQRT_ACTUAL_FIRST_MOVE_CHANGED_FACILITY_COUNT"
+_POLICY_RETURN_ROLES = {
+    "policy_return_train",
+    "policy_return_validation",
+    "policy_return_calibration",
+}
 
 
 def sha256_file(path: str | Path) -> str:
@@ -65,11 +69,15 @@ def _scale(changed_facility_count: int) -> float:
 
 
 def validate_policy_return_record(record: Mapping[str, Any]) -> None:
-    """Fail closed on a paired offline SWMM policy-return label."""
+    """Fail closed on a paired offline SWMM policy-return label.
 
+    Training/validation records are authoritative label records and need not already contain a model
+    prediction. Calibration records must contain the prediction from the frozen selected critic.
+    """
     if str(record.get("estimand", "")) != DIRECT_TFV_POLICY_RETURN_ESTIMAND:
         raise ValueError("policy-return record has the wrong estimand")
-    if str(record.get("data_role", "")) not in {"policy_return_train", "policy_return_calibration"}:
+    role = str(record.get("data_role", ""))
+    if role not in _POLICY_RETURN_ROLES:
         raise ValueError("policy-return record has an invalid data role")
     if record.get("same_prefix_verified") is not True:
         raise ValueError("policy-return record requires identical authoritative prefix verification")
@@ -81,9 +89,9 @@ def validate_policy_return_record(record: Mapping[str, Any]) -> None:
     event = str(record.get("event_id", ""))
     if not group or not event:
         raise ValueError("policy-return record requires rainfall_group and event_id")
-    changed = int(record.get("first_move_changed_facility_count", -1))
-    _scale(changed)
-    _finite(record.get("predicted_policy_return_delta_tfv_m3"), label="predicted policy return")
+    _scale(int(record.get("first_move_changed_facility_count", -1)))
+    if role == "policy_return_calibration" or "predicted_policy_return_delta_tfv_m3" in record:
+        _finite(record.get("predicted_policy_return_delta_tfv_m3"), label="predicted policy return")
     _finite(record.get("true_policy_return_delta_tfv_m3"), label="true policy return")
     candidate_tfv = _finite(record.get("candidate_branch_tfv_m3"), label="candidate branch TFV")
     hold_tfv = _finite(record.get("hold_branch_tfv_m3"), label="HOLD branch TFV")
@@ -103,18 +111,28 @@ def validate_policy_return_record(record: Mapping[str, Any]) -> None:
 
 def assert_role_disjoint(
     train_records: Sequence[Mapping[str, Any]],
+    validation_records: Sequence[Mapping[str, Any]],
     calibration_records: Sequence[Mapping[str, Any]],
 ) -> None:
-    train_groups = {str(row.get("rainfall_group", "")) for row in train_records}
-    calibration_groups = {str(row.get("rainfall_group", "")) for row in calibration_records}
-    overlap = sorted(train_groups & calibration_groups)
-    if overlap:
-        raise ValueError(f"policy-return train/calibration rainfall groups overlap: {overlap}")
-    if len(train_groups) < DIRECT_TFV_POLICY_RETURN_MIN_TRAIN_GROUPS:
+    sets = {
+        "train": {str(row.get("rainfall_group", "")) for row in train_records},
+        "validation": {str(row.get("rainfall_group", "")) for row in validation_records},
+        "calibration": {str(row.get("rainfall_group", "")) for row in calibration_records},
+    }
+    for left, right in (("train", "validation"), ("train", "calibration"), ("validation", "calibration")):
+        overlap = sorted(sets[left] & sets[right])
+        if overlap:
+            raise ValueError(f"policy-return {left}/{right} rainfall groups overlap: {overlap}")
+    if len(sets["train"]) < DIRECT_TFV_POLICY_RETURN_MIN_TRAIN_GROUPS:
         raise ValueError(
             f"policy-return training requires >= {DIRECT_TFV_POLICY_RETURN_MIN_TRAIN_GROUPS} rainfall groups"
         )
-    if len(calibration_groups) < DIRECT_TFV_POLICY_RETURN_MIN_CALIBRATION_GROUPS:
+    if len(sets["validation"]) < DIRECT_TFV_POLICY_RETURN_MIN_VALIDATION_GROUPS:
+        raise ValueError(
+            "policy-return model selection requires >= "
+            f"{DIRECT_TFV_POLICY_RETURN_MIN_VALIDATION_GROUPS} rainfall groups"
+        )
+    if len(sets["calibration"]) < DIRECT_TFV_POLICY_RETURN_MIN_CALIBRATION_GROUPS:
         raise ValueError(
             "policy-return calibration requires >= "
             f"{DIRECT_TFV_POLICY_RETURN_MIN_CALIBRATION_GROUPS} rainfall groups"
@@ -130,7 +148,6 @@ def derive_policy_return_admission(
     coverage: float = DIRECT_TFV_ADMISSION_COVERAGE,
 ) -> dict[str, Any]:
     """Derive rainfall-group split-conformal admission for the deployed-policy estimand."""
-
     if not 0.5 < float(coverage) < 1.0:
         raise ValueError("policy-return admission coverage must lie in (0.5,1)")
     expected = {str(value) for value in expected_rainfall_groups if str(value)}
@@ -239,6 +256,8 @@ def load_policy_return_checkpoint(
         raise ValueError("policy-return checkpoint was initialized from a different Step2 checkpoint")
     if int(payload.get("train_rainfall_group_count", 0)) < DIRECT_TFV_POLICY_RETURN_MIN_TRAIN_GROUPS:
         raise ValueError("policy-return checkpoint has insufficient independent training rainfall groups")
+    if int(payload.get("validation_rainfall_group_count", 0)) < DIRECT_TFV_POLICY_RETURN_MIN_VALIDATION_GROUPS:
+        raise ValueError("policy-return checkpoint has insufficient model-selection rainfall groups")
     design = _design_from_payload(payload["model_design"])
     model = DirectFacilityTFVValueModel(
         state_dim=int(payload["state_dim"]), rainfall_dim=int(payload["rainfall_dim"]),
@@ -260,6 +279,7 @@ __all__ = [
     "DIRECT_TFV_POLICY_RETURN_ESTIMAND",
     "DIRECT_TFV_POLICY_RETURN_MIN_CALIBRATION_GROUPS",
     "DIRECT_TFV_POLICY_RETURN_MIN_TRAIN_GROUPS",
+    "DIRECT_TFV_POLICY_RETURN_MIN_VALIDATION_GROUPS",
     "assert_role_disjoint",
     "derive_policy_return_admission",
     "load_policy_return_checkpoint",
