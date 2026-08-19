@@ -1,12 +1,8 @@
 """Capture one exact-prefix causal query context and stop before the branch action is written.
 
-This is a training-efficiency helper. It replays the recorded parent supervisory prefix through SWMM,
-lets the frozen online controller construct exactly the same Step1 state and causal rainfall scenarios
-used at the selected decision, captures that **pre-action** context, and intentionally terminates the
-simulation at the branch point. It produces no TFV truth and cannot be used as evaluation evidence.
-
-The expensive full CANDIDATE/HOLD branches are run only after the small practical portfolio has been
-designed from this context.
+The default first-round continuation is the current Practical base-H10-probe parent pi0, not a
+historical V12 optimizer. After a policy-return critic exists the same script can capture contexts
+under frozen pi1. It produces no TFV truth and cannot be used as evaluation evidence.
 """
 from __future__ import annotations
 
@@ -20,15 +16,15 @@ import numpy as np
 import torch
 
 from rtc.closed_loop import run_authoritative_closed_loop
+from rtc.direct_tfv_base_probe_runtime_factory import build_frozen_base_probe_parent_controller
 from rtc.direct_tfv_policy_return import DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING
 from rtc.direct_tfv_policy_return_runtime_factory import build_frozen_policy_return_continuation_controller
-from rtc.direct_tfv_runtime_factory import build_frozen_v12_continuation_controller
 from rtc.policy_return_replay import ExactPrefixThenFrozenPolicyController, snapshot_and_release_policy_return_branch
 from rtc.practical_rtc_assets import load_practical_rtc_asset_manifest, practical_asset_path
 from rtc.production_cli import _controls_disabled_runtime
 
 
-PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_CONTRACT = "PROJECT7_PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_V1"
+PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_CONTRACT = "PROJECT7_PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_V2_BASE_PROBE_PI0"
 
 
 class _ContextCaptured(RuntimeError):
@@ -64,27 +60,24 @@ def _build_delegate(args: argparse.Namespace, assets: dict, device: torch.device
         config_path=practical_asset_path(assets, "config"),
         step1_path=practical_asset_path(assets, "step1"),
         step2_path=practical_asset_path(assets, "step2"),
-        policy_admission_path=practical_asset_path(assets, "policy_admission"),
         sequence_support_path=practical_asset_path(assets, "sequence_support"),
         device=device,
-        lbfgsb_maxiter=int(args.lbfgsb_maxiter),
-        optimizer_deadline_seconds=float(args.optimizer_deadline_seconds),
         decision_runtime_budget_seconds=float(args.decision_runtime_budget_seconds),
-        first_move_maxiter=int(args.first_move_maxiter),
-        first_move_deadline_seconds=float(args.first_move_deadline_seconds),
     )
-    if args.continuation_kind == "v12":
-        return build_frozen_v12_continuation_controller(
+    if args.continuation_kind == "base-probe":
+        if args.policy_return_checkpoint or args.policy_return_admission:
+            raise ValueError("base-probe pi0 must not receive policy-return critic/admission")
+        return build_frozen_base_probe_parent_controller(
             **common,
-            first_move_admission_path=practical_asset_path(assets, "v12_first_move_admission"),
+            proposal_probe_chunk_size=int(args.probe_chunk_size),
         )
     if not args.policy_return_checkpoint or not args.policy_return_admission:
-        raise ValueError("policy-return context capture requires critic and admission")
+        raise ValueError("policy-return pi1 context capture requires critic and admission")
     return build_frozen_policy_return_continuation_controller(
         **common,
-        v12_first_move_admission_path=practical_asset_path(assets, "v12_first_move_admission"),
         policy_return_checkpoint_path=args.policy_return_checkpoint,
         policy_return_admission_path=args.policy_return_admission,
+        proposal_probe_chunk_size=int(args.probe_chunk_size),
     )
 
 
@@ -98,15 +91,12 @@ def main() -> None:
     p.add_argument("--rainfall-group", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--work-dir", required=True)
-    p.add_argument("--continuation-kind", choices=("v12", "policy-return"), default="v12")
+    p.add_argument("--continuation-kind", choices=("base-probe", "policy-return"), default="base-probe")
     p.add_argument("--policy-return-checkpoint")
     p.add_argument("--policy-return-admission")
     p.add_argument("--device", default="cuda")
-    p.add_argument("--lbfgsb-maxiter", type=int, default=30)
-    p.add_argument("--optimizer-deadline-seconds", type=float, default=120.0)
     p.add_argument("--decision-runtime-budget-seconds", type=float, default=180.0)
-    p.add_argument("--first-move-maxiter", type=int, default=12)
-    p.add_argument("--first-move-deadline-seconds", type=float, default=30.0)
+    p.add_argument("--probe-chunk-size", type=int, default=24)
     args = p.parse_args()
 
     assets = load_practical_rtc_asset_manifest(args.asset_manifest)
