@@ -35,6 +35,7 @@ jobs:
           python -m ruff check \
             scripts/audit_direct_tfv_policy_return_mechanism_panel_current.py \
             tests/test_direct_tfv_policy_return_hold_aware_metrics.py \
+            tests/test_native_supervisory_control.py \
             --select E4,E7,E9,F
       - name: High-signal Practical RTC tests
         run: |
@@ -46,6 +47,7 @@ jobs:
             tests/test_direct_tfv_policy_return_portfolio.py \
             tests/test_direct_tfv_hybrid_gradient_portfolio.py \
             tests/test_direct_tfv_policy_return_hold_aware_metrics.py \
+            tests/test_native_supervisory_control.py \
             tests/test_direct_tfv_runtime_adapter.py \
             tests/test_practical_rtc_assets.py \
             tests/test_practical_rtc_v14_contract.py \
@@ -55,11 +57,12 @@ jobs:
           python -m pytest -q
       - name: Practical RTC CLI help gates
         run: |
+          python scripts/build_native_supervisory_control_current.py --help >/dev/null
+          python scripts/build_direct_tfv_sequence_support_current.py --help >/dev/null
           python scripts/build_project7_practical_asset_manifest_current.py --help >/dev/null
           python scripts/run_policy_direct_tfv_base_hybrid_parent_current.py --help >/dev/null
           python scripts/capture_direct_tfv_policy_return_context_current.py --help >/dev/null
           python scripts/design_direct_tfv_policy_return_portfolio_current.py --help >/dev/null
-          python scripts/run_direct_tfv_policy_return_pair_current.py --help >/dev/null
           python scripts/run_direct_tfv_policy_return_query_current.py --help >/dev/null
           python scripts/audit_direct_tfv_policy_return_mechanism_panel_current.py --help >/dev/null
           python scripts/compile_direct_tfv_policy_return_dataset_current.py --help >/dev/null
