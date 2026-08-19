@@ -1,0 +1,3 @@
+title=Add fail-closed V12 lineage audit and calibration refresh path
+base=main
+head=agent/v12-lineage-refresh-clean-r2
