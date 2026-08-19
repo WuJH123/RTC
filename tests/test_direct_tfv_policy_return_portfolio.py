@@ -188,6 +188,10 @@ def _calibration_record(group: str, source: str, truth: float, prediction: float
         "query_set_id": query,
         "candidate_source": source,
         "candidate_portfolio_contract": DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
+        "supervisory_control_dimension": 82,
+        "model_action_channel_count": 109,
+        "supervisory_mask_sha256": "f" * 64,
+        "passive_setting_channels_unchanged": True,
         "first_move_changed_facility_count": 4,
         "predicted_policy_return_delta_tfv_m3": prediction,
         "true_policy_return_delta_tfv_m3": truth,
@@ -241,6 +245,9 @@ def test_portfolio_admission_requires_all_hybrid_candidate_families() -> None:
     assert payload["portfolio_admission_contract"] == DIRECT_TFV_POLICY_RETURN_PORTFOLIO_ADMISSION_CONTRACT
     assert payload["candidate_portfolio_contract"] == DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
     assert payload["action_encoding_contract"] == DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING
+    assert payload["supervisory_control_dimension"] == 82
+    assert payload["model_action_channel_count"] == 109
+    assert payload["supervisory_mask_sha256"] == "f" * 64
     assert payload["query_set_count"] == 24
     assert payload["multi_candidate_query_set_count"] == 24
     assert payload["candidate_source_counts"][PROJECTED_GRADIENT_SOURCE] == 24
