@@ -16,12 +16,13 @@ Every 10 minutes:
 ```text
 causal sparse hydraulic/rainfall history
   -> Step1 full-network state reconstruction
-  -> frozen base Step2 H10 action-effect probes over all 109 actuators
-  -> <=3 support-bounded first-action candidates
+  -> frozen base Step2 over all 109 actuators
+  -> <=4 support-bounded H10 first-action candidates
+       [Step2 full / Step2 half / type-aware hydraulic / 109-D projected gradient]
   -> receding-policy-return critic + one-sided admission
-  -> execute H10 candidate or HOLD
+  -> execute first H10 target or HOLD
   -> authoritative SWMM target write/readback
-  -> re-observe
+  -> re-observe and replan
 ```
 
 Objective hierarchy:
@@ -34,17 +35,25 @@ Objective hierarchy:
 No future realised rainfall/state/flooding, no online SWMM candidate search, no PFV/Peak penalty and
 no baseline imitation are permitted online.
 
-## Why the deployed controller is not the historical 1308-D L-BFGS-B MPC
+## Hybrid first-action search, not historical full-plan L-BFGS-B
 
-Historical Development found two distinct limitations:
+Historical Development found two distinct failure modes. A 12 x 109 continuous full-plan optimizer
+could exploit surrogate extrema/support edges, but an excessively conservative executable-prefix
+admission could also starve useful actions. The current controller therefore keeps differentiable
+search capacity without restoring the historical 1308-dimensional optimizer.
 
-1. 12 x 109 continuous full-plan optimization could exploit surrogate extrema and strain the frozen
-   training-support geometry;
-2. locally correct H360 action values did not reliably translate into better whole-event TFV under
-   repeated H10 replanning.
+At each decision the candidate family is at most:
 
-The Practical online policy therefore does **not** call the historical L-BFGS-B optimizer. V12 remains
-only an offline frozen parent `pi0` for the first paired policy-return label round and as an ablation.
+1. `STEP2_H10_PROBE_SCALE_1.00`;
+2. `STEP2_H10_PROBE_SCALE_0.50`;
+3. `TYPE_AWARE_HYDRAULIC_PRESSURE`;
+4. `SUPPORT_CONSTRAINED_GRADIENT_H10`.
+
+The fourth candidate is **109-dimensional and H10-only**. Autograd through frozen base Step2 proposes
+one first target; every trial is immediately projected to actuator bounds, <=0.5 target slew, the
+frozen per-facility q95 first-move radius and the q95 changed-facility ceiling. The gradient score
+cannot authorize execution. Every distinct candidate is subsequently contracted to q95 joint-
+sequence support and ranked by the separately trained receding-policy-return critic.
 
 ## Exact receding-policy first-action value
 
@@ -63,29 +72,23 @@ calibration and runtime all encode the candidate identically as:
 H10 candidate target -> H350 HOLD target
 ```
 
-This prevents the open-loop H360 action representation from silently re-entering the closed-loop
-critic.
+This is the critic representation of one first action, **not** an instruction to hold the real system
+for 350 minutes. The authoritative controller re-observes and replans after the executed H10 block.
 
-## Practical candidate layer
+## Current first policy iteration
 
-Frozen base Step2 is reused as an action-effect representation and cheap directional probe model. At
-one decision it batch-scores support-bounded positive/negative H10 probes for all 109 facilities,
-combines individually predicted-beneficial directions within q95 changed-facility support, and forms
-at most:
-
-1. `STEP2_H10_PROBE_SCALE_1.00`;
-2. `STEP2_H10_PROBE_SCALE_0.50`;
-3. `TYPE_AWARE_HYDRAULIC_PRESSURE`.
-
-Candidates are contracted to q95 joint-sequence support using the actual H10 pulse geometry. The
-policy-return critic ranks them; a candidate executes only when its calibrated one-sided upper bound
-is negative, otherwise HOLD is latched.
+Historical V12/L-BFGS-B is archival evidence/ablation only. The first current paired-label round uses
+`PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_PI0_V2`: the same four-family H10 proposal/support geometry
+without a policy-return critic. Frozen base Step2 ranks pi0 proposals; exact paired SWMM then supplies
+`Q^pi0/A^pi0` labels. After critic training and matched calibration, pi1 uses policy-return UCB ranking.
+If pi1 materially changes the state/action distribution, a new role-disjoint `Q^pi1` round is required
+before Policy Lock.
 
 ## Step1 / Step2 / critic roles
 
 - **Step1:** sparse sensing -> causal full-network state.
-- **Base Step2 V5:** frozen pairwise TFV action-effect representation and H10 direction generator;
-  it is not treated as the deployed closed-loop value oracle.
+- **Base Step2 V5:** frozen TFV action-effect representation, H10 directional probe model and
+  differentiable first-action proposer; it is not the deployed closed-loop value oracle.
 - **Policy-return critic:** initialized from base Step2 and fine-tuned by default only in
   facility/action/interaction layers on exact paired SWMM labels.
 
@@ -120,19 +123,22 @@ Authoritative comparison retains:
 - all-max-setting (`all_open`) — diagnostic extreme;
 - all-min-setting (`all_closed`) — diagnostic extreme.
 
-The Proposed policy is not required to beat every operational comparator on every event, and the
-numerical setting extremes are not mandatory competitive wins.
+The Proposed policy is not required to beat every operational comparator on every event. Performance
+is assessed event-balanced on untouched authoritative SWMM events, with Priority8 PFV safety reported
+on the same events.
 
 ## Efficient exact paired data generation
 
 Rainfall groups are role-disjoint: policy-return train >=48, model-selection validation >=12,
-conformal calibration >=24, plus separate new Development probes.
+conformal calibration >=24, plus separate new Development probes. Matched calibration must include
+the candidate families that can appear online, including the projected-gradient H10 family.
 
 The maintained workflow avoids unnecessary recomputation:
 
 ```text
-prefix-only causal context capture
-  -> Practical candidate portfolio
+hybrid pi0 parent trajectory
+  -> prefix-only causal context capture
+  -> four-family Practical candidate portfolio
   -> one shared HOLD authoritative branch
   -> N sequential candidate authoritative branches
   -> same-query paired labels
@@ -150,12 +156,14 @@ manifest:
 scripts/build_project7_practical_asset_manifest_current.py
 ```
 
-Downstream current scripts must reuse that manifest. Silent fallback to another historical path is
-forbidden.
+The current manifest contains graph, sensors, config, Step1, base Step2, sequence support and
+Priority8 only. Historical V12 policy/first-move admissions are not current dependencies. Downstream
+current scripts must reuse the manifest; silent fallback to another historical path is forbidden.
 
 Current Practical scripts include:
 
 ```text
+scripts/run_policy_direct_tfv_base_hybrid_parent_current.py
 scripts/capture_direct_tfv_policy_return_context_current.py
 scripts/design_direct_tfv_policy_return_portfolio_current.py
 scripts/run_direct_tfv_policy_return_query_current.py
@@ -174,6 +182,8 @@ execution contracts.
 
 ## Development boundary
 
-`READY_FOR_POLICY_LOCK=false` by default. Validation, Final, Formal and Policy Lock remain inaccessible
-until role-disjoint policy-return training/validation/calibration, independent Development probes,
-PFV-safe authoritative comparison and any necessary policy-iteration round are complete.
+Near-all-HOLD behavior is treated as an admission/data failure mode, not a successful conservative
+RTC. `READY_FOR_POLICY_LOCK=false` by default. Validation, Final, Formal and Policy Lock remain
+inaccessible until role-disjoint policy-return training/validation/calibration, independent
+Development probes, useful non-starved TFV control, Priority8-PFV-safe positive claims and any
+necessary policy-iteration round are complete.
