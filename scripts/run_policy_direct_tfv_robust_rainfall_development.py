@@ -9,17 +9,14 @@ from pathlib import Path
 
 import torch
 
-from rtc.checkpoint_direct_tfv import (
-    direct_tfv_first_move_behavioral_source_sha256,
-    direct_tfv_first_move_source_sha256,
-    load_direct_tfv_runtime_checkpoint,
-)
+from rtc.checkpoint_direct_tfv import direct_tfv_first_move_source_sha256, load_direct_tfv_runtime_checkpoint
 from rtc.closed_loop import run_authoritative_closed_loop
-from rtc.controller_direct_tfv import DirectTFVAuthoritativeController
+from rtc.controller_direct_tfv_safe import MemorySafeDirectTFVAuthoritativeController
 from rtc.direct_tfv_first_move import DIRECT_TFV_FIRST_MOVE_SEMANTICS
 from rtc.direct_tfv_first_move_admission import DIRECT_TFV_FIRST_MOVE_ADMISSION_CONTRACT
 from rtc.direct_tfv_policy_admission import DIRECT_TFV_POLICY_ADMISSION_CONTRACT
 from rtc.direct_tfv_sequence_support import validate_direct_tfv_sequence_support
+from rtc.direct_tfv_v12_lineage import direct_tfv_v12_behavioral_sha256
 from rtc.event_clock import inspect_prepared_event_clock
 from rtc.execution_audit_v127 import audit_target_write_readback_v127
 from rtc.forecast import PersistenceDecayForecast
@@ -36,7 +33,7 @@ from rtc.step3_tfv_value_mpc_v10 import (
 )
 
 
-DIRECT_TFV_V12_RUNTIME_CONTRACT = "PROJECT7_DIRECT_TFV_V12_SCENARIO_MEAN_AUTHORITATIVE_DEVELOPMENT_RTC_V1"
+DIRECT_TFV_V12_RUNTIME_CONTRACT = "PROJECT7_DIRECT_TFV_V12_SCENARIO_MEAN_AUTHORITATIVE_DEVELOPMENT_RTC_V2_MEMORY_SAFE"
 DIRECT_TFV_V12_FORECAST_CONTRACT = (
     "PersistenceDecayForecast(history_steps_for_level=3,decay_per_step=0.92,scenario_multipliers=(0.8,1.0,1.2))"
 )
@@ -125,13 +122,12 @@ def main() -> None:
     )
     if str(lineage.get("sequence_support_sha256", "")).lower() != _sha(args.sequence_support).lower():
         raise ValueError("V12 admission was calibrated with different sequence support")
-
-    current_behavioral = direct_tfv_first_move_behavioral_source_sha256()
-    calibrated_behavioral = str(lineage.get("first_move_behavioral_source_sha256", "")).lower()
-    if calibrated_behavioral and calibrated_behavioral != current_behavioral.lower():
+    current_v12_behavior = direct_tfv_v12_behavioral_sha256()
+    calibrated_v12_behavior = str(
+        first.get("v12_behavioral_source_sha256", lineage.get("v12_behavioral_source_sha256", ""))
+    ).lower()
+    if calibrated_v12_behavior != current_v12_behavior.lower():
         raise ValueError("V12 admission behavioral fingerprint differs from runtime")
-    # Legacy V12 artifacts may predate the behavioral/full split.  Full SHA is retained as
-    # provenance but does not invalidate an otherwise behavior-identical runtime.
     current_full = direct_tfv_first_move_source_sha256()
 
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
@@ -167,7 +163,7 @@ def main() -> None:
         first_move_deadline_seconds=float(args.first_move_deadline_seconds),
         minimum_rainfall_scenarios=3,
     )
-    controller = DirectTFVAuthoritativeController(
+    controller = MemorySafeDirectTFVAuthoritativeController(
         step1=step1,
         mpc=mpc,
         graph=graph,
@@ -229,8 +225,9 @@ def main() -> None:
             "first_move_admission_sha256": _sha(args.first_move_admission),
             "step2_model_sha256": _sha(args.step2),
             "joint_sequence_support_sha256": _sha(args.sequence_support),
-            "runtime_first_move_behavioral_source_sha256": current_behavioral,
+            "runtime_v12_behavioral_source_sha256": current_v12_behavior,
             "runtime_first_move_full_source_sha256": current_full,
+            "runtime_telemetry_graph_release": True,
             "target_write_readback_audit": write_audit,
             "project7_runtime_contract": project_contract,
             "prepared_event_clock": event_clock,
