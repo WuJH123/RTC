@@ -1,8 +1,9 @@
 """Build the current Practical H10 policy-return controller.
 
-The current online policy uses a four-family first-action portfolio: two frozen-Step2 probe scales,
-one type-aware hydraulic direction and one 109-D support-constrained projected-gradient proposal. The
-historical 12x109 L-BFGS-B optimizer and V12 admissions remain archival only.
+The current online policy keeps a frozen 109-channel Step2 representation but changes only the native
+supervisory-control subspace. For the Wuhan testbed that means 82 online control freedoms embedded in
+109 action channels. The four-family H10 portfolio and its admission must be trained/calibrated under
+that same control mask. Historical L-BFGS-B and V12 admissions remain archival only.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ from .direct_tfv_policy_return_hybrid_portfolio import (
 )
 from .direct_tfv_sequence_support import validate_direct_tfv_sequence_support
 from .forecast import PersistenceDecayForecast
+from .native_supervisory_control import load_native_supervisory_control
 from .production_cli import _controller_config, _load_graph, _load_lines
 from .runtime_controller_guard import ContinuityGuardController
 from .step1_runtime_v127 import load_frozen_step1_v127
@@ -38,7 +40,7 @@ from .step3_tfv_value_mpc_v13 import (
 
 
 POLICY_RETURN_FROZEN_CONTINUATION_FACTORY_CONTRACT = (
-    "PROJECT7_PRACTICAL_POLICY_RETURN_FACTORY_V6_H10_HYBRID_GRADIENT"
+    "PROJECT7_PRACTICAL_POLICY_RETURN_FACTORY_V7_H10_HYBRID_82CONTROL_109REP"
 )
 
 
@@ -53,6 +55,7 @@ def build_frozen_policy_return_continuation_controller(
     config_path: str | Path,
     step1_path: str | Path,
     step2_path: str | Path,
+    supervisory_control_path: str | Path,
     sequence_support_path: str | Path,
     policy_return_checkpoint_path: str | Path,
     policy_return_admission_path: str | Path,
@@ -68,11 +71,17 @@ def build_frozen_policy_return_continuation_controller(
     base_model, base_norm, base = load_direct_tfv_runtime_checkpoint(
         step2_path, graph=graph, device=device
     )
+    control, mask = load_native_supervisory_control(
+        supervisory_control_path,
+        actuator_ids=graph.actuator_ids,
+    )
     support = json.loads(Path(sequence_support_path).read_text(encoding="utf-8"))
     validate_direct_tfv_sequence_support(
         support,
         actuator_ids=graph.actuator_ids,
         step2_checkpoint_sha256=_sha(step2_path),
+        supervisory_mask=mask,
+        supervisory_control_contract=str(control["contract"]),
     )
     return_model, return_norm, return_checkpoint = load_policy_return_checkpoint(
         policy_return_checkpoint_path,
@@ -95,7 +104,11 @@ def build_frozen_policy_return_continuation_controller(
     checkpoint_portfolio = str(return_checkpoint.get("candidate_portfolio_contract", ""))
     admission_portfolio = str(return_admission.get("candidate_portfolio_contract", ""))
     if checkpoint_portfolio != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT or admission_portfolio != checkpoint_portfolio:
-        raise ValueError("Practical critic/admission must use the current hybrid H10 candidate portfolio")
+        raise ValueError("Practical critic/admission must use the current masked hybrid H10 portfolio")
+    if str(return_checkpoint.get("supervisory_mask_sha256", "")).lower() != str(control["supervisory_mask_sha256"]).lower():
+        raise ValueError("policy-return critic was trained under another supervisory-control mask")
+    if str(return_admission.get("supervisory_mask_sha256", "")).lower() != str(control["supervisory_mask_sha256"]).lower():
+        raise ValueError("policy-return admission was calibrated under another supervisory-control mask")
 
     cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
     controller_cfg = replace(
@@ -119,6 +132,7 @@ def build_frozen_policy_return_continuation_controller(
         normalization=base_norm,
         action_support=base["action_support"],
         sequence_support=support,
+        supervisory_mask=mask,
         policy_return_model=return_model,
         policy_return_normalization=return_norm,
         policy_return_admission=return_admission,
@@ -152,6 +166,10 @@ def build_frozen_policy_return_continuation_controller(
         "factory_contract": POLICY_RETURN_FROZEN_CONTINUATION_FACTORY_CONTRACT,
         "step1_sha256": _sha(step1_path),
         "base_step2_sha256": _sha(step2_path),
+        "supervisory_control_sha256": _sha(supervisory_control_path),
+        "supervisory_control_contract": control["contract"],
+        "supervisory_control_dimension": int(mask.sum()),
+        "model_action_channel_count": 109,
         "sequence_support_sha256": _sha(sequence_support_path),
         "policy_return_step3_source_sha256": _sha(step3_path),
         "policy_return_step3_contract": DIRECT_TFV_HYBRID_POLICY_RETURN_STEP3_CONTRACT,
@@ -163,6 +181,8 @@ def build_frozen_policy_return_continuation_controller(
         "candidate_portfolio_family_count_max": 4,
         "projected_gradient_h10_enabled": True,
         "projected_gradient_generator_contract": DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT,
+        "projected_gradient_free_dimension": int(mask.sum()),
+        "projected_gradient_tensor_channels": 109,
         "projected_gradient_steps": int(projected_gradient_steps),
         "projected_gradient_step_fraction": float(projected_gradient_step_fraction),
         "portfolio_mode": True,
@@ -172,6 +192,8 @@ def build_frozen_policy_return_continuation_controller(
         "graph_sha256": _sha(graph_path),
         "sensors_sha256": _sha(sensors_path),
         "config_sha256": _sha(config_path),
+        "step1_retrained_for_control_mask": False,
+        "base_step2_retrained_for_control_mask": False,
         "memory_safe_runtime": True,
     }
     return controller, graph, sensors, lineage
