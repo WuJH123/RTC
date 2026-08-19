@@ -1,9 +1,8 @@
-"""Run the current Practical H10 policy-return controller in authoritative Development SWMM.
+"""Run the current Practical hybrid H10 policy-return controller in authoritative Development SWMM.
 
-This entrypoint is intentionally path-safe and optimizer-agnostic. All frozen base artifacts come from
-one SHA-verified absolute asset manifest. The policy-return checkpoint/admission must select the
-current Practical H10-probe portfolio; legacy V12/L-BFGS-B policy-return bridges are rejected here and
-remain available only to explicit offline parent-label tools.
+All frozen base artifacts come from one SHA-verified absolute asset manifest. The policy-return
+checkpoint/admission must match the four-family H10 portfolio. Historical V12 admissions and the
+12x109 L-BFGS-B optimizer are rejected from this current execution surface.
 """
 from __future__ import annotations
 
@@ -20,8 +19,12 @@ from rtc.direct_tfv_policy_return import (
     DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT,
     load_policy_return_checkpoint,
 )
-from rtc.direct_tfv_policy_return_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
-from rtc.direct_tfv_policy_return_runtime_factory import build_frozen_policy_return_continuation_controller
+from rtc.direct_tfv_policy_return_hybrid_portfolio import (
+    DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
+)
+from rtc.direct_tfv_policy_return_runtime_factory import (
+    build_frozen_policy_return_continuation_controller,
+)
 from rtc.event_clock import inspect_prepared_event_clock
 from rtc.execution_audit_v127 import audit_target_write_readback_v127
 from rtc.practical_rtc_assets import load_practical_rtc_asset_manifest, practical_asset_path
@@ -32,7 +35,7 @@ from rtc.step1_runtime_v127 import load_frozen_step1_v127
 
 
 DIRECT_TFV_POLICY_RETURN_RUNTIME_CONTRACT = (
-    "PROJECT7_PRACTICAL_H10_POLICY_RETURN_AUTHORITATIVE_DEVELOPMENT_RTC_V1"
+    "PROJECT7_PRACTICAL_H10_HYBRID_POLICY_RETURN_AUTHORITATIVE_DEVELOPMENT_RTC_V2"
 )
 
 
@@ -40,7 +43,14 @@ def _sha(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def _require_step1_lineage(*, step1_path: str, step2_path: str, sensors_path: str, graph_path: str, device: torch.device) -> None:
+def _require_step1_lineage(
+    *,
+    step1_path: str,
+    step2_path: str,
+    sensors_path: str,
+    graph_path: str,
+    device: torch.device,
+) -> None:
     graph = _load_graph(graph_path)
     step1 = load_frozen_step1_v127(step1_path, device)
     from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
@@ -57,7 +67,9 @@ def _require_step1_lineage(*, step1_path: str, step2_path: str, sensors_path: st
     }
     for key, actual in expected.items():
         if str(lineage.get(key, "")).lower() != actual.lower():
-            raise ValueError(f"runtime Step1/sensor semantics differ from base Step2 training: {key}")
+            raise ValueError(
+                f"runtime Step1/sensor semantics differ from base Step2 training: {key}"
+            )
 
 
 def main() -> None:
@@ -70,6 +82,9 @@ def main() -> None:
     p.add_argument("--policy-return-admission", required=True)
     p.add_argument("--device", default="cuda")
     p.add_argument("--decision-runtime-budget-seconds", type=float, default=180.0)
+    p.add_argument("--probe-chunk-size", type=int, default=24)
+    p.add_argument("--projected-gradient-steps", type=int, default=6)
+    p.add_argument("--projected-gradient-step-fraction", type=float, default=0.25)
     args = p.parse_args()
     if not 0.0 < float(args.decision_runtime_budget_seconds) < 600.0:
         raise ValueError("Practical controller runtime budget must fit inside one 600-s update")
@@ -101,7 +116,7 @@ def main() -> None:
     )
     del return_model
     if str(return_checkpoint.get("candidate_portfolio_contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
-        raise ValueError("current Development runtime accepts only the Practical H10 candidate portfolio")
+        raise ValueError("current Development runtime accepts only the hybrid H10 candidate portfolio")
     if str(return_checkpoint.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
         raise ValueError("current Development runtime critic has the wrong H10 action encoding")
     admission = json.loads(Path(args.policy_return_admission).read_text(encoding="utf-8"))
@@ -124,22 +139,21 @@ def main() -> None:
         config_path=config_path,
         step1_path=step1_path,
         step2_path=step2_path,
-        policy_admission_path=practical_asset_path(assets, "policy_admission"),
-        v12_first_move_admission_path=practical_asset_path(assets, "v12_first_move_admission"),
         sequence_support_path=sequence_support_path,
         policy_return_checkpoint_path=args.policy_return_checkpoint,
         policy_return_admission_path=args.policy_return_admission,
         device=device,
-        lbfgsb_maxiter=1,
-        optimizer_deadline_seconds=30.0,
         decision_runtime_budget_seconds=float(args.decision_runtime_budget_seconds),
-        first_move_maxiter=1,
-        first_move_deadline_seconds=1.0,
+        proposal_probe_chunk_size=int(args.probe_chunk_size),
+        projected_gradient_steps=int(args.projected_gradient_steps),
+        projected_gradient_step_fraction=float(args.projected_gradient_step_fraction),
     )
     if lineage.get("portfolio_mode") is not True or lineage.get("online_lbfgsb_used") is not False:
-        raise RuntimeError("current Development runtime unexpectedly resolved to a legacy optimizer path")
+        raise RuntimeError("current Development runtime unexpectedly resolved outside hybrid portfolio mode")
     if lineage.get("legacy_v12_admission_required_online") is not False:
         raise RuntimeError("Practical runtime must not depend on legacy V12 online admission")
+    if lineage.get("projected_gradient_h10_enabled") is not True:
+        raise RuntimeError("current Development runtime lacks the 109-D H10 projected-gradient proposer")
 
     runtime_inp = _controls_disabled_runtime(
         source_inp=Path(args.inp).resolve(),
@@ -165,7 +179,7 @@ def main() -> None:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata.update(
         {
-            "strategy": "proposed_practical_h10_policy_return",
+            "strategy": "proposed_practical_h10_hybrid_policy_return",
             "direct_tfv_development_runtime_contract": DIRECT_TFV_POLICY_RETURN_RUNTIME_CONTRACT,
             "direct_tfv_step3_contract": lineage["policy_return_step3_contract"],
             "development_only": True,
@@ -176,6 +190,10 @@ def main() -> None:
             "future_realized_rainfall_used_as_model_input": False,
             "online_swmm_candidate_search": False,
             "online_lbfgsb_used": False,
+            "projected_gradient_h10_enabled": True,
+            "projected_gradient_dimension": 109,
+            "projected_gradient_action_horizon": "H10_ONLY",
+            "candidate_portfolio_family_count_max": 4,
             "policy_return_action_encoding": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
             "policy_return_checkpoint_sha256": _sha(args.policy_return_checkpoint),
             "policy_return_admission_sha256": _sha(args.policy_return_admission),
@@ -207,6 +225,7 @@ def main() -> None:
                 "node_statistics_path": result.node_statistics_path,
                 "decisions": result.decisions,
                 "online_lbfgsb_used": False,
+                "projected_gradient_h10_enabled": True,
                 "target_write_readback_passed": True,
                 "flow_routing_error_pct": result.flow_routing_error_pct,
             },
