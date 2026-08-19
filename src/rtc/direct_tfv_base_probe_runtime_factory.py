@@ -1,9 +1,9 @@
 """Build the frozen Practical hybrid-H10 parent pi0.
 
-The first exact policy-return label round uses the same four-family H10 proposal geometry as the
-current paper method: two Step2-probe scales, one type-aware hydraulic direction and one support-
-constrained 109-D projected-gradient proposal. No historical V12 policy/first-move admission or
-12x109 L-BFGS-B artifact is required.
+The pretrained representation remains 109-channel, while the online parent uses the frozen native
+supervisory-control mask and the matching masked q95 sequence support. For the Wuhan testbed this is
+82 online control freedoms embedded in 109 Step2 channels. No historical V12 admission or 12x109
+L-BFGS-B artifact is required.
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from .checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
 from .controller_direct_tfv_safe import MemorySafeDirectTFVAuthoritativeController
 from .direct_tfv_sequence_support import validate_direct_tfv_sequence_support
 from .forecast import PersistenceDecayForecast
+from .native_supervisory_control import load_native_supervisory_control
 from .production_cli import _controller_config, _load_graph, _load_lines
 from .runtime_controller_guard import ContinuityGuardController
 from .step1_runtime_v127 import load_frozen_step1_v127
@@ -29,7 +30,7 @@ from .step3_tfv_value_mpc_v4 import DirectTFVMPCDesignV4
 
 
 DIRECT_TFV_BASE_PROBE_PARENT_FACTORY_CONTRACT = (
-    "PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_FACTORY_V2"
+    "PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_FACTORY_V3_82CONTROL_109REP"
 )
 
 
@@ -44,6 +45,7 @@ def build_frozen_base_probe_parent_controller(
     config_path: str | Path,
     step1_path: str | Path,
     step2_path: str | Path,
+    supervisory_control_path: str | Path,
     sequence_support_path: str | Path,
     device: torch.device,
     decision_runtime_budget_seconds: float = 180.0,
@@ -57,11 +59,17 @@ def build_frozen_base_probe_parent_controller(
     base_model, base_norm, base = load_direct_tfv_runtime_checkpoint(
         step2_path, graph=graph, device=device
     )
+    control, mask = load_native_supervisory_control(
+        supervisory_control_path,
+        actuator_ids=graph.actuator_ids,
+    )
     support = json.loads(Path(sequence_support_path).read_text(encoding="utf-8"))
     validate_direct_tfv_sequence_support(
         support,
         actuator_ids=graph.actuator_ids,
         step2_checkpoint_sha256=_sha(step2_path),
+        supervisory_mask=mask,
+        supervisory_control_contract=str(control["contract"]),
     )
     design = DirectTFVMPCDesignV4(
         maxiter=1,
@@ -76,6 +84,7 @@ def build_frozen_base_probe_parent_controller(
         action_support=base["action_support"],
         sequence_support=support,
         design=design,
+        supervisory_mask=mask,
         proposal_probe_chunk_size=int(proposal_probe_chunk_size),
         projected_gradient_steps=int(projected_gradient_steps),
         projected_gradient_step_fraction=float(projected_gradient_step_fraction),
@@ -115,6 +124,10 @@ def build_frozen_base_probe_parent_controller(
         "policy_contract": DIRECT_TFV_BASE_PROBE_PARENT_CONTRACT,
         "step1_sha256": _sha(step1_path),
         "base_step2_sha256": _sha(step2_path),
+        "supervisory_control_sha256": _sha(supervisory_control_path),
+        "supervisory_control_contract": control["contract"],
+        "supervisory_control_dimension": int(mask.sum()),
+        "model_action_channel_count": 109,
         "sequence_support_sha256": _sha(sequence_support_path),
         "policy_source_sha256": _sha(source_path),
         "graph_sha256": _sha(graph_path),
@@ -122,12 +135,16 @@ def build_frozen_base_probe_parent_controller(
         "config_sha256": _sha(config_path),
         "candidate_portfolio_family_count_max": 4,
         "projected_gradient_h10_enabled": True,
+        "projected_gradient_free_dimension": int(mask.sum()),
+        "projected_gradient_tensor_channels": 109,
         "projected_gradient_steps": int(projected_gradient_steps),
         "projected_gradient_step_fraction": float(projected_gradient_step_fraction),
         "online_lbfgsb_used": False,
         "legacy_policy_admission_required": False,
         "legacy_first_move_admission_required": False,
         "future_realized_rainfall_used_online": False,
+        "step1_retrained_for_control_mask": False,
+        "base_step2_retrained_for_control_mask": False,
         "memory_safe_runtime": True,
     }
     return controller, graph, sensors, lineage
