@@ -1,9 +1,9 @@
-"""Project7 Practical Step3 V13: four-family H10 proposals ranked by policy return.
+"""Project7 Practical Step3: four-family H10 proposals ranked by policy return.
 
-This is the current paper-facing online Step3. It reuses the mature V12 helper methods for q95
-sequence support and policy-return scoring, but deliberately bypasses the V12 constructor so the
-current V4 hybrid candidate contract is validated directly. No historical V12 admission or 12x109
-L-BFGS-B optimizer is required online.
+The deployed policy keeps the frozen 109-channel Step2 representation but permits candidate/reference
+differences only on the native supervisory-control mask. The current Wuhan contract therefore uses
+82 online control freedoms embedded in 109 model channels. Masked q95 support and the policy-return
+critic remain the final trust/admission layers; no historical L-BFGS-B optimizer is restored.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from dataclasses import replace
 import time
 from typing import Any, Mapping
 
+import numpy as np
 import torch
 
 from .direct_tfv_policy_return import (
@@ -25,7 +26,10 @@ from .direct_tfv_policy_return_hybrid_portfolio import (
     build_hybrid_policy_return_portfolio,
 )
 from .direct_tfv_policy_return_portfolio import score_h10_first_action_targets
-from .direct_tfv_sequence_support import validate_direct_tfv_sequence_support
+from .direct_tfv_sequence_support import (
+    changed_facility_support_limit,
+    validate_direct_tfv_sequence_support,
+)
 from .step3_tfv_value_mpc_v4 import DirectTFVMPCDesignV4, DirectTFVRecedingMPCV4
 from .step3_tfv_value_mpc_v12 import (
     DirectTFVMPCResultV12,
@@ -34,12 +38,12 @@ from .step3_tfv_value_mpc_v12 import (
 
 
 DIRECT_TFV_HYBRID_POLICY_RETURN_STEP3_CONTRACT = (
-    "PROJECT7_PRACTICAL_RTC_H10_POLICY_RETURN_HYBRID_GRADIENT_V13"
+    "PROJECT7_PRACTICAL_RTC_H10_POLICY_RETURN_HYBRID_V14_82CONTROL_109REP"
 )
 
 
 class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
-    """At-most-four-candidate H10 receding policy improvement with one projected-gradient proposal."""
+    """At-most-four-candidate H10 receding policy improvement on the masked control subspace."""
 
     policy_mode = "practical_direct_tfv_h10_hybrid_policy_return_portfolio"
     policy_mode_contract = DIRECT_TFV_HYBRID_POLICY_RETURN_STEP3_CONTRACT
@@ -52,6 +56,7 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
         normalization: Any,
         action_support: Mapping[str, Any],
         sequence_support: Mapping[str, Any],
+        supervisory_mask: np.ndarray,
         policy_return_model: Any,
         policy_return_normalization: Any,
         policy_return_admission: Mapping[str, Any],
@@ -69,8 +74,17 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
             action_support=action_support,
             design=design,
         )
-        validate_direct_tfv_sequence_support(sequence_support, actuator_ids=graph.actuator_ids)
+        mask = np.asarray(supervisory_mask, dtype=bool).reshape(-1)
+        if mask.shape != (109,) or int(mask.sum()) <= 0:
+            raise ValueError("hybrid policy-return MPC requires a valid 109-channel supervisory mask")
+        validate_direct_tfv_sequence_support(
+            sequence_support,
+            actuator_ids=graph.actuator_ids,
+            supervisory_mask=mask,
+        )
         self.sequence_support = dict(sequence_support)
+        self.supervisory_mask = mask
+        self.supervisory_control_dimension = int(mask.sum())
         admission = dict(policy_return_admission)
         if str(admission.get("contract", "")) != DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT:
             raise ValueError("hybrid portfolio requires current H10 policy-return admission")
@@ -81,7 +95,7 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
         if str(admission.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
             raise ValueError("hybrid portfolio admission was calibrated with another action encoding")
         if str(admission.get("candidate_portfolio_contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
-            raise ValueError("hybrid portfolio requires calibration from the same four-family candidate contract")
+            raise ValueError("hybrid portfolio requires calibration from the same masked candidate contract")
         if int(admission.get("multi_candidate_query_set_count", 0)) <= 0:
             raise ValueError("hybrid portfolio requires same-prefix multi-candidate calibration")
         if str(admission.get("policy_return_checkpoint_sha256", "")).lower() != str(policy_return_checkpoint_sha256).lower():
@@ -123,6 +137,7 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
         )
         return replace(
             result,
+            screened_facility_count=self.supervisory_control_dimension,
             policy_return_portfolio_contract=DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
             policy_mode=self.policy_mode,
             policy_mode_contract=self.policy_mode_contract,
@@ -140,7 +155,7 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
         if tuple(flow.shape) != (1, 109):
             raise ValueError("hybrid practical portfolio requires previous_actuator_flow [1,109]")
 
-        ceiling = int(self.active_support_ceiling())
+        ceiling = changed_facility_support_limit(self.sequence_support, "q95")
         hybrid = build_hybrid_policy_return_portfolio(
             model=self.model,
             normalization=self.normalization,
@@ -155,16 +170,20 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
             probe_chunk_size=self.proposal_probe_chunk_size,
             gradient_steps=self.projected_gradient_steps,
             gradient_step_fraction=self.projected_gradient_step_fraction,
+            supervisory_mask=self.supervisory_mask,
         )
         learned = hybrid.learned_probe
         evaluated: list[tuple] = []
         seen: set[bytes] = set()
+        passive = torch.as_tensor(~self.supervisory_mask, dtype=torch.bool, device=active_target.device)
         for proposal in hybrid.candidates:
             target, sequence, changed, diagnostics = self._h10_supported_target(
                 proposal.target, active_target
             )
             if changed <= 0:
                 continue
+            if bool(torch.any(torch.abs(target[passive] - active_target[passive]) > 1.0e-7)):
+                raise RuntimeError("hybrid policy-return candidate changed a passive setting channel")
             key = target.detach().cpu().to(torch.float32).contiguous().numpy().tobytes()
             if key in seen:
                 continue
@@ -248,7 +267,7 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
             admission_passed=passed,
             calibrated_admission_contract=DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT,
             elapsed_seconds=float(time.perf_counter() - started),
-            screened_facility_count=109,
+            screened_facility_count=self.supervisory_control_dimension,
             predicted_beneficial_facility_count=int(learned.predicted_beneficial_facility_count),
             active_facility_count=changed,
             active_facility_ids=changed_ids,
@@ -276,9 +295,7 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
             policy_return_portfolio_sources=tuple(row[0] for row in evaluated),
             policy_return_portfolio_scores_m3=tuple(float(row[4]) for row in evaluated),
             policy_return_portfolio_upper_bounds_m3=tuple(float(row[6]) for row in evaluated),
-            policy_return_portfolio_base_step2_scores_m3=tuple(
-                float(row[7]) for row in evaluated
-            ),
+            policy_return_portfolio_base_step2_scores_m3=tuple(float(row[7]) for row in evaluated),
             h10_probe_generator_contract=DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT,
             h10_probe_count=int(learned.probe_count),
             policy_mode=self.policy_mode,
