@@ -1,8 +1,9 @@
-"""Build the frozen Practical base-H10-probe parent pi0.
+"""Build the frozen Practical hybrid-H10 parent pi0.
 
-This factory deliberately has no historical policy-admission, first-move-admission or L-BFGS-B
-arguments.  It is the default continuation for the first exact policy-return label round and keeps
-that round on the same candidate/support geometry as the final Practical controller.
+The first exact policy-return label round uses the same four-family H10 proposal geometry as the
+current paper method: two Step2-probe scales, one type-aware hydraulic direction and one support-
+constrained 109-D projected-gradient proposal. No historical V12 policy/first-move admission or
+12x109 L-BFGS-B artifact is required.
 """
 from __future__ import annotations
 
@@ -20,11 +21,16 @@ from .forecast import PersistenceDecayForecast
 from .production_cli import _controller_config, _load_graph, _load_lines
 from .runtime_controller_guard import ContinuityGuardController
 from .step1_runtime_v127 import load_frozen_step1_v127
-from .step3_tfv_base_probe_parent import DIRECT_TFV_BASE_PROBE_PARENT_CONTRACT, DirectTFVBaseProbeParentMPC
+from .step3_tfv_base_probe_parent_v2 import (
+    DIRECT_TFV_BASE_PROBE_PARENT_CONTRACT,
+    DirectTFVBaseHybridParentMPCV2,
+)
 from .step3_tfv_value_mpc_v4 import DirectTFVMPCDesignV4
 
 
-DIRECT_TFV_BASE_PROBE_PARENT_FACTORY_CONTRACT = "PROJECT7_PRACTICAL_BASE_H10_PROBE_PARENT_FACTORY_V1"
+DIRECT_TFV_BASE_PROBE_PARENT_FACTORY_CONTRACT = (
+    "PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_FACTORY_V2"
+)
 
 
 def _sha(path: str | Path) -> str:
@@ -42,11 +48,15 @@ def build_frozen_base_probe_parent_controller(
     device: torch.device,
     decision_runtime_budget_seconds: float = 180.0,
     proposal_probe_chunk_size: int = 24,
+    projected_gradient_steps: int = 6,
+    projected_gradient_step_fraction: float = 0.25,
 ) -> tuple[object, object, tuple[str, ...], dict]:
     graph = _load_graph(graph_path)
     sensors = _load_lines(sensors_path)
     step1 = load_frozen_step1_v127(step1_path, device)
-    base_model, base_norm, base = load_direct_tfv_runtime_checkpoint(step2_path, graph=graph, device=device)
+    base_model, base_norm, base = load_direct_tfv_runtime_checkpoint(
+        step2_path, graph=graph, device=device
+    )
     support = json.loads(Path(sequence_support_path).read_text(encoding="utf-8"))
     validate_direct_tfv_sequence_support(
         support,
@@ -59,7 +69,7 @@ def build_frozen_base_probe_parent_controller(
         active_facility_count=0,
         active_support_quantile="q95",
     )
-    mpc = DirectTFVBaseProbeParentMPC(
+    mpc = DirectTFVBaseHybridParentMPCV2(
         model=base_model,
         graph=graph,
         normalization=base_norm,
@@ -67,6 +77,8 @@ def build_frozen_base_probe_parent_controller(
         sequence_support=support,
         design=design,
         proposal_probe_chunk_size=int(proposal_probe_chunk_size),
+        projected_gradient_steps=int(projected_gradient_steps),
+        projected_gradient_step_fraction=float(projected_gradient_step_fraction),
     )
     cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
     controller_cfg = replace(
@@ -75,7 +87,7 @@ def build_frozen_base_probe_parent_controller(
         control_block_steps=2,
         max_setting_delta_per_update=0.5,
         decision_runtime_budget_seconds=float(decision_runtime_budget_seconds),
-        fallback_policy_id="HOLD_BASE_H10_PROBE_PARENT_FALLBACK",
+        fallback_policy_id="HOLD_BASE_H10_HYBRID_PARENT_FALLBACK",
     )
     controller_cfg.validate()
     inner = MemorySafeDirectTFVAuthoritativeController(
@@ -97,7 +109,7 @@ def build_frozen_base_probe_parent_controller(
         allow_projection=False,
         enforce_current_delta=False,
     )
-    source_path = Path(__file__).resolve().parent / "step3_tfv_base_probe_parent.py"
+    source_path = Path(__file__).resolve().parent / "step3_tfv_base_probe_parent_v2.py"
     lineage = {
         "factory_contract": DIRECT_TFV_BASE_PROBE_PARENT_FACTORY_CONTRACT,
         "policy_contract": DIRECT_TFV_BASE_PROBE_PARENT_CONTRACT,
@@ -108,6 +120,10 @@ def build_frozen_base_probe_parent_controller(
         "graph_sha256": _sha(graph_path),
         "sensors_sha256": _sha(sensors_path),
         "config_sha256": _sha(config_path),
+        "candidate_portfolio_family_count_max": 4,
+        "projected_gradient_h10_enabled": True,
+        "projected_gradient_steps": int(projected_gradient_steps),
+        "projected_gradient_step_fraction": float(projected_gradient_step_fraction),
         "online_lbfgsb_used": False,
         "legacy_policy_admission_required": False,
         "legacy_first_move_admission_required": False,
