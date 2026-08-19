@@ -1,14 +1,14 @@
 """Design the current same-prefix first-action portfolio from one captured causal context.
 
-No SWMM simulation and no future realised rainfall are used. Frozen base Step2 provides finite H10
-probes plus one differentiable 109-D projected-gradient proposal. Every target is first-move/q95
-supported, then contracted to the actual H10-pulse joint-sequence q95 geometry.
+The pretrained Step2 stays 109-channel. Online proposal freedom is restricted by the native
+supervisory-control artifact (82 facilities for the current Wuhan testbed), and q95 support is the
+matching label-independent masked support rebuilt from existing D3 TrainFit actions. No SWMM truth
+or future realised rainfall is used.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import math
 from pathlib import Path
 
 import numpy as np
@@ -21,23 +21,15 @@ from rtc.direct_tfv_policy_return_hybrid_portfolio import (
     DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT,
     build_hybrid_policy_return_portfolio,
 )
+from rtc.direct_tfv_policy_return_portfolio import score_h10_first_action_targets
 from rtc.direct_tfv_sequence_support import (
     SEQUENCE_SUPPORT_METRICS,
+    changed_facility_support_limit,
     sequence_support_limit,
     validate_direct_tfv_sequence_support,
 )
+from rtc.native_supervisory_control import load_native_supervisory_control
 from rtc.production_cli import _load_graph
-from rtc.step2_tfv_support import DIRECT_TFV_JOINT_DENSITY_SUPPORT_CONTRACT
-
-
-def _active_ceiling(action_support: dict) -> int:
-    extension = str(action_support.get("joint_density_extension_contract", ""))
-    key = "joint_changed_facility_count_q95"
-    if extension != DIRECT_TFV_JOINT_DENSITY_SUPPORT_CONTRACT or key not in action_support:
-        key = "joint_changed_facility_count_q90"
-    value = float(action_support.get(key, 1.0))
-    observed = int(action_support.get("joint_changed_facility_count_max", max(1, math.ceil(value))))
-    return max(1, min(109, observed, int(math.ceil(value))))
 
 
 def _joint_contract_h10_target(
@@ -47,7 +39,6 @@ def _joint_contract_h10_target(
     support: dict,
     quantile: str,
 ) -> tuple[np.ndarray, float, dict[str, float]]:
-    """Contract the actual H10 pulse geometry to the frozen joint-sequence trust region."""
     delta = np.asarray(target, dtype=np.float64) - np.asarray(active, dtype=np.float64)
     l1 = float(np.sum(np.abs(delta)))
     geometry = {
@@ -77,6 +68,7 @@ def main() -> None:
     p.add_argument("--context", required=True)
     p.add_argument("--graph", required=True)
     p.add_argument("--step2", required=True)
+    p.add_argument("--supervisory-control", required=True)
     p.add_argument("--sequence-support", required=True)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--device", default="cuda")
@@ -92,11 +84,16 @@ def main() -> None:
     )
     action_support = dict(checkpoint["action_support"])
     first_radius = np.asarray(action_support["first_move_abs_q95_per_facility"], dtype=np.float32)
+    control, mask = load_native_supervisory_control(
+        args.supervisory_control,
+        actuator_ids=graph.actuator_ids,
+    )
     support = json.loads(Path(args.sequence_support).read_text(encoding="utf-8"))
     validate_direct_tfv_sequence_support(
         support,
         actuator_ids=graph.actuator_ids,
-        step2_checkpoint_sha256=None,
+        supervisory_mask=mask,
+        supervisory_control_contract=str(control["contract"]),
     )
 
     data = np.load(args.context, allow_pickle=False)
@@ -106,16 +103,10 @@ def main() -> None:
     state = torch.as_tensor(np.asarray(data["current_state"]), dtype=torch.float32, device=device)
     if state.ndim != 3 or int(state.shape[0]) != 1:
         raise ValueError("context current_state must be [1,node,state]")
-    rain = torch.as_tensor(
-        np.asarray(data["rainfall_scenarios"])[0], dtype=torch.float32, device=device
-    )
-    active = torch.as_tensor(
-        np.asarray(data["active_target"])[0], dtype=torch.float32, device=device
-    )
-    flow = torch.as_tensor(
-        np.asarray(data["previous_actuator_flow"]), dtype=torch.float32, device=device
-    )
-    ceiling = _active_ceiling(action_support)
+    rain = torch.as_tensor(np.asarray(data["rainfall_scenarios"])[0], dtype=torch.float32, device=device)
+    active = torch.as_tensor(np.asarray(data["active_target"])[0], dtype=torch.float32, device=device)
+    flow = torch.as_tensor(np.asarray(data["previous_actuator_flow"]), dtype=torch.float32, device=device)
+    ceiling = changed_facility_support_limit(support, "q95")
 
     hybrid = build_hybrid_policy_return_portfolio(
         model=model,
@@ -131,6 +122,7 @@ def main() -> None:
         probe_chunk_size=int(args.probe_chunk_size),
         gradient_steps=int(args.projected_gradient_steps),
         gradient_step_fraction=float(args.projected_gradient_step_fraction),
+        supervisory_mask=mask,
     )
 
     out = Path(args.out_dir)
@@ -145,22 +137,43 @@ def main() -> None:
             support=support,
             quantile="q95",
         )
-        changed = int(
-            np.count_nonzero(np.abs(supported.astype(np.float64) - active_np) > 1.0e-7)
-        )
+        if np.any(np.abs(supported.astype(np.float64)[~mask] - active_np[~mask]) > 1.0e-7):
+            raise RuntimeError("final supported candidate changed a passive setting channel")
+        changed = int(np.count_nonzero(np.abs(supported.astype(np.float64) - active_np) > 1.0e-7))
         if changed <= 0:
             continue
         key = np.ascontiguousarray(supported, dtype=np.float32).tobytes()
         if key in seen:
             continue
         seen.add(key)
+        supported_tensor = torch.as_tensor(
+            supported.reshape(1, 109), dtype=active.dtype, device=active.device
+        )
+        base_score = float(
+            score_h10_first_action_targets(
+                model=model,
+                normalization=normalization,
+                graph=graph,
+                current_state=state,
+                rainfall_scenarios=rain,
+                previous_actuator_flow=flow,
+                active_target=active,
+                candidate_targets=supported_tensor,
+                probe_chunk_size=1,
+            )[0].detach().cpu()
+        )
         payload = {
             "contract": DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
             "candidate_source": candidate.source,
             "actuator_ids": [str(value) for value in graph.actuator_ids],
             "target_settings": supported.astype(float).tolist(),
             "changed_facility_count": changed,
+            "base_step2_h10_score_m3": base_score,
             "active_support_ceiling": ceiling,
+            "supervisory_control_dimension": int(mask.sum()),
+            "model_action_channel_count": 109,
+            "supervisory_mask_sha256": str(control["supervisory_mask_sha256"]),
+            "passive_setting_channels_unchanged": True,
             "joint_sequence_support_quantile": "q95",
             "joint_sequence_radial_contraction": contraction,
             "joint_sequence_geometry": geometry,
@@ -169,9 +182,7 @@ def main() -> None:
             "online_swmm_called": False,
         }
         path = out / f"candidate_{len(rows):02d}_{candidate.source.lower()}.json"
-        path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         rows.append({"path": str(path.resolve()), **payload})
     if len(rows) < 2:
         raise RuntimeError("hybrid policy-return portfolio produced fewer than two distinct candidates")
@@ -186,10 +197,12 @@ def main() -> None:
         "candidate_count": len(rows),
         "candidate_family_count_max": 4,
         "active_support_ceiling": ceiling,
+        "supervisory_control_dimension": int(mask.sum()),
+        "model_action_channel_count": 109,
+        "supervisory_control_contract": str(control["contract"]),
+        "supervisory_mask_sha256": str(control["supervisory_mask_sha256"]),
         "probe_count": int(hybrid.learned_probe.probe_count),
-        "predicted_beneficial_facility_count": int(
-            hybrid.learned_probe.predicted_beneficial_facility_count
-        ),
+        "predicted_beneficial_facility_count": int(hybrid.learned_probe.predicted_beneficial_facility_count),
         "selected_probe_facility_indices": list(hybrid.learned_probe.selected_facility_indices),
         "candidate_sources": [row["candidate_source"] for row in rows],
         "candidates": rows,
@@ -203,15 +216,14 @@ def main() -> None:
             "final_gradient_l2": float(gradient.final_gradient_l2),
         },
         "lbfgsb_used": False,
-        "gradient_dimension": 109,
+        "gradient_free_dimension": int(mask.sum()),
+        "gradient_tensor_channels": 109,
         "gradient_action_horizon": "H10_ONLY",
         "future_realized_rainfall_used": False,
         "online_swmm_called": False,
     }
     manifest_path = out / "POLICY_RETURN_CANDIDATE_PORTFOLIO.json"
-    manifest_path.write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(manifest, indent=2, sort_keys=True))
 
 
