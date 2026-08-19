@@ -6,13 +6,17 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from .baselines import FORMAL_FIXED_BASELINE_IDS, canonical_baseline_id
+from .baselines import (
+    COMPETITIVE_BASELINE_IDS,
+    FORMAL_FIXED_BASELINE_IDS,
+    canonical_baseline_id,
+)
 
 
 CURRENT_SIX_BASELINE_DEVELOPMENT_CONTRACT = (
     "PROJECT7_CURRENT_SIX_FIXED_BASELINE_DEVELOPMENT_SWMM_V1"
 )
-DIRECT_TFV_BASELINE_PANEL_CONTRACT = "PROJECT7_DIRECT_TFV_DEVELOPMENT_BASELINE_PANEL_V1"
+DIRECT_TFV_BASELINE_PANEL_CONTRACT = "PROJECT7_DIRECT_TFV_DEVELOPMENT_BASELINE_PANEL_V2_ROLE_AWARE"
 DIRECT_TFV_BASELINE_PROVENANCE_CONTRACT = "PROJECT7_FIXED_BASELINE_PROVENANCE_V1"
 SCIENTIFIC_COMPARATOR_IDS = ("internal_rtc", "auto_rbc", "efd")
 DIAGNOSTIC_EXTREME_IDS = ("all_open", "all_closed")
@@ -56,7 +60,6 @@ def baseline_lineage_failures(
     expected_strategy: str,
 ) -> list[str]:
     """Return fail-closed lineage mismatches without inventing missing legacy metadata."""
-
     expected = canonical_baseline_id(expected_strategy)
     failures: list[str] = []
     actual_strategy = canonical_baseline_id(str(baseline.get("strategy", "")))
@@ -82,7 +85,6 @@ def inspect_baseline_artifact(
     expected_strategy: str,
 ) -> dict[str, Any]:
     """Classify a baseline artifact as reusable or requiring a fresh authoritative run."""
-
     proposed_path = Path(proposed_metadata).resolve()
     baseline_path = Path(baseline_metadata).resolve()
     if not baseline_path.is_file():
@@ -125,9 +127,9 @@ def _role(strategy: str) -> str:
     if strategy == "proposed":
         return "proposed"
     if strategy == "no_control":
-        return "reference"
+        return "primary_reference"
     if strategy in SCIENTIFIC_COMPARATOR_IDS:
-        return "scientific_comparator"
+        return "operational_comparator"
     return "diagnostic_extreme"
 
 
@@ -136,8 +138,7 @@ def build_direct_tfv_baseline_comparison(
     proposed_metadata: str | Path,
     baseline_metadata_by_strategy: Mapping[str, str | Path],
 ) -> dict[str, Any]:
-    """Build one event comparison only after all six fixed baselines pass provenance checks."""
-
+    """Build one event comparison after all six fixed evidence baselines pass provenance checks."""
     proposed_path = Path(proposed_metadata).resolve()
     proposed = _json_object(proposed_path)
     proposed_statistics = _statistics_path(proposed_path, proposed)
@@ -147,7 +148,8 @@ def build_direct_tfv_baseline_comparison(
     }
     if set(normalized) != set(expected):
         raise ValueError(
-            f"comparison requires exactly the six fixed baselines; missing={sorted(set(expected)-set(normalized))}, "
+            f"comparison requires exactly the six fixed evidence baselines; "
+            f"missing={sorted(set(expected)-set(normalized))}, "
             f"extra={sorted(set(normalized)-set(expected))}"
         )
 
@@ -205,14 +207,14 @@ def build_direct_tfv_baseline_comparison(
             )
 
     proposed_beats_no_control = proposed_tfv < no_control_tfv
-    strong_wins = {
+    comparator_wins = {
         strategy: proposed_tfv < float(by_strategy[strategy]["tfv_m3"])
         for strategy in SCIENTIFIC_COMPARATOR_IDS
     }
-    if proposed_beats_no_control and all(strong_wins.values()):
+    if proposed_beats_no_control and all(comparator_wins.values()):
         classification = "DEVELOPMENT_EVENT_METHOD_ADVANTAGE_SUPPORTED"
     elif proposed_beats_no_control:
-        classification = "RULE_BASELINE_COMPETITIVENESS_LIMITED"
+        classification = "USEFUL_VS_NO_CONTROL_COMPARATOR_SUPERIORITY_NOT_UNIVERSAL"
     else:
         classification = "NO_CONTROL_BENEFIT_NOT_SUPPORTED"
 
@@ -222,12 +224,14 @@ def build_direct_tfv_baseline_comparison(
         "event_run_id": proposed.get("run_id"),
         "proposed_metadata": str(proposed_path),
         "baseline_provenance_verified_all": True,
-        "scientific_comparators": list(SCIENTIFIC_COMPARATOR_IDS),
+        "competitive_baselines": list(COMPETITIVE_BASELINE_IDS),
+        "operational_comparators": list(SCIENTIFIC_COMPARATOR_IDS),
         "diagnostic_extremes": list(DIAGNOSTIC_EXTREME_IDS),
+        "universal_comparator_superiority_required": False,
         "global_peak_role": "report_only",
         "rows": rows,
         "proposed_beats_no_control": proposed_beats_no_control,
-        "proposed_beats_scientific_comparator": strong_wins,
+        "proposed_beats_operational_comparator": comparator_wins,
         "classification": classification,
     }
 
