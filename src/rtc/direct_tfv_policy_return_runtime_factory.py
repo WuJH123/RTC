@@ -17,6 +17,7 @@ from .direct_tfv_policy_return import (
     load_policy_return_checkpoint,
 )
 from .direct_tfv_sequence_support import validate_direct_tfv_sequence_support
+from .direct_tfv_v12_lineage import direct_tfv_v12_behavioral_sha256
 from .forecast import PersistenceDecayForecast
 from .production_cli import _controller_config, _load_graph, _load_lines
 from .runtime_controller_guard import ContinuityGuardController
@@ -27,7 +28,7 @@ from .step3_tfv_value_mpc_v11 import DirectTFVPolicyReturnMPCV11
 
 
 POLICY_RETURN_FROZEN_CONTINUATION_FACTORY_CONTRACT = (
-    "PROJECT7_POLICY_RETURN_FROZEN_CONTINUATION_FACTORY_V1"
+    "PROJECT7_POLICY_RETURN_FROZEN_CONTINUATION_FACTORY_V2_STRICT_LINEAGE"
 )
 
 
@@ -68,11 +69,20 @@ def build_frozen_policy_return_continuation_controller(
         raise ValueError("policy-return continuation requires current V12 first-move admission")
     if str(first.get("query_step3_contract", "")) != DIRECT_TFV_SCENARIO_MEAN_STEP3_CONTRACT:
         raise ValueError("policy-return continuation requires V12 scenario-mean query lineage")
+    first_lineage = first.get("lineage") if isinstance(first.get("lineage"), dict) else {}
+    current_v12_behavior = direct_tfv_v12_behavioral_sha256()
+    calibrated_v12_behavior = str(
+        first.get("v12_behavioral_source_sha256", first_lineage.get("v12_behavioral_source_sha256", ""))
+    ).lower()
+    if calibrated_v12_behavior != current_v12_behavior.lower():
+        raise ValueError("policy-return continuation V12 direction behavioral lineage mismatch")
     support = json.loads(Path(sequence_support_path).read_text(encoding="utf-8"))
     validate_direct_tfv_sequence_support(
-        support, actuator_ids=graph.actuator_ids, step2_checkpoint_sha256=_sha(step2_path)
+        support,
+        actuator_ids=graph.actuator_ids,
+        step2_checkpoint_sha256=_sha(step2_path),
     )
-    return_model, return_norm, _ = load_policy_return_checkpoint(
+    return_model, return_norm, return_checkpoint = load_policy_return_checkpoint(
         policy_return_checkpoint_path,
         graph=graph,
         device=device,
@@ -81,10 +91,13 @@ def build_frozen_policy_return_continuation_controller(
     return_admission = json.loads(Path(policy_return_admission_path).read_text(encoding="utf-8"))
     if str(return_admission.get("contract", "")) != DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT:
         raise ValueError("policy-return continuation requires current return admission")
-    if str(return_admission.get("policy_return_checkpoint_sha256", "")).lower() != _sha(
-        policy_return_checkpoint_path
-    ).lower():
+    checkpoint_sha = _sha(policy_return_checkpoint_path)
+    if str(return_admission.get("policy_return_checkpoint_sha256", "")).lower() != checkpoint_sha.lower():
         raise ValueError("policy-return continuation admission/critic mismatch")
+    checkpoint_parent = str(return_checkpoint.get("continuation_policy_sha256", "")).lower()
+    admission_parent = str(return_admission.get("continuation_policy_sha256", "")).lower()
+    if len(checkpoint_parent) != 64 or checkpoint_parent != admission_parent:
+        raise ValueError("policy-return continuation critic/admission parent-policy mismatch")
     cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
     controller_cfg = replace(
         _controller_config(dict(cfg["controller"]), control_block_steps=2),
@@ -116,7 +129,7 @@ def build_frozen_policy_return_continuation_controller(
         policy_return_model=return_model,
         policy_return_normalization=return_norm,
         policy_return_admission=return_admission,
-        policy_return_checkpoint_sha256=_sha(policy_return_checkpoint_path),
+        policy_return_checkpoint_sha256=checkpoint_sha,
     )
     inner = MemorySafeDirectTFVAuthoritativeController(
         step1=step1,
@@ -132,7 +145,10 @@ def build_frozen_policy_return_continuation_controller(
         device=device,
     )
     controller = ContinuityGuardController(
-        inner, max_delta_per_update=0.5, allow_projection=False, enforce_current_delta=False
+        inner,
+        max_delta_per_update=0.5,
+        allow_projection=False,
+        enforce_current_delta=False,
     )
     lineage = {
         "factory_contract": POLICY_RETURN_FROZEN_CONTINUATION_FACTORY_CONTRACT,
@@ -141,8 +157,11 @@ def build_frozen_policy_return_continuation_controller(
         "policy_admission_sha256": _sha(policy_admission_path),
         "v12_first_move_admission_sha256": _sha(v12_first_move_admission_path),
         "sequence_support_sha256": _sha(sequence_support_path),
-        "policy_return_checkpoint_sha256": _sha(policy_return_checkpoint_path),
+        "v12_behavioral_source_sha256": current_v12_behavior,
+        "policy_return_step3_source_sha256": _sha(Path(__file__).resolve().parent / "step3_tfv_value_mpc_v11.py"),
+        "policy_return_checkpoint_sha256": checkpoint_sha,
         "policy_return_admission_sha256": _sha(policy_return_admission_path),
+        "critic_parent_continuation_policy_sha256": checkpoint_parent,
         "graph_sha256": _sha(graph_path),
         "sensors_sha256": _sha(sensors_path),
         "config_sha256": _sha(config_path),
