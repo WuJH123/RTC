@@ -1,9 +1,10 @@
 """Run one same-prefix Practical policy-return query with a single shared HOLD SWMM branch.
 
-The default first-round continuation is the current hybrid Base-H10 parent pi0. After a critic is
-trained, ``policy-return`` uses frozen pi1. Historical V12 optimizer/admission artifacts are not part
-of this current label path. HOLD truth is computed once and reused across all candidates in the same
-query, reducing authoritative work from 2N to 1+N branches.
+The default first-round continuation is the current masked hybrid Base-H10 parent pi0. HOLD truth is
+computed once and reused across all candidates (1+N authoritative branches). Candidate tensors remain
+109-channel for the pretrained Step2, but the frozen native supervisory mask requires all passive
+channels to equal HOLD. Post-support base-Step2 scores from the portfolio artifact are preserved in
+the authoritative records for later sign/rank diagnostics.
 """
 from __future__ import annotations
 
@@ -27,12 +28,9 @@ from rtc.direct_tfv_policy_return import (
     sha256_file,
     validate_policy_return_record,
 )
-from rtc.direct_tfv_policy_return_hybrid_portfolio import (
-    DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
-)
-from rtc.direct_tfv_policy_return_runtime_factory import (
-    build_frozen_policy_return_continuation_controller,
-)
+from rtc.direct_tfv_policy_return_hybrid_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+from rtc.direct_tfv_policy_return_runtime_factory import build_frozen_policy_return_continuation_controller
+from rtc.native_supervisory_control import load_native_supervisory_control
 from rtc.policy_return_replay import (
     ExactPrefixThenFrozenPolicyController,
     audit_policy_return_prefix_contexts,
@@ -43,7 +41,7 @@ from rtc.production_cli import _controls_disabled_runtime
 
 
 PRACTICAL_POLICY_RETURN_QUERY_RUNNER_CONTRACT = (
-    "PROJECT7_PRACTICAL_POLICY_RETURN_SHARED_HOLD_QUERY_RUNNER_V2_HYBRID_PI0"
+    "PROJECT7_PRACTICAL_POLICY_RETURN_SHARED_HOLD_QUERY_RUNNER_V3_82CONTROL_109REP"
 )
 
 
@@ -71,15 +69,26 @@ def _load_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _load_portfolio(path: Path, ids: tuple[str, ...]) -> list[tuple[str, np.ndarray]]:
+def _load_portfolio(
+    path: Path,
+    ids: tuple[str, ...],
+    *,
+    supervisory_mask: np.ndarray,
+    supervisory_mask_sha256: str,
+) -> list[dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("contract") != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
-        raise ValueError("candidate manifest has the wrong current hybrid portfolio contract")
+        raise ValueError("candidate manifest has the wrong current masked hybrid portfolio contract")
+    if str(payload.get("supervisory_mask_sha256", "")).lower() != str(supervisory_mask_sha256).lower():
+        raise ValueError("candidate manifest was generated under another supervisory-control mask")
+    if int(payload.get("supervisory_control_dimension", -1)) != int(supervisory_mask.sum()):
+        raise ValueError("candidate manifest has the wrong supervisory-control dimension")
     rows = payload.get("candidates")
     if not isinstance(rows, list) or not 1 <= len(rows) <= 4:
         raise ValueError("current Practical candidate manifest must contain 1-4 candidates")
-    result: list[tuple[str, np.ndarray]] = []
+    result: list[dict[str, Any]] = []
     seen: set[bytes] = set()
+    passive = ~np.asarray(supervisory_mask, dtype=bool)
     for row in rows:
         if not isinstance(row, dict) or row.get("contract") != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
             raise ValueError("candidate manifest contains an invalid row")
@@ -88,15 +97,16 @@ def _load_portfolio(path: Path, ids: tuple[str, ...]) -> list[tuple[str, np.ndar
             raise ValueError("candidate actuator order differs from parent decision")
         source = str(row.get("candidate_source", "")).strip()
         target = np.asarray(row.get("target_settings", ()), dtype=float).reshape(-1)
-        if not source or target.shape != (109,) or not np.isfinite(target).all():
-            raise ValueError("candidate row lacks source/109 finite target settings")
+        score = float(row.get("base_step2_h10_score_m3", float("nan")))
+        if not source or target.shape != (109,) or not np.isfinite(target).all() or not np.isfinite(score):
+            raise ValueError("candidate row lacks source/109 finite target/base-Step2 score")
         if np.any(target < -1.0e-7) or np.any(target > 1.0 + 1.0e-7):
             raise ValueError("candidate target leaves [0,1]")
         key = np.ascontiguousarray(target, dtype=np.float64).tobytes()
         if key in seen:
             continue
         seen.add(key)
-        result.append((source, target))
+        result.append({"source": source, "target": target, "base_step2_h10_score_m3": score, "passive": passive})
     if not result:
         raise ValueError("candidate portfolio deduplicated to zero actions")
     return result
@@ -109,6 +119,7 @@ def _build_delegate(args: argparse.Namespace, assets: dict, device: torch.device
         config_path=practical_asset_path(assets, "config"),
         step1_path=practical_asset_path(assets, "step1"),
         step2_path=practical_asset_path(assets, "step2"),
+        supervisory_control_path=practical_asset_path(assets, "supervisory_control"),
         sequence_support_path=practical_asset_path(assets, "sequence_support"),
         device=device,
         decision_runtime_budget_seconds=float(args.decision_runtime_budget_seconds),
@@ -189,11 +200,7 @@ def main() -> None:
         choices=("policy_return_train", "policy_return_validation", "policy_return_calibration"),
         required=True,
     )
-    p.add_argument(
-        "--continuation-kind",
-        choices=("base-probe", "policy-return"),
-        default="base-probe",
-    )
+    p.add_argument("--continuation-kind", choices=("base-probe", "policy-return"), default="base-probe")
     p.add_argument("--policy-return-checkpoint")
     p.add_argument("--policy-return-admission")
     p.add_argument("--out-dir", required=True)
@@ -221,8 +228,20 @@ def main() -> None:
     ids = tuple(str(x) for x in diagnostics.get("counterfactual_actuator_ids", ()))
     hold_target = np.asarray(diagnostics.get("hold_reference_settings", ()), dtype=float).reshape(-1)
     if len(ids) != 109 or len(set(ids)) != 109 or hold_target.shape != (109,):
-        raise ValueError("selected parent decision lacks 109-actuator HOLD context")
-    candidates = _load_portfolio(portfolio_path, ids)
+        raise ValueError("selected parent decision lacks 109-channel HOLD context")
+    control, mask = load_native_supervisory_control(
+        practical_asset_path(assets, "supervisory_control"),
+        actuator_ids=ids,
+    )
+    candidates = _load_portfolio(
+        portfolio_path,
+        ids,
+        supervisory_mask=mask,
+        supervisory_mask_sha256=str(control["supervisory_mask_sha256"]),
+    )
+    for row in candidates:
+        if np.any(np.abs(row["target"][~mask] - hold_target[~mask]) > 1.0e-7):
+            raise ValueError(f"candidate {row['source']} changes a passive setting channel relative to HOLD")
     branch_elapsed = int(selected["elapsed_seconds"])
     prefix_actions: dict[int, dict[str, float]] = {}
     for row in rows[: int(args.decision_index)]:
@@ -248,9 +267,7 @@ def main() -> None:
         out_root=out_root,
         suffix="hold_shared",
     )
-    hold_context, hold_release = snapshot_and_release_policy_return_branch(
-        hold_wrapper, device=device
-    )
+    hold_context, hold_release = snapshot_and_release_policy_return_branch(hold_wrapper, device=device)
     del hold_wrapper
     hold_tfv = _tfv(hold_result.node_statistics_path)
     continuation_policy_sha = _canonical_sha(
@@ -265,12 +282,16 @@ def main() -> None:
             "prefix_sha256": prefix_sha,
             "hold_first_target_sha256": _array_sha(hold_target),
             "continuation_policy_sha256": continuation_policy_sha,
+            "supervisory_mask_sha256": control["supervisory_mask_sha256"],
         }
     )
 
     records: list[dict[str, Any]] = []
     lifecycle: dict[str, Any] = {"hold_release": hold_release, "candidate_releases": {}}
-    for index, (source, target) in enumerate(candidates):
+    for index, candidate in enumerate(candidates):
+        source = str(candidate["source"])
+        target = np.asarray(candidate["target"], dtype=np.float64)
+        base_score = float(candidate["base_step2_h10_score_m3"])
         changed = int(np.sum(np.abs(target - hold_target) > 1.0e-7))
         if changed <= 0:
             continue
@@ -314,6 +335,7 @@ def main() -> None:
             query_set_id=np.asarray([query_set_id]),
             candidate_source=np.asarray([source]),
             candidate_portfolio_contract=np.asarray(DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT),
+            supervisory_mask_sha256=np.asarray([str(control["supervisory_mask_sha256"])]),
         )
         record = {
             "estimand": DIRECT_TFV_POLICY_RETURN_ESTIMAND,
@@ -326,6 +348,12 @@ def main() -> None:
             "query_set_id": query_set_id,
             "candidate_source": source,
             "candidate_portfolio_contract": DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
+            "supervisory_control_contract": control["contract"],
+            "supervisory_control_dimension": int(mask.sum()),
+            "model_action_channel_count": 109,
+            "supervisory_mask_sha256": control["supervisory_mask_sha256"],
+            "passive_setting_channels_unchanged": True,
+            "base_step2_h10_score_m3": base_score,
             "first_move_changed_facility_count": changed,
             "true_policy_return_delta_tfv_m3": truth,
             "candidate_branch_tfv_m3": candidate_tfv,
@@ -363,9 +391,7 @@ def main() -> None:
         encoding="utf-8",
     )
     lifecycle_path = out_root / f"{args.run_id}.branch_memory_lifecycle.json"
-    lifecycle_path.write_text(
-        json.dumps(lifecycle, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    lifecycle_path.write_text(json.dumps(lifecycle, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     summary = {
         "contract": PRACTICAL_POLICY_RETURN_QUERY_RUNNER_CONTRACT,
         "event_id": args.event_id,
@@ -380,9 +406,15 @@ def main() -> None:
         "authoritative_branch_count": 1 + len(records),
         "hold_tfv_m3": hold_tfv,
         "true_policy_return_delta_tfv_m3": {
-            row["candidate_source"]: row["true_policy_return_delta_tfv_m3"]
-            for row in records
+            row["candidate_source"]: row["true_policy_return_delta_tfv_m3"] for row in records
         },
+        "base_step2_h10_score_m3": {
+            row["candidate_source"]: row["base_step2_h10_score_m3"] for row in records
+        },
+        "supervisory_control_dimension": int(mask.sum()),
+        "model_action_channel_count": 109,
+        "supervisory_mask_sha256": control["supervisory_mask_sha256"],
+        "all_passive_setting_channels_unchanged": True,
         "all_same_prefix_verified": True,
         "same_continuation_policy_verified": True,
         "asset_manifest": str(Path(args.asset_manifest).resolve()),
@@ -394,9 +426,7 @@ def main() -> None:
         "legacy_v12_assets_used": False,
     }
     summary_path = out_root / f"{args.run_id}.policy_return_query_summary.json"
-    summary_path.write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 
