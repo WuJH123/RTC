@@ -27,6 +27,11 @@ NATIVE_SUPERVISORY_CONTROL_CONTRACT = (
 )
 PROJECT7_MODEL_ACTION_CHANNEL_COUNT = 109
 PROJECT7_EXPECTED_SUPERVISORY_CONTROL_DIMENSION = 82
+PROJECT7_EXPECTED_SUPERVISORY_KIND_COUNTS = {
+    "pump": 57,
+    "orifice": 16,
+    "weir": 9,
+}
 _ACTION_OBJECTS = {"PUMP", "ORIFICE", "WEIR", "OUTLET"}
 
 
@@ -55,11 +60,16 @@ def _iter_control_actions(path: str | Path):
         yield obj, tokens[2]
 
 
+def _normalize_kind_counts(value: Mapping[str, Any]) -> dict[str, int]:
+    return {str(key).lower(): int(count) for key, count in value.items() if int(count) != 0}
+
+
 def derive_native_supervisory_control(
     inp_path: str | Path,
     *,
     actuator_ids: Sequence[str],
     expected_control_dimension: int | None = PROJECT7_EXPECTED_SUPERVISORY_CONTROL_DIMENSION,
+    expected_kind_counts: Mapping[str, int] | None = PROJECT7_EXPECTED_SUPERVISORY_KIND_COUNTS,
 ) -> dict[str, Any]:
     ids = tuple(str(value) for value in actuator_ids)
     if len(ids) != PROJECT7_MODEL_ACTION_CHANNEL_COUNT or len(set(ids)) != len(ids):
@@ -94,8 +104,6 @@ def derive_native_supervisory_control(
     if not controlled_fold:
         raise ValueError("source INP [CONTROLS] contains no actions on Project7 model channels")
 
-    # Canonicalize all current artifacts to the pretrained/frozen graph order. This guarantees that
-    # candidate masks, support statistics and lineage hashes do not depend on rule-file ordering.
     mask = np.asarray([value.casefold() in controlled_fold for value in ids], dtype=bool)
     controlled = tuple(value for value, enabled in zip(ids, mask.tolist(), strict=True) if enabled)
     passive = tuple(value for value, enabled in zip(ids, mask.tolist(), strict=True) if not enabled)
@@ -108,8 +116,16 @@ def derive_native_supervisory_control(
 
     kind_counts: dict[str, int] = {}
     for actuator_id in controlled:
-        kind = str(catalog_by_fold[actuator_id.casefold()].kind)
+        kind = str(catalog_by_fold[actuator_id.casefold()].kind).lower()
         kind_counts[kind] = kind_counts.get(kind, 0) + 1
+    kind_counts = dict(sorted(kind_counts.items()))
+    if expected_kind_counts is not None:
+        expected = _normalize_kind_counts(expected_kind_counts)
+        if kind_counts != expected:
+            raise ValueError(
+                "native supervisory-control type census differs from the frozen Project7 contract: "
+                f"observed={kind_counts} expected={expected}"
+            )
 
     mask_bytes = np.ascontiguousarray(mask.astype(np.uint8)).tobytes()
     return {
@@ -124,7 +140,7 @@ def derive_native_supervisory_control(
         "supervisory_mask_sha256": hashlib.sha256(mask_bytes).hexdigest(),
         "controlled_actuator_ids": list(controlled),
         "passive_setting_channel_ids": list(passive),
-        "controlled_kind_counts": dict(sorted(kind_counts.items())),
+        "controlled_kind_counts": kind_counts,
         "non_model_control_actions": non_model_actions,
         "source_inp_path": str(Path(inp_path).resolve()),
         "source_inp_sha256": sha256_file(inp_path),
@@ -142,6 +158,7 @@ def validate_native_supervisory_control(
     *,
     actuator_ids: Sequence[str],
     expected_control_dimension: int | None = PROJECT7_EXPECTED_SUPERVISORY_CONTROL_DIMENSION,
+    expected_kind_counts: Mapping[str, int] | None = PROJECT7_EXPECTED_SUPERVISORY_KIND_COUNTS,
 ) -> np.ndarray:
     if str(payload.get("contract", "")) != NATIVE_SUPERVISORY_CONTROL_CONTRACT:
         raise ValueError("wrong native supervisory-control contract")
@@ -162,6 +179,13 @@ def validate_native_supervisory_control(
         raise ValueError(
             f"current Project7 requires {int(expected_control_dimension)} supervisory facilities, got {dimension}"
         )
+    if expected_kind_counts is not None:
+        observed = _normalize_kind_counts(dict(payload.get("controlled_kind_counts", {})))
+        expected = _normalize_kind_counts(expected_kind_counts)
+        if observed != expected:
+            raise ValueError(
+                f"current Project7 supervisory type census differs: observed={observed} expected={expected}"
+            )
     expected_sha = hashlib.sha256(np.ascontiguousarray(mask.astype(np.uint8)).tobytes()).hexdigest()
     if str(payload.get("supervisory_mask_sha256", "")).lower() != expected_sha:
         raise ValueError("native supervisory-control mask SHA is inconsistent")
@@ -179,6 +203,7 @@ def load_native_supervisory_control(
     *,
     actuator_ids: Sequence[str],
     expected_control_dimension: int | None = PROJECT7_EXPECTED_SUPERVISORY_CONTROL_DIMENSION,
+    expected_kind_counts: Mapping[str, int] | None = PROJECT7_EXPECTED_SUPERVISORY_KIND_COUNTS,
 ) -> tuple[dict[str, Any], np.ndarray]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -187,6 +212,7 @@ def load_native_supervisory_control(
         payload,
         actuator_ids=actuator_ids,
         expected_control_dimension=expected_control_dimension,
+        expected_kind_counts=expected_kind_counts,
     )
     return payload, mask
 
@@ -194,6 +220,7 @@ def load_native_supervisory_control(
 __all__ = [
     "NATIVE_SUPERVISORY_CONTROL_CONTRACT",
     "PROJECT7_EXPECTED_SUPERVISORY_CONTROL_DIMENSION",
+    "PROJECT7_EXPECTED_SUPERVISORY_KIND_COUNTS",
     "PROJECT7_MODEL_ACTION_CHANNEL_COUNT",
     "derive_native_supervisory_control",
     "load_native_supervisory_control",
