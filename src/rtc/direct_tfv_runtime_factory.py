@@ -9,7 +9,7 @@ from pathlib import Path
 import torch
 
 from .checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
-from .controller_direct_tfv import DirectTFVAuthoritativeController
+from .controller_direct_tfv_safe import MemorySafeDirectTFVAuthoritativeController
 from .direct_tfv_first_move_admission import DIRECT_TFV_FIRST_MOVE_ADMISSION_CONTRACT
 from .direct_tfv_policy_admission import DIRECT_TFV_POLICY_ADMISSION_CONTRACT
 from .direct_tfv_sequence_support import validate_direct_tfv_sequence_support
@@ -101,7 +101,7 @@ def build_frozen_v12_continuation_controller(
         first_move_deadline_seconds=float(first_move_deadline_seconds),
         minimum_rainfall_scenarios=3,
     )
-    inner = DirectTFVAuthoritativeController(
+    inner = MemorySafeDirectTFVAuthoritativeController(
         step1=step1,
         mpc=mpc,
         graph=graph,
@@ -128,6 +128,7 @@ def build_frozen_v12_continuation_controller(
         "sensors_sha256": _sha(sensors_path),
         "config_sha256": _sha(config_path),
         "step3_contract": DIRECT_TFV_SCENARIO_MEAN_STEP3_CONTRACT,
+        "memory_safe_runtime": True,
     }
     return controller, graph, sensors, lineage
 
