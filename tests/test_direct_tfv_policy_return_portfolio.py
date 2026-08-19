@@ -21,6 +21,8 @@ from rtc.direct_tfv_policy_return_portfolio_admission import (
 )
 from rtc.policy_return_replay import (
     POLICY_RETURN_BRANCH_RELEASE_CONTRACT,
+    POLICY_RETURN_PREFIX_AUDIT_CONTRACT,
+    audit_policy_return_prefix_contexts,
     snapshot_and_release_policy_return_branch,
 )
 
@@ -85,7 +87,7 @@ def test_hydraulic_pressure_candidate_reverses_weir_setting_direction() -> None:
     assert delta[3] > 0.0
 
 
-def test_candidate_portfolio_is_supported_bounded_and_not_baseline_imitation() -> None:
+def test_candidate_portfolio_is_small_supported_and_not_baseline_imitation() -> None:
     graph = _graph()
     state = torch.tensor(
         [[[1.8, 0.0, 0.0, 900.0], [0.2, 0.0, 0.0, 100.0]]],
@@ -108,7 +110,9 @@ def test_candidate_portfolio_is_supported_bounded_and_not_baseline_imitation() -
     sources = {row.source for row in candidates}
     assert "TYPE_AWARE_HYDRAULIC_PRESSURE" in sources
     assert any(value.startswith("V12_DIRECTION_SCALE_") for value in sources)
+    assert all("BLEND" not in value for value in sources)
     assert not any("AUTO_RBC" in value or "ALL_OPEN" in value for value in sources)
+    assert len(candidates) <= 3
     for row in candidates:
         delta = torch.abs(row.target - active)
         assert row.changed_facility_count <= 4
@@ -138,6 +142,45 @@ def test_policy_return_branch_release_copies_context_and_severs_delegate() -> No
     assert telemetry["cuda_device_type"] == "cpu"
     assert telemetry["allocated_before_bytes"] == 0
     assert telemetry["reserved_after_bytes"] == 0
+
+
+def _prefix_context() -> dict[str, np.ndarray]:
+    return {
+        "raw_observed_history": np.zeros((13, 2, 6), dtype=np.float32),
+        "raw_mask_history": np.ones((13, 2, 6), dtype=np.float32),
+        "raw_context_history": np.zeros((13, 2, 2), dtype=np.float32),
+        "raw_rainfall_history": np.zeros((13, 2, 1), dtype=np.float32),
+        "raw_sensor_depth_m": np.asarray([0.4, 0.8], dtype=np.float64),
+        "raw_sensor_head_m": np.asarray([10.4, 20.8], dtype=np.float64),
+        "raw_observed_rainfall_mmhr": np.asarray([5.0, 5.0], dtype=np.float64),
+        "raw_actuator_target_setting": np.full(109, 0.5, dtype=np.float64),
+        "raw_actuator_current_setting": np.full(109, 0.5, dtype=np.float64),
+        "raw_actuator_flow_m3s": np.full(109, 20.0, dtype=np.float64),
+        "current_state": np.zeros((2, 6), dtype=np.float32),
+        "rainfall_scenarios": np.ones((3, 72, 2, 1), dtype=np.float32),
+        "active_target": np.full(109, 0.5, dtype=np.float32),
+        "previous_actuator_flow": np.full(109, 20.0, dtype=np.float32),
+    }
+
+
+def test_prefix_audit_does_not_confuse_step1_float_noise_with_physical_prefix() -> None:
+    candidate = _prefix_context()
+    hold = {key: value.copy() for key, value in candidate.items()}
+    hold["current_state"][0, 0] += 0.001129150390625
+    report = audit_policy_return_prefix_contexts(candidate, hold)
+    assert report["contract"] == POLICY_RETURN_PREFIX_AUDIT_CONTRACT
+    assert report["same_authoritative_prefix_verified"] is True
+    assert report["derived_step1_reconstruction_max_abs"] > 0.001
+    assert report["derived_context_controls_prefix_gate"] is False
+
+
+def test_prefix_audit_rejects_material_raw_sensor_difference() -> None:
+    candidate = _prefix_context()
+    hold = {key: value.copy() for key, value in candidate.items()}
+    hold["raw_sensor_depth_m"][0] += 0.01
+    report = audit_policy_return_prefix_contexts(candidate, hold)
+    assert report["same_authoritative_prefix_verified"] is False
+    assert report["exact_raw_max_abs_by_field"]["raw_sensor_depth_m"] > 0.009
 
 
 def _calibration_record(group: str, source: str, truth: float, prediction: float) -> dict:
@@ -174,7 +217,7 @@ def test_portfolio_admission_requires_and_records_multi_candidate_query_sets() -
         records.append(
             _calibration_record(
                 group,
-                "V12_DIRECTION_SCALE_0.75",
+                "V12_DIRECTION_SCALE_0.50",
                 truth=-100.0 - i,
                 prediction=-110.0 - i,
             )
