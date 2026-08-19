@@ -242,7 +242,9 @@ def main() -> None:
             }
         )
     frame = pd.DataFrame(rows)
-    out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True); frame.to_csv(out, index=False)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(out, index=False)
     summary = {
         "contract": RUN_CONTRACT,
         "development_only": True,
