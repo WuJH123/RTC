@@ -1,16 +1,10 @@
-"""Run one exact-prefix CANDIDATE/HOLD pair followed by the same frozen continuation policy.
+"""Run one exact-prefix CANDIDATE/HOLD pair followed by one frozen continuation policy.
 
-Offline label generation only. Besides the parent policy's own first move, Development portfolio
-experiments may supply an explicit 109-target JSON produced by the causal portfolio designer. The
-candidate and HOLD branches always replay the identical parent prefix, inject exactly one H10 target,
-then use the same frozen continuation artifacts. Extra portfolio metadata changes neither SWMM nor
-the continuation policy; it identifies actions that belong to the same-state ranking query set.
-
-The two authoritative branches are intentionally sequential. After each completed branch, only the
-CPU causal context and scalar/path evidence are retained; the wrapper->delegate ownership edge is
-released before constructing the next CUDA controller. Same-prefix verification is based on raw
-causal measurements/history and the supervisory latch. Step1/forecast floating-point differences are
-reported separately and cannot by themselves redefine two identical SWMM prefixes as different.
+This is offline authoritative label generation only. Candidate and HOLD replay the identical recorded
+supervisory prefix, differ for exactly one H10 command, and then delegate to the same frozen policy.
+The resulting context is stamped with the same H10-candidate/H350-HOLD action-token contract used by
+policy-return training, calibration and runtime. Branch controllers are sequentially released so one
+8-GB GPU never retains two complete continuation stacks.
 """
 from __future__ import annotations
 
@@ -27,13 +21,12 @@ import torch
 
 from rtc.closed_loop import run_authoritative_closed_loop
 from rtc.direct_tfv_policy_return import (
+    DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
     DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT,
     DIRECT_TFV_POLICY_RETURN_ESTIMAND,
 )
 from rtc.direct_tfv_policy_return_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
-from rtc.direct_tfv_policy_return_runtime_factory import (
-    build_frozen_policy_return_continuation_controller,
-)
+from rtc.direct_tfv_policy_return_runtime_factory import build_frozen_policy_return_continuation_controller
 from rtc.direct_tfv_runtime_factory import build_frozen_v12_continuation_controller
 from rtc.policy_return_replay import (
     ExactPrefixThenFrozenPolicyController,
@@ -54,14 +47,14 @@ def _array_sha(value: np.ndarray) -> str:
 
 def _tfv(path: str | Path) -> float:
     total = 0.0
-    with gzip.open(path, "rt", encoding="utf-8", newline="") as fh:
-        for row in csv.DictReader(fh):
+    with gzip.open(path, "rt", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
             total += float(row["delta_flooding_volume_m3"])
     return float(total)
 
 
 def _load_decisions(path: str | Path) -> list[dict[str, Any]]:
-    rows = []
+    rows: list[dict[str, Any]] = []
     for raw in Path(path).read_text(encoding="utf-8").splitlines():
         if raw.strip():
             row = json.loads(raw)
@@ -100,12 +93,11 @@ def _candidate_override(
     parent_candidate: np.ndarray,
 ) -> tuple[np.ndarray, str, str]:
     if path is None:
-        return parent_candidate, "V12_REFINED_PARENT", ""
+        # Context/smoke mode only. These rows are not accepted by the practical dataset compiler.
+        return parent_candidate, "LEGACY_PARENT_CONTEXT_PROBE", ""
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError("candidate target JSON must contain one object")
-    if str(payload.get("contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
-        raise ValueError("candidate target JSON has the wrong portfolio contract")
+    if not isinstance(payload, dict) or str(payload.get("contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
+        raise ValueError("candidate target JSON has the wrong practical portfolio contract")
     payload_ids = tuple(str(value) for value in payload.get("actuator_ids", ()))
     if payload_ids and payload_ids != ids:
         raise ValueError("candidate target JSON actuator order differs from parent decision")
@@ -138,7 +130,7 @@ def _build_delegate(args: argparse.Namespace, device: torch.device):
     )
     if args.continuation_kind == "v12":
         if args.policy_return_checkpoint or args.policy_return_admission:
-            raise ValueError("V12 continuation must not receive policy-return critic/admission")
+            raise ValueError("V12 parent continuation must not receive policy-return critic/admission")
         return build_frozen_v12_continuation_controller(
             **common,
             first_move_admission_path=args.v12_first_move_admission,
@@ -163,7 +155,7 @@ def _run_branch(
     branch_elapsed: int,
     device: torch.device,
     out_root: Path,
-) -> tuple[object, ExactPrefixThenFrozenPolicyController, dict[str, Any]]:
+):
     delegate, graph, sensors, lineage = _build_delegate(args, device)
     if tuple(str(x) for x in graph.actuator_ids) != ids:
         raise ValueError("parent decision actuator order differs from frozen graph")
@@ -210,11 +202,7 @@ def main() -> None:
     p.add_argument("--decision-index", type=int, required=True)
     p.add_argument("--rainfall-group", required=True)
     p.add_argument("--event-id", required=True)
-    p.add_argument(
-        "--data-role",
-        choices=("policy_return_train", "policy_return_validation", "policy_return_calibration"),
-        required=True,
-    )
+    p.add_argument("--data-role", choices=("policy_return_train", "policy_return_validation", "policy_return_calibration"), required=True)
     p.add_argument("--continuation-kind", choices=("v12", "policy-return"), default="v12")
     p.add_argument("--candidate-target-json")
     p.add_argument("--out-dir", required=True)
@@ -230,6 +218,8 @@ def main() -> None:
     p.add_argument("--policy-return-checkpoint")
     p.add_argument("--policy-return-admission")
     p.add_argument("--device", default="cpu")
+    # Legacy parent-continuation knobs remain only for pi0 label generation. Practical online control
+    # does not use L-BFGS-B after the first policy-return critic is trained.
     p.add_argument("--lbfgsb-maxiter", type=int, default=30)
     p.add_argument("--optimizer-deadline-seconds", type=float, default=120.0)
     p.add_argument("--decision-runtime-budget-seconds", type=float, default=180.0)
@@ -238,18 +228,16 @@ def main() -> None:
     args = p.parse_args()
 
     rows = _load_decisions(args.parent_decisions)
-    if args.decision_index < 0 or args.decision_index >= len(rows):
+    if not 0 <= args.decision_index < len(rows):
         raise ValueError("decision-index lies outside parent decision JSONL")
     selected = rows[args.decision_index]
     ids, parent_candidate, hold_target = _targets(selected)
     candidate_target, candidate_source, portfolio_contract = _candidate_override(
-        args.candidate_target_json,
-        ids=ids,
-        parent_candidate=parent_candidate,
+        args.candidate_target_json, ids=ids, parent_candidate=parent_candidate
     )
     branch_elapsed = int(selected["elapsed_seconds"])
     if branch_elapsed <= 0:
-        raise ValueError("policy-return branch must occur after the initial causal warm-up")
+        raise ValueError("policy-return branch must occur after causal warm-up")
     changed = int(np.sum(np.abs(candidate_target - hold_target) > 1.0e-7))
     if changed <= 0:
         raise ValueError("selected policy-return query has zero changed facilities")
@@ -269,19 +257,10 @@ def main() -> None:
     prefix_audit_path = out_root / f"{args.run_id}.prefix_context_audit.json"
 
     candidate_result, candidate_wrapper, candidate_lineage = _run_branch(
-        args=args,
-        branch_kind="CANDIDATE",
-        branch_target=candidate_target,
-        ids=ids,
-        prefix_actions=prefix_actions,
-        branch_elapsed=branch_elapsed,
-        device=device,
-        out_root=out_root,
+        args=args, branch_kind="CANDIDATE", branch_target=candidate_target, ids=ids,
+        prefix_actions=prefix_actions, branch_elapsed=branch_elapsed, device=device, out_root=out_root,
     )
-    candidate_context, candidate_release = snapshot_and_release_policy_return_branch(
-        candidate_wrapper,
-        device=device,
-    )
+    candidate_context, candidate_release = snapshot_and_release_policy_return_branch(candidate_wrapper, device=device)
     del candidate_wrapper
     lifecycle: dict[str, Any] = {
         "candidate_release": candidate_release,
@@ -292,19 +271,10 @@ def main() -> None:
     _write_json(lifecycle_path, lifecycle)
 
     hold_result, hold_wrapper, hold_lineage = _run_branch(
-        args=args,
-        branch_kind="HOLD",
-        branch_target=hold_target,
-        ids=ids,
-        prefix_actions=prefix_actions,
-        branch_elapsed=branch_elapsed,
-        device=device,
-        out_root=out_root,
+        args=args, branch_kind="HOLD", branch_target=hold_target, ids=ids,
+        prefix_actions=prefix_actions, branch_elapsed=branch_elapsed, device=device, out_root=out_root,
     )
-    hold_context, hold_release = snapshot_and_release_policy_return_branch(
-        hold_wrapper,
-        device=device,
-    )
+    hold_context, hold_release = snapshot_and_release_policy_return_branch(hold_wrapper, device=device)
     del hold_wrapper
     lifecycle["hold_release"] = hold_release
     _write_json(lifecycle_path, lifecycle)
@@ -324,17 +294,12 @@ def main() -> None:
     )
     _write_json(prefix_audit_path, prefix_audit)
     if prefix_audit["same_authoritative_prefix_verified"] is not True:
-        raise RuntimeError(
-            "candidate/HOLD raw causal prefix mismatch; see "
-            f"{prefix_audit_path}"
-        )
+        raise RuntimeError(f"candidate/HOLD raw causal prefix mismatch; see {prefix_audit_path}")
 
     candidate_tfv = _tfv(candidate_result.node_statistics_path)
     hold_tfv = _tfv(hold_result.node_statistics_path)
     truth = float(candidate_tfv - hold_tfv)
-    continuation_policy_sha = _canonical_sha(
-        {"continuation_kind": args.continuation_kind, "lineage": candidate_lineage}
-    )
+    continuation_policy_sha = _canonical_sha({"continuation_kind": args.continuation_kind, "lineage": candidate_lineage})
     query_set_id = _canonical_sha(
         {
             "event_id": args.event_id,
@@ -351,6 +316,7 @@ def main() -> None:
         context_path,
         contract=np.asarray(DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT),
         estimand=np.asarray(DIRECT_TFV_POLICY_RETURN_ESTIMAND),
+        action_encoding_contract=np.asarray(DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING),
         data_role=np.asarray(args.data_role),
         current_state=candidate_context["current_state"][None],
         rainfall_scenarios=candidate_context["rainfall_scenarios"][None],
@@ -365,6 +331,7 @@ def main() -> None:
     )
     record = {
         "estimand": DIRECT_TFV_POLICY_RETURN_ESTIMAND,
+        "action_encoding_contract": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
         "data_role": args.data_role,
         "rainfall_group": args.rainfall_group,
         "event_id": args.event_id,
@@ -379,9 +346,7 @@ def main() -> None:
         "hold_branch_tfv_m3": hold_tfv,
         "same_prefix_verified": True,
         "same_prefix_definition": "RAW_CAUSAL_INPUTS_AND_RECORDED_SUPERVISORY_PREFIX",
-        "same_prefix_derived_step1_reconstruction_max_abs": float(
-            prefix_audit["derived_step1_reconstruction_max_abs"]
-        ),
+        "same_prefix_derived_step1_reconstruction_max_abs": float(prefix_audit["derived_step1_reconstruction_max_abs"]),
         "same_continuation_policy_verified": True,
         "future_realized_rainfall_used_online": False,
         "continuation_kind": args.continuation_kind,
