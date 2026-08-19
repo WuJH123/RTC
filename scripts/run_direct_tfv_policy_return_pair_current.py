@@ -1,9 +1,8 @@
-"""Run one exact-prefix CANDIDATE/HOLD pair followed by the same frozen V12 policy.
+"""Run one exact-prefix CANDIDATE/HOLD pair followed by the same frozen continuation policy.
 
-This script is offline label generation only.  It replays the recorded parent-policy prefix exactly,
-injects one alternative H10 target, then lets the same frozen V12 controller react to the branch-
-specific hydraulic state at every later 10-minute decision.  It also captures the exact causal Step1
-state and causal rainfall scenarios available online at the branch point.
+Offline label generation only. The continuation can be the frozen V12 parent policy or a frozen
+policy-return policy from a later policy-iteration round. Candidate and HOLD branches always replay
+the identical parent prefix, inject exactly one H10 target, then use the same continuation artifacts.
 """
 from __future__ import annotations
 
@@ -11,7 +10,6 @@ import argparse
 import csv
 import gzip
 import hashlib
-import inspect
 import json
 from pathlib import Path
 from typing import Any
@@ -24,10 +22,12 @@ from rtc.direct_tfv_policy_return import (
     DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT,
     DIRECT_TFV_POLICY_RETURN_ESTIMAND,
 )
+from rtc.direct_tfv_policy_return_runtime_factory import (
+    build_frozen_policy_return_continuation_controller,
+)
 from rtc.direct_tfv_runtime_factory import build_frozen_v12_continuation_controller
 from rtc.policy_return_replay import ExactPrefixThenFrozenPolicyController
 from rtc.production_cli import _controls_disabled_runtime
-from rtc.step3_tfv_value_mpc_v10 import DirectTFVScenarioMeanMPCV10
 
 
 def _canonical_sha(value: Any) -> str:
@@ -81,14 +81,13 @@ def _targets(row: dict[str, Any]) -> tuple[tuple[str, ...], np.ndarray, np.ndarr
 
 
 def _build_delegate(args: argparse.Namespace, device: torch.device):
-    return build_frozen_v12_continuation_controller(
+    common = dict(
         graph_path=args.graph,
         sensors_path=args.sensors,
         config_path=args.config,
         step1_path=args.step1,
         step2_path=args.step2,
         policy_admission_path=args.policy_admission,
-        first_move_admission_path=args.v12_first_move_admission,
         sequence_support_path=args.sequence_support,
         device=device,
         lbfgsb_maxiter=int(args.lbfgsb_maxiter),
@@ -96,6 +95,21 @@ def _build_delegate(args: argparse.Namespace, device: torch.device):
         decision_runtime_budget_seconds=float(args.decision_runtime_budget_seconds),
         first_move_maxiter=int(args.first_move_maxiter),
         first_move_deadline_seconds=float(args.first_move_deadline_seconds),
+    )
+    if args.continuation_kind == "v12":
+        if args.policy_return_checkpoint or args.policy_return_admission:
+            raise ValueError("V12 continuation must not receive policy-return critic/admission")
+        return build_frozen_v12_continuation_controller(
+            **common,
+            first_move_admission_path=args.v12_first_move_admission,
+        )
+    if not args.policy_return_checkpoint or not args.policy_return_admission:
+        raise ValueError("policy-return continuation requires critic and matched admission")
+    return build_frozen_policy_return_continuation_controller(
+        **common,
+        v12_first_move_admission_path=args.v12_first_move_admission,
+        policy_return_checkpoint_path=args.policy_return_checkpoint,
+        policy_return_admission_path=args.policy_return_admission,
     )
 
 
@@ -157,6 +171,7 @@ def main() -> None:
         choices=("policy_return_train", "policy_return_validation", "policy_return_calibration"),
         required=True,
     )
+    p.add_argument("--continuation-kind", choices=("v12", "policy-return"), default="v12")
     p.add_argument("--out-dir", required=True)
     p.add_argument("--run-id", required=True)
     p.add_argument("--sensors", required=True)
@@ -167,6 +182,8 @@ def main() -> None:
     p.add_argument("--policy-admission", required=True)
     p.add_argument("--v12-first-move-admission", required=True)
     p.add_argument("--sequence-support", required=True)
+    p.add_argument("--policy-return-checkpoint")
+    p.add_argument("--policy-return-admission")
     p.add_argument("--device", default="cpu")
     p.add_argument("--lbfgsb-maxiter", type=int, default=30)
     p.add_argument("--optimizer-deadline-seconds", type=float, default=120.0)
@@ -195,39 +212,47 @@ def main() -> None:
         prefix_actions[elapsed] = {aid: float(settings[aid]) for aid in ids}
 
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
-    out_root = Path(args.out_dir); out_root.mkdir(parents=True, exist_ok=True)
+    out_root = Path(args.out_dir)
+    out_root.mkdir(parents=True, exist_ok=True)
     candidate_result, candidate_wrapper, candidate_lineage = _run_branch(
-        args=args, branch_kind="CANDIDATE", branch_target=candidate_target, ids=ids,
-        prefix_actions=prefix_actions, branch_elapsed=branch_elapsed, device=device, out_root=out_root,
+        args=args,
+        branch_kind="CANDIDATE",
+        branch_target=candidate_target,
+        ids=ids,
+        prefix_actions=prefix_actions,
+        branch_elapsed=branch_elapsed,
+        device=device,
+        out_root=out_root,
     )
     hold_result, hold_wrapper, hold_lineage = _run_branch(
-        args=args, branch_kind="HOLD", branch_target=hold_target, ids=ids,
-        prefix_actions=prefix_actions, branch_elapsed=branch_elapsed, device=device, out_root=out_root,
+        args=args,
+        branch_kind="HOLD",
+        branch_target=hold_target,
+        ids=ids,
+        prefix_actions=prefix_actions,
+        branch_elapsed=branch_elapsed,
+        device=device,
+        out_root=out_root,
     )
     if candidate_lineage != hold_lineage:
         raise RuntimeError("candidate/HOLD branches used different continuation-policy artifacts")
-    candidate_context = candidate_wrapper.branch_context; hold_context = hold_wrapper.branch_context
+    candidate_context = candidate_wrapper.branch_context
+    hold_context = hold_wrapper.branch_context
     assert candidate_context is not None and hold_context is not None
     max_prefix_difference = max(
         float(np.max(np.abs(candidate_context[key].astype(float) - hold_context[key].astype(float))))
         for key in candidate_context
     )
-    same_prefix = bool(max_prefix_difference <= 1.0e-6)
-    if not same_prefix:
+    if max_prefix_difference > 1.0e-6:
         raise RuntimeError(f"candidate/HOLD policy-return prefix mismatch: {max_prefix_difference}")
 
     candidate_tfv = _tfv(candidate_result.node_statistics_path)
     hold_tfv = _tfv(hold_result.node_statistics_path)
     truth = float(candidate_tfv - hold_tfv)
     continuation_policy_sha = _canonical_sha(
-        {
-            "lineage": candidate_lineage,
-            "step3_source": inspect.getsource(DirectTFVScenarioMeanMPCV10),
-        }
+        {"continuation_kind": args.continuation_kind, "lineage": candidate_lineage}
     )
-    prefix_sha = _canonical_sha(
-        {str(k): prefix_actions[k] for k in sorted(prefix_actions)}
-    )
+    prefix_sha = _canonical_sha({str(k): prefix_actions[k] for k in sorted(prefix_actions)})
     context_path = out_root / f"{args.run_id}.policy_return_context.npz"
     np.savez_compressed(
         context_path,
@@ -257,6 +282,7 @@ def main() -> None:
         "same_prefix_max_abs_context_difference": max_prefix_difference,
         "same_continuation_policy_verified": True,
         "future_realized_rainfall_used_online": False,
+        "continuation_kind": args.continuation_kind,
         "continuation_policy_sha256": continuation_policy_sha,
         "prefix_sha256": prefix_sha,
         "candidate_first_target_sha256": _array_sha(candidate_target),
