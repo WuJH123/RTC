@@ -75,9 +75,8 @@ BASELINES = {
     ),
 }
 
-# Keep the six-strategy evidence panel for compatibility and transparency.  Publication claims use
-# COMPETITIVE_BASELINE_IDS; the numerical setting extremes are always reported but are not policies
-# that the Proposed controller is required to beat.
+# Keep the six-strategy evidence panel for compatibility and transparency. Publication claims use
+# COMPETITIVE_BASELINE_IDS; numerical setting extremes remain visible diagnostic evidence.
 FORMAL_FIXED_BASELINE_IDS = (
     "no_control",
     "internal_rtc",
@@ -189,9 +188,9 @@ def fixed_baseline_controller(
     if strategy == "hold":
         return frozen_hold_controller()
     if strategy == "all_open":
-        return constant_setting_controller(1.0, "ALL_MAX_SETTING_DIAGNOSTIC")
+        return constant_setting_controller(1.0, "ALL_OPEN")
     if strategy == "all_closed":
-        return constant_setting_controller(0.0, "ALL_MIN_SETTING_DIAGNOSTIC")
+        return constant_setting_controller(0.0, "ALL_CLOSED")
     if strategy == "auto_rbc":
         if inp_path is None:
             raise ValueError("Auto-RBC requires the source event INP")
