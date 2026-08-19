@@ -15,7 +15,12 @@ from rtc.native_supervisory_control import (
 )
 
 
-def _write_testbed(path: Path) -> tuple[str, ...]:
+def _write_testbed(
+    path: Path,
+    *,
+    reverse_control_order: bool = False,
+    mixed_case_actions: bool = False,
+) -> tuple[str, ...]:
     pumps = [f"P{i:03d}" for i in range(57)]
     orifices = [f"O{i:03d}" for i in range(42)]
     weirs = [f"W{i:03d}" for i in range(10)]
@@ -28,13 +33,16 @@ def _write_testbed(path: Path) -> tuple[str, ...]:
     lines.extend(f"{value} N0 N1 TRANSVERSE 0 1 NO 0 0 NO" for value in weirs)
     lines.extend(["", "[CONTROLS]"])
     controlled = pumps + orifices[:16] + weirs[:9]
+    if reverse_control_order:
+        controlled = list(reversed(controlled))
     for index, value in enumerate(controlled):
         obj = "PUMP" if value.startswith("P") else "ORIFICE" if value.startswith("O") else "WEIR"
+        action_id = value.lower() if mixed_case_actions and index % 2 == 0 else value
         lines.extend(
             [
                 f"RULE R{index:03d}",
                 "IF NODE N0 DEPTH >= 0.5",
-                f"THEN {obj} {value} SETTING = 1",
+                f"THEN {obj} {action_id} SETTING = 1",
                 "",
             ]
         )
@@ -56,6 +64,24 @@ def test_native_control_mask_keeps_109_channels_but_enables_82(tmp_path: Path) -
     assert mask.shape == (109,)
     assert payload["step1_retraining_required"] is False
     assert payload["base_step2_retraining_required"] is False
+
+
+def test_native_control_mask_is_canonical_under_rule_order_and_id_case(tmp_path: Path) -> None:
+    normal_inp = tmp_path / "normal.inp"
+    shuffled_inp = tmp_path / "shuffled.inp"
+    ids = _write_testbed(normal_inp)
+    _write_testbed(
+        shuffled_inp,
+        reverse_control_order=True,
+        mixed_case_actions=True,
+    )
+    normal = derive_native_supervisory_control(normal_inp, actuator_ids=ids)
+    shuffled = derive_native_supervisory_control(shuffled_inp, actuator_ids=ids)
+    assert normal["supervisory_mask"] == shuffled["supervisory_mask"]
+    assert normal["supervisory_mask_sha256"] == shuffled["supervisory_mask_sha256"]
+    assert normal["controlled_actuator_ids"] == shuffled["controlled_actuator_ids"]
+    assert normal["passive_setting_channel_ids"] == shuffled["passive_setting_channel_ids"]
+    validate_native_supervisory_control(shuffled, actuator_ids=ids)
 
 
 def test_masked_sequence_geometry_ignores_passive_action_channels() -> None:
