@@ -1,19 +1,19 @@
 """Causal first-action proposal portfolio for practical Project7 RTC.
 
-The proposal layer deliberately avoids high-dimensional continuous optimization. Historical
-Development evidence showed that a 12x109 L-BFGS-B search could leave the reliable Step2 query
-geometry and that even locally correct H360 plans did not guarantee good repeated H10 control.
+The pretrained Step2 keeps its frozen 109-channel hydraulic action representation. Current online
+proposal generation may additionally receive a native supervisory mask; channels outside that mask
+remain present in the model but are forced to candidate == reference. This lets Project7 reduce the
+actual control dimension without retraining Step1 or the base Step2.
 
-The practical proposal layer therefore uses the frozen base Step2 only as a *directional probe
-model*: for every actuator it batch-scores positive/negative H10 pulses followed by HOLD for H350,
-selects individually beneficial directions, and combines at most the TrainFit q95 changed-facility
-count. The resulting learned direction is offered at full and half magnitude alongside one
-hydraulically interpretable, actuator-type-aware pressure direction. The policy-return critic, not
-the base Step2 score, ranks/admits the final executable action.
+The proposal layer uses the frozen base Step2 as a directional probe model: for every *eligible*
+actuator it batch-scores positive/negative H10 pulses followed by HOLD for H350, selects individually
+beneficial directions, and combines at most the TrainFit support ceiling. The learned direction is
+offered at full and half magnitude alongside one hydraulically interpretable, actuator-type-aware
+pressure direction. The policy-return critic, not the base Step2 score, ranks/admits final execution.
 
 No future realised rainfall, online SWMM, PFV/peak objective, rule baseline warm start, or action
-penalty is used. All targets stay inside frozen first-move support, the 0.5 target slew and actuator
-bounds before the runtime applies its H10 joint-sequence trust region.
+penalty is used. All targets stay inside first-move support, the 0.5 target slew and actuator bounds
+before the runtime applies its H10 joint-sequence trust region.
 """
 from __future__ import annotations
 
@@ -34,8 +34,6 @@ DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT = (
     "PROJECT7_DIRECT_TFV_SUPPORTED_H10_PROBE_DIRECTION_GENERATOR_V1"
 )
 DEFAULT_LEARNED_SHRINK_SCALES = (0.50, 1.00)
-# Compatibility alias for callers/tests that have not yet renamed the symbol. The scientific source
-# labels no longer call the proposal a V12 direction.
 DEFAULT_V12_SHRINK_SCALES = DEFAULT_LEARNED_SHRINK_SCALES
 
 
@@ -78,6 +76,15 @@ def _actuator_bounds(graph: Any) -> tuple[np.ndarray, np.ndarray]:
     if not np.isfinite(lower).all() or not np.isfinite(upper).all() or np.any(lower > upper):
         raise ValueError("portfolio actuator setting bounds are invalid")
     return lower, upper
+
+
+def _validated_supervisory_mask(supervisory_mask: np.ndarray | None) -> np.ndarray:
+    if supervisory_mask is None:
+        return np.ones(109, dtype=bool)
+    mask = np.asarray(supervisory_mask, dtype=bool).reshape(-1)
+    if mask.shape != (109,) or int(mask.sum()) <= 0:
+        raise ValueError("portfolio supervisory mask must contain 109 entries with >=1 enabled")
+    return mask
 
 
 def _rain_level(rainfall_scenarios: np.ndarray) -> float:
@@ -137,33 +144,39 @@ def _bounded_supported_target(
     first_radius: np.ndarray,
     max_changed_facilities: int,
     max_delta_per_update: float,
+    supervisory_mask: np.ndarray | None = None,
 ) -> np.ndarray:
     active = np.asarray(active_target, dtype=np.float64).reshape(-1)
     delta = np.asarray(raw_delta, dtype=np.float64).reshape(-1)
     radius = np.asarray(first_radius, dtype=np.float64).reshape(-1)
     if active.shape != (109,) or delta.shape != (109,) or radius.shape != (109,):
         raise ValueError("portfolio target/support vectors must contain 109 actuators")
-    if not 1 <= int(max_changed_facilities) <= 109:
-        raise ValueError("portfolio changed-facility ceiling must lie in [1,109]")
+    mask = _validated_supervisory_mask(supervisory_mask)
+    if not 1 <= int(max_changed_facilities) <= int(mask.sum()):
+        raise ValueError("portfolio changed-facility ceiling exceeds the supervisory-control dimension")
     allowed = np.minimum(np.maximum(radius, 0.0), float(max_delta_per_update))
-    delta = np.clip(delta, -allowed, allowed)
+    allowed = np.where(mask, allowed, 0.0)
+    delta = np.where(mask, np.clip(delta, -allowed, allowed), 0.0)
 
     nonzero = np.flatnonzero(np.abs(delta) > 1.0e-7)
     if nonzero.size > int(max_changed_facilities):
         order = nonzero[np.argsort(-np.abs(delta[nonzero]), kind="mergesort")]
         keep = order[: int(max_changed_facilities)]
-        mask = np.zeros(109, dtype=bool)
-        mask[keep] = True
-        delta = np.where(mask, delta, 0.0)
+        keep_mask = np.zeros(109, dtype=bool)
+        keep_mask[keep] = True
+        delta = np.where(keep_mask, delta, 0.0)
 
     lower, upper = _actuator_bounds(graph)
     target = np.clip(active + delta, lower, upper)
     target = active + np.clip(target - active, -allowed, allowed)
+    target = np.where(mask, target, active)
     target = np.clip(target, lower, upper)
     return target.astype(np.float32)
 
 
-def _normalization_tensors(normalization: Any, *, dtype: torch.dtype, device: torch.device) -> dict[str, torch.Tensor]:
+def _normalization_tensors(
+    normalization: Any, *, dtype: torch.dtype, device: torch.device
+) -> dict[str, torch.Tensor]:
     return {
         "state_mean": torch.as_tensor(normalization.state_mean, dtype=dtype, device=device),
         "state_std": torch.as_tensor(normalization.state_std, dtype=dtype, device=device).clamp_min(1.0e-6),
@@ -263,30 +276,33 @@ def build_learned_h10_probe_proposal(
     max_changed_facilities: int,
     max_delta_per_update: float = 0.5,
     probe_chunk_size: int = 24,
+    supervisory_mask: np.ndarray | None = None,
 ) -> LearnedH10ProbeProposal:
-    """Generate a coordinated direction from finite, support-bounded single-actuator H10 probes."""
+    """Generate a coordinated direction from supported single-actuator H10 probes."""
     active = active_target.detach().cpu().numpy().astype(np.float64).reshape(-1)
     radius = np.asarray(first_radius, dtype=np.float64).reshape(-1)
     if active.shape != (109,) or radius.shape != (109,):
         raise ValueError("learned H10 proposal requires 109-dimensional targets/support")
+    mask = _validated_supervisory_mask(supervisory_mask)
     lower, upper = _actuator_bounds(graph)
     allowed = np.minimum(np.maximum(radius, 0.0), float(max_delta_per_update))
+    allowed = np.where(mask, allowed, 0.0)
 
     probe_targets: list[np.ndarray] = []
     probe_meta: list[tuple[int, float]] = []
-    for index in range(109):
+    for index in np.flatnonzero(mask):
         plus = min(float(allowed[index]), float(upper[index] - active[index]))
         minus = min(float(allowed[index]), float(active[index] - lower[index]))
         if plus > 1.0e-7:
             target = active.copy()
             target[index] += plus
             probe_targets.append(target)
-            probe_meta.append((index, plus))
+            probe_meta.append((int(index), plus))
         if minus > 1.0e-7:
             target = active.copy()
             target[index] -= minus
             probe_targets.append(target)
-            probe_meta.append((index, -minus))
+            probe_meta.append((int(index), -minus))
 
     best_score = np.full(109, np.inf, dtype=np.float64)
     best_delta = np.zeros(109, dtype=np.float64)
@@ -312,7 +328,9 @@ def build_learned_h10_probe_proposal(
                 best_score[index] = float(score)
                 best_delta[index] = float(delta)
 
-    beneficial = np.flatnonzero(np.isfinite(best_score) & (best_score < 0.0) & (np.abs(best_delta) > 1.0e-7))
+    beneficial = np.flatnonzero(
+        mask & np.isfinite(best_score) & (best_score < 0.0) & (np.abs(best_delta) > 1.0e-7)
+    )
     order = beneficial[np.argsort(best_score[beneficial], kind="mergesort")]
     selected = order[: int(max_changed_facilities)]
     if selected.size == 0:
@@ -332,6 +350,7 @@ def build_learned_h10_probe_proposal(
         first_radius=radius,
         max_changed_facilities=int(max_changed_facilities),
         max_delta_per_update=float(max_delta_per_update),
+        supervisory_mask=mask,
     )
     return LearnedH10ProbeProposal(
         target=torch.as_tensor(target_np, dtype=active_target.dtype, device=active_target.device),
@@ -354,25 +373,25 @@ def build_policy_return_candidate_portfolio(
     v12_target: torch.Tensor | None = None,
     max_delta_per_update: float = 0.5,
     shrink_scales: Iterable[float] = DEFAULT_LEARNED_SHRINK_SCALES,
+    supervisory_mask: np.ndarray | None = None,
 ) -> tuple[PolicyReturnPortfolioCandidate, ...]:
     """Build at most three deterministic, engineering-supported first targets."""
     active = active_target.detach().cpu().numpy().astype(np.float64).reshape(-1)
     if active.shape != (109,):
         raise ValueError("portfolio requires a 109-dimensional active target")
+    mask = _validated_supervisory_mask(supervisory_mask)
     state = current_state.detach().cpu().numpy()
     if state.ndim == 3 and state.shape[0] == 1:
         state = state[0]
     rain = rainfall_scenarios.detach().cpu().numpy()
 
-    # ``v12_target`` remains a compatibility input for old unit callers only. New runtime/design code
-    # supplies ``learned_target`` from the H10 probe generator and never calls the full-plan optimizer.
     learned_tensor = learned_target if isinstance(learned_target, torch.Tensor) else v12_target
     raw: list[tuple[str, np.ndarray]] = []
     if isinstance(learned_tensor, torch.Tensor):
         learned = learned_tensor.detach().cpu().numpy().astype(np.float64).reshape(-1)
         if learned.shape != (109,):
             raise ValueError("portfolio learned target must contain 109 settings")
-        learned_delta = learned - active
+        learned_delta = np.where(mask, learned - active, 0.0)
         for value in shrink_scales:
             scale = float(value)
             if not 0.0 < scale <= 1.0:
@@ -401,6 +420,7 @@ def build_policy_return_candidate_portfolio(
             first_radius=first_radius,
             max_changed_facilities=max_changed_facilities,
             max_delta_per_update=max_delta_per_update,
+            supervisory_mask=mask,
         )
         changed = int(np.count_nonzero(np.abs(target_np.astype(np.float64) - active) > 1.0e-7))
         if changed <= 0:
@@ -426,6 +446,9 @@ __all__ = [
     "DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT",
     "LearnedH10ProbeProposal",
     "PolicyReturnPortfolioCandidate",
+    "_bounded_supported_target",
+    "_normalization_tensors",
+    "_validated_supervisory_mask",
     "build_learned_h10_probe_proposal",
     "build_policy_return_candidate_portfolio",
     "hydraulic_pressure_setting_delta",
