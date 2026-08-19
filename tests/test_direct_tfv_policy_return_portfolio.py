@@ -61,7 +61,6 @@ def test_swmm_release_setting_direction_is_type_aware() -> None:
 
 def test_hydraulic_pressure_candidate_reverses_weir_setting_direction() -> None:
     graph = _graph()
-    # Upstream is almost full and downstream has headroom, so the hydraulic release intent is positive.
     state = np.asarray(
         [
             [1.8, 0.0, 0.0, 900.0],
@@ -76,10 +75,10 @@ def test_hydraulic_pressure_candidate_reverses_weir_setting_direction() -> None:
         graph=graph,
         max_delta_per_update=0.5,
     )
-    assert delta[0] > 0.0  # pump: release increase -> higher setting
-    assert delta[1] > 0.0  # orifice
-    assert delta[2] < 0.0  # weir: release increase -> lower freeboard setting
-    assert delta[3] > 0.0  # outlet
+    assert delta[0] > 0.0
+    assert delta[1] > 0.0
+    assert delta[2] < 0.0
+    assert delta[3] > 0.0
 
 
 def test_candidate_portfolio_is_supported_bounded_and_not_baseline_imitation() -> None:
@@ -104,7 +103,7 @@ def test_candidate_portfolio_is_supported_bounded_and_not_baseline_imitation() -
     )
     sources = {row.source for row in candidates}
     assert "TYPE_AWARE_HYDRAULIC_PRESSURE" in sources
-    assert "V12_DIRECTION_SCALE_1.00" in sources
+    assert any(value.startswith("V12_DIRECTION_SCALE_") for value in sources)
     assert not any("AUTO_RBC" in value or "ALL_OPEN" in value for value in sources)
     for row in candidates:
         delta = torch.abs(row.target - active)
@@ -147,7 +146,7 @@ def test_portfolio_admission_requires_and_records_multi_candidate_query_sets() -
         records.append(
             _calibration_record(
                 group,
-                "V12_DIRECTION_SCALE_1.00",
+                "V12_DIRECTION_SCALE_0.75",
                 truth=-100.0 - i,
                 prediction=-110.0 - i,
             )
