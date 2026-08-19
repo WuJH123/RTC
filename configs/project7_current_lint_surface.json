@@ -1,6 +1,6 @@
 {
   "contract": "PROJECT7_CURRENT_LINT_SURFACE_PRACTICAL_RTC_V1",
-  "purpose": "Fail closed on the maintained Practical H10 hybrid policy-return RTC, exact-prefix label generation, path-safe assets, type-aware baselines and authoritative PFV safety reporting.",
+  "purpose": "Fail closed on the maintained Practical 82-control/109-channel hybrid policy-return RTC, exact-prefix label generation, path-safe assets, type-aware baselines and authoritative PFV safety reporting.",
   "full_repository_ruff_is_gate": false,
   "current_surface_ruff_is_gate": true,
   "rule_select": ["E4", "E7", "E9", "F"],
@@ -8,6 +8,7 @@
     "scripts/lint_current_surface.py",
     "scripts/run_step2_current.py",
     "scripts/run_step2_tfv_value_core_current.py",
+    "scripts/build_native_supervisory_control_current.py",
     "scripts/build_direct_tfv_sequence_support_current.py",
     "scripts/design_direct_tfv_admission_d3_current.py",
     "scripts/validate_direct_tfv_fresh_admission_data_current.py",
@@ -30,7 +31,6 @@
     "scripts/run_policy_direct_tfv_base_hybrid_parent_current.py",
     "scripts/capture_direct_tfv_policy_return_context_current.py",
     "scripts/design_direct_tfv_policy_return_portfolio_current.py",
-    "scripts/run_direct_tfv_policy_return_pair_current.py",
     "scripts/run_direct_tfv_policy_return_query_current.py",
     "scripts/compile_direct_tfv_policy_return_dataset_current.py",
     "scripts/train_direct_tfv_policy_return_current.py",
@@ -38,6 +38,7 @@
     "scripts/calibrate_direct_tfv_policy_return_admission_current.py",
     "scripts/calibrate_direct_tfv_policy_return_portfolio_admission_current.py",
     "scripts/run_policy_direct_tfv_policy_return_development.py",
+    "scripts/audit_direct_tfv_policy_return_mechanism_panel_current.py",
     "scripts/add_pfv_to_direct_tfv_comparison_current.py",
     "scripts/audit_direct_tfv_closed_loop_current.py",
     "scripts/plan_direct_tfv_counterfactual_current.py",
@@ -69,6 +70,7 @@
     "src/rtc/direct_tfv_runtime_factory.py",
     "src/rtc/direct_tfv_base_probe_runtime_factory.py",
     "src/rtc/direct_tfv_policy_return_runtime_factory.py",
+    "src/rtc/native_supervisory_control.py",
     "src/rtc/policy_return_replay.py",
     "src/rtc/practical_rtc_assets.py",
     "src/rtc/direct_tfv_replay_guard.py",
@@ -117,6 +119,9 @@
     "tests/test_direct_tfv_policy_return.py",
     "tests/test_direct_tfv_policy_return_portfolio.py",
     "tests/test_direct_tfv_hybrid_gradient_portfolio.py",
+    "tests/test_direct_tfv_policy_return_hold_aware_metrics.py",
+    "tests/test_native_supervisory_control.py",
+    "tests/test_practical_rtc_assets.py",
     "tests/test_practical_rtc_v14_contract.py",
     "tests/test_direct_tfv_robust_rainfall.py",
     "tests/test_direct_tfv_baseline_provenance.py",
@@ -125,6 +130,6 @@
     "tests/test_facility_tfv_influence.py",
     "tests/test_facility_tfv_influence_cli.py"
   ],
-  "legacy_policy": "Historical V8-V12 files are evidence/ablation only. Current Practical execution and first-round pi0 generation may not require historical V12 optimizer/admission artifacts or silently route back to L-BFGS-B.",
+  "legacy_policy": "Historical V8-V12 files and the old pair-runner path are evidence/ablation only. Current Practical execution and first-round pi0 generation use the native supervisory mask, masked q95 support and shared-HOLD multi-candidate query runner; no current path may silently route back to V12/L-BFGS-B.",
   "non_gate_historical_debt_policy": "Do not mass-format archival code while changing the maintained Practical execution surface."
 }
