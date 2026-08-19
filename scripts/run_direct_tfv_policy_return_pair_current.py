@@ -8,8 +8,9 @@ the continuation policy; it identifies actions that belong to the same-state ran
 
 The two authoritative branches are intentionally sequential. After each completed branch, only the
 CPU causal context and scalar/path evidence are retained; the wrapper->delegate ownership edge is
-released before constructing the next CUDA controller. This prevents an 8-GB GPU from accidentally
-holding two complete continuation-policy model stacks at once.
+released before constructing the next CUDA controller. Same-prefix verification is based on raw
+causal measurements/history and the supervisory latch. Step1/forecast floating-point differences are
+reported separately and cannot by themselves redefine two identical SWMM prefixes as different.
 """
 from __future__ import annotations
 
@@ -36,6 +37,7 @@ from rtc.direct_tfv_policy_return_runtime_factory import (
 from rtc.direct_tfv_runtime_factory import build_frozen_v12_continuation_controller
 from rtc.policy_return_replay import (
     ExactPrefixThenFrozenPolicyController,
+    audit_policy_return_prefix_contexts,
     snapshot_and_release_policy_return_branch,
 )
 from rtc.production_cli import _controls_disabled_runtime
@@ -197,7 +199,7 @@ def _run_branch(
     return result, wrapper, lineage
 
 
-def _write_lifecycle(path: Path, payload: dict[str, Any]) -> None:
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
@@ -264,6 +266,7 @@ def main() -> None:
     out_root = Path(args.out_dir)
     out_root.mkdir(parents=True, exist_ok=True)
     lifecycle_path = out_root / f"{args.run_id}.branch_memory_lifecycle.json"
+    prefix_audit_path = out_root / f"{args.run_id}.prefix_context_audit.json"
 
     candidate_result, candidate_wrapper, candidate_lineage = _run_branch(
         args=args,
@@ -286,7 +289,7 @@ def main() -> None:
         "sequential_branch_controller_residency": True,
         "scientific_action_changed_by_cleanup": False,
     }
-    _write_lifecycle(lifecycle_path, lifecycle)
+    _write_json(lifecycle_path, lifecycle)
 
     hold_result, hold_wrapper, hold_lineage = _run_branch(
         args=args,
@@ -304,16 +307,27 @@ def main() -> None:
     )
     del hold_wrapper
     lifecycle["hold_release"] = hold_release
-    _write_lifecycle(lifecycle_path, lifecycle)
+    _write_json(lifecycle_path, lifecycle)
 
     if candidate_lineage != hold_lineage:
         raise RuntimeError("candidate/HOLD branches used different continuation-policy artifacts")
-    max_prefix_difference = max(
-        float(np.max(np.abs(candidate_context[key].astype(float) - hold_context[key].astype(float))))
-        for key in candidate_context
+    prefix_audit = audit_policy_return_prefix_contexts(candidate_context, hold_context)
+    prefix_audit.update(
+        {
+            "event_id": args.event_id,
+            "rainfall_group": args.rainfall_group,
+            "decision_index": int(args.decision_index),
+            "decision_elapsed_seconds": branch_elapsed,
+            "recorded_prefix_action_sha256": prefix_sha,
+            "same_continuation_policy_verified": True,
+        }
     )
-    if max_prefix_difference > 1.0e-6:
-        raise RuntimeError(f"candidate/HOLD policy-return prefix mismatch: {max_prefix_difference}")
+    _write_json(prefix_audit_path, prefix_audit)
+    if prefix_audit["same_authoritative_prefix_verified"] is not True:
+        raise RuntimeError(
+            "candidate/HOLD raw causal prefix mismatch; see "
+            f"{prefix_audit_path}"
+        )
 
     candidate_tfv = _tfv(candidate_result.node_statistics_path)
     hold_tfv = _tfv(hold_result.node_statistics_path)
@@ -364,7 +378,10 @@ def main() -> None:
         "candidate_branch_tfv_m3": candidate_tfv,
         "hold_branch_tfv_m3": hold_tfv,
         "same_prefix_verified": True,
-        "same_prefix_max_abs_context_difference": max_prefix_difference,
+        "same_prefix_definition": "RAW_CAUSAL_INPUTS_AND_RECORDED_SUPERVISORY_PREFIX",
+        "same_prefix_derived_step1_reconstruction_max_abs": float(
+            prefix_audit["derived_step1_reconstruction_max_abs"]
+        ),
         "same_continuation_policy_verified": True,
         "future_realized_rainfall_used_online": False,
         "continuation_kind": args.continuation_kind,
@@ -380,10 +397,12 @@ def main() -> None:
         "hold_node_statistics_path": hold_result.node_statistics_path,
         "branch_memory_lifecycle_path": str(lifecycle_path.resolve()),
         "branch_memory_lifecycle": lifecycle,
+        "prefix_context_audit_path": str(prefix_audit_path.resolve()),
+        "prefix_context_audit": prefix_audit,
         "continuation_lineage": candidate_lineage,
     }
     record_path = out_root / f"{args.run_id}.policy_return_record.json"
-    record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_json(record_path, record)
     print(json.dumps(record, indent=2, sort_keys=True))
 
 
