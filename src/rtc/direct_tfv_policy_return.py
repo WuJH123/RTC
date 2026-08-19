@@ -6,9 +6,9 @@ The deployed estimand is deliberately different from the historical open-loop H3
                      - J(x_t, HOLD for H10, then the same frozen pi)
 
 Both authoritative branches start from the same raw causal SWMM prefix and use the same frozen
-continuation after the first 10-minute command.  The critic therefore receives an *action token* that
+continuation after the first 10-minute command. The critic therefore receives an *action token* that
 matches the intervention being labelled: candidate settings occupy only the first H10 (two 5-minute
-model steps), and the remaining H350 is encoded as the current supervisory HOLD target.  It must not
+model steps), and the remaining H350 is encoded as the current supervisory HOLD target. It must not
 encode the candidate target as if it persisted for H360; doing so recreates the open-loop/receding
 estimand mismatch that Development evidence identified.
 """
@@ -31,9 +31,7 @@ from .step2_train_response_v60 import InputNormalizationV60
 DIRECT_TFV_POLICY_RETURN_ESTIMAND = (
     "EXECUTE_CANDIDATE_H10_THEN_FROZEN_POLICY_VS_HOLD_H10_THEN_SAME_FROZEN_POLICY"
 )
-DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING = (
-    "H10_CANDIDATE_THEN_H350_HOLD_ACTION_TOKEN_V1"
-)
+DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING = "H10_CANDIDATE_THEN_H350_HOLD_ACTION_TOKEN_V1"
 DIRECT_TFV_POLICY_RETURN_CHECKPOINT_CONTRACT = (
     "PROJECT7_DIRECT_TFV_RECEDING_POLICY_RETURN_VALUE_CHECKPOINT_V2_H10_ACTION_TOKEN"
 )
@@ -79,13 +77,7 @@ def encode_policy_return_action_token(
     horizon_steps: int = 72,
     first_action_steps: int = 2,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Encode HOLD reference and the executable H10 intervention for the value model.
-
-    ``active_target`` and ``candidate_target`` may be ``[109]`` or ``[B,109]``.  The returned
-    tensors are ``[B,H,109]``.  Only the first H10 differs; this encoding is shared by training,
-    calibration and runtime so the model can never silently regress to a persistent-H360 action.
-    """
-
+    """Encode HOLD reference and the executable H10 intervention for the value model."""
     active = active_target
     candidate = candidate_target
     if active.ndim == 1:
@@ -102,7 +94,6 @@ def encode_policy_return_action_token(
         raise ValueError("policy-return active/candidate targets must share a device")
     if not bool(torch.isfinite(active).all()) or not bool(torch.isfinite(candidate).all()):
         raise ValueError("policy-return action targets contain non-finite values")
-
     reference = active[:, None, :].expand(-1, int(horizon_steps), -1).clone()
     encoded = reference.clone()
     encoded[:, : int(first_action_steps), :] = candidate[:, None, :]
@@ -110,7 +101,7 @@ def encode_policy_return_action_token(
 
 
 def validate_policy_return_record(record: Mapping[str, Any]) -> None:
-    """Fail closed on a paired offline SWMM policy-return label."""
+    """Validate authoritative paired truth; prediction is optional until critic scoring."""
     if str(record.get("estimand", "")) != DIRECT_TFV_POLICY_RETURN_ESTIMAND:
         raise ValueError("policy-return record has the wrong estimand")
     if str(record.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
@@ -129,7 +120,7 @@ def validate_policy_return_record(record: Mapping[str, Any]) -> None:
     if not group or not event:
         raise ValueError("policy-return record requires rainfall_group and event_id")
     _scale(int(record.get("first_move_changed_facility_count", -1)))
-    if role == "policy_return_calibration" or "predicted_policy_return_delta_tfv_m3" in record:
+    if "predicted_policy_return_delta_tfv_m3" in record:
         _finite(record.get("predicted_policy_return_delta_tfv_m3"), label="predicted policy return")
     _finite(record.get("true_policy_return_delta_tfv_m3"), label="true policy return")
     candidate_tfv = _finite(record.get("candidate_branch_tfv_m3"), label="candidate branch TFV")
@@ -186,7 +177,7 @@ def derive_policy_return_admission(
     continuation_policy_sha256: str,
     coverage: float = DIRECT_TFV_ADMISSION_COVERAGE,
 ) -> dict[str, Any]:
-    """Derive rainfall-group split-conformal admission for the deployed-policy estimand."""
+    """Derive rainfall-group split-conformal admission from critic-scored calibration rows."""
     if not 0.5 < float(coverage) < 1.0:
         raise ValueError("policy-return admission coverage must lie in (0.5,1)")
     expected = {str(value) for value in expected_rainfall_groups if str(value)}
@@ -199,6 +190,8 @@ def derive_policy_return_admission(
         validate_policy_return_record(row)
         if str(row.get("data_role")) != "policy_return_calibration":
             raise ValueError("admission received a non-calibration policy-return row")
+        if "predicted_policy_return_delta_tfv_m3" not in row:
+            raise ValueError("admission requires frozen-critic predictions on calibration rows")
         group = str(row["rainfall_group"])
         if group not in expected:
             raise ValueError(f"unexpected policy-return calibration group: {group}")
