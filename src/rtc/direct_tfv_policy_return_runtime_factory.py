@@ -9,6 +9,7 @@ from pathlib import Path
 import torch
 
 from .checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
+from .controller_direct_tfv_portfolio import PortfolioMemorySafeDirectTFVAuthoritativeController
 from .controller_direct_tfv_safe import MemorySafeDirectTFVAuthoritativeController
 from .direct_tfv_first_move_admission import DIRECT_TFV_FIRST_MOVE_ADMISSION_CONTRACT
 from .direct_tfv_policy_admission import DIRECT_TFV_POLICY_ADMISSION_CONTRACT
@@ -16,6 +17,7 @@ from .direct_tfv_policy_return import (
     DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT,
     load_policy_return_checkpoint,
 )
+from .direct_tfv_policy_return_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
 from .direct_tfv_sequence_support import validate_direct_tfv_sequence_support
 from .direct_tfv_v12_lineage import direct_tfv_v12_behavioral_sha256
 from .forecast import PersistenceDecayForecast
@@ -25,10 +27,11 @@ from .step1_runtime_v127 import load_frozen_step1_v127
 from .step3_tfv_value_mpc_v4 import DirectTFVMPCDesignV4
 from .step3_tfv_value_mpc_v10 import DIRECT_TFV_SCENARIO_MEAN_STEP3_CONTRACT
 from .step3_tfv_value_mpc_v11 import DirectTFVPolicyReturnMPCV11
+from .step3_tfv_value_mpc_v12 import DirectTFVPolicyReturnPortfolioMPCV12
 
 
 POLICY_RETURN_FROZEN_CONTINUATION_FACTORY_CONTRACT = (
-    "PROJECT7_POLICY_RETURN_FROZEN_CONTINUATION_FACTORY_V2_STRICT_LINEAGE"
+    "PROJECT7_POLICY_RETURN_FROZEN_CONTINUATION_FACTORY_V3_PORTFOLIO_AWARE"
 )
 
 
@@ -70,12 +73,15 @@ def build_frozen_policy_return_continuation_controller(
     if str(first.get("query_step3_contract", "")) != DIRECT_TFV_SCENARIO_MEAN_STEP3_CONTRACT:
         raise ValueError("policy-return continuation requires V12 scenario-mean query lineage")
     first_lineage = first.get("lineage") if isinstance(first.get("lineage"), dict) else {}
-    current_v12_behavior = direct_tfv_v12_behavioral_sha256()
+    current_v12_behavior = direct_tfv_v12_behavioral_sha256().lower()
     calibrated_v12_behavior = str(
-        first.get("v12_behavioral_source_sha256", first_lineage.get("v12_behavioral_source_sha256", ""))
+        first.get(
+            "v12_behavioral_source_sha256",
+            first_lineage.get("v12_behavioral_source_sha256", ""),
+        )
     ).lower()
-    if calibrated_v12_behavior != current_v12_behavior.lower():
-        raise ValueError("policy-return continuation V12 direction behavioral lineage mismatch")
+    v12_behavioral_match = bool(calibrated_v12_behavior == current_v12_behavior)
+
     support = json.loads(Path(sequence_support_path).read_text(encoding="utf-8"))
     validate_direct_tfv_sequence_support(
         support,
@@ -98,6 +104,15 @@ def build_frozen_policy_return_continuation_controller(
     admission_parent = str(return_admission.get("continuation_policy_sha256", "")).lower()
     if len(checkpoint_parent) != 64 or checkpoint_parent != admission_parent:
         raise ValueError("policy-return continuation critic/admission parent-policy mismatch")
+
+    checkpoint_portfolio = str(return_checkpoint.get("candidate_portfolio_contract", ""))
+    admission_portfolio = str(return_admission.get("candidate_portfolio_contract", ""))
+    if checkpoint_portfolio != admission_portfolio:
+        raise ValueError("policy-return critic/admission use different candidate query families")
+    portfolio_mode = checkpoint_portfolio == DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+    if checkpoint_portfolio and not portfolio_mode:
+        raise ValueError("policy-return checkpoint contains an unknown candidate portfolio contract")
+
     cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
     controller_cfg = replace(
         _controller_config(dict(cfg["controller"]), control_block_steps=2),
@@ -114,7 +129,7 @@ def build_frozen_policy_return_continuation_controller(
         active_facility_count=0,
         active_support_quantile="q95",
     )
-    mpc = DirectTFVPolicyReturnMPCV11(
+    mpc_kwargs = dict(
         model=base_model,
         graph=graph,
         normalization=base_norm,
@@ -131,7 +146,17 @@ def build_frozen_policy_return_continuation_controller(
         policy_return_admission=return_admission,
         policy_return_checkpoint_sha256=checkpoint_sha,
     )
-    inner = MemorySafeDirectTFVAuthoritativeController(
+    mpc = (
+        DirectTFVPolicyReturnPortfolioMPCV12(**mpc_kwargs)
+        if portfolio_mode
+        else DirectTFVPolicyReturnMPCV11(**mpc_kwargs)
+    )
+    controller_cls = (
+        PortfolioMemorySafeDirectTFVAuthoritativeController
+        if portfolio_mode
+        else MemorySafeDirectTFVAuthoritativeController
+    )
+    inner = controller_cls(
         step1=step1,
         mpc=mpc,
         graph=graph,
@@ -150,6 +175,7 @@ def build_frozen_policy_return_continuation_controller(
         allow_projection=False,
         enforce_current_delta=False,
     )
+    step3_source = "step3_tfv_value_mpc_v12.py" if portfolio_mode else "step3_tfv_value_mpc_v11.py"
     lineage = {
         "factory_contract": POLICY_RETURN_FROZEN_CONTINUATION_FACTORY_CONTRACT,
         "step1_sha256": _sha(step1_path),
@@ -158,10 +184,15 @@ def build_frozen_policy_return_continuation_controller(
         "v12_first_move_admission_sha256": _sha(v12_first_move_admission_path),
         "sequence_support_sha256": _sha(sequence_support_path),
         "v12_behavioral_source_sha256": current_v12_behavior,
-        "policy_return_step3_source_sha256": _sha(Path(__file__).resolve().parent / "step3_tfv_value_mpc_v11.py"),
+        "calibrated_v12_behavioral_source_sha256": calibrated_v12_behavior,
+        "v12_behavioral_match": v12_behavioral_match,
+        "v12_open_loop_first_move_margin_controls_policy_return_execution": False,
+        "policy_return_step3_source_sha256": _sha(Path(__file__).resolve().parent / step3_source),
         "policy_return_checkpoint_sha256": checkpoint_sha,
         "policy_return_admission_sha256": _sha(policy_return_admission_path),
         "critic_parent_continuation_policy_sha256": checkpoint_parent,
+        "candidate_portfolio_contract": checkpoint_portfolio,
+        "portfolio_mode": portfolio_mode,
         "graph_sha256": _sha(graph_path),
         "sensors_sha256": _sha(sensors_path),
         "config_sha256": _sha(config_path),
