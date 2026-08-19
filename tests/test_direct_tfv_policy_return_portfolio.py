@@ -10,7 +10,9 @@ from rtc.actuator_release_semantics import (
     release_fraction_to_setting,
     release_setting_sign,
 )
+from rtc.direct_tfv_policy_return import DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING
 from rtc.direct_tfv_policy_return_portfolio import (
+    DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT,
     DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
     build_policy_return_candidate_portfolio,
     hydraulic_pressure_setting_delta,
@@ -60,20 +62,13 @@ def test_swmm_release_setting_direction_is_type_aware() -> None:
     assert release_setting_sign("weir") == -1.0
     assert release_fraction_to_setting("pump", 0.8) == 0.8
     assert abs(release_fraction_to_setting("weir", 0.8) - 0.2) < 1.0e-12
-
     signs = graph_release_setting_signs(_graph())
     assert tuple(signs[:4]) == (1.0, 1.0, -1.0, 1.0)
 
 
 def test_hydraulic_pressure_candidate_reverses_weir_setting_direction() -> None:
     graph = _graph()
-    state = np.asarray(
-        [
-            [1.8, 0.0, 0.0, 900.0],
-            [0.2, 0.0, 0.0, 100.0],
-        ],
-        dtype=np.float32,
-    )
+    state = np.asarray([[1.8, 0.0, 0.0, 900.0], [0.2, 0.0, 0.0, 100.0]], dtype=np.float32)
     rainfall = np.ones((3, 72, 2, 1), dtype=np.float32)
     delta = hydraulic_pressure_setting_delta(
         current_state=state,
@@ -87,12 +82,9 @@ def test_hydraulic_pressure_candidate_reverses_weir_setting_direction() -> None:
     assert delta[3] > 0.0
 
 
-def test_candidate_portfolio_is_small_supported_and_not_baseline_imitation() -> None:
+def test_candidate_portfolio_is_three_family_supported_and_not_baseline_imitation() -> None:
     graph = _graph()
-    state = torch.tensor(
-        [[[1.8, 0.0, 0.0, 900.0], [0.2, 0.0, 0.0, 100.0]]],
-        dtype=torch.float32,
-    )
+    state = torch.tensor([[[1.8, 0.0, 0.0, 900.0], [0.2, 0.0, 0.0, 100.0]]], dtype=torch.float32)
     rainfall = torch.ones((3, 72, 2, 1), dtype=torch.float32)
     active = torch.full((109,), 0.5, dtype=torch.float32)
     learned = active.clone()
@@ -101,7 +93,7 @@ def test_candidate_portfolio_is_small_supported_and_not_baseline_imitation() -> 
         current_state=state,
         rainfall_scenarios=rainfall,
         active_target=active,
-        v12_target=learned,
+        learned_target=learned,
         graph=graph,
         first_radius=np.full(109, 0.15, dtype=np.float32),
         max_changed_facilities=4,
@@ -109,8 +101,8 @@ def test_candidate_portfolio_is_small_supported_and_not_baseline_imitation() -> 
     )
     sources = {row.source for row in candidates}
     assert "TYPE_AWARE_HYDRAULIC_PRESSURE" in sources
-    assert any(value.startswith("V12_DIRECTION_SCALE_") for value in sources)
-    assert all("BLEND" not in value for value in sources)
+    assert any(value.startswith("STEP2_H10_PROBE_SCALE_") for value in sources)
+    assert all("V12_DIRECTION" not in value and "BLEND" not in value for value in sources)
     assert not any("AUTO_RBC" in value or "ALL_OPEN" in value for value in sources)
     assert len(candidates) <= 3
     for row in candidates:
@@ -131,10 +123,7 @@ def test_policy_return_branch_release_copies_context_and_severs_delegate() -> No
         },
         delegate=SimpleNamespace(model=torch.nn.Linear(4, 2)),
     )
-    context, telemetry = snapshot_and_release_policy_return_branch(
-        wrapper,
-        device=torch.device("cpu"),
-    )
+    context, telemetry = snapshot_and_release_policy_return_branch(wrapper, device=torch.device("cpu"))
     assert wrapper.delegate is None
     assert np.array_equal(context["current_state"], original)
     assert not np.shares_memory(context["current_state"], original)
@@ -187,6 +176,7 @@ def _calibration_record(group: str, source: str, truth: float, prediction: float
     query = (group.encode("utf-8").hex() + "0" * 64)[:64]
     return {
         "estimand": "EXECUTE_CANDIDATE_H10_THEN_FROZEN_POLICY_VS_HOLD_H10_THEN_SAME_FROZEN_POLICY",
+        "action_encoding_contract": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
         "data_role": "policy_return_calibration",
         "rainfall_group": group,
         "event_id": f"event-{group}",
@@ -217,7 +207,7 @@ def test_portfolio_admission_requires_and_records_multi_candidate_query_sets() -
         records.append(
             _calibration_record(
                 group,
-                "V12_DIRECTION_SCALE_0.50",
+                "STEP2_H10_PROBE_SCALE_0.50",
                 truth=-100.0 - i,
                 prediction=-110.0 - i,
             )
@@ -239,6 +229,9 @@ def test_portfolio_admission_requires_and_records_multi_candidate_query_sets() -
     )
     assert payload["portfolio_admission_contract"] == DIRECT_TFV_POLICY_RETURN_PORTFOLIO_ADMISSION_CONTRACT
     assert payload["candidate_portfolio_contract"] == DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+    assert payload["action_encoding_contract"] == DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING
     assert payload["query_set_count"] == 24
     assert payload["multi_candidate_query_set_count"] == 24
     assert payload["candidate_source_counts"]["TYPE_AWARE_HYDRAULIC_PRESSURE"] == 24
+    assert payload["required_candidate_families_present"]["step2_h10_probe_direction"] is True
+    assert DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT
