@@ -1,0 +1,48 @@
+name: final-mainline-autofix-temp
+
+on:
+  push:
+    branches:
+      - agent/final-receding-policy-return-mainline
+
+permissions:
+  contents: write
+
+jobs:
+  ruff-autofix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/final-receding-policy-return-mainline
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Ruff
+        run: python -m pip install 'ruff>=0.11.0'
+      - name: Mechanical fixes only
+        run: |
+          python -m ruff check --select E4,E7,E9,F --fix \
+            scripts/score_direct_tfv_policy_return_calibration_current.py \
+            scripts/build_direct_tfv_first_move_context_current.py \
+            scripts/design_direct_tfv_first_move_calibration_current.py \
+            scripts/design_direct_tfv_robust_rainfall_first_move_calibration_current.py \
+            scripts/merge_direct_tfv_robust_rainfall_first_move_panel_shards.py \
+            scripts/calibrate_direct_tfv_robust_rainfall_first_move_admission_current.py
+      - name: Commit only if changed
+        run: |
+          if git diff --quiet; then
+            echo 'No mechanical lint changes required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            scripts/score_direct_tfv_policy_return_calibration_current.py \
+            scripts/build_direct_tfv_first_move_context_current.py \
+            scripts/design_direct_tfv_first_move_calibration_current.py \
+            scripts/design_direct_tfv_robust_rainfall_first_move_calibration_current.py \
+            scripts/merge_direct_tfv_robust_rainfall_first_move_panel_shards.py \
+            scripts/calibrate_direct_tfv_robust_rainfall_first_move_admission_current.py
+          git commit -m 'Apply mechanical Ruff fixes to final Direct-TFV scripts'
+          git push origin HEAD:agent/final-receding-policy-return-mainline
