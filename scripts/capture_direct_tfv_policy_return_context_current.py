@@ -1,8 +1,8 @@
 """Capture one exact-prefix causal query context and stop before the branch action is written.
 
-The default first-round continuation is the current Practical base-H10-probe parent pi0, not a
-historical V12 optimizer. After a policy-return critic exists the same script can capture contexts
-under frozen pi1. It produces no TFV truth and cannot be used as evaluation evidence.
+The default first-round continuation is the current masked hybrid Base-H10 pi0. After a policy-return
+critic exists the same script can capture contexts under frozen pi1. It produces no TFV truth and
+cannot be used as evaluation evidence.
 """
 from __future__ import annotations
 
@@ -24,7 +24,9 @@ from rtc.practical_rtc_assets import load_practical_rtc_asset_manifest, practica
 from rtc.production_cli import _controls_disabled_runtime
 
 
-PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_CONTRACT = "PROJECT7_PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_V2_BASE_PROBE_PI0"
+PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_CONTRACT = (
+    "PROJECT7_PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_V3_82CONTROL_109REP"
+)
 
 
 class _ContextCaptured(RuntimeError):
@@ -60,6 +62,7 @@ def _build_delegate(args: argparse.Namespace, assets: dict, device: torch.device
         config_path=practical_asset_path(assets, "config"),
         step1_path=practical_asset_path(assets, "step1"),
         step2_path=practical_asset_path(assets, "step2"),
+        supervisory_control_path=practical_asset_path(assets, "supervisory_control"),
         sequence_support_path=practical_asset_path(assets, "sequence_support"),
         device=device,
         decision_runtime_budget_seconds=float(args.decision_runtime_budget_seconds),
@@ -114,7 +117,7 @@ def main() -> None:
     ids = tuple(str(x) for x in diagnostics.get("counterfactual_actuator_ids", ()))
     hold = np.asarray(diagnostics.get("hold_reference_settings", ()), dtype=float).reshape(-1)
     if len(ids) != 109 or len(set(ids)) != 109 or hold.shape != (109,):
-        raise ValueError("selected parent decision lacks 109-actuator HOLD context")
+        raise ValueError("selected parent decision lacks 109-channel HOLD context")
     branch_elapsed = int(selected["elapsed_seconds"])
     prefix: dict[int, dict[str, float]] = {}
     for row in rows[: int(args.decision_index)]:
@@ -188,6 +191,8 @@ def main() -> None:
         "recorded_prefix_action_sha256": prefix_sha,
         "continuation_kind": args.continuation_kind,
         "continuation_lineage": lineage,
+        "supervisory_control_dimension": int(lineage["supervisory_control_dimension"]),
+        "model_action_channel_count": int(lineage["model_action_channel_count"]),
         "asset_manifest": str(Path(args.asset_manifest).resolve()),
         "context_npz": str(out),
         "context_npz_sha256": hashlib.sha256(out.read_bytes()).hexdigest(),
