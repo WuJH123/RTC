@@ -1,0 +1,5 @@
+compileall
+current lint
+high-signal tests
+full pytest
+CLI help
