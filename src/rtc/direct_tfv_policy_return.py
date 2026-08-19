@@ -1,15 +1,16 @@
 """Receding-policy first-action value contracts for Project7 Direct-TFV control.
 
-The historical Direct-TFV Step2 predicts an open-loop/no-further-command H360 value difference.
-That remains useful for generating a coordinated H120 direction, but Development V12 evidence shows
-that a locally correct H360 first-move sign is not sufficient to guarantee lower event-level TFV
-under repeated 10-minute replanning. This module defines the deployed-policy estimand:
+The deployed estimand is deliberately different from the historical open-loop H360 value target::
 
-    A^pi(x_t, u_t) = J(x_t, u_t for H10, then frozen pi)
+    A^pi(x_t, u_t) = J(x_t, candidate for H10, then frozen pi)
                      - J(x_t, HOLD for H10, then the same frozen pi)
 
-Both counterfactual branches must use the same frozen continuation policy after t+10 min and must
-start from an identical authoritative SWMM prefix. SWMM remains offline truth only.
+Both authoritative branches start from the same raw causal SWMM prefix and use the same frozen
+continuation after the first 10-minute command.  The critic therefore receives an *action token* that
+matches the intervention being labelled: candidate settings occupy only the first H10 (two 5-minute
+model steps), and the remaining H350 is encoded as the current supervisory HOLD target.  It must not
+encode the candidate target as if it persisted for H360; doing so recreates the open-loop/receding
+estimand mismatch that Development evidence identified.
 """
 from __future__ import annotations
 
@@ -30,14 +31,17 @@ from .step2_train_response_v60 import InputNormalizationV60
 DIRECT_TFV_POLICY_RETURN_ESTIMAND = (
     "EXECUTE_CANDIDATE_H10_THEN_FROZEN_POLICY_VS_HOLD_H10_THEN_SAME_FROZEN_POLICY"
 )
+DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING = (
+    "H10_CANDIDATE_THEN_H350_HOLD_ACTION_TOKEN_V1"
+)
 DIRECT_TFV_POLICY_RETURN_CHECKPOINT_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_RECEDING_POLICY_RETURN_VALUE_CHECKPOINT_V1"
+    "PROJECT7_DIRECT_TFV_RECEDING_POLICY_RETURN_VALUE_CHECKPOINT_V2_H10_ACTION_TOKEN"
 )
 DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_RECEDING_POLICY_RETURN_ONE_SIDED_ADMISSION_V1"
+    "PROJECT7_DIRECT_TFV_RECEDING_POLICY_RETURN_ONE_SIDED_ADMISSION_V2_H10_ACTION_TOKEN"
 )
 DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_RECEDING_POLICY_RETURN_PAIRED_SWMM_DATASET_V1"
+    "PROJECT7_DIRECT_TFV_RECEDING_POLICY_RETURN_PAIRED_SWMM_DATASET_V2_H10_ACTION_TOKEN"
 )
 DIRECT_TFV_POLICY_RETURN_MIN_TRAIN_GROUPS = 48
 DIRECT_TFV_POLICY_RETURN_MIN_VALIDATION_GROUPS = 12
@@ -68,14 +72,49 @@ def _scale(changed_facility_count: int) -> float:
     return math.sqrt(float(count))
 
 
-def validate_policy_return_record(record: Mapping[str, Any]) -> None:
-    """Fail closed on a paired offline SWMM policy-return label.
+def encode_policy_return_action_token(
+    active_target: torch.Tensor,
+    candidate_target: torch.Tensor,
+    *,
+    horizon_steps: int = 72,
+    first_action_steps: int = 2,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Encode HOLD reference and the executable H10 intervention for the value model.
 
-    Training/validation records are authoritative label records and need not already contain a model
-    prediction. Calibration records must contain the prediction from the frozen selected critic.
+    ``active_target`` and ``candidate_target`` may be ``[109]`` or ``[B,109]``.  The returned
+    tensors are ``[B,H,109]``.  Only the first H10 differs; this encoding is shared by training,
+    calibration and runtime so the model can never silently regress to a persistent-H360 action.
     """
+
+    active = active_target
+    candidate = candidate_target
+    if active.ndim == 1:
+        active = active.unsqueeze(0)
+    if candidate.ndim == 1:
+        candidate = candidate.unsqueeze(0)
+    if active.ndim != 2 or candidate.ndim != 2 or tuple(active.shape) != tuple(candidate.shape):
+        raise ValueError("policy-return action targets must be aligned [B,109] tensors")
+    if int(active.shape[1]) != 109:
+        raise ValueError("policy-return action encoding requires 109 actuators")
+    if int(horizon_steps) <= 0 or not 0 < int(first_action_steps) <= int(horizon_steps):
+        raise ValueError("invalid policy-return action-token horizon")
+    if active.device != candidate.device:
+        raise ValueError("policy-return active/candidate targets must share a device")
+    if not bool(torch.isfinite(active).all()) or not bool(torch.isfinite(candidate).all()):
+        raise ValueError("policy-return action targets contain non-finite values")
+
+    reference = active[:, None, :].expand(-1, int(horizon_steps), -1).clone()
+    encoded = reference.clone()
+    encoded[:, : int(first_action_steps), :] = candidate[:, None, :]
+    return reference, encoded
+
+
+def validate_policy_return_record(record: Mapping[str, Any]) -> None:
+    """Fail closed on a paired offline SWMM policy-return label."""
     if str(record.get("estimand", "")) != DIRECT_TFV_POLICY_RETURN_ESTIMAND:
         raise ValueError("policy-return record has the wrong estimand")
+    if str(record.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
+        raise ValueError("policy-return record has the wrong H10 action encoding")
     role = str(record.get("data_role", ""))
     if role not in _POLICY_RETURN_ROLES:
         raise ValueError("policy-return record has an invalid data role")
@@ -183,6 +222,7 @@ def derive_policy_return_admission(
         "contract": DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT,
         "development_only": True,
         "estimand": DIRECT_TFV_POLICY_RETURN_ESTIMAND,
+        "action_encoding_contract": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
         "coverage": float(coverage),
         "independent_unit": "RAINFALL_GROUP_MAX_NORMALIZED_TRUE_MINUS_PREDICTED_RESIDUAL",
         "normalization": DIRECT_TFV_POLICY_RETURN_NORMALIZATION,
@@ -204,7 +244,7 @@ def derive_policy_return_admission(
         "generic_d3_floor_controls_execution": False,
         "open_loop_first_move_margin_controls_execution": False,
         "coverage_claim_scope": (
-            "Marginal rainfall-group split-conformal coverage for the fixed policy-return score; "
+            "Marginal rainfall-group split-conformal coverage for the fixed H10 policy-return score; "
             "no conditional coverage claim is made."
         ),
     }
@@ -215,6 +255,8 @@ def policy_return_margin_m3(calibration: Mapping[str, Any], changed_facility_cou
         raise ValueError("wrong policy-return admission contract")
     if str(calibration.get("estimand", "")) != DIRECT_TFV_POLICY_RETURN_ESTIMAND:
         raise ValueError("wrong policy-return execution estimand")
+    if str(calibration.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
+        raise ValueError("wrong policy-return H10 action encoding")
     if str(calibration.get("normalization", "")) != DIRECT_TFV_POLICY_RETURN_NORMALIZATION:
         raise ValueError("wrong policy-return residual normalization")
     q = _finite(calibration.get("normalized_residual_conformal_upper"), label="policy-return conformal upper")
@@ -247,11 +289,13 @@ def load_policy_return_checkpoint(
 ) -> tuple[DirectFacilityTFVValueModel, InputNormalizationV60, dict[str, Any]]:
     payload = torch.load(path, map_location="cpu", weights_only=False)
     if not isinstance(payload, dict) or str(payload.get("contract", "")) != DIRECT_TFV_POLICY_RETURN_CHECKPOINT_CONTRACT:
-        raise ValueError("runtime requires a current receding-policy-return checkpoint")
+        raise ValueError("runtime requires the current H10 policy-return checkpoint")
     if payload.get("development_only") is not True:
         raise ValueError("policy-return checkpoint must be Development-only")
     if str(payload.get("estimand", "")) != DIRECT_TFV_POLICY_RETURN_ESTIMAND:
         raise ValueError("policy-return checkpoint has the wrong target estimand")
+    if str(payload.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
+        raise ValueError("policy-return checkpoint has the wrong action encoding")
     if str(payload.get("base_step2_sha256", "")).lower() != str(expected_base_step2_sha256).lower():
         raise ValueError("policy-return checkpoint was initialized from a different Step2 checkpoint")
     if int(payload.get("train_rainfall_group_count", 0)) < DIRECT_TFV_POLICY_RETURN_MIN_TRAIN_GROUPS:
@@ -260,9 +304,11 @@ def load_policy_return_checkpoint(
         raise ValueError("policy-return checkpoint has insufficient model-selection rainfall groups")
     design = _design_from_payload(payload["model_design"])
     model = DirectFacilityTFVValueModel(
-        state_dim=int(payload["state_dim"]), rainfall_dim=int(payload["rainfall_dim"]),
+        state_dim=int(payload["state_dim"]),
+        rainfall_dim=int(payload["rainfall_dim"]),
         actuator_physics_dim=int(payload["actuator_physics_dim"]),
-        target_scale_m3=float(payload["target_scale_m3"]), design=design,
+        target_scale_m3=float(payload["target_scale_m3"]),
+        design=design,
     ).to(device)
     model.load_state_dict(payload["model_state_dict"], strict=True)
     model.eval()
@@ -273,6 +319,7 @@ def load_policy_return_checkpoint(
 
 
 __all__ = [
+    "DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING",
     "DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT",
     "DIRECT_TFV_POLICY_RETURN_CHECKPOINT_CONTRACT",
     "DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT",
@@ -282,6 +329,7 @@ __all__ = [
     "DIRECT_TFV_POLICY_RETURN_MIN_VALIDATION_GROUPS",
     "assert_role_disjoint",
     "derive_policy_return_admission",
+    "encode_policy_return_action_token",
     "load_policy_return_checkpoint",
     "policy_return_margin_m3",
     "sha256_file",
