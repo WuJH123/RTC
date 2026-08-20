@@ -80,7 +80,7 @@ def _inputs():
     return state, rainfall, flow, active
 
 
-def test_projected_gradient_is_109channel_h10_only_and_support_bounded() -> None:
+def test_projected_gradient_ablation_is_109channel_h10_only_and_support_bounded() -> None:
     state, rainfall, flow, active = _inputs()
     proposal = build_projected_gradient_h10_proposal(
         model=_DifferentiableH10Value(),
@@ -97,6 +97,7 @@ def test_projected_gradient_is_109channel_h10_only_and_support_bounded() -> None
         step_fraction=0.25,
     )
     assert proposal.generator_contract == DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT
+    assert proposal.generator_contract.endswith("ABLATION_ONLY")
     assert proposal.produced_nonhold_candidate is True
     assert proposal.target is not None
     assert proposal.final_gradient_l2 > 0.0
@@ -106,7 +107,7 @@ def test_projected_gradient_is_109channel_h10_only_and_support_bounded() -> None
     assert bool(torch.all((proposal.target >= 0.0) & (proposal.target <= 1.0)))
 
 
-def test_hybrid_portfolio_adds_one_distinct_gradient_candidate_without_lbfgsb() -> None:
+def test_current_portfolio_excludes_gradient_and_uses_at_most_three_families() -> None:
     state, rainfall, flow, active = _inputs()
     result = build_hybrid_policy_return_portfolio(
         model=_DifferentiableH10Value(),
@@ -120,29 +121,21 @@ def test_hybrid_portfolio_adds_one_distinct_gradient_candidate_without_lbfgsb() 
         max_changed_facilities=4,
         max_delta_per_update=0.5,
         probe_chunk_size=32,
-        gradient_steps=1,
-        gradient_step_fraction=0.25,
     )
     sources = tuple(candidate.source for candidate in result.candidates)
-    assert 2 <= len(sources) <= 4
-    assert PROJECTED_GRADIENT_SOURCE in sources
+    assert 2 <= len(sources) <= 3
+    assert PROJECTED_GRADIENT_SOURCE not in sources
     assert any(source.startswith("STEP2_H10_PROBE_SCALE_") for source in sources)
     assert "TYPE_AWARE_HYDRAULIC_PRESSURE" in sources
-    assert all("LBFGS" not in source.upper() for source in sources)
-    for candidate in result.candidates:
-        delta = torch.abs(candidate.target - active)
-        assert candidate.changed_facility_count <= 4
-        assert float(delta.max()) <= 0.150001
-        assert bool(torch.all((candidate.target >= 0.0) & (candidate.target <= 1.0)))
-    assert "82CONTROL_109REP" in DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+    assert result.projected_gradient_online is False
+    assert result.projected_gradient.produced_nonhold_candidate is False
+    assert "THREE_FAMILY_82CONTROL_109REP" in DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
 
 
-def test_masked_gradient_and_all_candidates_leave_passive_channels_at_hold() -> None:
+def test_explicit_gradient_ablation_still_respects_mask_and_never_changes_current_default() -> None:
     state, rainfall, flow, active = _inputs()
     mask = np.zeros(109, dtype=bool)
     mask[:4] = True
-    # The differentiable surface also has strong gradients on channels 4/5, but those channels are
-    # deliberately passive and therefore may not move under the masked Practical controller.
     result = build_hybrid_policy_return_portfolio(
         model=_DifferentiableH10Value(),
         normalization=_normalization(),
@@ -158,8 +151,11 @@ def test_masked_gradient_and_all_candidates_leave_passive_channels_at_hold() -> 
         gradient_steps=2,
         gradient_step_fraction=0.25,
         supervisory_mask=mask,
+        include_projected_gradient_ablation=True,
     )
     assert result.projected_gradient.produced_nonhold_candidate is True
+    assert result.projected_gradient_online is False
+    assert PROJECTED_GRADIENT_SOURCE in {candidate.source for candidate in result.candidates}
     assert result.learned_probe.probe_count <= 2 * int(mask.sum())
     for candidate in result.candidates:
         target = candidate.target.detach().cpu().numpy()
