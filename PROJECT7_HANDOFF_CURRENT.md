@@ -135,6 +135,20 @@ identical forcing. All-max/min SETTING remain diagnostics. Positive method claim
 Priority8 PFV safety. If pi1 materially changes the policy distribution, collect a role-disjoint Q^pi1
 round before Policy Lock.
 
+## Resource execution policy
+
+Machine-resource measurements are telemetry only. The current Project7 workflow must **not** stop,
+pause, skip a planned rainfall group, or change scientific execution because of free-RAM, paging,
+pagefile, GPU-memory, GPU-utilization, CPU-utilization or similar threshold values. No host-memory or
+GPU safety reserve is part of the current execution contract.
+
+Authoritative candidate/HOLD branches remain sequential because of the PySWMM/current scientific
+execution semantics, not because of a resource threshold. Real CUDA OOM, host allocation failure,
+PySWMM failure, process crash, or scientific/lineage fail-closed exceptions remain real errors and
+should surface normally. The canonical code contract is
+`PROJECT7_RESOURCE_TELEMETRY_ONLY_NO_PREEMPTIVE_STOP_V1` in
+`src/rtc/resource_execution_policy.py`.
+
 ## Do not do
 
 Do not add pump-energy objectives, PID setpoints, new level penalties, online PFV surrogate, q99/K
