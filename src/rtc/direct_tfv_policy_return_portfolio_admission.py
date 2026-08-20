@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import math
 from typing import Any, Mapping, Sequence
 
 from .direct_tfv_policy_return import (
@@ -20,6 +21,35 @@ CURRENT_THREE_FAMILY_SOURCES = (
     "STEP2_H10_PROBE_SCALE_1.00",
     "TYPE_AWARE_HYDRAULIC_PRESSURE",
 )
+CURRENT_POLICY_RETURN_LEARNING_ROLES = (
+    "policy_return_train",
+    "policy_return_validation",
+    "policy_return_calibration",
+)
+_LEARNING_TRUTH_GATES = (
+    "shared_hold_branch",
+    "same_prefix_verified",
+    "same_continuation_policy_verified",
+    "passive_setting_channels_unchanged",
+    "target_write_readback_verified",
+    "engineering_bounds_verified",
+    "candidate_manifest_support_lineage_verified",
+)
+_LEARNING_PROVENANCE_HASHES = (
+    "candidate_manifest_sha256",
+    "parent_decisions_sha256",
+    "source_inp_sha256",
+    "asset_manifest_sha256",
+    "graph_sha256",
+    "base_step2_sha256",
+    "sequence_support_sha256",
+    "supervisory_control_sha256",
+)
+
+
+def _canonical_sha256(value: Any) -> bool:
+    raw = str(value or "").strip().lower()
+    return len(raw) == 64 and all(ch in "0123456789abcdef" for ch in raw)
 
 
 def validate_policy_return_portfolio_record(record: Mapping[str, Any]) -> None:
@@ -68,6 +98,41 @@ def validate_policy_return_portfolio_record(record: Mapping[str, Any]) -> None:
         raise ValueError("current policy-return portfolio record unexpectedly enables projected gradient")
     if record.get("online_lbfgsb_used") not in (False, None):
         raise ValueError("current policy-return portfolio record unexpectedly uses L-BFGS-B")
+
+
+def validate_policy_return_learning_record(record: Mapping[str, Any]) -> None:
+    """Fail closed before exact truth can enter train/validation/calibration datasets.
+
+    Development mechanism rows are intentionally valid portfolio records, but they must never cross
+    the learning boundary. Learning rows additionally require the exact-query truth firewall emitted
+    by the current authoritative query runner: shared HOLD, same prefix/continuation, readback,
+    engineering/support lineage, current finite three-family execution and canonical provenance SHAs.
+    """
+    validate_policy_return_portfolio_record(record)
+    role = str(record.get("data_role", ""))
+    if role not in CURRENT_POLICY_RETURN_LEARNING_ROLES:
+        raise ValueError("policy-return learning firewall accepts only train/validation/calibration rows")
+    if record.get("development_diagnostic_only") is not False:
+        raise ValueError("policy-return learning row is marked as Development diagnostic truth")
+    if record.get("eligible_for_learning_dataset") is not True:
+        raise ValueError("policy-return record is not explicitly eligible for learning")
+    for key in _LEARNING_TRUTH_GATES:
+        if record.get(key) is not True:
+            raise ValueError(f"policy-return learning truth failed authoritative gate: {key}")
+    if record.get("projected_gradient_online") is not False:
+        raise ValueError("policy-return learning truth must explicitly keep projected gradient offline")
+    if record.get("online_lbfgsb_used") is not False:
+        raise ValueError("policy-return learning truth must explicitly keep L-BFGS-B offline")
+    for key in _LEARNING_PROVENANCE_HASHES:
+        if not _canonical_sha256(record.get(key)):
+            raise ValueError(f"policy-return learning truth lacks canonical provenance {key}")
+    for key in ("candidate_flow_routing_error_pct", "hold_flow_routing_error_pct"):
+        try:
+            value = float(record.get(key, float("nan")))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"policy-return learning truth lacks finite {key}") from exc
+        if not math.isfinite(value):
+            raise ValueError(f"policy-return learning truth lacks finite {key}")
 
 
 def derive_policy_return_portfolio_admission(
@@ -140,8 +205,10 @@ def derive_policy_return_portfolio_admission(
 
 
 __all__ = [
+    "CURRENT_POLICY_RETURN_LEARNING_ROLES",
     "CURRENT_THREE_FAMILY_SOURCES",
     "DIRECT_TFV_POLICY_RETURN_PORTFOLIO_ADMISSION_CONTRACT",
     "derive_policy_return_portfolio_admission",
+    "validate_policy_return_learning_record",
     "validate_policy_return_portfolio_record",
 ]

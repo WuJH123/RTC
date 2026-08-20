@@ -14,7 +14,7 @@ from rtc.direct_tfv_policy_return import (
 from rtc.direct_tfv_policy_return_portfolio_admission import (
     DIRECT_TFV_POLICY_RETURN_PORTFOLIO_ADMISSION_CONTRACT,
     derive_policy_return_portfolio_admission,
-    validate_policy_return_portfolio_record,
+    validate_policy_return_learning_record,
 )
 
 
@@ -48,7 +48,7 @@ def main() -> None:
         row = json.loads(raw)
         if not isinstance(row, dict):
             raise ValueError(f"policy-return portfolio calibration row {line_number} is not an object")
-        validate_policy_return_portfolio_record(row)
+        validate_policy_return_learning_record(row)
         if str(row.get("data_role", "")) != "policy_return_calibration":
             raise ValueError("portfolio calibration JSONL may contain only calibration rows")
         mask_shas.add(str(row["supervisory_mask_sha256"]).lower())
@@ -69,6 +69,8 @@ def main() -> None:
         raise RuntimeError("derived admission changed the frozen supervisory-control mask lineage")
     payload["records_jsonl_sha256"] = sha256_file(args.records_jsonl)
     payload["policy_return_checkpoint_path"] = str(Path(args.policy_return_checkpoint).resolve())
+    payload["authoritative_truth_firewall_verified"] = True
+    payload["development_diagnostic_rows_allowed"] = False
     payload["base_admission_contract_verified"] = (
         payload["contract"] == DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT
     )

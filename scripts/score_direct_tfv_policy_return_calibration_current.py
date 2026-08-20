@@ -2,7 +2,8 @@
 
 Calibration must use the same 82-control/109-channel supervisory mask as critic training and the
 candidate portfolio. This script only adds frozen-critic predictions to authoritative calibration
-records; it does not modify exact SWMM truth or the control mask.
+records; it does not modify exact SWMM truth or the control mask. Records must already have passed
+the current authoritative three-family truth firewall before any GPU scoring is attempted.
 """
 from __future__ import annotations
 
@@ -20,7 +21,9 @@ from rtc.direct_tfv_policy_return import (
     encode_policy_return_action_token,
     load_policy_return_checkpoint,
     sha256_file,
-    validate_policy_return_record,
+)
+from rtc.direct_tfv_policy_return_portfolio_admission import (
+    validate_policy_return_learning_record,
 )
 from rtc.production_cli import _load_graph
 
@@ -50,7 +53,10 @@ def _score(
         raise ValueError("calibration context has the wrong dataset contract")
     if str(np.asarray(data["estimand"]).reshape(-1)[0]) != DIRECT_TFV_POLICY_RETURN_ESTIMAND:
         raise ValueError("calibration context has the wrong estimand")
-    if str(np.asarray(data["action_encoding_contract"]).reshape(-1)[0]) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
+    if (
+        str(np.asarray(data["action_encoding_contract"]).reshape(-1)[0])
+        != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING
+    ):
         raise ValueError("calibration context has the wrong H10 action encoding")
     if str(np.asarray(data["data_role"]).reshape(-1)[0]) != "policy_return_calibration":
         raise ValueError("critic scorer accepts only policy_return_calibration contexts")
@@ -137,9 +143,7 @@ def main() -> None:
             raise ValueError(f"calibration record {line_number} is not an object")
         if str(row.get("data_role", "")) != "policy_return_calibration":
             raise ValueError("critic scorer received a non-calibration record")
-        probe = dict(row)
-        probe["predicted_policy_return_delta_tfv_m3"] = 0.0
-        validate_policy_return_record(probe)
+        validate_policy_return_learning_record(row)
         if str(row["continuation_policy_sha256"]).lower() != parent_sha:
             raise ValueError("calibration record continuation policy differs from critic training")
         if str(row.get("supervisory_mask_sha256", "")).lower() != mask_sha:
@@ -164,7 +168,7 @@ def main() -> None:
         scored = dict(row)
         scored["predicted_policy_return_delta_tfv_m3"] = prediction
         scored["policy_return_checkpoint_sha256"] = sha256_file(args.policy_return_checkpoint)
-        validate_policy_return_record(scored)
+        validate_policy_return_learning_record(scored)
         rows.append(scored)
         groups.add(str(scored["rainfall_group"]))
     if not rows:
@@ -186,6 +190,8 @@ def main() -> None:
         "model_action_channel_count": 109,
         "supervisory_mask_sha256": mask_sha,
         "passive_setting_channels_unchanged": True,
+        "authoritative_truth_firewall_verified": True,
+        "development_diagnostic_rows_allowed": False,
         "scored_records_sha256": sha256_file(out),
     }
     out.with_suffix(".json").write_text(
