@@ -1,7 +1,7 @@
 # Project7 Practical RTC — authoritative local execution guide
 
 Web GPT owns the scientific/code contract. Local Codex discovers existing files, executes the frozen
-current branch, monitors resources and returns evidence/errors. Historical V* filenames are evidence
+current branch, monitors resources and returns evidence/errors. Historical V* artifacts are evidence
 or ablation only, not automatic execution selectors.
 
 ## 0. Git and local-edit safety
@@ -14,10 +14,11 @@ switch to `main` unless explicitly instructed after a later scientific merge.
 
 Every 600 s:
 
-`causal sparse history -> Step1 full-state reconstruction -> masked H10 proposals -> <=4 candidates -> receding-policy-return critic/admission -> execute H10 or HOLD -> SWMM write/readback -> observe again`.
+`causal sparse history -> frozen Step1 -> 82-control/109-representation -> <=3 H10 candidates -> receding-policy-return critic/admission -> execute H10 or HOLD -> SWMM readback -> observe again`.
 
-The sole online objective is system-wide cumulative TFV. Priority8 PFV is an authoritative secondary
-non-inferiority condition for positive event claims:
+Sole online objective: **system-wide cumulative TFV**.
+
+Secondary authoritative Priority8 PFV safety for positive event claims:
 
 `PFV_proposed <= 100 m3 + 1.05 * PFV_no_control`.
 
@@ -25,268 +26,173 @@ Global Peak is report-only. Future realised rainfall/state/flooding/Internal tra
 candidate search, PFV/Peak/action penalties, Auto-RBC/EFD warm starts and baseline imitation are
 forbidden online.
 
-## 2. New frozen action-space contract: 82 control freedoms inside 109 model channels
+## 2. Frozen action-space and assets
 
 Do not convert Step1 or base Step2 into an 82-channel neural model.
 
-- frozen Step2 representation: **109 hydraulic action channels**;
-- native supervisory-control facilities: **82**;
-- passive setting channels: **27**;
-- on every passive channel: `candidate == HOLD/reference`.
+- frozen Step2 representation: 109 hydraulic/action channels;
+- native supervisory controls: 82 facilities = 57 pumps + 16 orifices + 9 weirs;
+- passive setting channels: 27;
+- passive rule: `candidate == HOLD/reference`;
+- five `RTC_ST_*` Storage nodes remain frozen hydraulic state/capacity features.
 
-The 82-facility mask is derived deterministically from explicit action clauses in the source INP
-`[CONTROLS]`; the current Wuhan testbed must resolve to 82 or fail closed. The current expected type
-counts are 57 pumps, 16 orifices and 9 weirs.
+The existing native mask and masked q95 support were built label-independently from the canonical INP
+and existing D3 TrainFit actions. **Reuse their SHAs; do not rebuild or rerun D3 SWMM unless lineage
+actually drifts.** Step1/base Step2 are not retrained for this mask.
 
-The five added `RTC_ST_*` Storage nodes remain part of the frozen hydraulic network/state and are not
-control dimensions. **Do not retrain Step1 or base Step2 because of this control-mask change.**
+## 3. Completed mechanism evidence and what changed
 
-## 3. Cheap label-independent migration before any new SWMM truth
+The completed four-family 82-control seen panel used six label-blind queries across T8/T30/T80 and
+passed same-prefix/continuation/causality/engineering gates. Every query contained a beneficial
+candidate, so candidate coverage is not dead.
 
-First build the native control mask from the exact canonical source INP used by the graph:
+Observed base Step2 diagnostics were weak as a deployed return oracle: sign 0.45, false-beneficial
+0.30, false-reject 0.25, pairwise rank 0.4167, top1 0.50. Type-aware hydraulic pressure was beneficial
+5/6; projected gradient was beneficial 3/5 but oracle-best 0/5.
 
-```powershell
-python scripts/build_native_supervisory_control_current.py --help
-```
+Therefore current online portfolio is reduced to exactly these possible families:
 
-Then rebuild q95 sequence support **from the existing D3 TrainFit cache only**:
+1. `STEP2_H10_PROBE_SCALE_0.50`;
+2. `STEP2_H10_PROBE_SCALE_1.00`;
+3. `TYPE_AWARE_HYDRAULIC_PRESSURE`.
 
-```powershell
-python scripts/build_direct_tfv_sequence_support_current.py --help
-```
+Projected gradient is now **Development ablation only**. Current pi0/pi1, dataset family matching,
+calibration and online execution must not include `SUPPORT_CONSTRAINED_GRADIENT_H10`.
 
-This support rebuild must report `new_swmm_simulation_required=false` and freeze masked q95 changed-K,
-first-block L1, H120 L1 and H120 total variation. Do not regenerate D3 SWMM data.
+Historical gradient code remains for reproducibility; current CLI gradient knobs are compatibility-only
+and must not alter the current policy.
 
-Only then build the new asset manifest:
-
-```powershell
-python scripts/build_project7_practical_asset_manifest_current.py --help
-```
-
-The manifest must contain exactly graph, sensors, config, Step1, base Step2, `supervisory_control`,
-matching masked `sequence_support`, and Priority8. It must freeze 109 model channels, 82 control
-freedoms, Step1-retrain=false and base-Step2-retrain=false.
-
-## 4. Current Hybrid H10 portfolio
-
-The historical 12 x 109 L-BFGS-B full-plan optimizer is not current. At most four distinct H10
-candidates are offered:
-
-1. `STEP2_H10_PROBE_SCALE_1.00`;
-2. `STEP2_H10_PROBE_SCALE_0.50`;
-3. `TYPE_AWARE_HYDRAULIC_PRESSURE`;
-4. `SUPPORT_CONSTRAINED_GRADIENT_H10`.
-
-The projected-gradient tensor remains 109 channels but has only **82 free dimensions**. Its gradient is
-zeroed on passive channels, and every trial is projected to the native mask, physical bounds, <=0.5
-slew, per-facility q95 first-move radius and masked q95 changed-K. Final targets are also contracted to
-masked q95 joint-sequence support.
-
-The final post-mask/post-support base-Step2 H10 score must be stored in each candidate artifact. Base
-Step2 score never authorizes pi1 execution; the trained policy-return critic + matched one-sided UCB
-decides ACTION vs HOLD.
-
-## 5. Exact receding-policy estimand
+## 4. Exact estimand and lineage consequence
 
 Authoritative label:
 
 `A^pi(x_t,u_t) = J(candidate H10 -> frozen pi) - J(HOLD H10 -> same frozen pi)`.
 
-Negative is beneficial. Training/calibration/runtime encode exactly:
+Negative is beneficial. The critic token is exactly `H10 candidate -> H350 HOLD` versus `HOLD H360`.
 
-`H10 candidate target -> H350 HOLD target` versus `HOLD H360`.
+Removing gradient changes the pi0 continuation policy. Consequently, the completed four-family seen
+exact returns are mechanism evidence only and may **not** be reused as current three-family
+train/validation/calibration truth.
 
-Candidate/HOLD branches must share the same raw causal prefix and frozen continuation. The query
-identity also includes the supervisory-mask SHA. Derived Step1 floating-point differences are
-only diagnostics and do not redefine physical prefix identity.
+## 5. Cheap gates
 
-## 6. First current parent
-
-Historical V12/L-BFGS-B is archival. The current first-round parent is:
-
-`PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_PI0_V3_82CONTROL_109REP`.
-
-Pi0 uses the same native mask, masked support and four-family geometry as the eventual policy, but
-ranks candidates with frozen base Step2 before a policy-return critic exists.
-
-## 7. Cheap gates
-
-Before expensive work run:
+Before any SWMM work:
 
 ```powershell
 python -m pip install -e ".[dev,swmm]"
 python -m compileall -q src scripts tests
 python scripts/lint_current_surface.py
-python -m pytest -q tests/test_native_supervisory_control.py tests/test_direct_tfv_hybrid_gradient_portfolio.py tests/test_direct_tfv_policy_return_hold_aware_metrics.py tests/test_practical_rtc_assets.py tests/test_practical_rtc_v14_contract.py tests/test_direct_tfv_runtime_adapter.py tests/test_current_step2_routing.py
+python -m pytest -q tests/test_native_supervisory_control.py tests/test_direct_tfv_hybrid_gradient_portfolio.py tests/test_direct_tfv_policy_return_portfolio.py tests/test_direct_tfv_policy_return_hold_aware_metrics.py tests/test_practical_rtc_assets.py tests/test_practical_rtc_v14_contract.py tests/test_direct_tfv_runtime_adapter.py tests/test_current_step2_routing.py
 python -m pytest -q
 ```
 
-Run `--help` for every script actually used. Never invent CLI flags. `capture_direct_tfv_policy_return_context_current.py --out` is an NPZ path; its companion JSON is written automatically.
+Run `--help` for every script actually used. Never invent flags.
 
-## 8. Path discovery rules
+## 6. First next action: zero-SWMM forcing inventory
 
-Search existing evidence first under:
+Before generating any new forcing or policy-return truth, inventory existing event/forcing metadata in
+`study_v069` and current input manifests. This step must not run SWMM and must not inspect outcome
+labels.
 
-```text
-E:\RTC_sewer\Project7\study_v069
-E:\RTC_sewer\Project7\repo
-```
+Exclude:
 
-Resolve graph, sensors, config, Step1, Step2, D3 cache manifest and Priority8 by scientific
-contract/SHA/semantic lineage, not newest-looking filenames. The source INP used to derive the 82 mask
-must be the exact canonical testbed lineage for the frozen graph; record its SHA. If any frozen asset
-or mask/support SHA drifts, stop. Never silently replace it with another historical artifact.
+- all previously inspected Development families (including T5/T8/T10/T20/T30/T80, P15/P35/P75,
+  V10 and V12 seen probes);
+- existing Step2/D3 TrainFit rainfall groups from independent policy-return roles;
+- Validation, Final, Formal and PolicyLock resources.
 
-## 9. Old T30 truth is historical after the control-mask change
+Return a deterministic inventory of eligible untouched forcing groups with forcing metadata only.
+Do not guess that the pool is zero just because the previous role plan had not confirmed it.
 
-The previous T30 elapsed-3600 query was produced under 109 free online channels. It taught us that
-base-Step2/gradient value geometry can be wrong even when gradient descent numerically succeeds, and
-that one all-harmful state should be treated as a valid HOLD example rather than universal model
-failure.
+Target eventual role counts remain 48 train / 12 model-selection validation / 24 calibration / 3 new
+Development probes. Create only the **deficit** after inventory, using forcing-only deterministic
+selection. Do not start bulk truth yet.
 
-However, because the deployed policy is now 82-control/109-representation, **do not reuse that old T30
-candidate truth as current policy-return training/calibration/mechanism evidence**. It may be reported
-only as historical Development diagnostics.
+## 7. Minimal three-family continuation-specific mechanism recheck
 
-## 10. Re-run a small seen-event mechanism panel before bulk learning
+Because pi0 changed, rerun three-family parent trajectories on already-seen T8/T30/T80. Before reading
+new candidate truth, freeze **two** deterministic causal-ready query points per event:
 
-Do not jump to 48/12/24. Under the new mask, run current hybrid-pi0 trajectories for already-inspected
-T8, T30 and T80 Development events. Freeze two deterministic causal-ready query points per event
-before reading new candidate truth:
+- first query = first causal-ready non-HOLD decision;
+- reserve query = later distinct non-HOLD decision with the most-negative recorded base-Step2 selected
+  score among remaining decisions.
 
-1. first causal-ready non-HOLD decision;
-2. later distinct non-HOLD decision with the most-negative recorded selected/base-Step2 score among
-   remaining decisions.
+Write and hash the whole six-point plan before any new truth.
 
-If a selected point yields <2 distinct post-support candidates, move deterministically to the next
-ranked point without reading SWMM candidate outcomes.
+Then execute only the **first-wave three queries** initially: one per event. For each query use current
+three-family context/portfolio and `1 shared HOLD + N sequential candidate branches`.
 
-Write a `SEEN_MECHANISM_QUERY_PLAN_82CONTROL.json` containing event/INP/parent SHAs, query indices,
-selection reasons, asset-manifest SHA and `selection_uses_candidate_truth=false`. Freeze its SHA before
-running new paired truth.
+If all three first-wave queries contain at least one exact beneficial candidate and all technical gates
+pass, STOP the mechanism recheck; do not spend SWMM on reserve queries. If any first-wave event has no
+beneficial current candidate or the evidence is technically ambiguous, execute the already-frozen
+reserve queries before considering model changes.
 
-For each query:
+These seen queries are Development diagnostics only, never independent learning evidence.
 
-`masked hybrid pi0 -> causal context -> masked hybrid portfolio -> 1 shared HOLD + N sequential candidates`.
+## 8. Current pi0 and portfolio checks
 
-Use `run_direct_tfv_policy_return_query_current.py`, not the old pair runner. Require same raw prefix,
-same continuation, mask SHA identity, passive-channel unchanged, zero future-rain leakage and zero
-engineering/readback/support failures.
+Current parent contract:
 
-Aggregate with:
+`PROJECT7_PRACTICAL_BASE_H10_THREE_FAMILY_PARENT_PI0_V4_82CONTROL_109REP`.
 
-```powershell
-python scripts/audit_direct_tfv_policy_return_mechanism_panel_current.py --help
-```
+Current portfolio contract contains `V6_H10_THREE_FAMILY_82CONTROL_109REP`.
 
-Interpretation:
+For every parent/query require:
 
-- fewer than six valid query sets: insufficient mechanism evidence;
-- >=6 and at least one query has `true A^pi < 0`: useful generated-action coverage exists; fresh
-  role-disjoint learning is justified;
-- >=6 and no query has any beneficial candidate: stop before bulk and return a representation/proposal
-  audit. Do **not** increase K/q95/gradient steps or add a fifth candidate family.
+- supervisory controls = 82, model channels = 109;
+- candidate count <=3;
+- sources only Step2 0.50, Step2 1.00, hydraulic pressure;
+- projected-gradient online = false;
+- no L-BFGS-B;
+- passive changes = 0;
+- q95 support, engineering, routing and readback violations = 0;
+- future realised rainfall online = false;
+- same raw prefix and same frozen continuation for paired branches.
 
-All-harmful means HOLD is oracle within the generated portfolio at that exact state, not that all
-engineering-feasible actions are harmful.
+Base-Step2 score is diagnostic only. Do **not** drop the hydraulic candidate because Step2 predicts a
+positive value; the completed mechanism panel specifically showed this false-reject mode.
 
-## 11. What to report from the six-query panel
+## 9. Role-disjoint learning after both gates
 
-For every candidate report:
+Only after (a) forcing inventory/role identities are frozen and (b) the three-family mechanism recheck
+passes, generate exact policy-return labels.
 
-- event/query/elapsed;
-- source;
-- changed K;
-- post-mask/post-support base-Step2 H10 score;
-- shared-HOLD TFV and candidate TFV;
-- exact `candidate - HOLD` policy return;
-- first-move and joint-support ratios/contraction;
-- gradient attempted/accepted steps when relevant;
-- whether passive setting channels remained identical to HOLD.
+Initially use one deterministic causal query per rainfall group. One shared HOLD plus all distinct
+three-family candidates minimizes authoritative branch count. All-harmful query sets remain valid HOLD
+negative examples.
 
-Aggregate base-Step2 sign accuracy, false-beneficial, false-reject, within-query rank/top1; also report
-per-family beneficial fraction and gradient beneficial/oracle-best fraction.
+Dataset/checkpoint/calibration/runtime must share the current portfolio contract, continuation-policy
+SHA, 82/109 control contract and supervisory-mask SHA.
 
-## 12. HOLD-aware critic evaluation
+Default critic training scope remains control/action/interaction heads. Do not unfreeze the whole
+representation first. Model selection uses HOLD-aware false-beneficial, false-reject, same-query rank,
+selected regret and then event-balanced MAE/sign.
 
-Runtime action set is `{HOLD=0} + generated candidates`.
+Matched calibration must contain the **actual three-family** distribution and must reject projected-
+gradient rows. Do not reduce conformal coverage or margins to force ACTION.
 
-- predicted ACTION only when minimum predicted return <0;
-- oracle ACTION only when minimum true return <0;
-- false-beneficial = predicted ACTION whose selected true return >=0;
-- false-reject = predicted HOLD while a true beneficial candidate exists;
-- regret is measured against `min(0,best true candidate)`.
+## 10. New Development pi1 and comparators
 
-Report hold-aware decision accuracy, predicted/oracle HOLD fractions, false-beneficial, false-reject,
-same-query rank, candidate top1, selected regret and event-balanced MAE/sign metrics.
+After critic + matched calibration are frozen, run new Development closed loops. Compare unchanged
+No-control, Internal RTC, Auto-RBC and EFD on identical SWMM forcing. All-max/min are diagnostics only.
+Positive claims additionally require the frozen Priority8 PFV envelope. Global Peak is report-only.
 
-## 13. Role-disjoint learning only after the mechanism gate
+Near-all-HOLD behavior remains a failure mode to diagnose, not a successful conservative policy.
 
-Only if beneficial generated actions exist under the new 82-control policy, freeze fresh disjoint
-rainfall groups for at least:
+## 11. Resource rules
 
-- train: 48;
-- model-selection validation: 12;
-- conformal calibration: 24;
-- separate new Development closed-loop probes.
+Target machine: RTX 4060 Laptop 8 GB / 16 GB RAM. Use one heavy process first. Candidate/HOLD branches
+are sequential. One Python process must not run multiple PySWMM simulations concurrently. Set
+OMP/MKL/OpenBLAS/NUMEXPR threads to 1. Only consider a second external worker after measured resource
+preflight proves safe.
 
-Previously inspected T5/T8/T10/T20/T30/T80 and all Validation/Final/Formal/Policy-Lock data are excluded
-from new independent roles. Selection must be deterministic, forcing-only and label-blind. Initially
-use one deterministic causal query per group to minimize SWMM cost.
+## 12. Do not broaden the question
 
-Use the shared-HOLD query runner. All-harmful query sets stay in their assigned role because they are
-necessary HOLD negatives.
+Do not add pump-energy objectives, PID setpoints, new level penalties, online PFV surrogate, additional
+online candidate families, wider q99/K support, more gradient steps, L-BFGS-B, or Step1/base-Step2
+retraining without later independent evidence that specifically requires it.
 
-## 14. Critic / calibration lineage
-
-Current dataset, checkpoint, calibration records, admission artifact and runtime must all share:
-
-- candidate portfolio contract;
-- continuation-policy lineage;
-- `supervisory_control_dimension=82`;
-- `model_action_channel_count=109`;
-- identical `supervisory_mask_sha256`;
-- passive-setting unchanged evidence.
-
-Default critic training scope remains `control-heads`; do not unfreeze the full representation first.
-Matched calibration must contain Step2-probe, type-aware hydraulic and gradient family examples. Do not
-reduce conformal coverage/margin to force more ACTION.
-
-## 15. New Development pi1
-
-Run only after critic + matched calibration are frozen. Require:
-
-- 82 supervisory facilities screened, 109 model channels retained;
-- projected-gradient free dimension 82, tensor channels 109, H10-only;
-- no online L-BFGS-B;
-- no historical V12 admission;
-- reasonable ACTION/HOLD distribution;
-- passive-setting changes = 0;
-- q95 support/readback/engineering/score-execute violations = 0;
-- every guarded callback <<600 s.
-
-Compare unchanged No-control, Internal RTC, Auto-RBC and EFD on identical SWMM events. Positive event
-claims additionally require Priority8 PFV non-inferiority; Global Peak remains report-only.
-
-## 16. Resource rules
-
-Workstation target: RTX 4060 Laptop 8 GB / 16 GB RAM. Start with one heavy process. Candidate/HOLD
-branches are sequential and controller objects are released between branches. Use one shared HOLD per
-query. Do not run multiple PySWMM Simulations in one Python process. Only consider a second external
-worker after measured RAM/VRAM preflight proves safe. Set BLAS/OpenMP threads to 1 under process
-parallelism.
-
-## 17. Do not broaden the research question
-
-Do not add pump-energy objectives, PID setpoints, new high/low water-level penalties, an online PFV
-surrogate, a fifth heuristic candidate, or a new Step1/Step2 retraining campaign unless later evidence
-specifically identifies such a need. The current correction is only the engineering definition of
-online controllability.
-
-## 18. Promotion boundary
-
-Do not enter untouched Validation, Final, Formal or Policy Lock during this Development work. Do not
-merge PR #106 based on CI or seen-event mechanism diagnostics alone.
+Do not enter Validation, Final, Formal or Policy Lock. Do not merge PR #106 based on CI or seen
+Development diagnostics alone.
 
 `READY_FOR_POLICY_LOCK=false`.
