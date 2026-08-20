@@ -5,10 +5,14 @@ supervisory-control artifact (82 facilities for the current Wuhan testbed), and 
 matching label-independent masked support rebuilt from existing D3 TrainFit actions. Current online
 families are Step2 H10 scale 0.50, Step2 H10 scale 1.00 and type-aware hydraulic pressure. Projected
 gradient remains code-level Development ablation only and is deliberately excluded here.
+
+The emitted manifest is cryptographically bound to the exact causal context and its parent/asset
+lineage. This prevents a scientifically valid candidate set from one query being reused at another.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -31,6 +35,52 @@ from rtc.direct_tfv_sequence_support import (
 )
 from rtc.native_supervisory_control import load_native_supervisory_control
 from rtc.production_cli import _load_graph
+
+
+PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_CONTRACT = (
+    "PROJECT7_PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_V4_EXACT_LINEAGE_82CONTROL_109REP"
+)
+CURRENT_THREE_FAMILY_SOURCES = (
+    "STEP2_H10_PROBE_SCALE_0.50",
+    "STEP2_H10_PROBE_SCALE_1.00",
+    "TYPE_AWARE_HYDRAULIC_PRESSURE",
+)
+_CONTEXT_TEXT_FIELDS = (
+    "event_id",
+    "rainfall_group",
+    "recorded_prefix_action_sha256",
+    "continuation_kind",
+    "continuation_policy_sha256",
+    "source_inp_sha256",
+    "parent_decisions_sha256",
+    "asset_manifest_sha256",
+    "graph_sha256",
+    "step2_checkpoint_sha256",
+    "sequence_support_sha256",
+    "supervisory_control_sha256",
+)
+
+
+def _sha(path: str | Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _scalar_text(data: np.lib.npyio.NpzFile, key: str) -> str:
+    if key not in data:
+        raise ValueError(f"policy-return context lacks lineage field {key}")
+    value = np.asarray(data[key])
+    if value.size != 1:
+        raise ValueError(f"policy-return context field {key} must be scalar")
+    return str(value.reshape(-1)[0])
+
+
+def _scalar_int(data: np.lib.npyio.NpzFile, key: str) -> int:
+    if key not in data:
+        raise ValueError(f"policy-return context lacks lineage field {key}")
+    value = np.asarray(data[key])
+    if value.size != 1:
+        raise ValueError(f"policy-return context field {key} must be scalar")
+    return int(value.reshape(-1)[0])
 
 
 def _joint_contract_h10_target(
@@ -84,6 +134,8 @@ def main() -> None:
         raise ValueError("projected-gradient-step-fraction compatibility value must lie in (0,1]")
 
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
+    if args.device == "cuda" and device.type != "cuda":
+        raise RuntimeError("policy-return portfolio design requested CUDA but CUDA is unavailable")
     graph = _load_graph(args.graph)
     model, normalization, checkpoint = load_direct_tfv_runtime_checkpoint(
         args.step2, graph=graph, device=device
@@ -95,17 +147,37 @@ def main() -> None:
         actuator_ids=graph.actuator_ids,
     )
     support = json.loads(Path(args.sequence_support).read_text(encoding="utf-8"))
+    step2_sha = _sha(args.step2)
     validate_direct_tfv_sequence_support(
         support,
         actuator_ids=graph.actuator_ids,
+        step2_checkpoint_sha256=step2_sha,
         supervisory_mask=mask,
         supervisory_control_contract=str(control["contract"]),
     )
 
-    data = np.load(args.context, allow_pickle=False)
+    context_path = Path(args.context).resolve()
+    if not context_path.is_file():
+        raise FileNotFoundError(f"policy-return context does not exist: {context_path}")
+    data = np.load(context_path, allow_pickle=False)
+    if _scalar_text(data, "contract") != PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_CONTRACT:
+        raise ValueError("policy-return context has the wrong exact-lineage contract")
     for key in ("current_state", "rainfall_scenarios", "active_target", "previous_actuator_flow"):
         if key not in data:
             raise ValueError(f"policy-return context lacks {key}")
+    context_lineage = {key: _scalar_text(data, key) for key in _CONTEXT_TEXT_FIELDS}
+    context_lineage["decision_index"] = _scalar_int(data, "decision_index")
+    context_lineage["decision_elapsed_seconds"] = _scalar_int(data, "decision_elapsed_seconds")
+    expected_file_shas = {
+        "graph_sha256": _sha(args.graph),
+        "step2_checkpoint_sha256": step2_sha,
+        "sequence_support_sha256": _sha(args.sequence_support),
+        "supervisory_control_sha256": _sha(args.supervisory_control),
+    }
+    for key, expected in expected_file_shas.items():
+        if str(context_lineage[key]).lower() != expected.lower():
+            raise ValueError(f"policy-return context {key} differs from current designer input")
+
     state = torch.as_tensor(np.asarray(data["current_state"]), dtype=torch.float32, device=device)
     if state.ndim != 3 or int(state.shape[0]) != 1:
         raise ValueError("context current_state must be [1,node,state]")
@@ -136,6 +208,8 @@ def main() -> None:
     rows = []
     seen: set[bytes] = set()
     for candidate in hybrid.candidates:
+        if candidate.source not in CURRENT_THREE_FAMILY_SOURCES:
+            raise RuntimeError(f"current designer received unexpected candidate family {candidate.source}")
         supported, contraction, geometry = _joint_contract_h10_target(
             candidate.target.detach().cpu().numpy(),
             active_np,
@@ -189,21 +263,18 @@ def main() -> None:
         path = out / f"candidate_{len(rows):02d}_{candidate.source.lower()}.json"
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         rows.append({"path": str(path.resolve()), **payload})
-    if len(rows) < 2:
-        raise RuntimeError("three-family policy-return portfolio produced fewer than two distinct candidates")
+    if not rows:
+        raise RuntimeError("three-family policy-return portfolio produced no distinct non-HOLD candidate")
     if len(rows) > 3:
         raise RuntimeError("current policy-return portfolio exceeded the three-candidate contract")
 
+    context_sha = _sha(context_path)
     manifest = {
         "contract": DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
         "h10_probe_generator_contract": DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT,
         "candidate_count": len(rows),
         "candidate_family_count_max": 3,
-        "candidate_family_contract": [
-            "STEP2_H10_PROBE_SCALE_0.50",
-            "STEP2_H10_PROBE_SCALE_1.00",
-            "TYPE_AWARE_HYDRAULIC_PRESSURE",
-        ],
+        "candidate_family_contract": list(CURRENT_THREE_FAMILY_SOURCES),
         "active_support_ceiling": ceiling,
         "supervisory_control_dimension": int(mask.sum()),
         "model_action_channel_count": 109,
@@ -214,6 +285,10 @@ def main() -> None:
         "selected_probe_facility_indices": list(hybrid.learned_probe.selected_facility_indices),
         "candidate_sources": [row["candidate_source"] for row in rows],
         "candidates": rows,
+        "context_npz": str(context_path),
+        "context_npz_sha256": context_sha,
+        "context_contract": PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_CONTRACT,
+        **context_lineage,
         "projected_gradient_online": False,
         "projected_gradient_ablation_available": True,
         "projected_gradient_generator_contract": DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT,
