@@ -1,9 +1,9 @@
-"""Build the frozen Practical hybrid-H10 parent pi0.
+"""Build the frozen Practical three-family H10 parent pi0.
 
 The pretrained representation remains 109-channel, while the online parent uses the frozen native
-supervisory-control mask and the matching masked q95 sequence support. For the Wuhan testbed this is
-82 online control freedoms embedded in 109 Step2 channels. No historical V12 admission or 12x109
-L-BFGS-B artifact is required.
+supervisory-control mask and matching masked q95 support. For the Wuhan testbed this is 82 online
+control freedoms embedded in 109 Step2 channels. Current pi0 uses only Step2 0.5/1.0 H10 probes plus
+type-aware hydraulic pressure. Projected gradient is Development ablation only.
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from .step3_tfv_value_mpc_v4 import DirectTFVMPCDesignV4
 
 
 DIRECT_TFV_BASE_PROBE_PARENT_FACTORY_CONTRACT = (
-    "PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_FACTORY_V3_82CONTROL_109REP"
+    "PROJECT7_PRACTICAL_BASE_H10_THREE_FAMILY_PARENT_FACTORY_V4_82CONTROL_109REP"
 )
 
 
@@ -96,7 +96,7 @@ def build_frozen_base_probe_parent_controller(
         control_block_steps=2,
         max_setting_delta_per_update=0.5,
         decision_runtime_budget_seconds=float(decision_runtime_budget_seconds),
-        fallback_policy_id="HOLD_BASE_H10_HYBRID_PARENT_FALLBACK",
+        fallback_policy_id="HOLD_BASE_H10_THREE_FAMILY_PARENT_FALLBACK",
     )
     controller_cfg.validate()
     inner = MemorySafeDirectTFVAuthoritativeController(
@@ -133,12 +133,15 @@ def build_frozen_base_probe_parent_controller(
         "graph_sha256": _sha(graph_path),
         "sensors_sha256": _sha(sensors_path),
         "config_sha256": _sha(config_path),
-        "candidate_portfolio_family_count_max": 4,
-        "projected_gradient_h10_enabled": True,
-        "projected_gradient_free_dimension": int(mask.sum()),
-        "projected_gradient_tensor_channels": 109,
-        "projected_gradient_steps": int(projected_gradient_steps),
-        "projected_gradient_step_fraction": float(projected_gradient_step_fraction),
+        "candidate_portfolio_family_count_max": 3,
+        "candidate_portfolio_families": [
+            "STEP2_H10_PROBE_SCALE_0.50",
+            "STEP2_H10_PROBE_SCALE_1.00",
+            "TYPE_AWARE_HYDRAULIC_PRESSURE",
+        ],
+        "projected_gradient_h10_enabled": False,
+        "projected_gradient_ablation_available": True,
+        "projected_gradient_cli_knobs_affect_current_policy": False,
         "online_lbfgsb_used": False,
         "legacy_policy_admission_required": False,
         "legacy_first_move_admission_required": False,
