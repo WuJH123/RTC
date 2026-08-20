@@ -6,6 +6,12 @@ that old Step1 checkpoint to carry the *current* whole-project source contract w
 irrelevant Step1 retraining after a D5 or baseline edit.  This loader retains the actual
 Step1 checkpoint/model/time requirements and strict state_dict loading, then lets V127 bind
 train/deploy identity to the loaded parameter tensors.
+
+Runtime loading is deliberately host-memory conservative.  Checkpoint storages are memory-mapped
+on CPU, copied once into the module, and only then is the frozen module moved to the requested
+device.  This avoids transiently materialising a second full checkpoint copy on CUDA for every
+short-lived authoritative policy-return branch.  The model parameters and numerical inference
+contract are unchanged.
 """
 from __future__ import annotations
 
@@ -15,14 +21,16 @@ import torch
 
 from .models import SparseStateEstimator
 
-V127_STEP1_RUNTIME_LOADER_CONTRACT = "PROJECT7_V127_FROZEN_STEP1_SEMANTIC_LOADER_V1"
+V127_STEP1_RUNTIME_LOADER_CONTRACT = "PROJECT7_V127_FROZEN_STEP1_SEMANTIC_LOADER_V2_MMAP_CPU_STAGE"
 
 
 def load_frozen_step1_v127(
     path: str | Path, device: torch.device | str
 ) -> SparseStateEstimator:
     target = torch.device(device)
-    payload = torch.load(path, map_location=target)
+    # ``mmap=True`` keeps serialized tensor storages file-backed until touched.  Load on CPU first so
+    # a CUDA run does not hold both checkpoint storages and the final module parameters on the GPU.
+    payload = torch.load(path, map_location="cpu", weights_only=False, mmap=True)
     if not isinstance(payload, dict):
         raise ValueError("V127 Step1 checkpoint payload must be a dictionary")
     if payload.get("checkpoint_contract") != "RTC_TORCH_CHECKPOINT_V2_CODE_BOUND":
@@ -55,7 +63,11 @@ def load_frozen_step1_v127(
         "training_contract_sha256": training_contract,
         "original_rtc_source_tree_sha256": str(payload.get("rtc_source_tree_sha256", "")),
         "v127_loader_contract": V127_STEP1_RUNTIME_LOADER_CONTRACT,
+        "runtime_checkpoint_mmap": True,
+        "runtime_checkpoint_staged_on_cpu": True,
     }
+    # Drop references to file-backed checkpoint tensors before moving the final module to CUDA.
+    del state, payload
     return model.to(target).eval()
 
 
