@@ -1,14 +1,16 @@
-"""Hybrid Practical H10 proposal portfolio for Project7 RTC.
+"""Current Practical H10 proposal portfolio for Project7 RTC.
 
 The pretrained Step2 remains a 109-channel hydraulic action representation. Current online control is
 a strict subspace: only channels enabled by the native SWMM supervisory mask may differ from HOLD.
 For the Wuhan testbed this is an 82-dimensional supervisory action embedded in the frozen 109-channel
 Step2 tensor. The other 27 channels remain hydraulically represented but candidate == reference.
 
-The projected-gradient proposal therefore optimizes only the current H10 first action on the enabled
-subspace. Every trial is projected to the native supervisory mask, first-move q95 radius, 0.5 target
-slew, actuator bounds and masked q95 changed-facility ceiling. It remains only a candidate proposer;
-the receding-policy-return critic and one-sided admission gate decide execution.
+Seen Development mechanism evidence under the 82-control mask showed that the deterministic Step2
+full/half probes plus the type-aware hydraulic-pressure proposal already retained a truly beneficial
+candidate in every inspected query, while the projected-gradient proposal was never oracle-best. The
+current paper-facing portfolio is therefore deliberately reduced to those three deterministic H10
+families. The projected-gradient implementation is retained only as an explicit Development ablation;
+it is not part of current pi0/pi1 execution or matched calibration.
 """
 from __future__ import annotations
 
@@ -33,10 +35,10 @@ from .direct_tfv_policy_return_portfolio import (
 
 
 DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_POLICY_RETURN_CAUSAL_CANDIDATE_PORTFOLIO_V5_H10_HYBRID_82CONTROL_109REP"
+    "PROJECT7_DIRECT_TFV_POLICY_RETURN_CAUSAL_CANDIDATE_PORTFOLIO_V6_H10_THREE_FAMILY_82CONTROL_109REP"
 )
 DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_SUPPORTED_82D_IN_109CHANNEL_H10_PROJECTED_GRADIENT_GENERATOR_V2"
+    "PROJECT7_DIRECT_TFV_SUPPORTED_82D_IN_109CHANNEL_H10_PROJECTED_GRADIENT_GENERATOR_V2_ABLATION_ONLY"
 )
 PROJECTED_GRADIENT_SOURCE = "SUPPORT_CONSTRAINED_GRADIENT_H10"
 
@@ -58,6 +60,19 @@ class HybridPolicyReturnPortfolio:
     candidates: tuple[PolicyReturnPortfolioCandidate, ...]
     learned_probe: LearnedH10ProbeProposal
     projected_gradient: ProjectedGradientH10Proposal
+    projected_gradient_online: bool = False
+
+
+def _disabled_gradient() -> ProjectedGradientH10Proposal:
+    return ProjectedGradientH10Proposal(
+        target=None,
+        start_score_m3=0.0,
+        best_score_m3=0.0,
+        attempted_steps=0,
+        accepted_improvement_steps=0,
+        final_gradient_l2=0.0,
+        produced_nonhold_candidate=False,
+    )
 
 
 def _score_single_h10_target_with_grad(
@@ -139,7 +154,7 @@ def build_projected_gradient_h10_proposal(
     step_fraction: float = 0.25,
     supervisory_mask: np.ndarray | None = None,
 ) -> ProjectedGradientH10Proposal:
-    """Generate one bounded H10 proposal on the enabled supervisory-control subspace."""
+    """Generate one bounded H10 proposal for an explicit Development ablation only."""
     if int(gradient_steps) <= 0:
         raise ValueError("gradient_steps must be positive")
     if not 0.0 < float(step_fraction) <= 1.0:
@@ -157,15 +172,7 @@ def build_projected_gradient_h10_proposal(
     allowed = np.minimum(np.maximum(radius, 0.0), float(max_delta_per_update))
     allowed = np.where(mask, allowed, 0.0)
     if int(np.count_nonzero(allowed > 1.0e-7)) == 0:
-        return ProjectedGradientH10Proposal(
-            target=None,
-            start_score_m3=0.0,
-            best_score_m3=0.0,
-            attempted_steps=0,
-            accepted_improvement_steps=0,
-            final_gradient_l2=0.0,
-            produced_nonhold_candidate=False,
-        )
+        return _disabled_gradient()
 
     start_score = float(
         score_h10_first_action_targets(
@@ -305,8 +312,9 @@ def build_hybrid_policy_return_portfolio(
     gradient_steps: int = 6,
     gradient_step_fraction: float = 0.25,
     supervisory_mask: np.ndarray | None = None,
+    include_projected_gradient_ablation: bool = False,
 ) -> HybridPolicyReturnPortfolio:
-    """Build the current at-most-four-candidate H10 portfolio on the masked control subspace."""
+    """Build the current three-family H10 portfolio; gradient is opt-in ablation only."""
     mask = _validated_supervisory_mask(supervisory_mask)
     learned = build_learned_h10_probe_proposal(
         model=model,
@@ -322,7 +330,7 @@ def build_hybrid_policy_return_portfolio(
         probe_chunk_size=int(probe_chunk_size),
         supervisory_mask=mask,
     )
-    deterministic = list(
+    candidates = list(
         build_policy_return_candidate_portfolio(
             current_state=current_state,
             rainfall_scenarios=rainfall_scenarios,
@@ -335,44 +343,47 @@ def build_hybrid_policy_return_portfolio(
             supervisory_mask=mask,
         )
     )
-    gradient = build_projected_gradient_h10_proposal(
-        model=model,
-        normalization=normalization,
-        graph=graph,
-        current_state=current_state,
-        rainfall_scenarios=rainfall_scenarios,
-        previous_actuator_flow=previous_actuator_flow,
-        active_target=active_target,
-        first_radius=first_radius,
-        max_changed_facilities=int(max_changed_facilities),
-        max_delta_per_update=float(max_delta_per_update),
-        gradient_steps=int(gradient_steps),
-        step_fraction=float(gradient_step_fraction),
-        supervisory_mask=mask,
-    )
-    candidates = list(deterministic)
-    if gradient.target is not None:
-        key = gradient.target.detach().cpu().to(torch.float32).contiguous().numpy().tobytes()
-        seen = {
-            row.target.detach().cpu().to(torch.float32).contiguous().numpy().tobytes()
-            for row in candidates
-        }
-        if key not in seen:
-            changed = int(
-                torch.count_nonzero(torch.abs(gradient.target - active_target) > 1.0e-7).item()
-            )
-            if changed > 0:
-                candidates.append(
-                    PolicyReturnPortfolioCandidate(
-                        source=PROJECTED_GRADIENT_SOURCE,
-                        target=gradient.target.detach(),
-                        changed_facility_count=changed,
-                    )
+    gradient = _disabled_gradient()
+    if include_projected_gradient_ablation:
+        gradient = build_projected_gradient_h10_proposal(
+            model=model,
+            normalization=normalization,
+            graph=graph,
+            current_state=current_state,
+            rainfall_scenarios=rainfall_scenarios,
+            previous_actuator_flow=previous_actuator_flow,
+            active_target=active_target,
+            first_radius=first_radius,
+            max_changed_facilities=int(max_changed_facilities),
+            max_delta_per_update=float(max_delta_per_update),
+            gradient_steps=int(gradient_steps),
+            step_fraction=float(gradient_step_fraction),
+            supervisory_mask=mask,
+        )
+        if gradient.target is not None:
+            key = gradient.target.detach().cpu().to(torch.float32).contiguous().numpy().tobytes()
+            seen = {
+                row.target.detach().cpu().to(torch.float32).contiguous().numpy().tobytes()
+                for row in candidates
+            }
+            if key not in seen:
+                changed = int(
+                    torch.count_nonzero(torch.abs(gradient.target - active_target) > 1.0e-7).item()
                 )
+                if changed > 0:
+                    candidates.append(
+                        PolicyReturnPortfolioCandidate(
+                            source=PROJECTED_GRADIENT_SOURCE,
+                            target=gradient.target.detach(),
+                            changed_facility_count=changed,
+                        )
+                    )
+    limit = 4 if include_projected_gradient_ablation else 3
     return HybridPolicyReturnPortfolio(
-        candidates=tuple(candidates[:4]),
+        candidates=tuple(candidates[:limit]),
         learned_probe=learned,
         projected_gradient=gradient,
+        projected_gradient_online=False,
     )
 
 
