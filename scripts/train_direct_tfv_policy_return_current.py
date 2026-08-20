@@ -6,9 +6,11 @@ Step2 tensor and use the same H10-candidate/H350-HOLD token as runtime, while ev
 to one frozen native supervisory mask (82 online control freedoms for the current Wuhan testbed).
 
 With limited authoritative labels, the default keeps global state/rainfall encoders frozen and adapts
-only facility/action and interaction layers. Checkpoint selection is HOLD-aware: the actual action set
-is {HOLD=0 plus generated candidates}, so correctly HOLDing an all-harmful query is not a false
-beneficial selection.
+only facility/action and interaction layers. Training is decision-aligned with the deployed action
+set {HOLD=0 plus generated candidates}: pointwise return regression is supplemented by sign,
+within-query pairwise ranking and an explicit HOLD-aware listwise loss. Checkpoint selection is also
+HOLD-aware and baseline-preserving: epoch 0 (the frozen Step2 initialization) remains eligible, so
+fine-tuning can never be selected merely because at least one training epoch was run.
 """
 from __future__ import annotations
 
@@ -38,6 +40,17 @@ from rtc.direct_tfv_policy_return import (
 )
 from rtc.direct_tfv_policy_return_hybrid_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
 from rtc.production_cli import _load_graph
+
+
+POLICY_RETURN_REGRESSION_WEIGHT = 1.0
+POLICY_RETURN_SIGN_WEIGHT = 0.35
+POLICY_RETURN_PAIRWISE_RANK_WEIGHT = 0.45
+POLICY_RETURN_HOLD_LISTWISE_WEIGHT = 0.35
+POLICY_RETURN_SELECTION_RULE = (
+    "LEXICOGRAPHIC_SELECTED_FALSE_BENEFICIAL_THEN_FALSE_REJECT_THEN_PAIRWISE_RANK_"
+    "THEN_CANDIDATE_TOP1_THEN_SELECTED_REGRET_THEN_HOLD_AWARE_DECISION_ACCURACY_"
+    "THEN_EVENT_BALANCED_SIGN_THEN_MAE_WITH_EPOCH0_BASELINE_ELIGIBLE"
+)
 
 
 def _scalar_text(data: np.lib.npyio.NpzFile, key: str) -> str:
@@ -209,6 +222,11 @@ def _predict_group(
 def _query_loss(
     prediction: torch.Tensor, truth: torch.Tensor, *, scale: torch.Tensor
 ) -> torch.Tensor:
+    """Decision-aligned loss for one same-prefix candidate set plus implicit HOLD=0."""
+    if prediction.ndim != 1 or truth.ndim != 1 or prediction.shape != truth.shape:
+        raise ValueError("policy-return query loss requires aligned one-dimensional candidate vectors")
+    if int(prediction.numel()) <= 0:
+        raise ValueError("policy-return query loss received zero candidates")
     regression = F.smooth_l1_loss(prediction / scale, truth / scale)
     informative = torch.abs(truth) > 1.0
     sign_loss = prediction.new_zeros(())
@@ -222,7 +240,21 @@ def _query_loss(
         mask = torch.triu(torch.abs(ti) > 1.0, diagonal=1)
         if bool(mask.any()):
             ranking = F.softplus(-(pi[mask] / scale) * torch.sign(ti[mask])).mean()
-    return regression + 0.35 * sign_loss + 0.45 * ranking
+
+    # The deployed decision is argmin over HOLD=0 plus candidates. Treat that exact action set as a
+    # listwise classification problem so all-harmful queries teach HOLD and mixed/beneficial queries
+    # teach the truly best candidate. This complements, rather than replaces, calibrated regression.
+    hold_prediction = torch.cat((prediction.new_zeros(1), prediction), dim=0)
+    hold_truth = torch.cat((truth.new_zeros(1), truth), dim=0)
+    oracle_index = torch.argmin(hold_truth).reshape(1)
+    decision_logits = -(hold_prediction / scale).reshape(1, -1)
+    hold_listwise = F.cross_entropy(decision_logits, oracle_index)
+    return (
+        POLICY_RETURN_REGRESSION_WEIGHT * regression
+        + POLICY_RETURN_SIGN_WEIGHT * sign_loss
+        + POLICY_RETURN_PAIRWISE_RANK_WEIGHT * ranking
+        + POLICY_RETURN_HOLD_LISTWISE_WEIGHT * hold_listwise
+    )
 
 
 def _hold_aware_query_decision_metrics(
@@ -271,15 +303,14 @@ def _same_query_statistics(
     device: torch.device,
 ) -> dict[str, float]:
     correct = comparisons = multi = candidate_top1 = 0
-    false_beneficial = false_reject = decision_correct = 0
+    decision_queries = false_beneficial = false_reject = decision_correct = 0
     predicted_hold = oracle_hold = 0
     regrets: list[float] = []
     with torch.no_grad():
         for query in sorted(set(dataset["query_sets"].tolist())):
             idx = np.flatnonzero(dataset["query_sets"] == query)
-            if idx.size < 2:
+            if idx.size <= 0:
                 continue
-            multi += 1
             pred_t, truth_t = _predict_group(
                 model,
                 dataset,
@@ -290,9 +321,7 @@ def _same_query_statistics(
             )
             pred = pred_t.detach().cpu().numpy().astype(float)
             truth = truth_t.detach().cpu().numpy().astype(float)
-            selected = int(np.argmin(pred))
-            oracle = int(np.argmin(truth))
-            candidate_top1 += int(selected == oracle)
+            decision_queries += 1
             decision = _hold_aware_query_decision_metrics(pred, truth)
             false_beneficial += int(bool(decision["false_beneficial"]))
             false_reject += int(bool(decision["false_reject"]))
@@ -300,6 +329,15 @@ def _same_query_statistics(
             predicted_hold += int(bool(decision["predicted_hold"]))
             oracle_hold += int(bool(decision["oracle_hold"]))
             regrets.append(float(decision["regret_m3"]))
+
+            # Candidate-vs-candidate ranking is defined only for genuinely multi-candidate sets.
+            # HOLD-vs-candidate decisions above are meaningful even when support/dedup leaves one row.
+            if idx.size < 2:
+                continue
+            multi += 1
+            selected = int(np.argmin(pred))
+            oracle = int(np.argmin(truth))
+            candidate_top1 += int(selected == oracle)
             for left in range(len(pred)):
                 for right in range(left + 1, len(pred)):
                     if abs(truth[left] - truth[right]) <= 1.0:
@@ -313,14 +351,21 @@ def _same_query_statistics(
         "within_query_pairwise_rank_accuracy": float(correct / comparisons) if comparisons else 1.0,
         "within_query_pairwise_comparison_count": float(comparisons),
         "multi_candidate_query_set_count": float(multi),
+        "decision_query_set_count": float(decision_queries),
         "within_query_top1_accuracy": float(candidate_top1 / multi) if multi else 1.0,
         "within_query_candidate_top1_accuracy": float(candidate_top1 / multi) if multi else 1.0,
-        "hold_aware_decision_accuracy": float(decision_correct / multi) if multi else 1.0,
+        "hold_aware_decision_accuracy": (
+            float(decision_correct / decision_queries) if decision_queries else 1.0
+        ),
         "selected_action_mean_regret_m3": float(np.mean(regrets)) if regrets else 0.0,
-        "selected_action_false_beneficial_fraction": float(false_beneficial / multi) if multi else 0.0,
-        "selected_action_false_reject_fraction": float(false_reject / multi) if multi else 0.0,
-        "predicted_hold_fraction": float(predicted_hold / multi) if multi else 0.0,
-        "oracle_hold_optimal_fraction": float(oracle_hold / multi) if multi else 0.0,
+        "selected_action_false_beneficial_fraction": (
+            float(false_beneficial / decision_queries) if decision_queries else 0.0
+        ),
+        "selected_action_false_reject_fraction": (
+            float(false_reject / decision_queries) if decision_queries else 0.0
+        ),
+        "predicted_hold_fraction": float(predicted_hold / decision_queries) if decision_queries else 0.0,
+        "oracle_hold_optimal_fraction": float(oracle_hold / decision_queries) if decision_queries else 0.0,
     }
 
 
@@ -398,6 +443,20 @@ def _evaluate(
     return result
 
 
+def _validation_selection_key(metrics: dict[str, float]) -> tuple[float, ...]:
+    """Precommitted validation priority aligned with the deployed HOLD-aware RTC decision."""
+    return (
+        float(metrics["selected_action_false_beneficial_fraction"]),
+        float(metrics["selected_action_false_reject_fraction"]),
+        -float(metrics["within_query_pairwise_rank_accuracy"]),
+        -float(metrics["within_query_candidate_top1_accuracy"]),
+        float(metrics["selected_action_mean_regret_m3"]),
+        -float(metrics["hold_aware_decision_accuracy"]),
+        -float(metrics["event_balanced_sign_accuracy"]),
+        float(metrics["event_balanced_mae_m3"]),
+    )
+
+
 def _configure_trainable_scope(
     model: torch.nn.Module, scope: str
 ) -> list[torch.nn.Parameter]:
@@ -458,9 +517,21 @@ def main() -> None:
     trainable = _configure_trainable_scope(model, args.trainable_scope)
     optimizer = torch.optim.AdamW(trainable, lr=float(args.learning_rate), weight_decay=1e-5)
     scale = model.target_scale_m3.to(device).clamp_min(1.0)
+
+    # Epoch 0 is a real model-selection candidate. This prevents scarce-label fine-tuning from being
+    # accepted when every trained epoch worsens the decision-aligned validation priority.
+    baseline_metrics = _evaluate(model, valid, graph=graph, normalization=normalization, device=device)
     best_state = copy.deepcopy(model.state_dict())
-    best_key: tuple[float, float, float, float] | None = None
-    history: list[dict[str, float | int]] = []
+    best_key = _validation_selection_key(baseline_metrics)
+    best_epoch = 0
+    history: list[dict[str, Any]] = [
+        {
+            "epoch": 0,
+            "train_loss": None,
+            "baseline_frozen_initialization": True,
+            **baseline_metrics,
+        }
+    ]
     groups = sorted(train_groups)
     for epoch in range(1, int(args.epochs) + 1):
         random.Random(args.seed + epoch).shuffle(groups)
@@ -489,25 +560,24 @@ def main() -> None:
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
         metrics = _evaluate(model, valid, graph=graph, normalization=normalization, device=device)
-        key = (
-            float(metrics["selected_action_false_beneficial_fraction"]),
-            -float(metrics["within_query_pairwise_rank_accuracy"]),
-            float(metrics["selected_action_mean_regret_m3"]),
-            float(metrics["event_balanced_mae_m3"]),
-        )
+        key = _validation_selection_key(metrics)
         history.append(
             {
                 "epoch": epoch,
                 "train_loss": float(np.mean(losses)) if losses else 0.0,
+                "baseline_frozen_initialization": False,
                 **metrics,
             }
         )
-        if best_key is None or key < best_key:
+        if key < best_key:
             best_key = key
+            best_epoch = epoch
             best_state = copy.deepcopy(model.state_dict())
 
     model.load_state_dict(best_state)
     final_metrics = _evaluate(model, valid, graph=graph, normalization=normalization, device=device)
+    if _validation_selection_key(final_metrics) != best_key:
+        raise RuntimeError("restored policy-return checkpoint does not match selected validation key")
     train_query_counts = Counter(train["query_sets"].tolist())
     valid_query_counts = Counter(valid["query_sets"].tolist())
     payload = {
@@ -546,14 +616,27 @@ def main() -> None:
         "normalization": dict(base["normalization"]),
         "model_state_dict": model.state_dict(),
         "training_history": history,
+        "validation_baseline_metrics": baseline_metrics,
         "validation_metrics": final_metrics,
+        "validation_selected_epoch": int(best_epoch),
+        "validation_selection_key": [float(value) for value in best_key],
+        "fine_tuning_improved_over_epoch0": bool(best_epoch > 0),
+        "baseline_preserving_model_selection": True,
         "trainable_scope": args.trainable_scope,
         "ranking_unit": "SAME_AUTHORITATIVE_PREFIX_QUERY_SET_WITH_HOLD_ZERO",
         "decision_set": "HOLD_ZERO_PLUS_GENERATED_CANDIDATES",
-        "selection_rule": (
-            "LEXICOGRAPHIC_HOLD_AWARE_FALSE_BENEFICIAL_THEN_RANK_"
-            "THEN_HOLD_AWARE_SELECTED_REGRET_THEN_MAE"
-        ),
+        "training_loss_contract": {
+            "regression": "SMOOTH_L1_NORMALIZED_POLICY_RETURN",
+            "regression_weight": POLICY_RETURN_REGRESSION_WEIGHT,
+            "sign": "CANDIDATE_VS_HOLD_ZERO_LOGISTIC",
+            "sign_weight": POLICY_RETURN_SIGN_WEIGHT,
+            "pairwise_rank": "SAME_PREFIX_CANDIDATE_PAIR_LOGISTIC",
+            "pairwise_rank_weight": POLICY_RETURN_PAIRWISE_RANK_WEIGHT,
+            "hold_listwise": "CROSS_ENTROPY_ARGMIN_OVER_HOLD_ZERO_PLUS_CANDIDATES",
+            "hold_listwise_weight": POLICY_RETURN_HOLD_LISTWISE_WEIGHT,
+        },
+        "selection_rule": POLICY_RETURN_SELECTION_RULE,
+        "single_candidate_queries_included_in_hold_aware_selection_metrics": True,
         "future_realized_rainfall_used_as_model_input": False,
         "base_step2_retrained": False,
     }
