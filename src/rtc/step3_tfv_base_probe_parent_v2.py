@@ -1,9 +1,10 @@
-"""Practical first-round parent pi0 with the current masked hybrid H10 proposal geometry.
+"""Practical first-round parent pi0 with the current masked three-family H10 geometry.
 
 The parent keeps the frozen 109-channel Step2 representation, but only the native supervisory mask
 may change online. The current Wuhan contract therefore screens 82 control freedoms while retaining
 all 109 channels in state/action tensors. Masked q95 support is read from the recomputed sequence-
-support artifact; no Step1/base-Step2 retraining is required.
+support artifact; no Step1/base-Step2 retraining is required. Projected gradient is not part of the
+current parent after the completed 82-control seen mechanism panel; it remains an archival ablation.
 """
 from __future__ import annotations
 
@@ -28,14 +29,14 @@ from .step3_tfv_base_probe_parent import (
 
 
 DIRECT_TFV_BASE_PROBE_PARENT_CONTRACT = (
-    "PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_PI0_V3_82CONTROL_109REP"
+    "PROJECT7_PRACTICAL_BASE_H10_THREE_FAMILY_PARENT_PI0_V4_82CONTROL_109REP"
 )
 
 
 class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
-    """Deterministic pi0 on the native supervisory-control subspace."""
+    """Deterministic three-family pi0 on the native supervisory-control subspace."""
 
-    policy_mode = "practical_base_h10_hybrid_parent_pi0"
+    policy_mode = "practical_base_h10_three_family_parent_pi0"
     policy_mode_contract = DIRECT_TFV_BASE_PROBE_PARENT_CONTRACT
 
     def __init__(
@@ -49,7 +50,9 @@ class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
         super().__init__(*args, **kwargs)
         mask = np.asarray(supervisory_mask, dtype=bool).reshape(-1)
         if mask.shape != (109,) or int(mask.sum()) <= 0:
-            raise ValueError("base hybrid parent requires a valid 109-channel supervisory mask")
+            raise ValueError("base three-family parent requires a valid 109-channel supervisory mask")
+        # Legacy CLI knobs are accepted only for backward-compatible launch scripts. They no longer
+        # change the current paper-facing candidate family.
         if int(projected_gradient_steps) <= 0:
             raise ValueError("projected_gradient_steps must be positive")
         if not 0.0 < float(projected_gradient_step_fraction) <= 1.0:
@@ -66,7 +69,7 @@ class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
         flow = kwargs["previous_actuator_flow"]
         active = kwargs.get("active_target")
         if not isinstance(active, torch.Tensor) or active.shape != (109,):
-            raise ValueError("base hybrid parent requires active_target [109]")
+            raise ValueError("base three-family parent requires active_target [109]")
         ceiling = changed_facility_support_limit(self.sequence_support, "q95")
         hybrid = build_hybrid_policy_return_portfolio(
             model=self.model,
@@ -80,9 +83,8 @@ class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
             max_changed_facilities=ceiling,
             max_delta_per_update=float(self.design.max_setting_delta_per_update),
             probe_chunk_size=self.proposal_probe_chunk_size,
-            gradient_steps=self.projected_gradient_steps,
-            gradient_step_fraction=self.projected_gradient_step_fraction,
             supervisory_mask=self.supervisory_mask,
+            include_projected_gradient_ablation=False,
         )
         learned = hybrid.learned_probe
         evaluated: list[
@@ -103,7 +105,7 @@ class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
                 continue
             passive = torch.as_tensor(~self.supervisory_mask, dtype=torch.bool, device=target.device)
             if bool(torch.any(torch.abs(target[passive] - active[passive]) > 1.0e-7)):
-                raise RuntimeError("hybrid parent changed a passive 109-channel setting")
+                raise RuntimeError("three-family parent changed a passive 109-channel setting")
             key = target.detach().cpu().to(torch.float32).contiguous().numpy().tobytes()
             if key in seen:
                 continue
@@ -161,21 +163,15 @@ class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
             torch.abs(target - active) / radius.clamp_min(1.0e-12),
             torch.zeros_like(radius),
         )
-        gradient = hybrid.projected_gradient
-        gradient_gain = (
-            max(0.0, float(gradient.start_score_m3 - gradient.best_score_m3))
-            if gradient.produced_nonhold_candidate
-            else 0.0
-        )
         return DirectTFVBaseProbeParentResult(
             settings=executed,
             optimized_candidate_settings=sequence,
             predicted_delta_tfv_m3=score if passed else 0.0,
             raw_optimized_predicted_delta_tfv_m3=score,
             selected_source=(
-                f"BASE_H10_HYBRID_PARENT::{selected_source}"
+                f"BASE_H10_THREE_FAMILY_PARENT::{selected_source}"
                 if passed
-                else "LATCH_PREVIOUS_TARGET_BASE_H10_HYBRID_PARENT"
+                else "LATCH_PREVIOUS_TARGET_BASE_H10_THREE_FAMILY_PARENT"
             ),
             candidate_valid=passed,
             admission_margin_m3=0.0,
@@ -218,10 +214,10 @@ class DirectTFVBaseHybridParentMPCV2(DirectTFVBaseProbeParentMPC):
             optimizer_success=True,
             optimizer_steps=0,
             optimizer_starts=0,
-            gradient_norm=float(gradient.final_gradient_l2),
-            scipy_message="NOT_USED_BASE_H10_HYBRID_PROJECTED_GRADIENT_PROPOSER_ONLY",
-            first_move_refiner_steps=int(gradient.attempted_steps),
-            first_move_refinement_gain_m3=gradient_gain,
+            gradient_norm=0.0,
+            scipy_message="NOT_USED_CURRENT_THREE_FAMILY_FINITE_PORTFOLIO",
+            first_move_refiner_steps=0,
+            first_move_refinement_gain_m3=0.0,
         )
 
 
