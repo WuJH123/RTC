@@ -1,8 +1,10 @@
 """Capture one exact-prefix causal query context and stop before the branch action is written.
 
-The default first-round continuation is the current masked hybrid Base-H10 pi0. After a policy-return
-critic exists the same script can capture contexts under frozen pi1. It produces no TFV truth and
-cannot be used as evaluation evidence.
+The default first-round continuation is the current masked three-family Base-H10 pi0. After a
+policy-return critic exists the same script can capture contexts under frozen pi1. It produces no TFV
+truth and cannot be used as evaluation evidence. The context artifact is cryptographically bound to
+the exact parent decision, forcing INP, current Practical assets, and continuation lineage so that a
+portfolio designed for one query cannot be silently reused for another.
 """
 from __future__ import annotations
 
@@ -20,12 +22,16 @@ from rtc.direct_tfv_base_probe_runtime_factory import build_frozen_base_probe_pa
 from rtc.direct_tfv_policy_return import DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING
 from rtc.direct_tfv_policy_return_runtime_factory import build_frozen_policy_return_continuation_controller
 from rtc.policy_return_replay import ExactPrefixThenFrozenPolicyController, snapshot_and_release_policy_return_branch
-from rtc.practical_rtc_assets import load_practical_rtc_asset_manifest, practical_asset_path
+from rtc.practical_rtc_assets import (
+    load_practical_rtc_asset_manifest,
+    practical_asset_path,
+    sha256_file,
+)
 from rtc.production_cli import _controls_disabled_runtime
 
 
 PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_CONTRACT = (
-    "PROJECT7_PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_V3_82CONTROL_109REP"
+    "PROJECT7_PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_V4_EXACT_LINEAGE_82CONTROL_109REP"
 )
 
 
@@ -128,9 +134,14 @@ def main() -> None:
     prefix_sha = _canonical_sha({str(k): prefix[k] for k in sorted(prefix)})
 
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
+    if args.device == "cuda" and device.type != "cuda":
+        raise RuntimeError("policy-return context capture requested CUDA but CUDA is unavailable")
     delegate, graph, sensors, lineage = _build_delegate(args, assets, device)
     if tuple(str(x) for x in graph.actuator_ids) != ids:
         raise ValueError("parent decision actuator order differs from frozen graph")
+    continuation_policy_sha = _canonical_sha(
+        {"continuation_kind": args.continuation_kind, "lineage": lineage}
+    )
     wrapper = _CaptureOnlyController(
         delegate=delegate,
         actuator_ids=ids,
@@ -167,6 +178,15 @@ def main() -> None:
     context, release = snapshot_and_release_policy_return_branch(wrapper, device=device)
     out = Path(args.out).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    asset_manifest_sha = sha256_file(args.asset_manifest)
+    source_inp_sha = sha256_file(inp)
+    parent_decisions_sha = sha256_file(decisions)
+    graph_sha = sha256_file(practical_asset_path(assets, "graph"))
+    step2_sha = sha256_file(practical_asset_path(assets, "step2"))
+    sequence_support_sha = sha256_file(practical_asset_path(assets, "sequence_support"))
+    supervisory_control_sha = sha256_file(practical_asset_path(assets, "supervisory_control"))
+
     np.savez_compressed(
         out,
         contract=np.asarray(PRACTICAL_RTC_CAUSAL_QUERY_CONTEXT_CONTRACT),
@@ -176,6 +196,15 @@ def main() -> None:
         decision_index=np.asarray(int(args.decision_index), dtype=np.int64),
         decision_elapsed_seconds=np.asarray(branch_elapsed, dtype=np.int64),
         recorded_prefix_action_sha256=np.asarray(prefix_sha),
+        continuation_kind=np.asarray(args.continuation_kind),
+        continuation_policy_sha256=np.asarray(continuation_policy_sha),
+        source_inp_sha256=np.asarray(source_inp_sha),
+        parent_decisions_sha256=np.asarray(parent_decisions_sha),
+        asset_manifest_sha256=np.asarray(asset_manifest_sha),
+        graph_sha256=np.asarray(graph_sha),
+        step2_checkpoint_sha256=np.asarray(step2_sha),
+        sequence_support_sha256=np.asarray(sequence_support_sha),
+        supervisory_control_sha256=np.asarray(supervisory_control_sha),
         current_state=context["current_state"][None],
         rainfall_scenarios=context["rainfall_scenarios"][None],
         active_target=context["active_target"][None],
@@ -190,10 +219,18 @@ def main() -> None:
         "decision_elapsed_seconds": branch_elapsed,
         "recorded_prefix_action_sha256": prefix_sha,
         "continuation_kind": args.continuation_kind,
+        "continuation_policy_sha256": continuation_policy_sha,
         "continuation_lineage": lineage,
         "supervisory_control_dimension": int(lineage["supervisory_control_dimension"]),
         "model_action_channel_count": int(lineage["model_action_channel_count"]),
         "asset_manifest": str(Path(args.asset_manifest).resolve()),
+        "asset_manifest_sha256": asset_manifest_sha,
+        "source_inp_sha256": source_inp_sha,
+        "parent_decisions_sha256": parent_decisions_sha,
+        "graph_sha256": graph_sha,
+        "step2_checkpoint_sha256": step2_sha,
+        "sequence_support_sha256": sequence_support_sha,
+        "supervisory_control_sha256": supervisory_control_sha,
         "context_npz": str(out),
         "context_npz_sha256": hashlib.sha256(out.read_bytes()).hexdigest(),
         "intentional_prefix_only_stop": True,
