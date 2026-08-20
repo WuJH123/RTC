@@ -179,12 +179,21 @@ Positive claims additionally require the frozen Priority8 PFV envelope. Global P
 
 Near-all-HOLD behavior remains a failure mode to diagnose, not a successful conservative policy.
 
-## 11. Resource rules
+## 11. Resource execution policy
 
-Target machine: RTX 4060 Laptop 8 GB / 16 GB RAM. Use one heavy process first. Candidate/HOLD branches
-are sequential. One Python process must not run multiple PySWMM simulations concurrently. Set
-OMP/MKL/OpenBLAS/NUMEXPR threads to 1. Only consider a second external worker after measured resource
-preflight proves safe.
+Target machine: RTX 4060 Laptop 8 GB / 16 GB RAM. Resource observations are **telemetry only**. The
+current workflow must not pause, stop, skip a rainfall group, or alter scientific execution because of
+free-RAM, paging/pagefile, GPU-memory, GPU-utilization, CPU-utilization or similar threshold values.
+There is no resource safety reserve and no pre-emptive resource stop condition.
+
+Candidate/HOLD authoritative branches remain sequential because of the PySWMM/current scientific
+execution contract, not because of a resource guard. OMP/MKL/OpenBLAS/NUMEXPR threads remain at 1 to
+avoid unrelated nested numerical threading. A real CUDA OOM, host allocation failure, PySWMM failure,
+process crash or scientific/lineage fail-closed exception remains an actual execution error and should
+surface normally; do not convert telemetry into a synthetic stop.
+
+Canonical code contract: `PROJECT7_RESOURCE_TELEMETRY_ONLY_NO_PREEMPTIVE_STOP_V1` in
+`src/rtc/resource_execution_policy.py`.
 
 ## 12. Do not broaden the question
 
