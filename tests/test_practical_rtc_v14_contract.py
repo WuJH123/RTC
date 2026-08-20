@@ -62,7 +62,8 @@ def test_practical_portfolio_is_three_family_with_109_representation_and_82_cont
 
 
 def test_practical_paper_contract_reuses_models_and_demotes_gradient_to_ablation() -> None:
-    text = Path("PROJECT7_PRACTICAL_RTC_V14.md").read_text(encoding="utf-8")
+    raw = Path("PROJECT7_PRACTICAL_RTC_V14.md").read_text(encoding="utf-8")
+    text = " ".join(raw.split())
     assert "12 x 109 = 1308-dimensional L-BFGS-B" in text
     assert "three-family" in text.lower()
     assert "projected gradient" in text.lower() and "ablation" in text.lower()
