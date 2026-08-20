@@ -1,9 +1,9 @@
-"""Build the current Practical H10 policy-return controller.
+"""Build the current Practical three-family H10 policy-return controller.
 
 The current online policy keeps a frozen 109-channel Step2 representation but changes only the native
 supervisory-control subspace. For the Wuhan testbed that means 82 online control freedoms embedded in
-109 action channels. The four-family H10 portfolio and its admission must be trained/calibrated under
-that same control mask. Historical L-BFGS-B and V12 admissions remain archival only.
+109 action channels. The current three-family H10 portfolio and its matched admission share that same
+control mask. Projected gradient and historical L-BFGS-B remain Development/archival ablations only.
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ from .step3_tfv_value_mpc_v13 import (
 
 
 POLICY_RETURN_FROZEN_CONTINUATION_FACTORY_CONTRACT = (
-    "PROJECT7_PRACTICAL_POLICY_RETURN_FACTORY_V7_H10_HYBRID_82CONTROL_109REP"
+    "PROJECT7_PRACTICAL_POLICY_RETURN_FACTORY_V8_H10_THREE_FAMILY_82CONTROL_109REP"
 )
 
 
@@ -104,11 +104,13 @@ def build_frozen_policy_return_continuation_controller(
     checkpoint_portfolio = str(return_checkpoint.get("candidate_portfolio_contract", ""))
     admission_portfolio = str(return_admission.get("candidate_portfolio_contract", ""))
     if checkpoint_portfolio != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT or admission_portfolio != checkpoint_portfolio:
-        raise ValueError("Practical critic/admission must use the current masked hybrid H10 portfolio")
+        raise ValueError("Practical critic/admission must use the current three-family H10 portfolio")
     if str(return_checkpoint.get("supervisory_mask_sha256", "")).lower() != str(control["supervisory_mask_sha256"]).lower():
         raise ValueError("policy-return critic was trained under another supervisory-control mask")
     if str(return_admission.get("supervisory_mask_sha256", "")).lower() != str(control["supervisory_mask_sha256"]).lower():
         raise ValueError("policy-return admission was calibrated under another supervisory-control mask")
+    if return_admission.get("projected_gradient_online") not in (False, None):
+        raise ValueError("current policy-return admission unexpectedly enables projected gradient")
 
     cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
     controller_cfg = replace(
@@ -117,7 +119,7 @@ def build_frozen_policy_return_continuation_controller(
         control_block_steps=2,
         max_setting_delta_per_update=0.5,
         decision_runtime_budget_seconds=float(decision_runtime_budget_seconds),
-        fallback_policy_id="HOLD_PRACTICAL_HYBRID_POLICY_RETURN_FALLBACK",
+        fallback_policy_id="HOLD_PRACTICAL_THREE_FAMILY_POLICY_RETURN_FALLBACK",
     )
     controller_cfg.validate()
     design = DirectTFVMPCDesignV4(
@@ -178,13 +180,16 @@ def build_frozen_policy_return_continuation_controller(
         "policy_return_action_encoding": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
         "critic_parent_continuation_policy_sha256": checkpoint_parent,
         "candidate_portfolio_contract": checkpoint_portfolio,
-        "candidate_portfolio_family_count_max": 4,
-        "projected_gradient_h10_enabled": True,
+        "candidate_portfolio_family_count_max": 3,
+        "candidate_portfolio_families": [
+            "STEP2_H10_PROBE_SCALE_0.50",
+            "STEP2_H10_PROBE_SCALE_1.00",
+            "TYPE_AWARE_HYDRAULIC_PRESSURE",
+        ],
+        "projected_gradient_h10_enabled": False,
+        "projected_gradient_ablation_available": True,
         "projected_gradient_generator_contract": DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT,
-        "projected_gradient_free_dimension": int(mask.sum()),
-        "projected_gradient_tensor_channels": 109,
-        "projected_gradient_steps": int(projected_gradient_steps),
-        "projected_gradient_step_fraction": float(projected_gradient_step_fraction),
+        "projected_gradient_cli_knobs_affect_current_policy": False,
         "portfolio_mode": True,
         "online_lbfgsb_used": False,
         "h10_probe_generator_contract": DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT,
