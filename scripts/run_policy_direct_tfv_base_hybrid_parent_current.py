@@ -1,8 +1,9 @@
-"""Run the frozen hybrid Base-H10 parent pi0 in authoritative Development SWMM.
+"""Run the frozen three-family Base-H10 parent pi0 in authoritative Development SWMM.
 
 The parent keeps the pretrained 109-channel Step2 representation but changes only the native
 supervisory-control subspace from the asset manifest. This creates causal parent trajectories for
-exact policy-return queries without retraining Step1/base Step2.
+exact policy-return queries without retraining Step1/base Step2. Projected gradient is retained only
+as an explicit Development ablation and is not part of the current pi0 candidate portfolio.
 """
 from __future__ import annotations
 
@@ -22,8 +23,33 @@ from rtc.project7_contract import EFFECTIVE_WARMUP_MINUTES, validate_project7_ru
 
 
 BASE_HYBRID_PARENT_RUNTIME_CONTRACT = (
-    "PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_AUTHORITATIVE_DEVELOPMENT_V2_82CONTROL_109REP"
+    "PROJECT7_PRACTICAL_BASE_H10_HYBRID_PARENT_AUTHORITATIVE_DEVELOPMENT_V3_82CONTROL_109REP"
 )
+CURRENT_THREE_FAMILY_PORTFOLIO = (
+    "STEP2_H10_PROBE_SCALE_0.50",
+    "STEP2_H10_PROBE_SCALE_1.00",
+    "TYPE_AWARE_HYDRAULIC_PRESSURE",
+)
+
+
+def _require_current_three_family_lineage(lineage: dict) -> None:
+    if lineage.get("online_lbfgsb_used") is not False:
+        raise RuntimeError("three-family parent unexpectedly resolved to L-BFGS-B")
+    if lineage.get("projected_gradient_h10_enabled") is not False:
+        raise RuntimeError("three-family parent unexpectedly enabled projected-gradient H10 online")
+    if lineage.get("projected_gradient_ablation_available") is not True:
+        raise RuntimeError("three-family parent lost the explicit projected-gradient ablation")
+    if lineage.get("projected_gradient_cli_knobs_affect_current_policy") is not False:
+        raise RuntimeError("projected-gradient compatibility knobs changed the current parent policy")
+    if int(lineage.get("candidate_portfolio_family_count_max", -1)) != 3:
+        raise RuntimeError("three-family parent lineage does not declare a three-family maximum")
+    families = tuple(str(value) for value in lineage.get("candidate_portfolio_families", ()))
+    if families != CURRENT_THREE_FAMILY_PORTFOLIO:
+        raise RuntimeError("three-family parent lineage has unexpected candidate families")
+    if int(lineage.get("supervisory_control_dimension", -1)) != 82:
+        raise RuntimeError("three-family parent did not resolve to the frozen 82-control subspace")
+    if int(lineage.get("model_action_channel_count", -1)) != 109:
+        raise RuntimeError("three-family parent lost the frozen 109-channel Step2 representation")
 
 
 def main() -> None:
@@ -35,6 +61,7 @@ def main() -> None:
     p.add_argument("--device", default="cuda")
     p.add_argument("--decision-runtime-budget-seconds", type=float, default=180.0)
     p.add_argument("--probe-chunk-size", type=int, default=24)
+    # Backward-compatible launch knobs only; the factory records that they do not alter current pi0.
     p.add_argument("--projected-gradient-steps", type=int, default=6)
     p.add_argument("--projected-gradient-step-fraction", type=float, default=0.25)
     args = p.parse_args()
@@ -44,13 +71,13 @@ def main() -> None:
     assets = load_practical_rtc_asset_manifest(args.asset_manifest)
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
     if args.device == "cuda" and device.type != "cuda":
-        raise RuntimeError("hybrid parent requested CUDA but CUDA is unavailable")
+        raise RuntimeError("three-family parent requested CUDA but CUDA is unavailable")
     config_path = practical_asset_path(assets, "config")
     cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
     project_contract = validate_project7_runtime_config(cfg)
     clock = inspect_prepared_event_clock(args.inp)
     if abs(float(clock["effective_warmup_minutes"]) - EFFECTIVE_WARMUP_MINUTES) > 1.0e-6:
-        raise ValueError("hybrid parent event violates the common warm-up clock")
+        raise ValueError("three-family parent event violates the common warm-up clock")
 
     controller, _, sensors, lineage = build_frozen_base_probe_parent_controller(
         graph_path=practical_asset_path(assets, "graph"),
@@ -66,14 +93,7 @@ def main() -> None:
         projected_gradient_steps=int(args.projected_gradient_steps),
         projected_gradient_step_fraction=float(args.projected_gradient_step_fraction),
     )
-    if lineage.get("online_lbfgsb_used") is not False:
-        raise RuntimeError("hybrid parent unexpectedly resolved to L-BFGS-B")
-    if lineage.get("projected_gradient_h10_enabled") is not True:
-        raise RuntimeError("hybrid parent lacks the projected-gradient H10 proposer")
-    if int(lineage.get("supervisory_control_dimension", -1)) != 82:
-        raise RuntimeError("hybrid parent did not resolve to the frozen 82-control subspace")
-    if int(lineage.get("model_action_channel_count", -1)) != 109:
-        raise RuntimeError("hybrid parent lost the frozen 109-channel Step2 representation")
+    _require_current_three_family_lineage(lineage)
 
     out = Path(args.out_dir).resolve()
     runtime_inp = _controls_disabled_runtime(
@@ -95,12 +115,12 @@ def main() -> None:
     )
     write_audit = audit_target_write_readback_v127(metadata_path=result.metadata_path)
     if write_audit.get("passed") is not True:
-        raise RuntimeError("hybrid parent failed target write/readback audit")
+        raise RuntimeError("three-family parent failed target write/readback audit")
     metadata_path = Path(result.metadata_path)
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata.update(
         {
-            "strategy": "development_base_h10_hybrid_parent_pi0",
+            "strategy": "development_base_h10_three_family_parent_pi0",
             "runtime_contract": BASE_HYBRID_PARENT_RUNTIME_CONTRACT,
             "development_only": True,
             "policy_return_parent_data_source": True,
@@ -108,10 +128,13 @@ def main() -> None:
             "future_realized_rainfall_used_as_model_input": False,
             "online_swmm_candidate_search": False,
             "online_lbfgsb_used": False,
-            "projected_gradient_h10_enabled": True,
-            "projected_gradient_free_dimension": 82,
+            "projected_gradient_h10_enabled": False,
+            "projected_gradient_role": "DEVELOPMENT_ABLATION_ONLY",
+            "projected_gradient_ablation_available": True,
+            "projected_gradient_cli_knobs_affect_current_policy": False,
             "model_action_channel_count": 109,
-            "candidate_portfolio_family_count_max": 4,
+            "candidate_portfolio_family_count_max": 3,
+            "candidate_portfolio_families": list(CURRENT_THREE_FAMILY_PORTFOLIO),
             "step1_retrained_for_control_mask": False,
             "base_step2_retrained_for_control_mask": False,
             "target_write_readback_audit": write_audit,
@@ -131,7 +154,9 @@ def main() -> None:
                 "decisions": result.decisions,
                 "supervisory_control_dimension": 82,
                 "model_action_channel_count": 109,
-                "projected_gradient_h10_enabled": True,
+                "candidate_portfolio_family_count_max": 3,
+                "projected_gradient_h10_enabled": False,
+                "projected_gradient_role": "DEVELOPMENT_ABLATION_ONLY",
                 "target_write_readback_passed": True,
                 "flow_routing_error_pct": result.flow_routing_error_pct,
             },

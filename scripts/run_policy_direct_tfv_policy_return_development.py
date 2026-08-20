@@ -1,9 +1,10 @@
-"""Run the current Practical masked hybrid H10 policy-return controller in authoritative Development SWMM.
+"""Run the current Practical three-family H10 policy-return controller in Development SWMM.
 
 Frozen Step1 and base Step2 remain unchanged. Online control is restricted to the native 82-facility
 supervisory subspace while all 109 hydraulic action channels remain in the pretrained representation.
-The critic/admission must match the same control-mask SHA and candidate portfolio. Historical V12
-admissions and 12x109 L-BFGS-B remain rejected.
+The critic/admission must match the same control-mask SHA and three-family candidate portfolio.
+Projected gradient is retained only as an explicit Development ablation; historical V12 admissions
+and 12x109 L-BFGS-B remain rejected.
 """
 from __future__ import annotations
 
@@ -28,12 +29,17 @@ from rtc.native_supervisory_control import load_native_supervisory_control
 from rtc.practical_rtc_assets import load_practical_rtc_asset_manifest, practical_asset_path
 from rtc.production_cli import _controls_disabled_runtime, _load_graph
 from rtc.project7_contract import EFFECTIVE_WARMUP_MINUTES, validate_project7_runtime_config
-from rtc.step2_state_store_v127 import semantic_model_state_dict_sha256, semantic_sensor_layout_sha256
 from rtc.step1_runtime_v127 import load_frozen_step1_v127
+from rtc.step2_state_store_v127 import semantic_model_state_dict_sha256, semantic_sensor_layout_sha256
 
 
 DIRECT_TFV_POLICY_RETURN_RUNTIME_CONTRACT = (
-    "PROJECT7_PRACTICAL_H10_HYBRID_POLICY_RETURN_AUTHORITATIVE_DEVELOPMENT_RTC_V3_82CONTROL_109REP"
+    "PROJECT7_PRACTICAL_H10_THREE_FAMILY_POLICY_RETURN_AUTHORITATIVE_DEVELOPMENT_RTC_V4_82CONTROL_109REP"
+)
+CURRENT_THREE_FAMILY_PORTFOLIO = (
+    "STEP2_H10_PROBE_SCALE_0.50",
+    "STEP2_H10_PROBE_SCALE_1.00",
+    "TYPE_AWARE_HYDRAULIC_PRESSURE",
 )
 
 
@@ -70,6 +76,28 @@ def _require_step1_lineage(
             )
 
 
+def _require_current_three_family_lineage(lineage: dict, mask) -> None:
+    if lineage.get("portfolio_mode") is not True or lineage.get("online_lbfgsb_used") is not False:
+        raise RuntimeError("current Development runtime resolved outside finite portfolio mode")
+    if lineage.get("legacy_v12_admission_required_online") is not False:
+        raise RuntimeError("Practical runtime must not depend on legacy V12 online admission")
+    if lineage.get("projected_gradient_h10_enabled") is not False:
+        raise RuntimeError("current three-family runtime unexpectedly enabled projected gradient online")
+    if lineage.get("projected_gradient_ablation_available") is not True:
+        raise RuntimeError("current runtime lost the explicit projected-gradient Development ablation")
+    if lineage.get("projected_gradient_cli_knobs_affect_current_policy") is not False:
+        raise RuntimeError("projected-gradient compatibility knobs changed the current pi1 policy")
+    if int(lineage.get("candidate_portfolio_family_count_max", -1)) != 3:
+        raise RuntimeError("current Development lineage does not declare a three-family maximum")
+    families = tuple(str(value) for value in lineage.get("candidate_portfolio_families", ()))
+    if families != CURRENT_THREE_FAMILY_PORTFOLIO:
+        raise RuntimeError("current Development lineage has unexpected candidate families")
+    if int(lineage.get("supervisory_control_dimension", -1)) != 82 or int(mask.sum()) != 82:
+        raise RuntimeError("current Development runtime did not resolve the 82-control subspace")
+    if int(lineage.get("model_action_channel_count", -1)) != 109:
+        raise RuntimeError("current Development runtime lost the 109-channel representation")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--asset-manifest", required=True)
@@ -81,6 +109,7 @@ def main() -> None:
     p.add_argument("--device", default="cuda")
     p.add_argument("--decision-runtime-budget-seconds", type=float, default=180.0)
     p.add_argument("--probe-chunk-size", type=int, default=24)
+    # Backward-compatible launch knobs only; they must remain scientifically inert in current pi1.
     p.add_argument("--projected-gradient-steps", type=int, default=6)
     p.add_argument("--projected-gradient-step-fraction", type=float, default=0.25)
     args = p.parse_args()
@@ -119,7 +148,7 @@ def main() -> None:
     )
     del return_model
     if str(return_checkpoint.get("candidate_portfolio_contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
-        raise ValueError("current Development runtime accepts only the masked hybrid H10 portfolio")
+        raise ValueError("current Development runtime accepts only the three-family H10 portfolio")
     if str(return_checkpoint.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
         raise ValueError("current Development runtime critic has the wrong H10 action encoding")
     if str(return_checkpoint.get("supervisory_mask_sha256", "")).lower() != str(control["supervisory_mask_sha256"]).lower():
@@ -133,6 +162,8 @@ def main() -> None:
         raise ValueError("current Development runtime admission uses another action encoding")
     if str(admission.get("supervisory_mask_sha256", "")).lower() != str(control["supervisory_mask_sha256"]).lower():
         raise ValueError("current Development admission uses another supervisory-control mask")
+    if admission.get("projected_gradient_online") not in (False, None):
+        raise ValueError("current Development admission unexpectedly enables projected gradient")
 
     cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
     project_contract = validate_project7_runtime_config(cfg)
@@ -156,16 +187,7 @@ def main() -> None:
         projected_gradient_steps=int(args.projected_gradient_steps),
         projected_gradient_step_fraction=float(args.projected_gradient_step_fraction),
     )
-    if lineage.get("portfolio_mode") is not True or lineage.get("online_lbfgsb_used") is not False:
-        raise RuntimeError("current Development runtime unexpectedly resolved outside hybrid portfolio mode")
-    if lineage.get("legacy_v12_admission_required_online") is not False:
-        raise RuntimeError("Practical runtime must not depend on legacy V12 online admission")
-    if lineage.get("projected_gradient_h10_enabled") is not True:
-        raise RuntimeError("current Development runtime lacks the masked H10 projected-gradient proposer")
-    if int(lineage.get("supervisory_control_dimension", -1)) != 82 or int(mask.sum()) != 82:
-        raise RuntimeError("current Development runtime did not resolve the 82-control subspace")
-    if int(lineage.get("model_action_channel_count", -1)) != 109:
-        raise RuntimeError("current Development runtime lost the 109-channel representation")
+    _require_current_three_family_lineage(lineage, mask)
 
     runtime_inp = _controls_disabled_runtime(
         source_inp=Path(args.inp).resolve(),
@@ -191,7 +213,7 @@ def main() -> None:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata.update(
         {
-            "strategy": "proposed_practical_h10_hybrid_policy_return",
+            "strategy": "proposed_practical_h10_three_family_policy_return",
             "direct_tfv_development_runtime_contract": DIRECT_TFV_POLICY_RETURN_RUNTIME_CONTRACT,
             "direct_tfv_step3_contract": lineage["policy_return_step3_contract"],
             "development_only": True,
@@ -206,11 +228,12 @@ def main() -> None:
             "model_action_channel_count": 109,
             "passive_setting_channel_count": 27,
             "supervisory_mask_sha256": control["supervisory_mask_sha256"],
-            "projected_gradient_h10_enabled": True,
-            "projected_gradient_free_dimension": 82,
-            "projected_gradient_tensor_channels": 109,
-            "projected_gradient_action_horizon": "H10_ONLY",
-            "candidate_portfolio_family_count_max": 4,
+            "projected_gradient_h10_enabled": False,
+            "projected_gradient_role": "DEVELOPMENT_ABLATION_ONLY",
+            "projected_gradient_ablation_available": True,
+            "projected_gradient_cli_knobs_affect_current_policy": False,
+            "candidate_portfolio_family_count_max": 3,
+            "candidate_portfolio_families": list(CURRENT_THREE_FAMILY_PORTFOLIO),
             "policy_return_action_encoding": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
             "policy_return_checkpoint_sha256": _sha(args.policy_return_checkpoint),
             "policy_return_admission_sha256": _sha(args.policy_return_admission),
@@ -245,7 +268,9 @@ def main() -> None:
                 "supervisory_control_dimension": 82,
                 "model_action_channel_count": 109,
                 "online_lbfgsb_used": False,
-                "projected_gradient_h10_enabled": True,
+                "candidate_portfolio_family_count_max": 3,
+                "projected_gradient_h10_enabled": False,
+                "projected_gradient_role": "DEVELOPMENT_ABLATION_ONLY",
                 "target_write_readback_passed": True,
                 "flow_routing_error_pct": result.flow_routing_error_pct,
             },
