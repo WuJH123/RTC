@@ -1,9 +1,10 @@
-"""Project7 Practical Step3: four-family H10 proposals ranked by policy return.
+"""Project7 Practical Step3: three-family H10 proposals ranked by exact-policy-return learning.
 
 The deployed policy keeps the frozen 109-channel Step2 representation but permits candidate/reference
 differences only on the native supervisory-control mask. The current Wuhan contract therefore uses
 82 online control freedoms embedded in 109 model channels. Masked q95 support and the policy-return
-critic remain the final trust/admission layers; no historical L-BFGS-B optimizer is restored.
+critic are the final trust/admission layers. Projected gradient and historical L-BFGS-B are not part
+of current online execution.
 """
 from __future__ import annotations
 
@@ -38,14 +39,14 @@ from .step3_tfv_value_mpc_v12 import (
 
 
 DIRECT_TFV_HYBRID_POLICY_RETURN_STEP3_CONTRACT = (
-    "PROJECT7_PRACTICAL_RTC_H10_POLICY_RETURN_HYBRID_V14_82CONTROL_109REP"
+    "PROJECT7_PRACTICAL_RTC_H10_POLICY_RETURN_THREE_FAMILY_V15_82CONTROL_109REP"
 )
 
 
 class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
-    """At-most-four-candidate H10 receding policy improvement on the masked control subspace."""
+    """At-most-three-candidate H10 receding policy improvement on the masked control subspace."""
 
-    policy_mode = "practical_direct_tfv_h10_hybrid_policy_return_portfolio"
+    policy_mode = "practical_direct_tfv_h10_three_family_policy_return_portfolio"
     policy_mode_contract = DIRECT_TFV_HYBRID_POLICY_RETURN_STEP3_CONTRACT
 
     def __init__(
@@ -76,7 +77,7 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
         )
         mask = np.asarray(supervisory_mask, dtype=bool).reshape(-1)
         if mask.shape != (109,) or int(mask.sum()) <= 0:
-            raise ValueError("hybrid policy-return MPC requires a valid 109-channel supervisory mask")
+            raise ValueError("three-family policy-return MPC requires a valid supervisory mask")
         validate_direct_tfv_sequence_support(
             sequence_support,
             actuator_ids=graph.actuator_ids,
@@ -87,28 +88,29 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
         self.supervisory_control_dimension = int(mask.sum())
         admission = dict(policy_return_admission)
         if str(admission.get("contract", "")) != DIRECT_TFV_POLICY_RETURN_ADMISSION_CONTRACT:
-            raise ValueError("hybrid portfolio requires current H10 policy-return admission")
+            raise ValueError("three-family portfolio requires current H10 policy-return admission")
         if admission.get("development_only") is not True:
-            raise ValueError("hybrid portfolio admission must be Development-only")
+            raise ValueError("policy-return portfolio admission must be Development-only")
         if str(admission.get("estimand", "")) != DIRECT_TFV_POLICY_RETURN_ESTIMAND:
-            raise ValueError("hybrid portfolio admission has the wrong estimand")
+            raise ValueError("policy-return portfolio admission has the wrong estimand")
         if str(admission.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
-            raise ValueError("hybrid portfolio admission was calibrated with another action encoding")
+            raise ValueError("policy-return admission was calibrated with another action encoding")
         if str(admission.get("candidate_portfolio_contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
-            raise ValueError("hybrid portfolio requires calibration from the same masked candidate contract")
+            raise ValueError("policy-return runtime requires calibration from the same three-family contract")
         if int(admission.get("multi_candidate_query_set_count", 0)) <= 0:
-            raise ValueError("hybrid portfolio requires same-prefix multi-candidate calibration")
+            raise ValueError("three-family portfolio requires same-prefix multi-candidate calibration")
         if str(admission.get("policy_return_checkpoint_sha256", "")).lower() != str(policy_return_checkpoint_sha256).lower():
-            raise ValueError("hybrid portfolio admission was calibrated on another critic")
+            raise ValueError("policy-return admission was calibrated on another critic")
         parent = str(admission.get("continuation_policy_sha256", "")).lower()
         if len(parent) != 64:
-            raise ValueError("hybrid portfolio admission lacks frozen parent-policy lineage")
+            raise ValueError("policy-return admission lacks frozen parent-policy lineage")
         if admission.get("generic_d3_floor_controls_execution") is not False:
-            raise ValueError("generic D3 admission cannot control hybrid execution")
+            raise ValueError("generic D3 admission cannot control three-family execution")
         if admission.get("open_loop_first_move_margin_controls_execution") is not False:
-            raise ValueError("open-loop first-move margin cannot control hybrid execution")
+            raise ValueError("open-loop first-move margin cannot control three-family execution")
         if int(proposal_probe_chunk_size) <= 0:
             raise ValueError("proposal_probe_chunk_size must be positive")
+        # Retained launch compatibility only. The current portfolio never invokes projected gradient.
         if int(projected_gradient_steps) <= 0:
             raise ValueError("projected_gradient_steps must be positive")
         if not 0.0 < float(projected_gradient_step_fraction) <= 1.0:
@@ -141,19 +143,19 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
             policy_return_portfolio_contract=DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
             policy_mode=self.policy_mode,
             policy_mode_contract=self.policy_mode_contract,
-            scipy_message="NOT_USED_HYBRID_PROJECTED_GRADIENT_PROPOSER_ONLY",
+            scipy_message="NOT_USED_CURRENT_THREE_FAMILY_FINITE_PORTFOLIO",
         )
 
     def optimize(self, **kwargs: Any) -> DirectTFVMPCResultV12:
         started = time.perf_counter()
         active_target = kwargs.get("active_target")
         if not isinstance(active_target, torch.Tensor) or tuple(active_target.shape) != (109,):
-            raise ValueError("hybrid practical portfolio requires active_target [109]")
+            raise ValueError("three-family practical portfolio requires active_target [109]")
         current_state = kwargs["current_state"]
         rainfall = kwargs["rainfall"]
         flow = kwargs["previous_actuator_flow"]
         if tuple(flow.shape) != (1, 109):
-            raise ValueError("hybrid practical portfolio requires previous_actuator_flow [1,109]")
+            raise ValueError("three-family practical portfolio requires previous_actuator_flow [1,109]")
 
         ceiling = changed_facility_support_limit(self.sequence_support, "q95")
         hybrid = build_hybrid_policy_return_portfolio(
@@ -168,9 +170,8 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
             max_changed_facilities=ceiling,
             max_delta_per_update=float(self.design.max_setting_delta_per_update),
             probe_chunk_size=self.proposal_probe_chunk_size,
-            gradient_steps=self.projected_gradient_steps,
-            gradient_step_fraction=self.projected_gradient_step_fraction,
             supervisory_mask=self.supervisory_mask,
+            include_projected_gradient_ablation=False,
         )
         learned = hybrid.learned_probe
         evaluated: list[tuple] = []
@@ -183,7 +184,7 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
             if changed <= 0:
                 continue
             if bool(torch.any(torch.abs(target[passive] - active_target[passive]) > 1.0e-7)):
-                raise RuntimeError("hybrid policy-return candidate changed a passive setting channel")
+                raise RuntimeError("three-family policy-return candidate changed a passive setting channel")
             key = target.detach().cpu().to(torch.float32).contiguous().numpy().tobytes()
             if key in seen:
                 continue
@@ -244,21 +245,15 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
             torch.abs(target - active_target) > 1.0e-7
         ).reshape(-1).tolist()
         changed_ids = tuple(str(self.graph.actuator_ids[int(i)]) for i in changed_indices)
-        gradient = hybrid.projected_gradient
-        gradient_gain = (
-            max(0.0, float(gradient.start_score_m3 - gradient.best_score_m3))
-            if gradient.produced_nonhold_candidate
-            else 0.0
-        )
         return DirectTFVMPCResultV12(
             settings=executed,
             optimized_candidate_settings=sequence,
             predicted_delta_tfv_m3=score if passed else 0.0,
             raw_optimized_predicted_delta_tfv_m3=score,
             selected_source=(
-                f"DIRECT_TFV_POLICY_RETURN_HYBRID::{source}"
+                f"DIRECT_TFV_POLICY_RETURN_THREE_FAMILY::{source}"
                 if passed
-                else "LATCH_PREVIOUS_TARGET_HYBRID_UPPER_BOUND_NONNEGATIVE"
+                else "LATCH_PREVIOUS_TARGET_THREE_FAMILY_UPPER_BOUND_NONNEGATIVE"
             ),
             candidate_valid=passed,
             admission_margin_m3=margin,
@@ -306,10 +301,10 @@ class DirectTFVHybridPolicyReturnMPCV13(DirectTFVPolicyReturnPortfolioMPCV12):
             optimizer_success=True,
             optimizer_steps=0,
             optimizer_starts=0,
-            gradient_norm=float(gradient.final_gradient_l2),
-            scipy_message="NOT_USED_HYBRID_PROJECTED_GRADIENT_PROPOSER_ONLY",
-            first_move_refiner_steps=int(gradient.attempted_steps),
-            first_move_refinement_gain_m3=gradient_gain,
+            gradient_norm=0.0,
+            scipy_message="NOT_USED_CURRENT_THREE_FAMILY_FINITE_PORTFOLIO",
+            first_move_refiner_steps=0,
+            first_move_refinement_gain_m3=0.0,
         )
 
 
