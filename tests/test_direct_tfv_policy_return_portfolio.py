@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
 
 from rtc.actuator_release_semantics import (
@@ -11,10 +12,7 @@ from rtc.actuator_release_semantics import (
     release_setting_sign,
 )
 from rtc.direct_tfv_policy_return import DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING
-from rtc.direct_tfv_policy_return_hybrid_portfolio import (
-    DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
-    PROJECTED_GRADIENT_SOURCE,
-)
+from rtc.direct_tfv_policy_return_hybrid_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
 from rtc.direct_tfv_policy_return_portfolio import (
     DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT,
     build_policy_return_candidate_portfolio,
@@ -207,7 +205,7 @@ def _calibration_record(group: str, source: str, truth: float, prediction: float
     }
 
 
-def test_portfolio_admission_requires_all_hybrid_candidate_families() -> None:
+def test_portfolio_admission_matches_three_online_families_and_rejects_gradient() -> None:
     records = []
     groups = [f"G{i:02d}" for i in range(24)]
     for i, group in enumerate(groups):
@@ -227,14 +225,6 @@ def test_portfolio_admission_requires_all_hybrid_candidate_families() -> None:
                 prediction=-90.0 - i,
             )
         )
-        records.append(
-            _calibration_record(
-                group,
-                PROJECTED_GRADIENT_SOURCE,
-                truth=-120.0 - i,
-                prediction=-125.0 - i,
-            )
-        )
     payload = derive_policy_return_portfolio_admission(
         records=records,
         expected_rainfall_groups=groups,
@@ -250,8 +240,26 @@ def test_portfolio_admission_requires_all_hybrid_candidate_families() -> None:
     assert payload["supervisory_mask_sha256"] == "f" * 64
     assert payload["query_set_count"] == 24
     assert payload["multi_candidate_query_set_count"] == 24
-    assert payload["candidate_source_counts"][PROJECTED_GRADIENT_SOURCE] == 24
     assert payload["required_candidate_families_present"]["step2_h10_probe_direction"] is True
     assert payload["required_candidate_families_present"]["type_aware_hydraulic_pressure"] is True
-    assert payload["required_candidate_families_present"]["support_constrained_gradient_h10"] is True
+    assert payload["projected_gradient_online"] is False
+    assert payload["projected_gradient_calibration_required"] is False
     assert DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT
+
+    bad = list(records)
+    bad.append(
+        _calibration_record(
+            groups[0],
+            "SUPPORT_CONSTRAINED_GRADIENT_H10",
+            truth=-10.0,
+            prediction=-20.0,
+        )
+    )
+    with pytest.raises(ValueError, match="must not contain projected-gradient"):
+        derive_policy_return_portfolio_admission(
+            records=bad,
+            expected_rainfall_groups=groups,
+            policy_return_checkpoint_sha256="e" * 64,
+            continuation_policy_sha256="a" * 64,
+            coverage=0.90,
+        )
