@@ -13,7 +13,6 @@ from rtc.direct_tfv_policy_return import DIRECT_TFV_POLICY_RETURN_ACTION_ENCODIN
 from rtc.direct_tfv_policy_return_hybrid_portfolio import (
     DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
     DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT,
-    PROJECTED_GRADIENT_SOURCE,
 )
 from rtc.direct_tfv_policy_return_portfolio import (
     DEFAULT_LEARNED_SHRINK_SCALES,
@@ -49,12 +48,12 @@ def test_six_strategy_panel_is_retained_but_extremes_are_not_competitive() -> No
     assert BASELINES["efd"].formal_comparator is True
 
 
-def test_practical_portfolio_keeps_109_representation_but_only_82_control_freedoms() -> None:
+def test_practical_portfolio_is_three_family_with_109_representation_and_82_controls() -> None:
     assert DEFAULT_LEARNED_SHRINK_SCALES == (0.50, 1.00)
     assert "H10_PROBE" in DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT
-    assert "82CONTROL_109REP" in DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
-    assert "82D_IN_109CHANNEL_H10_PROJECTED_GRADIENT" in DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT
-    assert PROJECTED_GRADIENT_SOURCE == "SUPPORT_CONSTRAINED_GRADIENT_H10"
+    assert "THREE_FAMILY_82CONTROL_109REP" in DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+    assert DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT.endswith("ABLATION_ONLY")
+    assert "THREE_FAMILY" in DIRECT_TFV_HYBRID_POLICY_RETURN_STEP3_CONTRACT
     assert "82CONTROL_109REP" in DIRECT_TFV_HYBRID_POLICY_RETURN_STEP3_CONTRACT
     assert NATIVE_SUPERVISORY_CONTROL_CONTRACT.endswith("82_OF_109_SUPERVISORY_MASK_V1")
     assert PROJECT7_EXPECTED_SUPERVISORY_CONTROL_DIMENSION == 82
@@ -62,11 +61,11 @@ def test_practical_portfolio_keeps_109_representation_but_only_82_control_freedo
     assert DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING == "H10_CANDIDATE_THEN_H350_HOLD_ACTION_TOKEN_V1"
 
 
-def test_practical_paper_contract_reuses_step1_step2_and_masks_control_subspace() -> None:
+def test_practical_paper_contract_reuses_models_and_demotes_gradient_to_ablation() -> None:
     text = Path("PROJECT7_PRACTICAL_RTC_V14.md").read_text(encoding="utf-8")
     assert "12 x 109 = 1308-dimensional L-BFGS-B" in text
-    assert "SUPPORT_CONSTRAINED_GRADIENT_H10" in text
-    assert "82 free supervisory dimensions embedded in a 109-channel tensor" in text
+    assert "three-family" in text.lower()
+    assert "projected gradient" in text.lower() and "ablation" in text.lower()
     assert "does not retrain Step1 or base Step2" in text
     assert "five RTC Storage additions are retained" in text
     assert "H10 candidate target -> H350 current HOLD target" in text
