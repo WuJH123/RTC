@@ -1,9 +1,10 @@
-"""Design the current same-prefix first-action portfolio from one captured causal context.
+"""Design the current three-family same-prefix first-action portfolio from one causal context.
 
 The pretrained Step2 stays 109-channel. Online proposal freedom is restricted by the native
 supervisory-control artifact (82 facilities for the current Wuhan testbed), and q95 support is the
-matching label-independent masked support rebuilt from existing D3 TrainFit actions. No SWMM truth
-or future realised rainfall is used.
+matching label-independent masked support rebuilt from existing D3 TrainFit actions. Current online
+families are Step2 H10 scale 0.50, Step2 H10 scale 1.00 and type-aware hydraulic pressure. Projected
+gradient remains code-level Development ablation only and is deliberately excluded here.
 """
 from __future__ import annotations
 
@@ -73,9 +74,14 @@ def main() -> None:
     p.add_argument("--out-dir", required=True)
     p.add_argument("--device", default="cuda")
     p.add_argument("--probe-chunk-size", type=int, default=24)
+    # Deprecated launch-compatibility knobs. The current paper-facing designer does not use gradient.
     p.add_argument("--projected-gradient-steps", type=int, default=6)
     p.add_argument("--projected-gradient-step-fraction", type=float, default=0.25)
     args = p.parse_args()
+    if int(args.projected_gradient_steps) <= 0:
+        raise ValueError("projected-gradient-steps compatibility value must be positive")
+    if not 0.0 < float(args.projected_gradient_step_fraction) <= 1.0:
+        raise ValueError("projected-gradient-step-fraction compatibility value must lie in (0,1]")
 
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
     graph = _load_graph(args.graph)
@@ -120,9 +126,8 @@ def main() -> None:
         max_changed_facilities=ceiling,
         max_delta_per_update=0.5,
         probe_chunk_size=int(args.probe_chunk_size),
-        gradient_steps=int(args.projected_gradient_steps),
-        gradient_step_fraction=float(args.projected_gradient_step_fraction),
         supervisory_mask=mask,
+        include_projected_gradient_ablation=False,
     )
 
     out = Path(args.out_dir)
@@ -185,17 +190,20 @@ def main() -> None:
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         rows.append({"path": str(path.resolve()), **payload})
     if len(rows) < 2:
-        raise RuntimeError("hybrid policy-return portfolio produced fewer than two distinct candidates")
-    if len(rows) > 4:
-        raise RuntimeError("hybrid policy-return portfolio exceeded the four-candidate contract")
+        raise RuntimeError("three-family policy-return portfolio produced fewer than two distinct candidates")
+    if len(rows) > 3:
+        raise RuntimeError("current policy-return portfolio exceeded the three-candidate contract")
 
-    gradient = hybrid.projected_gradient
     manifest = {
         "contract": DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
         "h10_probe_generator_contract": DIRECT_TFV_H10_PROBE_GENERATOR_CONTRACT,
-        "projected_gradient_generator_contract": DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT,
         "candidate_count": len(rows),
-        "candidate_family_count_max": 4,
+        "candidate_family_count_max": 3,
+        "candidate_family_contract": [
+            "STEP2_H10_PROBE_SCALE_0.50",
+            "STEP2_H10_PROBE_SCALE_1.00",
+            "TYPE_AWARE_HYDRAULIC_PRESSURE",
+        ],
         "active_support_ceiling": ceiling,
         "supervisory_control_dimension": int(mask.sum()),
         "model_action_channel_count": 109,
@@ -206,19 +214,11 @@ def main() -> None:
         "selected_probe_facility_indices": list(hybrid.learned_probe.selected_facility_indices),
         "candidate_sources": [row["candidate_source"] for row in rows],
         "candidates": rows,
-        "projected_gradient": {
-            "source": "SUPPORT_CONSTRAINED_GRADIENT_H10",
-            "produced_nonhold_candidate": bool(gradient.produced_nonhold_candidate),
-            "attempted_steps": int(gradient.attempted_steps),
-            "accepted_improvement_steps": int(gradient.accepted_improvement_steps),
-            "start_score_m3": float(gradient.start_score_m3),
-            "best_score_m3": float(gradient.best_score_m3),
-            "final_gradient_l2": float(gradient.final_gradient_l2),
-        },
+        "projected_gradient_online": False,
+        "projected_gradient_ablation_available": True,
+        "projected_gradient_generator_contract": DIRECT_TFV_PROJECTED_GRADIENT_GENERATOR_CONTRACT,
+        "projected_gradient_role": "HISTORICAL_OR_EXPLICIT_DEVELOPMENT_ABLATION_ONLY",
         "lbfgsb_used": False,
-        "gradient_free_dimension": int(mask.sum()),
-        "gradient_tensor_channels": 109,
-        "gradient_action_horizon": "H10_ONLY",
         "future_realized_rainfall_used": False,
         "online_swmm_called": False,
     }
