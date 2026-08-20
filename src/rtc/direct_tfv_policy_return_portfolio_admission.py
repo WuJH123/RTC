@@ -1,4 +1,4 @@
-"""Calibration helpers for the current masked hybrid H10 policy-return candidate portfolio."""
+"""Calibration helpers for the current masked three-family H10 policy-return portfolio."""
 from __future__ import annotations
 
 from collections import Counter
@@ -9,21 +9,18 @@ from .direct_tfv_policy_return import (
     derive_policy_return_admission,
     validate_policy_return_record,
 )
-from .direct_tfv_policy_return_hybrid_portfolio import (
-    DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
-    PROJECTED_GRADIENT_SOURCE,
-)
+from .direct_tfv_policy_return_hybrid_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
 
 
 DIRECT_TFV_POLICY_RETURN_PORTFOLIO_ADMISSION_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_POLICY_RETURN_PORTFOLIO_MATCHED_ADMISSION_V4_82CONTROL_109REP"
+    "PROJECT7_DIRECT_TFV_POLICY_RETURN_PORTFOLIO_MATCHED_ADMISSION_V5_THREE_FAMILY_82CONTROL_109REP"
 )
 
 
 def validate_policy_return_portfolio_record(record: Mapping[str, Any]) -> None:
     validate_policy_return_record(record)
     if str(record.get("candidate_portfolio_contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
-        raise ValueError("policy-return portfolio record has the wrong masked hybrid candidate contract")
+        raise ValueError("policy-return portfolio record has the wrong current three-family contract")
     if str(record.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
         raise ValueError("policy-return portfolio record has the wrong H10 action encoding")
     if int(record.get("supervisory_control_dimension", -1)) != 82:
@@ -51,7 +48,7 @@ def derive_policy_return_portfolio_admission(
     continuation_policy_sha256: str,
     coverage: float,
 ) -> dict[str, Any]:
-    """Calibrate one-sided residuals on the same masked hybrid H10 family used online."""
+    """Calibrate one-sided residuals on the same three-family H10 set used online."""
     if not records:
         raise ValueError("portfolio admission received no calibration records")
     query_counts: Counter[str] = Counter()
@@ -72,8 +69,8 @@ def derive_policy_return_portfolio_admission(
         raise ValueError("portfolio calibration lacks the type-aware hydraulic-pressure family")
     if not any(source.startswith("STEP2_H10_PROBE_SCALE_") for source in sources):
         raise ValueError("portfolio calibration lacks the supported Step2 H10-probe family")
-    if PROJECTED_GRADIENT_SOURCE not in sources:
-        raise ValueError("portfolio calibration lacks the masked support-constrained H10 gradient family")
+    if "SUPPORT_CONSTRAINED_GRADIENT_H10" in sources:
+        raise ValueError("current three-family calibration must not contain projected-gradient rows")
 
     payload = derive_policy_return_admission(
         records=records,
@@ -97,16 +94,14 @@ def derive_policy_return_portfolio_admission(
             "required_candidate_families_present": {
                 "step2_h10_probe_direction": True,
                 "type_aware_hydraulic_pressure": True,
-                "support_constrained_gradient_h10": True,
             },
+            "projected_gradient_online": False,
+            "projected_gradient_calibration_required": False,
             "ranking_calibration_scope": (
-                "same-prefix H10 hybrid candidate portfolio on the frozen native supervisory-control "
+                "same-prefix H10 three-family candidate portfolio on the frozen native supervisory "
                 "subspace after first-move support projection, q95 joint-sequence contraction and "
                 "deduplication; rainfall-group max residual is the independent split-conformal unit"
             ),
-            "gradient_free_dimension": 82,
-            "gradient_tensor_channels": 109,
-            "gradient_action_horizon": "H10_ONLY",
             "online_lbfgsb_used": False,
         }
     )
