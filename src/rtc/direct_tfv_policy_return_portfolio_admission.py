@@ -15,10 +15,34 @@ from .direct_tfv_policy_return_hybrid_portfolio import DIRECT_TFV_POLICY_RETURN_
 DIRECT_TFV_POLICY_RETURN_PORTFOLIO_ADMISSION_CONTRACT = (
     "PROJECT7_DIRECT_TFV_POLICY_RETURN_PORTFOLIO_MATCHED_ADMISSION_V5_THREE_FAMILY_82CONTROL_109REP"
 )
+CURRENT_THREE_FAMILY_SOURCES = (
+    "STEP2_H10_PROBE_SCALE_0.50",
+    "STEP2_H10_PROBE_SCALE_1.00",
+    "TYPE_AWARE_HYDRAULIC_PRESSURE",
+)
 
 
 def validate_policy_return_portfolio_record(record: Mapping[str, Any]) -> None:
-    validate_policy_return_record(record)
+    """Validate one current three-family portfolio row.
+
+    Exact-query provenance/readback gates are enforced by the authoritative query runner before a
+    record is emitted. This reusable validator keeps the stable dataset/calibration schema while
+    fail-closing candidate-family drift.
+    """
+    role = str(record.get("data_role", ""))
+    if role == "policy_return_development_diagnostic":
+        probe = dict(record)
+        probe["data_role"] = "policy_return_train"
+        validate_policy_return_record(probe)
+        if (
+            record.get("development_diagnostic_only") is not True
+            or record.get("eligible_for_learning_dataset") is not False
+        ):
+            raise ValueError(
+                "Development mechanism truth must remain explicitly ineligible for learning"
+            )
+    else:
+        validate_policy_return_record(record)
     if str(record.get("candidate_portfolio_contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
         raise ValueError("policy-return portfolio record has the wrong current three-family contract")
     if str(record.get("action_encoding_contract", "")) != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING:
@@ -33,11 +57,17 @@ def validate_policy_return_portfolio_record(record: Mapping[str, Any]) -> None:
     if record.get("passive_setting_channels_unchanged") is not True:
         raise ValueError("policy-return portfolio record changed passive setting channels")
     source = str(record.get("candidate_source", "")).strip()
+    if source == "SUPPORT_CONSTRAINED_GRADIENT_H10":
+        raise ValueError("current three-family calibration must not contain projected-gradient rows")
+    if source not in CURRENT_THREE_FAMILY_SOURCES:
+        raise ValueError(f"policy-return portfolio record has unexpected candidate family: {source}")
     query_set = str(record.get("query_set_id", "")).strip().lower()
-    if not source:
-        raise ValueError("policy-return portfolio record lacks candidate_source")
     if len(query_set) != 64 or any(ch not in "0123456789abcdef" for ch in query_set):
         raise ValueError("policy-return portfolio record lacks a canonical query_set_id")
+    if record.get("projected_gradient_online") not in (False, None):
+        raise ValueError("current policy-return portfolio record unexpectedly enables projected gradient")
+    if record.get("online_lbfgsb_used") not in (False, None):
+        raise ValueError("current policy-return portfolio record unexpectedly uses L-BFGS-B")
 
 
 def derive_policy_return_portfolio_admission(
@@ -69,8 +99,8 @@ def derive_policy_return_portfolio_admission(
         raise ValueError("portfolio calibration lacks the type-aware hydraulic-pressure family")
     if not any(source.startswith("STEP2_H10_PROBE_SCALE_") for source in sources):
         raise ValueError("portfolio calibration lacks the supported Step2 H10-probe family")
-    if "SUPPORT_CONSTRAINED_GRADIENT_H10" in sources:
-        raise ValueError("current three-family calibration must not contain projected-gradient rows")
+    if not sources.issubset(set(CURRENT_THREE_FAMILY_SOURCES)):
+        raise ValueError("current three-family calibration contains a non-current candidate family")
 
     payload = derive_policy_return_admission(
         records=records,
@@ -95,6 +125,7 @@ def derive_policy_return_portfolio_admission(
                 "step2_h10_probe_direction": True,
                 "type_aware_hydraulic_pressure": True,
             },
+            "candidate_family_contract": list(CURRENT_THREE_FAMILY_SOURCES),
             "projected_gradient_online": False,
             "projected_gradient_calibration_required": False,
             "ranking_calibration_scope": (
@@ -109,6 +140,7 @@ def derive_policy_return_portfolio_admission(
 
 
 __all__ = [
+    "CURRENT_THREE_FAMILY_SOURCES",
     "DIRECT_TFV_POLICY_RETURN_PORTFOLIO_ADMISSION_CONTRACT",
     "derive_policy_return_portfolio_admission",
     "validate_policy_return_portfolio_record",
