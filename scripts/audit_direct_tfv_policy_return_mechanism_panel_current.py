@@ -18,8 +18,8 @@ from typing import Any
 
 import numpy as np
 
-from rtc.direct_tfv_policy_return import validate_policy_return_record
 from rtc.direct_tfv_policy_return_hybrid_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+from rtc.direct_tfv_policy_return_portfolio_admission import validate_policy_return_portfolio_record
 
 
 MECHANISM_PANEL_CONTRACT = "PROJECT7_POLICY_RETURN_SEEN_MECHANISM_PANEL_V2_82CONTROL_109REP"
@@ -37,7 +37,7 @@ def _read_records(paths: list[str]) -> list[dict[str, Any]]:
             row = json.loads(raw)
             if not isinstance(row, dict):
                 raise ValueError(f"{path}:{line_number}: record is not an object")
-            validate_policy_return_record(row)
+            validate_policy_return_portfolio_record(row)
             if str(row.get("candidate_portfolio_contract", "")) != DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT:
                 raise ValueError(f"{path}:{line_number}: wrong masked hybrid portfolio contract")
             if int(row.get("supervisory_control_dimension", -1)) != 82:
