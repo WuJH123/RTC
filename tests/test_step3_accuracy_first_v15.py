@@ -9,6 +9,7 @@ from torch import nn
 from rtc.direct_tfv_policy_return_query_margin_v2 import (
     QueryConditionedPolicyReturnAdapterV2,
     build_query_margin_v2_features,
+    freeze_step2_for_step3,
 )
 
 
@@ -31,7 +32,7 @@ class _DummyStep2(nn.Module):
 
 
 def _inputs() -> dict[str, object]:
-    model = _DummyStep2()
+    model = freeze_step2_for_step3(_DummyStep2())
     normalization = SimpleNamespace(
         state_mean=np.asarray(0.0, dtype=np.float32),
         state_std=np.asarray(1.0, dtype=np.float32),
@@ -78,7 +79,22 @@ def test_v15_features_reuse_step2_latent_instead_of_11_number_summary() -> None:
     assert torch.isfinite(candidates).all()
 
 
-def test_v15_rank_and_hold_margin_remain_separate() -> None:
+def test_v15_step2_must_be_frozen_before_feature_extraction() -> None:
+    kwargs = _inputs()
+    model = _DummyStep2()
+    kwargs["step2_model"] = model
+    try:
+        build_query_margin_v2_features(**kwargs)
+    except ValueError as exc:
+        assert "frozen" in str(exc).lower()
+    else:
+        raise AssertionError("V15 accepted a trainable Step2 representation")
+    freeze_step2_for_step3(model)
+    assert not any(parameter.requires_grad for parameter in model.parameters())
+    assert model.training is False
+
+
+def test_v15_rank_and_selected_hold_margin_are_aligned() -> None:
     context, candidates = build_query_margin_v2_features(**_inputs())
     adapter = QueryConditionedPolicyReturnAdapterV2(
         target_scale_m3=10000.0,
@@ -91,7 +107,8 @@ def test_v15_rank_and_hold_margin_remain_separate() -> None:
         context_features=context,
         candidate_features=candidates,
     )
-    selected = int(torch.argmin(output.relative_rank_normalized))
+    selected = int(output.selected_candidate_index)
+    assert selected == int(torch.argmin(output.rank_scores_normalized))
     assert torch.isclose(output.relative_rank_normalized[selected], torch.tensor(0.0), atol=1e-6)
     assert torch.isclose(
         output.predicted_returns_m3[selected],
@@ -99,6 +116,30 @@ def test_v15_rank_and_hold_margin_remain_separate() -> None:
         atol=1e-4,
     )
     assert output.hold_logit.ndim == 0
+
+
+def test_v15_selected_candidate_conditioning_is_permutation_invariant() -> None:
+    context, candidates = build_query_margin_v2_features(**_inputs())
+    adapter = QueryConditionedPolicyReturnAdapterV2(
+        target_scale_m3=10000.0,
+        context_dim=context.numel(),
+        candidate_dim=candidates.shape[1],
+        hidden_dim=16,
+    )
+    raw = torch.tensor([5000.0, -2000.0])
+    first = adapter(
+        raw_rank_scores_m3=raw,
+        context_features=context,
+        candidate_features=candidates,
+    )
+    perm = torch.tensor([1, 0])
+    second = adapter(
+        raw_rank_scores_m3=raw[perm],
+        context_features=context,
+        candidate_features=candidates[perm],
+    )
+    assert torch.isclose(first.query_best_margin_m3, second.query_best_margin_m3, atol=1e-5)
+    assert torch.allclose(first.predicted_returns_m3[perm], second.predicted_returns_m3, atol=1e-5)
 
 
 def test_v15_passive_channels_remain_immutable() -> None:
