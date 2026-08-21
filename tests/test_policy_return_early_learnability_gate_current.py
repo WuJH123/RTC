@@ -34,11 +34,32 @@ def test_early_gate_is_diagnostic_only_and_does_not_weaken_full_contract() -> No
     assert "calibrate_direct_tfv_policy_return_portfolio_admission_current.py" not in text
 
 
+def test_early_gate_requires_decision_improvement_and_no_action_starvation() -> None:
+    module = _module()
+    supported = {
+        "fine_tuning_improved_decision_metrics_over_epoch0": True,
+        "validation_action_starvation_detected": False,
+    }
+    assert module._decision_material_gate(supported) == (True, True, False)
+
+    mae_only = {
+        "fine_tuning_improved_over_epoch0": True,
+        "fine_tuning_improved_decision_metrics_over_epoch0": False,
+        "validation_action_starvation_detected": False,
+    }
+    assert module._decision_material_gate(mae_only) == (False, False, False)
+
+    starved = {
+        "fine_tuning_improved_decision_metrics_over_epoch0": True,
+        "validation_action_starvation_detected": True,
+    }
+    assert module._decision_material_gate(starved) == (False, True, True)
+
+
 def test_early_gate_requires_validation_before_spending_more_bulk() -> None:
     module = _module()
     assert module.FROZEN_VALIDATION_GROUPS == 12
     assert module.PILOT_MIN_TRAIN_GROUPS < module.FULL_TRAIN_GROUPS
     with pytest.raises(ValueError, match="48 train groups already exist"):
-        # This branch is intentionally encoded as a fail-closed user-facing rule in main().
         if module.FULL_TRAIN_GROUPS >= module.FULL_TRAIN_GROUPS:
             raise ValueError("48 train groups already exist; run the normal learning pipeline instead")
