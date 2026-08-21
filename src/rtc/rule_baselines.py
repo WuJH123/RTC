@@ -5,14 +5,18 @@ from pathlib import Path
 
 import numpy as np
 
+from .actuator_release_semantics import (
+    RELEASE_SETTING_SEMANTICS_CONTRACT,
+    release_fraction_to_setting,
+)
 from .closed_loop import CausalObservation, ControllerAction
 from .inp import ActuatorCatalog, discover_actuators
 from .units import length_to_m, volume_to_m3
 
-AUTO_RBC_SOURCE = "AUTO_RBC_V2_TARGET_LATCH"
-AUTO_RBC_CONTRACT = "AUTO_RBC_TOPOLOGY_NORMALIZED_DEPTH_TARGET_COMMAND_V2"
-EFD_SOURCE = "EFD_V3_TARGET_LATCH"
-EFD_CONTRACT = "STORAGE_EQUAL_FILLING_DEGREE_VOLUME_TARGET_COMMAND_V3"
+AUTO_RBC_SOURCE = "AUTO_RBC_V3_TYPE_AWARE_TARGET_LATCH"
+AUTO_RBC_CONTRACT = "AUTO_RBC_TOPOLOGY_DEPTH_RELEASE_INTENT_TYPE_AWARE_SETTING_V3"
+EFD_SOURCE = "EFD_V4_TYPE_AWARE_TARGET_LATCH"
+EFD_CONTRACT = "STORAGE_EQUAL_FILLING_DEGREE_VOLUME_RELEASE_INTENT_TYPE_AWARE_SETTING_V4"
 
 
 @dataclass(frozen=True)
@@ -204,10 +208,11 @@ def rule_baseline_sensor_nodes(
             )
         return tuple(nodes)
     if strategy == "efd":
+        storage_set = set(network.storage_ids)
         controlled = {
             actuator.upstream_node
             for actuator in network.catalog.actuators
-            if actuator.upstream_node in set(network.storage_ids)
+            if actuator.upstream_node in storage_set
         }
         nodes = tuple(node for node in network.storage_ids if node in controlled)
         if not nodes:
@@ -234,8 +239,18 @@ def _limit_move(
     return np.clip(target, anchor - delta, anchor + delta).clip(0.0, 1.0)
 
 
+def _setting_from_release_intent(actuator, release_fraction: float) -> float:
+    """Translate a hydraulic release intent into the actuator-specific SWMM SETTING coordinate."""
+    return release_fraction_to_setting(actuator.kind, release_fraction)
+
+
 class AutoRBCController:
-    """Automatically parameterized local causal rule-based control."""
+    """Automatically parameterized local causal rule-based control.
+
+    The rule computes a normalized *release intent* from upstream filling and downstream congestion,
+    then converts that intent to SWMM SETTING using the actual actuator type. This is essential for
+    weirs, whose SETTING is a freeboard fraction rather than a generic opening fraction.
+    """
 
     def __init__(
         self,
@@ -273,11 +288,10 @@ class AutoRBCController:
         active_target = np.asarray(obs.actuator_target_setting, dtype=float).reshape(-1)
         if active_target.shape != current.shape:
             raise ValueError("Auto-RBC target/current readback shapes differ")
-        # Untouched actuators preserve the supervisory latch; they are not reset to a lagged
-        # physical current setting at every 10-minute decision.
         target = active_target.copy()
         upstream_fill: list[float] = []
         downstream_fill: list[float] = []
+        type_counts: dict[str, int] = {}
         for i, actuator in enumerate(self.network.catalog.actuators):
             up_cap = self.network.node_max_depth_m.get(actuator.upstream_node)
             if up_cap is None or actuator.upstream_node not in sensor_depth:
@@ -288,7 +302,7 @@ class AutoRBCController:
                 down = float(np.clip(sensor_depth[actuator.downstream_node] / down_cap, 0.0, 1.5))
             else:
                 down = 0.0
-            open_drive = float(
+            release_drive = float(
                 np.clip((up - self.low_fill) / (self.high_fill - self.low_fill), 0.0, 1.0)
             )
             downstream_penalty = float(
@@ -299,33 +313,34 @@ class AutoRBCController:
                     1.0,
                 )
             )
-            raw = open_drive * (1.0 - downstream_penalty)
-            target[i] = active_target[i] + self.response * (raw - active_target[i])
+            release_intent = release_drive * (1.0 - downstream_penalty)
+            desired_setting = _setting_from_release_intent(actuator, release_intent)
+            target[i] = active_target[i] + self.response * (desired_setting - active_target[i])
             upstream_fill.append(up)
             downstream_fill.append(down)
+            type_counts[actuator.kind] = type_counts.get(actuator.kind, 0) + 1
         target = _limit_move(active_target, target, self.max_delta_per_update)
         return ControllerAction(
             settings=dict(zip(obs.actuator_ids, target, strict=True)),
             source=AUTO_RBC_SOURCE,
             diagnostics={
                 "rule_contract": AUTO_RBC_CONTRACT,
+                "release_setting_semantics_contract": RELEASE_SETTING_SEMANTICS_CONTRACT,
                 "observed_rule_nodes": len(self.sensor_nodes),
                 "mean_upstream_fill": float(np.mean(upstream_fill)) if upstream_fill else 0.0,
                 "max_downstream_fill": float(np.max(downstream_fill)) if downstream_fill else 0.0,
                 "command_anchor": "actuator_target_setting",
                 "current_tracking_lag_max": float(np.abs(current-active_target).max(initial=0.0)),
+                "controlled_pump_count": int(type_counts.get("pump", 0)),
+                "controlled_orifice_count": int(type_counts.get("orifice", 0)),
+                "controlled_weir_count": int(type_counts.get("weir", 0)),
+                "controlled_outlet_count": int(type_counts.get("outlet", 0)),
             },
         )
 
 
 class EFDController:
-    """Storage-volume Equal Filling Degree baseline.
-
-    Filling degree is current static storage volume divided by storage capacity. Current
-    volume is reconstructed causally from monitored storage depth and FUNCTIONAL/TABULAR
-    SWMM geometry. Only storage units with writable outgoing actuators are controlled;
-    other actuators preserve their current supervisory target latch.
-    """
+    """Storage-volume Equal Filling Degree baseline with type-aware discharge semantics."""
 
     def __init__(
         self,
@@ -368,8 +383,6 @@ class EFDController:
             if geometry is not None and capacity > 1.0e-9:
                 filling = geometry.volume_m3(depth[node]) / capacity
             else:
-                # Retain a transparent fallback for malformed legacy INP geometry rather
-                # than silently crashing a development comparison; evidence reports it.
                 capacity_depth = self.network.node_max_depth_m[node]
                 filling = depth[node] / capacity_depth
                 depth_fallback_count += 1
@@ -381,9 +394,10 @@ class EFDController:
         if active_target.shape != current.shape:
             raise ValueError("EFD target/current readback shapes differ")
         target = active_target.copy()
+        type_counts: dict[str, int] = {}
         for storage, actuator_indices in self.outgoing.items():
             filling = fill[storage]
-            raw = float(
+            release_intent = float(
                 np.clip(
                     filling + self.equalization_gain * (filling - mean_fill),
                     0.0,
@@ -391,13 +405,17 @@ class EFDController:
                 )
             )
             for i in actuator_indices:
-                target[i] = active_target[i] + self.response * (raw - active_target[i])
+                actuator = self.network.catalog.actuators[i]
+                desired_setting = _setting_from_release_intent(actuator, release_intent)
+                target[i] = active_target[i] + self.response * (desired_setting - active_target[i])
+                type_counts[actuator.kind] = type_counts.get(actuator.kind, 0) + 1
         target = _limit_move(active_target, target, self.max_delta_per_update)
         return ControllerAction(
             settings=dict(zip(obs.actuator_ids, target, strict=True)),
             source=EFD_SOURCE,
             diagnostics={
                 "rule_contract": EFD_CONTRACT,
+                "release_setting_semantics_contract": RELEASE_SETTING_SEMANTICS_CONTRACT,
                 "controlled_storages": len(self.sensor_nodes),
                 "mean_filling_degree": mean_fill,
                 "filling_degree_std": float(values.std()),
@@ -405,5 +423,9 @@ class EFDController:
                 "depth_fallback_storage_count": depth_fallback_count,
                 "command_anchor": "actuator_target_setting",
                 "current_tracking_lag_max": float(np.abs(current-active_target).max(initial=0.0)),
+                "controlled_pump_count": int(type_counts.get("pump", 0)),
+                "controlled_orifice_count": int(type_counts.get("orifice", 0)),
+                "controlled_weir_count": int(type_counts.get("weir", 0)),
+                "controlled_outlet_count": int(type_counts.get("outlet", 0)),
             },
         )

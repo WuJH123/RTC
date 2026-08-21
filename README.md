@@ -1,160 +1,137 @@
-# Project7 — TFV-first continuous real-time control methodology testbed
+# Project7 — sparse-sensing Practical real-time control for urban drainage
 
-This repository implements an **idealized EPA-SWMM urban-drainage RTC methodology test** on a
-simplified Wuhan network. It is **not** a field-calibrated digital twin. SWMM remains the
-authoritative hydraulic truth.
+Project7 is an idealized EPA-SWMM methodology testbed for a large drainage network. It is not a
+field-calibrated digital twin. **Authoritative hydraulic truth always comes from SWMM.**
 
-## Frozen control problem
+The current research question is:
 
-Every 600 s:
+> Can a sparse-sensor, strictly causal, training-support-constrained and engineering-executable
+> learning controller reduce system-wide total flooding volume (TFV), while avoiding material
+> deterioration of flooding at frozen Priority8 nodes?
 
-```text
-causal sparse sensing
- -> Step1 current full-network state reconstruction
- -> differentiable action-conditioned Step2 hydraulic surrogate
- -> H360 prediction / H120 free control / 109 continuous actuators
- -> engineering envelope inside differentiable decoder
- -> execute only first 10-min target
- -> authoritative SWMM write/readback
- -> re-observe and re-optimize
-```
-
-Scientific hierarchy: **system-wide cumulative TFV primary**, Priority8 PFV **one-sided soft
-secondary**, Global Peak **report-only**. Model/observation step = 300 s, control update = 600 s,
-and 12 x 109 = 1308 free MPC variables.
-
-## Current Development status — counterfactual trajectory first
-
-PR #77 recovered the magnitude of the historical full-H72 managed-flow effect, but that metric
-mixes local actuator response with later hydraulic feedback and can be dominated by one high-energy
-actuator. Stage-A TFV autograd also remained weak in direction. The current Development surface
-does **not** train toward a larger SWMM objective gradient. It first repairs the causal trajectory
-chain:
-
-1. **A0 — direct same-prefix setting -> managed flow.** Only the first setting-divergence
-   transition is a local actuator label. Temporal flow variation and direct action-response scales
-   remain separate.
-2. **A1 — managed flow -> hydraulics.** The actuator submodel is frozen and authoritative SWMM
-   managed flow is injected. For direct reference/candidate effects, both branches share the
-   reference setting inside the typed action context; authoritative managed flow is the only
-   branch-varying control signal. This blocks a hidden `setting -> message -> state` bypass.
-3. **A2 — joint direct counterfactual teacher forcing.** Predicted flow and hydraulic transition are
-   trained together with absolute state/flow targets plus response-weighted same-prefix effects.
-4. **B0 — autoregressive network feedback.** Full candidate/reference hydraulic feedback belongs
-   here, not in the local `dq/du` label. Feedback-flow effects use actuator flow standard deviation
-   for normalization rather than the local direct-action scale.
-5. **B0 evidence before H360.** A source-strict nonfinal ranking+horizon audit and a selectable B0
-   spatial audit run directly on `stage_b0.pt`; no production checkpoint is required.
-6. **H360 exact TFV objective downstream.** The source-strict two-pass within-group pairwise TFV
-   objective remains intact. SWMM action-gradient labels are never training targets; autograd is a
-   Development diagnostic and future online optimization signal after trajectory/ranking fidelity.
-
-Large authoritative state/flow truth arrays stay mmap-backed. A0/A1/A2, B0 and the post-objective
-trajectory anchor call the V128 lazy helpers explicitly; direct-pair extraction materializes only
-the reference/candidate slices needed through first divergence.
-
-Current implementation:
+## Current method in one line
 
 ```text
-scripts/run_step2_current.py
-scripts/run_step2_action_identifiable_current.py
-src/rtc/step2_counterfactual_first_v128.py
-src/rtc/step2_oracle_isolation_v128.py
-src/rtc/step2_counterfactual_training_v5.py
-src/rtc/step2_differentiable_v128_edge.py
-src/rtc/step2_train_v128_exact.py
+causal sparse history
+ -> frozen Step1 full-state reconstruction
+ -> frozen 109-channel Step2 representation
+ -> 82-control native supervisory mask
+ -> <=3 supported H10 candidates [Step2 0.5, Step2 1.0, type-aware hydraulic]
+ -> exact-receding-policy-return critic + one-sided admission
+ -> execute H10 or HOLD
+ -> SWMM readback -> re-observe every 10 min
 ```
 
-Current Development diagnostics:
+The **sole online objective is system-wide cumulative TFV**. Priority8 PFV is an authoritative
+secondary non-inferiority safety check for positive event claims:
+
+`PFV_proposed <= 100 m3 + 1.05 * PFV_no_control`.
+
+Global Peak is report-only. Future realised rainfall/state/flooding, online SWMM candidate search,
+PFV/Peak/action penalties and baseline imitation are forbidden online.
+
+## 82 online controls inside a frozen 109-channel representation
+
+The pretrained Step2 retains all 109 hydraulic setting/status channels. A deterministic artifact built
+from explicit source-INP `[CONTROLS]` action clauses identifies 82 facilities that may change online:
+57 pumps, 16 orifices and 9 weirs. The remaining 27 channels remain hydraulically represented but must
+equal HOLD/reference in every candidate.
+
+This does **not** trigger Step1 or base-Step2 retraining. The five added `RTC_ST_*` Storage nodes remain
+unchanged hydraulic state/capacity information and are not supervisory action dimensions.
+
+Masked q95 changed-facility/L1/total-variation support is recomputed label-independently from existing
+D3 TrainFit actions, with no new SWMM simulation.
+
+## What the completed 82-control mechanism panel established
+
+Six query points were frozen label-blind before truth: two each from already-inspected T8, T30 and T80.
+All six exact same-prefix queries contained at least one truly beneficial candidate. Therefore current
+candidate coverage is **not** the principal failure mode.
+
+The frozen base Step2 directional score, however, is not a reliable deployed return oracle on this
+panel: sign accuracy 0.45, false-beneficial fraction 0.30, false-reject fraction 0.25, within-query
+pairwise rank accuracy 0.4167 and top-1 accuracy 0.50.
+
+Candidate-family mechanism evidence was especially informative:
+
+- Step2 scale 0.50: beneficial 3/6;
+- Step2 scale 1.00: beneficial 2/3 when distinct;
+- type-aware hydraulic pressure: beneficial 5/6 and repeatedly oracle-best;
+- projected gradient: beneficial 3/5 but oracle-best 0/5.
+
+This supports a simpler conclusion: keep base Step2 as a pretrained representation/direction generator,
+but learn the **actual receding first-action value/ranking** from exact SWMM pairs.
+
+## Current three-family portfolio
+
+The paper-facing online portfolio is now deliberately restricted to at most three distinct H10
+candidates:
+
+1. `STEP2_H10_PROBE_SCALE_0.50`;
+2. `STEP2_H10_PROBE_SCALE_1.00`;
+3. `TYPE_AWARE_HYDRAULIC_PRESSURE`.
+
+Projected gradient remains implemented only for an explicit Development ablation. It is not part of
+current pi0, pi1, training/calibration family matching or online execution. Historical 12 x 109
+L-BFGS-B remains archival.
+
+Every candidate is bounded by the native 82-control mask, physical bounds, <=0.5 target slew,
+per-facility q95 first-move radius and masked q95 joint-sequence support. Actuator release intent uses
+actuator-type-specific SWMM SETTING semantics.
+
+## Exact receding-policy target
+
+The deployed learning target is:
 
 ```text
-scripts/audit_step2_actuator_flow_effect_current.py
-    direct same-prefix + actuator-balanced flow metrics; full-H72 feedback reported separately
-
-scripts/audit_step2_direct_hydraulic_effect_current.py
-    normal predicted-flow vs strict q-only authoritative-flow hydraulic isolation
-
-scripts/audit_step2_stage_ranking_current.py
-    source-strict ranking + H30-H360 trajectory audit for stage_b0 or objective checkpoints
-
-scripts/audit_step2_spatial_current.py
-    source-strict held-out action effect by graph distance for stage_b0 or objective checkpoints
-
-scripts/audit_step2_gradient_stage_current_dev.py
-    TFV autograd diagnostic at Stage A/B0/objective
+A^pi(x_t,u_t)
+ = J(candidate H10 -> frozen continuation pi)
+ - J(HOLD H10 -> the same frozen continuation pi)
 ```
 
-## Development funnel
+Negative is beneficial. Training/calibration/runtime encode exactly:
 
-Only `--profile smoke` and `--profile dev` are enabled. `--profile full` intentionally fails
-closed. Smoke/dev checkpoints are NONFINAL.
+`H10 candidate target -> H350 HOLD target` versus `HOLD H360`.
 
-```text
-cheap gates + preflight
- -> edge-physics lineage
- -> smoke Stage A (A0 -> q-only A1 -> A2)
- -> direct same-prefix/actuator-balanced flow audit
- -> strict q-only direct hydraulic audit
- -> Stage-A TFV-gradient diagnostic
- -> STOP / reject or explicitly resume B0
- -> B0 source-strict ranking+horizon + spatial + gradient audits
- -> only then exact H360 TFV objective
- -> repeat same-checkpoint ranking+horizon + spatial + gradient diagnostics
- -> deterministic dev confirmation
- -> future explicit production checkpoint/loader/runtime promotion
- -> D5 / runtime / seven-strategy / Policy Lock only after that promotion
-```
+Candidate/HOLD branches share the same raw causal prefix, forcing, supervisory-mask SHA and frozen
+continuation. The real controller re-observes and replans after each executed H10.
 
-A large gradient does not rescue a surrogate with wrong trajectory/ranking. Conversely, weak
-Stage-A gradient alone is not a reason to reject a candidate whose direct chain has improved;
-autoregressive trajectory and ranking evidence are checked before the final gradient decision.
+Because removing projected gradient changes the parent continuation policy, the completed four-family
+seen panel remains **mechanism evidence only**. It is not silently relabelled as current three-family
+training/calibration truth.
 
-## Physics and evidence boundary
+## Next Development gate: minimum confirmation, then forcing inventory
 
-Current smoke/dev uses frozen SWMM edge descriptors and dynamic head-difference/head-gradient
-messages. Missing ordinary-conduit dynamic-flow labels are not fabricated, and the incomplete
-continuity proxy is not enabled as a training loss. Hydraulic-influence shortcuts/deeper GNNs are
-not promoted until held-out spatial evidence isolates a distance-dependent failure.
+Before bulk labels, rerun the three-family parent on seen T8/T30/T80 and freeze two query points per
+event before reading truth. Evaluate only the first query from each event initially. If all three have
+a beneficial current candidate under the new continuation, the mechanism recheck is sufficient; the
+already-frozen reserve queries remain unused. If the first wave is ambiguous, evaluate the reserves
+before changing architecture.
 
-No future realised rainfall, future SWMM state or future Internal trajectory online. No
-Validation/Final/Formal/Policy Lock during Development.
+Then perform a **zero-SWMM inventory** of existing forcing/event metadata against frozen exclusions.
+Only create the missing forcing definitions needed to reach role-disjoint targets:
 
-## Production is intentionally fail-closed
+- policy-return train: 48 rainfall groups;
+- model-selection validation: 12;
+- conformal calibration: 24;
+- new Development closed-loop probes: 3.
 
-The current counterfactual-first model is a Development subclass and has no promoted production
-checkpoint factory/loader yet. Therefore:
+The current uploaded role audit confirmed no role-pure untouched pool yet; bulk generation remains
+closed until forcing identities are frozen. Do not use existing Step2 TrainFit groups as independent
+policy-return evidence.
 
-```text
-scripts/run_policy_current.py
-scripts/run_seven_strategies_current.py
-```
+## Critic and promotion logic
 
-support `--help` / `--promotion-status` but reject ordinary execution. This prevents an older
-base-V128 checkpoint from silently masquerading as the current Proposed controller. Full, D5,
-runtime and seven-strategy evaluation are enabled only by a later explicit production-promotion
-source change after Development evidence passes.
+The runtime decision set is `{HOLD=0 + generated candidates}`. Critic selection prioritizes HOLD-aware
+false-beneficial and false-reject behavior, same-query ranking and selected regret before scalar MAE.
+Default fine-tuning remains control/action heads; do not unfreeze the full pretrained representation
+unless later independent evidence requires it.
 
-## One current user surface
+Operational comparison remains No-control, Internal RTC, Auto-RBC and EFD. All-max/min SETTING are
+diagnostic extremes. Positive event claims additionally require Priority8 PFV safety.
 
-Start from:
+See `CODEX_START_HERE.md`, `PROJECT7_PRACTICAL_RTC_V14.md` and `PROJECT7_HANDOFF_CURRENT.md`.
 
-```text
-CODEX_START_HERE.md
-configs/step2_current_contract.json
-configs/project7_execution_registry.json
-configs/v128_control_execution.json
-configs/project7_current_lint_surface.json
-```
-
-Stable user entrypoints:
-
-```text
-rtc-current-preflight
-scripts/run_step2_current.py
-scripts/audit_step2_stage_ranking_current.py
-scripts/run_policy_current.py           # currently fail-closed
-scripts/run_seven_strategies_current.py # currently fail-closed
-```
-
-See **`CODEX_START_HERE.md`** for the exact clean-sync, stage-stop, audit and conditional-resume
-commands.
+`READY_FOR_POLICY_LOCK=false`. Validation, Final, Formal and Policy Lock remain inaccessible during
+current policy development.

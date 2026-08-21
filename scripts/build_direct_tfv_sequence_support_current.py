@@ -1,4 +1,9 @@
-"""Build label-independent D3-HOLD joint-sequence support for Direct-TFV Step3 V6."""
+"""Build label-independent D3-HOLD support on the current native supervisory-control subspace.
+
+This reuses existing D3 TrainFit action tensors. The pretrained Step2 stays 109-channel, while
+changed-facility counts and joint sequence geometry are recomputed after masking passive setting
+channels. No new SWMM run or outcome label is required.
+"""
 from __future__ import annotations
 
 import argparse
@@ -10,11 +15,14 @@ import torch
 
 from rtc.checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
 from rtc.direct_tfv_sequence_support import derive_direct_tfv_sequence_support
+from rtc.native_supervisory_control import load_native_supervisory_control
 from rtc.production_cli import _load_graph
 from rtc.step2_train_response_v60 import V60TrainCache, deterministic_rainfall_split_v60
 
 
-CURRENT_SEQUENCE_SUPPORT_BUILD_CONTRACT = "PROJECT7_CURRENT_DIRECT_TFV_SEQUENCE_SUPPORT_BUILD_V1"
+CURRENT_SEQUENCE_SUPPORT_BUILD_CONTRACT = (
+    "PROJECT7_CURRENT_DIRECT_TFV_SEQUENCE_SUPPORT_BUILD_V2_NATIVE_CONTROL_SUBSPACE"
+)
 EXPECTED_D3_FIT_GROUPS = 112
 
 
@@ -27,6 +35,7 @@ def main() -> None:
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--graph", required=True)
     p.add_argument("--cache-manifest", required=True)
+    p.add_argument("--supervisory-control", required=True)
     p.add_argument("--out", required=True)
     args = p.parse_args()
 
@@ -35,6 +44,10 @@ def main() -> None:
         args.checkpoint,
         graph=graph,
         device=torch.device("cpu"),
+    )
+    control, mask = load_native_supervisory_control(
+        args.supervisory_control,
+        actuator_ids=graph.actuator_ids,
     )
     base = V60TrainCache(args.cache_manifest)
     fit, _ = deterministic_rainfall_split_v60(
@@ -55,15 +68,20 @@ def main() -> None:
         actuator_ids=graph.actuator_ids,
         control_block_steps=2,
         free_control_blocks=12,
+        supervisory_mask=mask,
+        supervisory_control_contract=str(control["contract"]),
+        supervisory_mask_sha256=str(control["supervisory_mask_sha256"]),
     )
     payload["build_contract"] = CURRENT_SEQUENCE_SUPPORT_BUILD_CONTRACT
     payload["lineage"] = {
         "step2_checkpoint_sha256": _sha(args.checkpoint),
         "graph_sha256": _sha(args.graph),
         "cache_manifest_sha256": _sha(args.cache_manifest),
+        "supervisory_control_sha256": _sha(args.supervisory_control),
         "d3_fit_group_count": len(fit_d3),
+        "new_swmm_simulation_required": False,
     }
-    out = Path(args.out)
+    out = Path(args.out).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(payload, indent=2, sort_keys=True))

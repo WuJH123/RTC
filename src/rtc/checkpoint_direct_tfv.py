@@ -114,9 +114,12 @@ def load_direct_tfv_runtime_checkpoint(
     graph: Any,
     device: torch.device,
 ) -> tuple[DirectFacilityTFVValueModel, InputNormalizationV60, dict[str, Any]]:
-    payload = torch.load(path, map_location="cpu", weights_only=False)
+    # The exact-return bulk repeatedly creates short-lived frozen controllers.  Memory-map the
+    # checkpoint on CPU so tensor storages are faulted in lazily instead of eagerly duplicating the
+    # whole checkpoint in 16-GB host memory at every branch construction.
+    payload = torch.load(path, map_location="cpu", weights_only=False, mmap=True)
     if not isinstance(payload, dict):
-        raise ValueError("Direct-TFV checkpoint payload must be a mapping")
+        raise ValueError("Direct-TFV runtime checkpoint payload must be a mapping")
     if str(payload.get("contract")) != DIRECT_TFV_VALUE_CONTRACT:
         raise ValueError("Direct-TFV runtime checkpoint has the wrong model contract")
     training_contract = str(payload.get("training_contract"))
@@ -139,12 +142,26 @@ def load_direct_tfv_runtime_checkpoint(
         target_scale_m3=float(payload["target_scale_m3"]),
         design=design,
     ).to(device)
-    model.load_state_dict(payload["model_state_dict"], strict=True)
+    state_dict = payload.get("model_state_dict")
+    if not isinstance(state_dict, dict):
+        raise ValueError("Direct-TFV runtime checkpoint lacks model_state_dict")
+    model.load_state_dict(state_dict, strict=True)
     model.eval()
     normalization = _normalization(dict(payload["normalization"]))
-    payload["runtime_loader_contract"] = DIRECT_TFV_RUNTIME_CHECKPOINT_CONTRACT
-    payload["runtime_training_contract_is_legacy"] = training_contract == LEGACY_DIRECT_TFV_TRAINING_CONTRACT
-    return model, normalization, payload
+
+    # Runtime callers need model metadata/action support, not a second CPU copy of the parameters.
+    # Drop the serialized state_dict after it has been copied into the frozen module.  This is a
+    # memory-only optimization and does not change model weights, support, scoring, or policy lineage.
+    runtime_payload = dict(payload)
+    runtime_payload.pop("model_state_dict", None)
+    runtime_payload["runtime_loader_contract"] = DIRECT_TFV_RUNTIME_CHECKPOINT_CONTRACT
+    runtime_payload["runtime_training_contract_is_legacy"] = (
+        training_contract == LEGACY_DIRECT_TFV_TRAINING_CONTRACT
+    )
+    runtime_payload["runtime_checkpoint_mmap"] = True
+    runtime_payload["runtime_model_state_dict_retained"] = False
+    del state_dict, payload
+    return model, normalization, runtime_payload
 
 
 __all__ = [

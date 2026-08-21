@@ -23,7 +23,7 @@ class BaselineDefinition:
 BASELINES = {
     "proposed": BaselineDefinition(
         "proposed",
-        "Sparse causal Step1 state reconstruction plus learned 109-actuator pairwise delta-TFV value and support-aware H120/H360 receding MPC; no RBC warm start, no RBC safety fallback and no calibrated improvement threshold",
+        "Sparse causal Step1 state reconstruction plus learned 109-actuator pairwise delta-TFV value and support-aware receding control",
         True,
         False,
         False,
@@ -42,37 +42,41 @@ BASELINES = {
     ),
     "auto_rbc": BaselineDefinition(
         "auto_rbc",
-        "Automatically parameterized causal rule-based control from actuator-adjacent normalized node depths; no forecast or event tuning",
+        "Automatically parameterized causal local rule-based control using actuator-adjacent filling, downstream congestion and type-aware SWMM release-setting semantics",
         True,
         False,
     ),
     "efd": BaselineDefinition(
         "efd",
-        "Strict storage Equal Filling Degree comparator using causal storage volume/capacity and writable storage-outflow actuators only; it is intentionally not the older depth-zone EFD-like heuristic",
+        "Storage Equal Filling Degree comparator using causal storage volume/capacity and type-aware outgoing-release settings",
         True,
         False,
     ),
     "all_open": BaselineDefinition(
         "all_open",
-        "Diagnostic extreme policy on controls-disabled base: command every eligible setting to 1.0 from the first common control decision",
+        "Legacy-name diagnostic extreme: command every eligible SWMM SETTING to its numerical maximum 1.0. This is ALL-MAX-SETTING, not a universal physical all-open/max-release state because WEIR SETTING has different semantics.",
         True,
+        False,
         False,
     ),
     "all_closed": BaselineDefinition(
         "all_closed",
-        "Diagnostic extreme policy on controls-disabled base: command every eligible setting to 0.0 from the first common control decision",
+        "Legacy-name diagnostic extreme: command every eligible SWMM SETTING to its numerical minimum 0.0. This is ALL-MIN-SETTING, not a universal physical all-closed/min-release state because actuator SETTING semantics differ by type.",
         True,
+        False,
         False,
     ),
     "hold": BaselineDefinition(
         "hold",
-        "Debug-only frozen-readback policy. Excluded from the Formal comparison matrix because on a controls-disabled base it can collapse to No-control.",
+        "Debug-only frozen-readback policy. Excluded from the formal competitive comparison because on a controls-disabled base it can collapse to No-control.",
         True,
         False,
         False,
     ),
 }
 
+# Keep the six-strategy evidence panel for compatibility and transparency. Publication claims use
+# COMPETITIVE_BASELINE_IDS; numerical setting extremes remain visible diagnostic evidence.
 FORMAL_FIXED_BASELINE_IDS = (
     "no_control",
     "internal_rtc",
@@ -81,8 +85,14 @@ FORMAL_FIXED_BASELINE_IDS = (
     "all_open",
     "all_closed",
 )
-DIAGNOSTIC_FIXED_BASELINE_IDS = ("hold",)
-SUPPORTED_FIXED_BASELINE_IDS = FORMAL_FIXED_BASELINE_IDS + DIAGNOSTIC_FIXED_BASELINE_IDS
+COMPETITIVE_BASELINE_IDS = (
+    "no_control",
+    "internal_rtc",
+    "auto_rbc",
+    "efd",
+)
+DIAGNOSTIC_FIXED_BASELINE_IDS = ("all_open", "all_closed", "hold")
+SUPPORTED_FIXED_BASELINE_IDS = FORMAL_FIXED_BASELINE_IDS + ("hold",)
 FIXED_BASELINE_IDS = FORMAL_FIXED_BASELINE_IDS
 
 LEGACY_BASELINE_ALIASES = {
@@ -111,10 +121,9 @@ def write_no_control_inp(
     This removes user-defined supervisory ``[CONTROLS]`` only. It intentionally preserves
     pump curves, initial pump status, intrinsic [PUMPS] Startup/Shutoff depths, storage
     geometry, regulator physics and all forcing. No Python control writes are made. It is
-    therefore neither All-open nor All-closed and remains an operationally meaningful
+    therefore neither All-max-setting nor All-min-setting and remains an operationally meaningful
     reference representing the network without supervisory RTC.
     """
-
     result = build_runtime_inp(
         source,
         destination,

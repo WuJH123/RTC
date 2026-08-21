@@ -1,8 +1,17 @@
-"""Add Priority8 PFV as a report-only metric to an existing Direct-TFV baseline comparison.
+"""Add Priority8 PFV and its one-sided safety envelope to a Direct-TFV comparison.
 
-TFV remains the sole optimization objective and the existing TFV classification is preserved.  This
-post-processor only sums authoritative SWMM node flooding volume over a frozen Priority8 node list so
-PFV can be reported alongside TFV and Global Peak for every strategy.
+Project7 keeps system-wide TFV as the sole online optimization objective. Priority8 PFV is evaluated
+from authoritative SWMM node flooding volumes as a secondary safety requirement: the Proposed policy
+must not materially worsen priority-area flooding relative to No-control. This avoids adding another
+uncertain online surrogate while preventing a TFV-only policy from buying global volume reduction by
+concentrating flooding at priority nodes.
+
+The default envelope reuses the project's earlier engineering convention:
+
+    PFV_proposed <= 100 m3 + 1.05 * PFV_no_control
+
+The 5%/100 m3 values are Project7/Project6 study tolerances, not universal regulatory thresholds, and
+are explicit CLI parameters so the frozen study contract is visible in every report.
 """
 from __future__ import annotations
 
@@ -11,6 +20,9 @@ import csv
 import gzip
 import json
 from pathlib import Path
+
+
+PFV_SAFETY_CONTRACT = "PROJECT7_PRIORITY8_PFV_SECONDARY_SAFETY_V1"
 
 
 def _priority_nodes(path: str | Path) -> tuple[str, ...]:
@@ -46,7 +58,13 @@ def main() -> None:
     p.add_argument("--priority-nodes", required=True)
     p.add_argument("--out-json", required=True)
     p.add_argument("--out-csv", required=True)
+    p.add_argument("--pfv-relative-tolerance", type=float, default=0.05)
+    p.add_argument("--pfv-absolute-tolerance-m3", type=float, default=100.0)
     args = p.parse_args()
+    if not 0.0 <= float(args.pfv_relative_tolerance) <= 1.0:
+        raise ValueError("PFV relative tolerance must lie in [0,1]")
+    if float(args.pfv_absolute_tolerance_m3) < 0.0:
+        raise ValueError("PFV absolute tolerance must be non-negative")
 
     payload = json.loads(Path(args.comparison_json).read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or not isinstance(payload.get("rows"), list):
@@ -64,21 +82,35 @@ def main() -> None:
         raise ValueError("comparison must contain proposed and no_control rows")
     nc = float(by_strategy["no_control"]["pfv_m3"])
     proposed = float(by_strategy["proposed"]["pfv_m3"])
+    limit = (
+        (1.0 + float(args.pfv_relative_tolerance)) * nc
+        + float(args.pfv_absolute_tolerance_m3)
+    )
     for row in rows:
         pfv = float(row["pfv_m3"])
         row["delta_pfv_vs_no_control_m3"] = pfv - nc
         row["pfv_reduction_vs_no_control_pct"] = (
             100.0 * (nc - pfv) / nc if nc > 0.0 else None
         )
+        row["within_pfv_no_control_safety_envelope"] = bool(pfv <= limit + 1.0e-9)
         if row["strategy"] != "proposed":
             row["proposed_minus_strategy_pfv_m3"] = proposed - pfv
 
+    proposal_pass = bool(proposed <= limit + 1.0e-9)
     payload["rows"] = rows
     payload["priority_nodes"] = list(priority)
-    payload["pfv_role"] = "report_only_secondary_not_optimization_objective_or_gate"
+    payload["pfv_safety_contract"] = PFV_SAFETY_CONTRACT
+    payload["pfv_role"] = "secondary_authoritative_safety_gate_not_online_optimization_objective"
+    payload["pfv_no_control_m3"] = nc
+    payload["pfv_relative_tolerance"] = float(args.pfv_relative_tolerance)
+    payload["pfv_absolute_tolerance_m3"] = float(args.pfv_absolute_tolerance_m3)
+    payload["pfv_safety_limit_m3"] = float(limit)
+    payload["proposed_pfv_m3"] = proposed
+    payload["proposed_pfv_safety_pass"] = proposal_pass
     payload["tfv_remains_primary_objective"] = True
     payload["global_peak_role"] = "report_only"
-    payload["classification_unchanged_by_pfv"] = True
+    payload["performance_claim_requires_pfv_safety_pass"] = True
+    payload["pfv_safety_threshold_is_project_specific_not_universal_regulation"] = True
 
     out_json = Path(args.out_json)
     out_json.parent.mkdir(parents=True, exist_ok=True)

@@ -1,4 +1,12 @@
-"""Factories for offline policy-return replay using the frozen V12 continuation policy."""
+"""Factories for offline policy-return replay using a frozen V12 continuation policy.
+
+The policy-return estimand only requires CANDIDATE and HOLD branches to use the exact same frozen
+continuation policy. A historical V12 first-move admission fingerprint is useful provenance, but a
+mismatch does not invalidate a Development paired counterfactual when the actual loaded parent is
+frozen identically for both branches. This factory is used for offline policy-iteration labels, so
+provenance-only parent use is the default; callers that need a strict current-V12 identity check can
+set ``require_behavioral_match=True`` explicitly.
+"""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -26,7 +34,9 @@ from .step3_tfv_value_mpc_v10 import (
 )
 
 
-V12_FROZEN_CONTINUATION_FACTORY_CONTRACT = "PROJECT7_V12_FROZEN_CONTINUATION_FACTORY_V2_BEHAVIORAL_LINEAGE"
+V12_FROZEN_CONTINUATION_FACTORY_CONTRACT = (
+    "PROJECT7_V12_FROZEN_CONTINUATION_FACTORY_V3_EXPLICIT_PARENT_PROVENANCE_MODE"
+)
 
 
 def _sha(path: str | Path) -> str:
@@ -49,6 +59,7 @@ def build_frozen_v12_continuation_controller(
     decision_runtime_budget_seconds: float = 180.0,
     first_move_maxiter: int = 12,
     first_move_deadline_seconds: float = 30.0,
+    require_behavioral_match: bool = False,
 ) -> tuple[object, object, tuple[str, ...], dict]:
     graph = _load_graph(graph_path)
     sensors = _load_lines(sensors_path)
@@ -66,13 +77,18 @@ def build_frozen_v12_continuation_controller(
         raise ValueError("continuation first-move admission is not V12 scenario-matched")
     if str(first.get("rainfall_scenario_contract", "")) != DIRECT_TFV_CAUSAL_RAINFALL_SCENARIO_CONTRACT:
         raise ValueError("continuation rainfall scenario contract differs from V12")
-    lineage = first.get("lineage") if isinstance(first.get("lineage"), dict) else {}
+    first_lineage = first.get("lineage") if isinstance(first.get("lineage"), dict) else {}
     calibrated_behavior = str(
-        first.get("v12_behavioral_source_sha256", lineage.get("v12_behavioral_source_sha256", ""))
+        first.get(
+            "v12_behavioral_source_sha256",
+            first_lineage.get("v12_behavioral_source_sha256", ""),
+        )
     ).lower()
-    current_behavior = direct_tfv_v12_behavioral_sha256()
-    if calibrated_behavior != current_behavior.lower():
+    current_behavior = direct_tfv_v12_behavioral_sha256().lower()
+    behavioral_match = bool(calibrated_behavior == current_behavior)
+    if require_behavioral_match and not behavioral_match:
         raise ValueError("V12 continuation admission behavioral fingerprint differs from source")
+
     support = json.loads(Path(sequence_support_path).read_text(encoding="utf-8"))
     validate_direct_tfv_sequence_support(
         support,
@@ -122,7 +138,10 @@ def build_frozen_v12_continuation_controller(
         device=device,
     )
     controller = ContinuityGuardController(
-        inner, max_delta_per_update=0.5, allow_projection=False, enforce_current_delta=False
+        inner,
+        max_delta_per_update=0.5,
+        allow_projection=False,
+        enforce_current_delta=False,
     )
     lineage = {
         "factory_contract": V12_FROZEN_CONTINUATION_FACTORY_CONTRACT,
@@ -136,6 +155,17 @@ def build_frozen_v12_continuation_controller(
         "config_sha256": _sha(config_path),
         "step3_contract": DIRECT_TFV_SCENARIO_MEAN_STEP3_CONTRACT,
         "v12_behavioral_source_sha256": current_behavior,
+        "calibrated_v12_behavioral_source_sha256": calibrated_behavior,
+        "v12_behavioral_match": behavioral_match,
+        "behavioral_match_required": bool(require_behavioral_match),
+        "parent_use_scope": (
+            "STRICT_CURRENT_V12"
+            if require_behavioral_match
+            else "DEVELOPMENT_POLICY_RETURN_PARENT_PROVENANCE_ONLY"
+        ),
+        "paired_counterfactual_validity_basis": (
+            "exact same loaded frozen continuation policy after H10 in candidate and HOLD branches"
+        ),
         "memory_safe_runtime": True,
     }
     return controller, graph, sensors, lineage

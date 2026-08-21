@@ -21,6 +21,7 @@ class _Inner:
         self.model = torch.nn.Linear(1, 1)
         self.called = None
         self.fail = False
+        self.portfolio = False
 
     def active_support_quantile_effective(self) -> str:
         return "q95"
@@ -33,8 +34,8 @@ class _Inner:
         if self.fail:
             raise RuntimeError("synthetic solve failure")
         settings = torch.full((72, 109), 0.5)
-        settings[:24, :5] = 0.6
-        return SimpleNamespace(
+        settings[:2, :5] = 0.6
+        common = dict(
             settings=settings,
             optimized_candidate_settings=settings.clone(),
             predicted_delta_tfv_m3=-1234.0,
@@ -44,28 +45,48 @@ class _Inner:
             admission_margin_kind="dense",
             admission_passed=True,
             calibrated_admission_contract=DIRECT_TFV_ADMISSION_CALIBRATION_CONTRACT,
-            selected_source="DIRECT_TFV_RECEDING_LBFGSB",
+            candidate_valid=True,
             optimizer_success=True,
-            optimizer_steps=4,
-            optimizer_starts=2,
-            gradient_norm=3.0,
+            optimizer_steps=0 if self.portfolio else 4,
+            optimizer_starts=0 if self.portfolio else 2,
+            gradient_norm=0.0 if self.portfolio else 3.0,
             elapsed_seconds=0.2,
             screened_facility_count=109,
             predicted_beneficial_facility_count=30,
-            active_facility_count=23,
-            active_facility_ids=tuple(f"A{i:03d}" for i in range(23)),
+            active_facility_count=5 if self.portfolio else 23,
+            active_facility_ids=tuple(f"A{i:03d}" for i in range(5 if self.portfolio else 23)),
             active_facility_screening_scores_m3=tuple(-1000.0 + i for i in range(23)),
             first_move_changed_facility_count=5,
             maximum_support_ratio=0.8,
             joint_sequence_support_quantile="q95",
             joint_sequence_first_block_l1=0.5,
-            joint_sequence_h120_l1=6.0,
-            joint_sequence_h120_total_variation_l1=0.5,
+            joint_sequence_h120_l1=0.5 if self.portfolio else 6.0,
+            joint_sequence_h120_total_variation_l1=1.0 if self.portfolio else 0.5,
             joint_sequence_support_max_ratio=0.9,
             joint_sequence_support_binding=False,
             training_joint_changed_facility_q90=20.0,
-            scipy_message="ok",
+            scipy_message="NOT_USED_PRACTICAL_H10_PORTFOLIO" if self.portfolio else "ok",
         )
+        if self.portfolio:
+            common.update(
+                selected_source="DIRECT_TFV_POLICY_RETURN_PORTFOLIO::STEP2_H10_PROBE_SCALE_0.50",
+                policy_return_portfolio_contract="PORTFOLIO_V3",
+                policy_return_portfolio_candidate_count=3,
+                policy_return_portfolio_selected_source="STEP2_H10_PROBE_SCALE_0.50",
+                policy_return_portfolio_sources=(
+                    "STEP2_H10_PROBE_SCALE_0.50",
+                    "STEP2_H10_PROBE_SCALE_1.00",
+                    "TYPE_AWARE_HYDRAULIC_PRESSURE",
+                ),
+                policy_return_portfolio_scores_m3=(-100.0, -80.0, 30.0),
+                policy_return_portfolio_upper_bounds_m3=(-20.0, 5.0, 100.0),
+                policy_return_portfolio_base_step2_scores_m3=(-90.0, -70.0, 20.0),
+                h10_probe_generator_contract="H10_PROBE_V1",
+                h10_probe_count=190,
+            )
+        else:
+            common.update(selected_source="DIRECT_TFV_RECEDING_LBFGSB")
+        return SimpleNamespace(**common)
 
 
 def _optimize(adapter: DirectTFVRuntimeMPCAdapter):
@@ -117,6 +138,19 @@ def test_runtime_adapter_maps_calibrated_step3_and_preserves_raw_plan() -> None:
     assert inner.called is not None
     assert torch.allclose(inner.called["active_target"], torch.full((109,), 0.5))
     assert inner.called["rainfall"].shape == (1, 72, 8, 1)
+
+
+def test_runtime_adapter_accepts_practical_non_lbfgs_action_and_keeps_portfolio_fields() -> None:
+    inner = _Inner()
+    inner.portfolio = True
+    result = _optimize(DirectTFVRuntimeMPCAdapter(inner))  # type: ignore[arg-type]
+    assert result.candidate_valid is True
+    assert "POLICY_RETURN_PORTFOLIO" in result.selected_source
+    assert result.optimizer_steps == 0
+    assert result.policy_return_portfolio_candidate_count == 3
+    assert result.policy_return_portfolio_selected_source == "STEP2_H10_PROBE_SCALE_0.50"
+    assert result.policy_return_portfolio_sources[-1] == "TYPE_AWARE_HYDRAULIC_PRESSURE"
+    assert result.h10_probe_count == 190
 
 
 def test_runtime_adapter_clears_stale_result_before_failed_solve() -> None:

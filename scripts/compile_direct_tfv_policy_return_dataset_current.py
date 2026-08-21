@@ -1,20 +1,36 @@
-"""Compile one-sample policy-return replay contexts into one role-pure training dataset."""
+"""Compile exact paired policy-return records into role-pure, same-query datasets.
+
+Current datasets retain the 109-channel action tensors used by the pretrained Step2 while freezing
+one native supervisory-control mask lineage for all samples. Passive channels must be unchanged in
+every authoritative pair. Post-support base-Step2 H10 scores are carried alongside exact SWMM truth
+for later sign/rank diagnostics.
+
+Only rows that have passed the current authoritative three-family truth firewall may enter
+train/validation/calibration datasets. Development mechanism diagnostics remain permanently
+ineligible for learning, even though they are valid exact SWMM evidence.
+"""
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 
 import numpy as np
 
 from rtc.direct_tfv_policy_return import (
+    DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
     DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT,
     DIRECT_TFV_POLICY_RETURN_ESTIMAND,
     DIRECT_TFV_POLICY_RETURN_MIN_CALIBRATION_GROUPS,
     DIRECT_TFV_POLICY_RETURN_MIN_TRAIN_GROUPS,
     DIRECT_TFV_POLICY_RETURN_MIN_VALIDATION_GROUPS,
     sha256_file,
-    validate_policy_return_record,
+)
+from rtc.direct_tfv_policy_return_hybrid_portfolio import DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+from rtc.direct_tfv_policy_return_portfolio_admission import (
+    validate_policy_return_learning_record,
 )
 
 
@@ -25,6 +41,11 @@ _MIN_GROUPS = {
 }
 
 
+def _canonical_sha(value: object) -> str:
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
 def _read_records(path: str | Path) -> list[dict]:
     records: list[dict] = []
     for line_number, raw in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
@@ -33,11 +54,31 @@ def _read_records(path: str | Path) -> list[dict]:
         row = json.loads(raw)
         if not isinstance(row, dict):
             raise ValueError(f"record line {line_number} is not an object")
-        validate_policy_return_record(row)
+        validate_policy_return_learning_record(row)
         records.append(row)
     if not records:
         raise ValueError("policy-return record JSONL is empty")
     return records
+
+
+def _query_set_id(row: dict) -> str:
+    supplied = str(row.get("query_set_id", "")).strip().lower()
+    if supplied:
+        if len(supplied) != 64 or any(ch not in "0123456789abcdef" for ch in supplied):
+            raise ValueError("policy-return query_set_id must be a canonical sha256")
+        return supplied
+    return _canonical_sha(
+        {
+            "event_id": str(row["event_id"]),
+            "rainfall_group": str(row["rainfall_group"]),
+            "decision_index": int(row["decision_index"]),
+            "decision_elapsed_seconds": int(row.get("decision_elapsed_seconds", -1)),
+            "prefix_sha256": str(row["prefix_sha256"]).lower(),
+            "hold_first_target_sha256": str(row["hold_first_target_sha256"]).lower(),
+            "continuation_policy_sha256": str(row["continuation_policy_sha256"]).lower(),
+            "supervisory_mask_sha256": str(row.get("supervisory_mask_sha256", "")).lower(),
+        }
+    )
 
 
 def main() -> None:
@@ -61,18 +102,37 @@ def main() -> None:
     continuation = {str(row["continuation_policy_sha256"]).lower() for row in records}
     if len(continuation) != 1:
         raise ValueError("policy-return dataset mixes continuation-policy lineages")
+    if {str(row.get("action_encoding_contract", "")) for row in records} != {
+        DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING
+    }:
+        raise ValueError("policy-return dataset mixes H10 action encodings")
+    if {str(row.get("candidate_portfolio_contract", "")) for row in records} != {
+        DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT
+    }:
+        raise ValueError("policy-return dataset must use the current masked hybrid H10 portfolio")
+    mask_shas = {str(row.get("supervisory_mask_sha256", "")).lower() for row in records}
+    if len(mask_shas) != 1 or len(next(iter(mask_shas))) != 64:
+        raise ValueError("policy-return dataset mixes or lacks supervisory-control mask lineage")
+    control_dimensions = {int(row.get("supervisory_control_dimension", -1)) for row in records}
+    if control_dimensions != {82}:
+        raise ValueError("current policy-return dataset must use the frozen 82-control subspace")
+    if any(row.get("passive_setting_channels_unchanged") is not True for row in records):
+        raise ValueError("policy-return dataset contains a candidate that changed passive settings")
 
-    current_states = []
-    rainfall = []
-    active_targets = []
-    candidate_targets = []
-    flows = []
-    truth = []
-    rainfall_groups = []
-    event_ids = []
-    decision_indices = []
-    changed_counts = []
-    context_shas = []
+    current_states: list[np.ndarray] = []
+    rainfall: list[np.ndarray] = []
+    active_targets: list[np.ndarray] = []
+    candidate_targets: list[np.ndarray] = []
+    flows: list[np.ndarray] = []
+    truth: list[float] = []
+    base_scores: list[float] = []
+    rainfall_groups: list[str] = []
+    event_ids: list[str] = []
+    decision_indices: list[int] = []
+    changed_counts: list[int] = []
+    context_shas: list[str] = []
+    query_set_ids: list[str] = []
+    candidate_sources: list[str] = []
     for row in records:
         context_path = Path(str(row.get("context_npz", "")))
         if not context_path.is_file():
@@ -85,6 +145,11 @@ def main() -> None:
             raise ValueError("policy-return context has the wrong contract")
         if str(np.asarray(data["estimand"]).reshape(-1)[0]) != DIRECT_TFV_POLICY_RETURN_ESTIMAND:
             raise ValueError("policy-return context has the wrong estimand")
+        if (
+            str(np.asarray(data["action_encoding_contract"]).reshape(-1)[0])
+            != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING
+        ):
+            raise ValueError("policy-return context has the wrong H10 action encoding")
         if str(np.asarray(data["data_role"]).reshape(-1)[0]) != args.data_role:
             raise ValueError("policy-return context role differs from compiler role")
         current_states.append(np.asarray(data["current_state"])[0].astype(np.float32))
@@ -93,11 +158,20 @@ def main() -> None:
         candidate_targets.append(np.asarray(data["candidate_target"])[0].astype(np.float32))
         flows.append(np.asarray(data["previous_actuator_flow"])[0].astype(np.float32))
         truth.append(float(row["true_policy_return_delta_tfv_m3"]))
+        base_scores.append(float(row["base_step2_h10_score_m3"]))
         rainfall_groups.append(str(row["rainfall_group"]))
         event_ids.append(str(row["event_id"]))
         decision_indices.append(int(row["decision_index"]))
         changed_counts.append(int(row["first_move_changed_facility_count"]))
         context_shas.append(expected_sha)
+        query_set_ids.append(_query_set_id(row))
+        candidate_sources.append(str(row["candidate_source"]))
+
+    query_counts = Counter(query_set_ids)
+    source_counts = Counter(candidate_sources)
+    multi_query_sets = sum(count >= 2 for count in query_counts.values())
+    if multi_query_sets <= 0:
+        raise ValueError("hybrid portfolio dataset requires same-prefix multi-candidate query sets")
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -105,34 +179,54 @@ def main() -> None:
         out,
         contract=np.asarray(DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT),
         estimand=np.asarray(DIRECT_TFV_POLICY_RETURN_ESTIMAND),
+        action_encoding_contract=np.asarray(DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING),
         data_role=np.asarray(args.data_role),
         continuation_policy_sha256=np.asarray(next(iter(continuation))),
+        candidate_portfolio_contract=np.asarray(DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT),
+        supervisory_control_dimension=np.asarray(82, dtype=np.int64),
+        model_action_channel_count=np.asarray(109, dtype=np.int64),
+        supervisory_mask_sha256=np.asarray(next(iter(mask_shas))),
         current_state=np.stack(current_states),
         rainfall_scenarios=np.stack(rainfall),
         active_target=np.stack(active_targets),
         candidate_target=np.stack(candidate_targets),
         previous_actuator_flow=np.stack(flows),
         true_policy_return_delta_tfv_m3=np.asarray(truth, dtype=np.float64),
+        base_step2_h10_score_m3=np.asarray(base_scores, dtype=np.float64),
         rainfall_group=np.asarray(rainfall_groups),
         event_id=np.asarray(event_ids),
         decision_index=np.asarray(decision_indices, dtype=np.int64),
         first_move_changed_facility_count=np.asarray(changed_counts, dtype=np.int64),
         context_npz_sha256=np.asarray(context_shas),
+        query_set_id=np.asarray(query_set_ids),
+        candidate_source=np.asarray(candidate_sources),
     )
     summary = {
         "contract": DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT,
         "estimand": DIRECT_TFV_POLICY_RETURN_ESTIMAND,
+        "action_encoding_contract": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
         "data_role": args.data_role,
         "sample_count": len(records),
         "rainfall_group_count": len(groups),
         "rainfall_groups": sorted(groups),
+        "query_set_count": len(query_counts),
+        "multi_candidate_query_set_count": int(multi_query_sets),
+        "candidate_source_counts": dict(sorted(source_counts.items())),
+        "candidate_portfolio_contract": DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
+        "supervisory_control_dimension": 82,
+        "model_action_channel_count": 109,
+        "supervisory_mask_sha256": next(iter(mask_shas)),
+        "passive_setting_channels_unchanged": True,
+        "authoritative_truth_firewall_verified": True,
+        "development_diagnostic_rows_allowed": False,
+        "ranking_unit": "SAME_AUTHORITATIVE_PREFIX_QUERY_SET_WITH_HOLD_ZERO",
+        "scientific_split_unit": "RAINFALL_GROUP",
         "continuation_policy_sha256": next(iter(continuation)),
         "output_sha256": sha256_file(out),
         "records_jsonl_sha256": sha256_file(args.records_jsonl),
     }
     out.with_suffix(".json").write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
 

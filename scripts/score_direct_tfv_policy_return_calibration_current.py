@@ -1,4 +1,10 @@
-"""Score untouched policy-return calibration contexts with a frozen selected critic."""
+"""Score untouched policy-return calibration contexts with a frozen H10-aligned critic.
+
+Calibration must use the same 82-control/109-channel supervisory mask as critic training and the
+candidate portfolio. This script only adds frozen-critic predictions to authoritative calibration
+records; it does not modify exact SWMM truth or the control mask. Records must already have passed
+the current authoritative three-family truth firewall before any GPU scoring is attempted.
+"""
 from __future__ import annotations
 
 import argparse
@@ -9,11 +15,15 @@ import numpy as np
 import torch
 
 from rtc.direct_tfv_policy_return import (
+    DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
     DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT,
     DIRECT_TFV_POLICY_RETURN_ESTIMAND,
+    encode_policy_return_action_token,
     load_policy_return_checkpoint,
     sha256_file,
-    validate_policy_return_record,
+)
+from rtc.direct_tfv_policy_return_portfolio_admission import (
+    validate_policy_return_learning_record,
 )
 from rtc.production_cli import _load_graph
 
@@ -29,18 +39,36 @@ def _normalization_tensors(normalization, *, dtype, device):
     }
 
 
-def _score(model, normalization, graph, context_path: Path, device: torch.device) -> float:
+def _score(
+    model,
+    normalization,
+    graph,
+    context_path: Path,
+    device: torch.device,
+    *,
+    expected_mask_sha256: str,
+) -> float:
     data = np.load(context_path, allow_pickle=False)
     if str(np.asarray(data["contract"]).reshape(-1)[0]) != DIRECT_TFV_POLICY_RETURN_DATASET_CONTRACT:
         raise ValueError("calibration context has the wrong dataset contract")
     if str(np.asarray(data["estimand"]).reshape(-1)[0]) != DIRECT_TFV_POLICY_RETURN_ESTIMAND:
         raise ValueError("calibration context has the wrong estimand")
+    if (
+        str(np.asarray(data["action_encoding_contract"]).reshape(-1)[0])
+        != DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING
+    ):
+        raise ValueError("calibration context has the wrong H10 action encoding")
     if str(np.asarray(data["data_role"]).reshape(-1)[0]) != "policy_return_calibration":
         raise ValueError("critic scorer accepts only policy_return_calibration contexts")
+    if "supervisory_mask_sha256" not in data:
+        raise ValueError("calibration context lacks supervisory-control mask lineage")
+    context_mask_sha = str(np.asarray(data["supervisory_mask_sha256"]).reshape(-1)[0]).lower()
+    if context_mask_sha != str(expected_mask_sha256).lower():
+        raise ValueError("calibration context uses another supervisory-control mask")
     state = torch.as_tensor(data["current_state"], dtype=torch.float32, device=device)
     rain = torch.as_tensor(data["rainfall_scenarios"], dtype=torch.float32, device=device)
     active = torch.as_tensor(data["active_target"], dtype=torch.float32, device=device)
-    candidate_target = torch.as_tensor(data["candidate_target"], dtype=torch.float32, device=device)
+    target = torch.as_tensor(data["candidate_target"], dtype=torch.float32, device=device)
     flow = torch.as_tensor(data["previous_actuator_flow"], dtype=torch.float32, device=device)
     if rain.ndim != 5 or int(rain.shape[0]) != 1 or int(rain.shape[1]) < 2:
         raise ValueError("calibration rainfall must be [1,scenario,H,node,feature]")
@@ -52,8 +80,14 @@ def _score(model, normalization, graph, context_path: Path, device: torch.device
     state = state.expand(scenarios, -1, -1)
     rain = rain.reshape(scenarios, horizon, nodes, features)
     flow = flow.expand(scenarios, -1)
-    reference = active.reshape(1, 1, 109).expand(scenarios, horizon, 109)
-    candidate = candidate_target.reshape(1, 1, 109).expand(scenarios, horizon, 109)
+    active = active.expand(scenarios, -1)
+    target = target.expand(scenarios, -1)
+    reference, candidate = encode_policy_return_action_token(
+        active,
+        target,
+        horizon_steps=int(horizon),
+        first_action_steps=2,
+    )
     with torch.no_grad():
         output = model(
             current_state=state,
@@ -89,45 +123,80 @@ def main() -> None:
         expected_base_step2_sha256=sha256_file(args.base_step2),
     )
     parent_sha = str(checkpoint.get("continuation_policy_sha256", "")).lower()
+    mask_sha = str(checkpoint.get("supervisory_mask_sha256", "")).lower()
+    if len(mask_sha) != 64:
+        raise ValueError("policy-return checkpoint lacks frozen supervisory-control mask lineage")
+    if int(checkpoint.get("supervisory_control_dimension", -1)) != 82:
+        raise ValueError("policy-return checkpoint was not trained on the frozen 82-control subspace")
+    if int(checkpoint.get("model_action_channel_count", -1)) != 109:
+        raise ValueError("policy-return checkpoint lost the 109-channel Step2 representation")
+
     rows = []
     groups = set()
-    for line_number, raw in enumerate(Path(args.records_jsonl).read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, raw in enumerate(
+        Path(args.records_jsonl).read_text(encoding="utf-8").splitlines(), 1
+    ):
         if not raw.strip():
             continue
         row = json.loads(raw)
         if not isinstance(row, dict):
             raise ValueError(f"calibration record {line_number} is not an object")
         if str(row.get("data_role", "")) != "policy_return_calibration":
-            raise ValueError("critic scorer received a non-calibration policy-return record")
-        probe = dict(row)
-        probe["predicted_policy_return_delta_tfv_m3"] = 0.0
-        validate_policy_return_record(probe)
+            raise ValueError("critic scorer received a non-calibration record")
+        validate_policy_return_learning_record(row)
         if str(row["continuation_policy_sha256"]).lower() != parent_sha:
             raise ValueError("calibration record continuation policy differs from critic training")
+        if str(row.get("supervisory_mask_sha256", "")).lower() != mask_sha:
+            raise ValueError("calibration record supervisory mask differs from critic training")
+        if int(row.get("supervisory_control_dimension", -1)) != 82:
+            raise ValueError("calibration record has the wrong supervisory-control dimension")
+        if row.get("passive_setting_channels_unchanged") is not True:
+            raise ValueError("calibration record changed passive setting channels")
         context = Path(str(row.get("context_npz", "")))
-        if not context.is_file() or sha256_file(context).lower() != str(row.get("context_npz_sha256", "")).lower():
+        if not context.is_file() or sha256_file(context).lower() != str(
+            row.get("context_npz_sha256", "")
+        ).lower():
             raise ValueError(f"calibration context missing/SHA mismatch: {context}")
-        prediction = _score(model, normalization, graph, context, device)
+        prediction = _score(
+            model,
+            normalization,
+            graph,
+            context,
+            device,
+            expected_mask_sha256=mask_sha,
+        )
         scored = dict(row)
         scored["predicted_policy_return_delta_tfv_m3"] = prediction
         scored["policy_return_checkpoint_sha256"] = sha256_file(args.policy_return_checkpoint)
-        validate_policy_return_record(scored)
+        validate_policy_return_learning_record(scored)
         rows.append(scored)
         groups.add(str(scored["rainfall_group"]))
     if not rows:
         raise ValueError("no policy-return calibration records were scored")
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+    out.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+        encoding="utf-8",
+    )
     summary = {
         "records": len(rows),
         "rainfall_group_count": len(groups),
         "rainfall_groups": sorted(groups),
+        "action_encoding_contract": DIRECT_TFV_POLICY_RETURN_ACTION_ENCODING,
         "policy_return_checkpoint_sha256": sha256_file(args.policy_return_checkpoint),
         "continuation_policy_sha256": parent_sha,
+        "supervisory_control_dimension": 82,
+        "model_action_channel_count": 109,
+        "supervisory_mask_sha256": mask_sha,
+        "passive_setting_channels_unchanged": True,
+        "authoritative_truth_firewall_verified": True,
+        "development_diagnostic_rows_allowed": False,
         "scored_records_sha256": sha256_file(out),
     }
-    out.with_suffix(".json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    out.with_suffix(".json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 
