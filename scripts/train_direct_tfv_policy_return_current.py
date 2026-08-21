@@ -11,6 +11,11 @@ set {HOLD=0 plus generated candidates}: pointwise return regression is supplemen
 within-query pairwise ranking and an explicit HOLD-aware listwise loss. Checkpoint selection is also
 HOLD-aware and baseline-preserving: epoch 0 (the frozen Step2 initialization) remains eligible, so
 fine-tuning can never be selected merely because at least one training epoch was run.
+
+Checkpoint selection explicitly balances the two asymmetric deployment errors. A trivial all-HOLD
+critic is not allowed to win solely by driving false-beneficial actions to zero while rejecting every
+truly beneficial query. Selection first minimizes the worse of false-beneficial and false-reject
+fractions, then their balanced mean, before regret/ranking/accuracy and scalar MAE.
 """
 from __future__ import annotations
 
@@ -47,9 +52,10 @@ POLICY_RETURN_SIGN_WEIGHT = 0.35
 POLICY_RETURN_PAIRWISE_RANK_WEIGHT = 0.45
 POLICY_RETURN_HOLD_LISTWISE_WEIGHT = 0.35
 POLICY_RETURN_SELECTION_RULE = (
-    "LEXICOGRAPHIC_SELECTED_FALSE_BENEFICIAL_THEN_FALSE_REJECT_THEN_PAIRWISE_RANK_"
-    "THEN_CANDIDATE_TOP1_THEN_SELECTED_REGRET_THEN_HOLD_AWARE_DECISION_ACCURACY_"
-    "THEN_EVENT_BALANCED_SIGN_THEN_MAE_WITH_EPOCH0_BASELINE_ELIGIBLE"
+    "LEXICOGRAPHIC_SELECTED_WORST_SIDE_ERROR_THEN_BALANCED_ERROR_THEN_SELECTED_REGRET_"
+    "THEN_HOLD_AWARE_DECISION_ACCURACY_THEN_PAIRWISE_RANK_THEN_CANDIDATE_TOP1_"
+    "THEN_EVENT_BALANCED_SIGN_THEN_FALSE_BENEFICIAL_THEN_FALSE_REJECT_THEN_MAE_"
+    "WITH_EPOCH0_BASELINE_ELIGIBLE_AND_NO_ALL_HOLD_REWARD"
 )
 
 
@@ -241,9 +247,6 @@ def _query_loss(
         if bool(mask.any()):
             ranking = F.softplus(-(pi[mask] / scale) * torch.sign(ti[mask])).mean()
 
-    # The deployed decision is argmin over HOLD=0 plus candidates. Treat that exact action set as a
-    # listwise classification problem so all-harmful queries teach HOLD and mixed/beneficial queries
-    # teach the truly best candidate. This complements, rather than replaces, calibrated regression.
     hold_prediction = torch.cat((prediction.new_zeros(1), prediction), dim=0)
     hold_truth = torch.cat((truth.new_zeros(1), truth), dim=0)
     oracle_index = torch.argmin(hold_truth).reshape(1)
@@ -330,8 +333,6 @@ def _same_query_statistics(
             oracle_hold += int(bool(decision["oracle_hold"]))
             regrets.append(float(decision["regret_m3"]))
 
-            # Candidate-vs-candidate ranking is defined only for genuinely multi-candidate sets.
-            # HOLD-vs-candidate decisions above are meaningful even when support/dedup leaves one row.
             if idx.size < 2:
                 continue
             multi += 1
@@ -347,6 +348,10 @@ def _same_query_statistics(
                         np.sign(pred[left] - pred[right])
                         == np.sign(truth[left] - truth[right])
                     )
+    false_beneficial_fraction = (
+        float(false_beneficial / decision_queries) if decision_queries else 0.0
+    )
+    false_reject_fraction = float(false_reject / decision_queries) if decision_queries else 0.0
     return {
         "within_query_pairwise_rank_accuracy": float(correct / comparisons) if comparisons else 1.0,
         "within_query_pairwise_comparison_count": float(comparisons),
@@ -358,12 +363,13 @@ def _same_query_statistics(
             float(decision_correct / decision_queries) if decision_queries else 1.0
         ),
         "selected_action_mean_regret_m3": float(np.mean(regrets)) if regrets else 0.0,
-        "selected_action_false_beneficial_fraction": (
-            float(false_beneficial / decision_queries) if decision_queries else 0.0
+        "selected_action_false_beneficial_fraction": false_beneficial_fraction,
+        "selected_action_false_reject_fraction": false_reject_fraction,
+        "selected_action_worst_side_error_fraction": max(
+            false_beneficial_fraction, false_reject_fraction
         ),
-        "selected_action_false_reject_fraction": (
-            float(false_reject / decision_queries) if decision_queries else 0.0
-        ),
+        "selected_action_balanced_error_fraction": 0.5
+        * (false_beneficial_fraction + false_reject_fraction),
         "predicted_hold_fraction": float(predicted_hold / decision_queries) if decision_queries else 0.0,
         "oracle_hold_optimal_fraction": float(oracle_hold / decision_queries) if decision_queries else 0.0,
     }
@@ -444,17 +450,33 @@ def _evaluate(
 
 
 def _validation_selection_key(metrics: dict[str, float]) -> tuple[float, ...]:
-    """Precommitted validation priority aligned with the deployed HOLD-aware RTC decision."""
+    """Choose a useful decision rule instead of rewarding trivial all-HOLD collapse."""
+    false_beneficial = float(metrics["selected_action_false_beneficial_fraction"])
+    false_reject = float(metrics["selected_action_false_reject_fraction"])
     return (
-        float(metrics["selected_action_false_beneficial_fraction"]),
-        float(metrics["selected_action_false_reject_fraction"]),
-        -float(metrics["within_query_pairwise_rank_accuracy"]),
-        -float(metrics["within_query_candidate_top1_accuracy"]),
+        max(false_beneficial, false_reject),
+        0.5 * (false_beneficial + false_reject),
         float(metrics["selected_action_mean_regret_m3"]),
         -float(metrics["hold_aware_decision_accuracy"]),
+        -float(metrics["within_query_pairwise_rank_accuracy"]),
+        -float(metrics["within_query_candidate_top1_accuracy"]),
         -float(metrics["event_balanced_sign_accuracy"]),
+        false_beneficial,
+        false_reject,
         float(metrics["event_balanced_mae_m3"]),
     )
+
+
+def _validation_decision_key(metrics: dict[str, float]) -> tuple[float, ...]:
+    """Selection key excluding scalar MAE for compute-stop/learnability decisions."""
+    return _validation_selection_key(metrics)[:-1]
+
+
+def _action_starvation_detected(metrics: dict[str, float], *, atol: float = 1.0e-12) -> bool:
+    """Detect all-HOLD prediction when validation truth contains at least one action opportunity."""
+    predicted_hold = float(metrics.get("predicted_hold_fraction", 0.0))
+    oracle_hold = float(metrics.get("oracle_hold_optimal_fraction", 1.0))
+    return bool(predicted_hold >= 1.0 - atol and oracle_hold < 1.0 - atol)
 
 
 def _configure_trainable_scope(
@@ -518,8 +540,6 @@ def main() -> None:
     optimizer = torch.optim.AdamW(trainable, lr=float(args.learning_rate), weight_decay=1e-5)
     scale = model.target_scale_m3.to(device).clamp_min(1.0)
 
-    # Epoch 0 is a real model-selection candidate. This prevents scarce-label fine-tuning from being
-    # accepted when every trained epoch worsens the decision-aligned validation priority.
     baseline_metrics = _evaluate(model, valid, graph=graph, normalization=normalization, device=device)
     best_state = copy.deepcopy(model.state_dict())
     best_key = _validation_selection_key(baseline_metrics)
@@ -580,6 +600,10 @@ def main() -> None:
         raise RuntimeError("restored policy-return checkpoint does not match selected validation key")
     train_query_counts = Counter(train["query_sets"].tolist())
     valid_query_counts = Counter(valid["query_sets"].tolist())
+    decision_improved = _validation_decision_key(final_metrics) < _validation_decision_key(
+        baseline_metrics
+    )
+    action_starvation = _action_starvation_detected(final_metrics)
     payload = {
         "contract": DIRECT_TFV_POLICY_RETURN_CHECKPOINT_CONTRACT,
         "development_only": True,
@@ -620,7 +644,15 @@ def main() -> None:
         "validation_metrics": final_metrics,
         "validation_selected_epoch": int(best_epoch),
         "validation_selection_key": [float(value) for value in best_key],
+        "validation_baseline_decision_key": [
+            float(value) for value in _validation_decision_key(baseline_metrics)
+        ],
+        "validation_decision_key": [
+            float(value) for value in _validation_decision_key(final_metrics)
+        ],
         "fine_tuning_improved_over_epoch0": bool(best_epoch > 0),
+        "fine_tuning_improved_decision_metrics_over_epoch0": bool(decision_improved),
+        "validation_action_starvation_detected": bool(action_starvation),
         "baseline_preserving_model_selection": True,
         "trainable_scope": args.trainable_scope,
         "ranking_unit": "SAME_AUTHORITATIVE_PREFIX_QUERY_SET_WITH_HOLD_ZERO",
