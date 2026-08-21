@@ -11,11 +11,9 @@ policy_return_validation groups already exist. It never calls SWMM, never reads 
 Development-probe, Validation/Final/Formal truth outside those assigned learning roles, and never
 produces a runtime-eligible checkpoint.
 
-Interpretation:
-- if decision-aligned fine-tuning beats epoch 0 on the frozen 12-group model-selection validation,
-  the expensive bulk has demonstrated learnability and may continue;
-- if it does not, stop new authoritative label generation and diagnose the critic/estimand/data
-  alignment before spending the remaining SWMM budget.
+The gate is intentionally decision-material. A tiny scalar-MAE improvement is not enough to justify
+more authoritative SWMM labels if sign/rank/HOLD decisions did not improve. It also rejects the
+trivial all-HOLD collapse whenever validation truth contains at least one beneficial action.
 """
 from __future__ import annotations
 
@@ -30,7 +28,7 @@ from typing import Iterator
 from rtc.direct_tfv_policy_return_portfolio_admission import validate_policy_return_learning_record
 
 
-EARLY_GATE_CONTRACT = "PROJECT7_POLICY_RETURN_EARLY_LEARNABILITY_GATE_V1_NO_SWMM"
+EARLY_GATE_CONTRACT = "PROJECT7_POLICY_RETURN_EARLY_LEARNABILITY_GATE_V2_DECISION_MATERIAL_NO_SWMM"
 PILOT_MIN_TRAIN_GROUPS = 12
 FROZEN_VALIDATION_GROUPS = 12
 FULL_TRAIN_GROUPS = 48
@@ -68,6 +66,15 @@ def _role_groups(path: Path, role: str) -> set[str]:
             raise ValueError(f"{path}:{line_number}: expected role {role}")
         groups.add(str(row["rainfall_group"]))
     return groups
+
+
+def _decision_material_gate(report: dict) -> tuple[bool, bool, bool]:
+    """Return (supported, decision_improved, action_starvation)."""
+    decision_improved = bool(
+        report.get("fine_tuning_improved_decision_metrics_over_epoch0", False)
+    )
+    action_starvation = bool(report.get("validation_action_starvation_detected", False))
+    return bool(decision_improved and not action_starvation), decision_improved, action_starvation
 
 
 def main() -> None:
@@ -121,7 +128,6 @@ def main() -> None:
         "policy_return_pilot_trainer",
     )
 
-    # Pilot-only relaxation. The normal compiler/trainer/runtime constants are not modified on disk.
     compiler._MIN_GROUPS["policy_return_train"] = PILOT_MIN_TRAIN_GROUPS
     trainer.DIRECT_TFV_POLICY_RETURN_MIN_TRAIN_GROUPS = PILOT_MIN_TRAIN_GROUPS
 
@@ -182,11 +188,11 @@ def main() -> None:
 
     report_path = pilot_checkpoint.with_suffix(".json")
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    improved = bool(report.get("fine_tuning_improved_over_epoch0", False))
+    supported, decision_improved, action_starvation = _decision_material_gate(report)
     verdict = (
-        "EARLY_POLICY_RETURN_LEARNABILITY_SUPPORTED_CONTINUE_FROZEN_BULK"
-        if improved
-        else "EARLY_POLICY_RETURN_LEARNABILITY_NOT_SUPPORTED_STOP_NEW_SWMM_LABELS"
+        "EARLY_POLICY_RETURN_DECISION_LEARNABILITY_SUPPORTED_CONTINUE_FROZEN_BULK"
+        if supported
+        else "EARLY_POLICY_RETURN_DECISION_LEARNABILITY_NOT_SUPPORTED_STOP_NEW_SWMM_LABELS"
     )
     summary = {
         "contract": EARLY_GATE_CONTRACT,
@@ -198,15 +204,19 @@ def main() -> None:
         "full_train_group_requirement_unchanged": FULL_TRAIN_GROUPS,
         "full_calibration_group_requirement_unchanged": 24,
         "validation_selected_epoch": report.get("validation_selected_epoch"),
-        "fine_tuning_improved_over_epoch0": improved,
+        "fine_tuning_improved_over_epoch0": bool(
+            report.get("fine_tuning_improved_over_epoch0", False)
+        ),
+        "fine_tuning_improved_decision_metrics_over_epoch0": decision_improved,
+        "validation_action_starvation_detected": action_starvation,
         "validation_baseline_metrics": report.get("validation_baseline_metrics", {}),
         "validation_metrics": report.get("validation_metrics", {}),
         "selection_rule": report.get("selection_rule"),
         "verdict": verdict,
         "next_action": (
             "CONTINUE_ONLY_MISSING_FROZEN_TRAIN_GROUPS_THEN_CALIBRATION"
-            if improved
-            else "STOP_BULK; DIAGNOSE_EXACT_POLICY_RETURN_CRITIC_GENERALIZATION; DO_NOT_RETRAIN_STEP2_BY_DEFAULT"
+            if supported
+            else "STOP_BULK; DIAGNOSE_EXACT_POLICY_RETURN_DECISION_GENERALIZATION; DO_NOT_RETRAIN_STEP2_BY_DEFAULT"
         ),
         "ready_for_pi1_development": False,
         "ready_for_policy_lock": False,
