@@ -44,6 +44,7 @@
     "scripts/run_policy_direct_tfv_query_margin_development.py",
     "scripts/build_step3_development_bank_current.py",
     "scripts/train_step3_query_margin_v2_current.py",
+    "scripts/train_step3_query_margin_v17_current.py",
     "scripts/audit_direct_tfv_policy_return_mechanism_panel_current.py",
     "scripts/add_pfv_to_direct_tfv_comparison_current.py",
     "scripts/audit_direct_tfv_closed_loop_current.py",
@@ -75,6 +76,7 @@
     "src/rtc/direct_tfv_policy_return_portfolio_admission.py",
     "src/rtc/direct_tfv_policy_return_query_margin.py",
     "src/rtc/direct_tfv_policy_return_query_margin_v2.py",
+    "src/rtc/direct_tfv_policy_return_query_margin_v17.py",
     "src/rtc/direct_tfv_runtime_factory.py",
     "src/rtc/direct_tfv_base_probe_runtime_factory.py",
     "src/rtc/direct_tfv_policy_return_runtime_factory.py",
@@ -132,6 +134,7 @@
     "tests/test_direct_tfv_policy_return_hold_aware_metrics.py",
     "tests/test_policy_return_query_margin_current.py",
     "tests/test_step3_accuracy_first_v15.py",
+    "tests/test_step3_rank_reuse_v17.py",
     "tests/test_native_supervisory_control.py",
     "tests/test_practical_rtc_assets.py",
     "tests/test_practical_rtc_v14_contract.py",
@@ -142,6 +145,6 @@
     "tests/test_facility_tfv_influence.py",
     "tests/test_facility_tfv_influence_cli.py"
   ],
-  "legacy_policy": "Historical V8-V13 scalar-decision files and the old pair-runner path are evidence/ablation only once the query-conditioned V14 critic passes fresh Validation and matched calibration. Current Practical execution keeps the native supervisory mask, masked q95 support and shared-HOLD multi-candidate query runner; no current path may silently route back to L-BFGS-B.",
+  "legacy_policy": "Historical V8-V13 scalar-decision files and the old pair-runner path are evidence/ablation only once the query-conditioned critic passes development validation and matched calibration. Current Practical execution keeps the native supervisory mask, masked q95 support and shared-HOLD multi-candidate query runner; no current path may silently route back to L-BFGS-B.",
   "non_gate_historical_debt_policy": "Do not mass-format archival code while changing the maintained Practical execution surface."
 }
