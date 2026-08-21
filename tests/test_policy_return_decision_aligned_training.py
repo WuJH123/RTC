@@ -29,41 +29,62 @@ def _metrics(**updates: float) -> dict[str, float]:
         "hold_aware_decision_accuracy": 0.65,
         "event_balanced_sign_accuracy": 0.75,
         "event_balanced_mae_m3": 500.0,
+        "predicted_hold_fraction": 0.25,
+        "oracle_hold_optimal_fraction": 0.25,
     }
     base.update(updates)
     return base
 
 
-def test_selection_prioritizes_false_beneficial_before_every_other_metric() -> None:
+def test_selection_rejects_trivial_all_hold_collapse() -> None:
     module = _module()
-    safer = _metrics(
+    all_hold = _metrics(
         selected_action_false_beneficial_fraction=0.0,
-        selected_action_false_reject_fraction=0.9,
-        within_query_pairwise_rank_accuracy=0.1,
-        event_balanced_mae_m3=5000.0,
-    )
-    riskier = _metrics(
-        selected_action_false_beneficial_fraction=0.1,
-        selected_action_false_reject_fraction=0.0,
-        within_query_pairwise_rank_accuracy=1.0,
+        selected_action_false_reject_fraction=1.0,
+        selected_action_mean_regret_m3=5000.0,
+        hold_aware_decision_accuracy=0.0,
+        predicted_hold_fraction=1.0,
+        oracle_hold_optimal_fraction=0.2,
         event_balanced_mae_m3=1.0,
     )
-    assert module._validation_selection_key(safer) < module._validation_selection_key(riskier)
+    imperfect_but_noncollapsed = _metrics(
+        selected_action_false_beneficial_fraction=0.5,
+        selected_action_false_reject_fraction=0.0,
+        selected_action_mean_regret_m3=1000.0,
+        hold_aware_decision_accuracy=0.5,
+        predicted_hold_fraction=0.2,
+        oracle_hold_optimal_fraction=0.2,
+        event_balanced_mae_m3=5000.0,
+    )
+    assert (
+        module._validation_selection_key(imperfect_but_noncollapsed)
+        < module._validation_selection_key(all_hold)
+    )
 
 
-def test_selection_prioritizes_false_reject_before_rank_or_mae() -> None:
+def test_selection_balances_false_beneficial_and_false_reject_before_mae() -> None:
     module = _module()
-    fewer_rejects = _metrics(
-        selected_action_false_reject_fraction=0.0,
-        within_query_pairwise_rank_accuracy=0.1,
+    balanced = _metrics(
+        selected_action_false_beneficial_fraction=0.20,
+        selected_action_false_reject_fraction=0.20,
         event_balanced_mae_m3=5000.0,
     )
-    more_rejects = _metrics(
-        selected_action_false_reject_fraction=0.1,
-        within_query_pairwise_rank_accuracy=1.0,
+    one_sided = _metrics(
+        selected_action_false_beneficial_fraction=0.0,
+        selected_action_false_reject_fraction=0.60,
         event_balanced_mae_m3=1.0,
     )
-    assert module._validation_selection_key(fewer_rejects) < module._validation_selection_key(more_rejects)
+    assert module._validation_selection_key(balanced) < module._validation_selection_key(one_sided)
+
+
+def test_action_starvation_requires_oracle_action_opportunity() -> None:
+    module = _module()
+    assert module._action_starvation_detected(
+        _metrics(predicted_hold_fraction=1.0, oracle_hold_optimal_fraction=0.25)
+    ) is True
+    assert module._action_starvation_detected(
+        _metrics(predicted_hold_fraction=1.0, oracle_hold_optimal_fraction=1.0)
+    ) is False
 
 
 def test_query_loss_prefers_correct_hold_aware_action_ordering() -> None:
@@ -93,8 +114,9 @@ def test_trainer_keeps_epoch_zero_and_single_candidate_hold_decisions_in_contrac
     assert "validation_baseline_metrics" in text
     assert "validation_selected_epoch" in text
     assert "baseline_preserving_model_selection" in text
-    assert "fine_tuning_improved_over_epoch0" in text
+    assert "fine_tuning_improved_decision_metrics_over_epoch0" in text
+    assert "validation_action_starvation_detected" in text
     assert "decision_query_set_count" in text
     assert "single_candidate_queries_included_in_hold_aware_selection_metrics" in text
     assert "CROSS_ENTROPY_ARGMIN_OVER_HOLD_ZERO_PLUS_CANDIDATES" in text
-    assert "selected_action_false_reject_fraction" in text
+    assert "selected_action_worst_side_error_fraction" in text
