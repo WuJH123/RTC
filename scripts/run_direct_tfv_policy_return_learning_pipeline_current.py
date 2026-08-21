@@ -9,7 +9,8 @@ firewall. The pipeline then performs, in one fail-closed command:
 3. decision-aligned critic fine-tuning with epoch-0 baseline preservation;
 4. frozen-critic scoring of untouched calibration records;
 5. matched one-sided split-conformal admission;
-6. an immutable summary for the subsequent pi1 Development run.
+6. a validation deployability gate that rejects trivial all-HOLD/action-starvation solutions;
+7. an immutable summary for the subsequent pi1 Development run.
 
 The script never calls SWMM, never reads Development/Final truth, never weakens q95 support or
 conformal coverage, and never promotes Policy Lock.
@@ -39,7 +40,7 @@ from rtc.direct_tfv_policy_return_portfolio_admission import (
 )
 
 
-PIPELINE_CONTRACT = "PROJECT7_DIRECT_TFV_POLICY_RETURN_LEARNING_PIPELINE_V1_DECISION_ALIGNED"
+PIPELINE_CONTRACT = "PROJECT7_DIRECT_TFV_POLICY_RETURN_LEARNING_PIPELINE_V2_DECISION_DEPLOYABLE"
 ROLE_MINIMUMS = {
     "policy_return_train": DIRECT_TFV_POLICY_RETURN_MIN_TRAIN_GROUPS,
     "policy_return_validation": DIRECT_TFV_POLICY_RETURN_MIN_VALIDATION_GROUPS,
@@ -116,10 +117,35 @@ def _audit_roles(
         "supervisory_mask_sha256": next(iter(masks)),
         "role_group_counts": {role: len(values) for role, values in groups.items()},
         "role_record_counts": {role: len(rows) for role, rows in by_role.items()},
-        "candidate_source_counts": dict(sorted(Counter(str(row["candidate_source"]) for row in all_rows).items())),
+        "candidate_source_counts": dict(
+            sorted(Counter(str(row["candidate_source"]) for row in all_rows).items())
+        ),
         "role_disjoint": True,
         "authoritative_truth_firewall_verified": True,
         "development_diagnostic_rows_allowed": False,
+    }
+
+
+def _validation_deployability(checkpoint_report: dict[str, Any]) -> dict[str, Any]:
+    metrics = dict(checkpoint_report.get("validation_metrics", {}))
+    predicted_hold = float(metrics.get("predicted_hold_fraction", 1.0))
+    oracle_hold = float(metrics.get("oracle_hold_optimal_fraction", 1.0))
+    decision_accuracy = float(metrics.get("hold_aware_decision_accuracy", 0.0))
+    action_starvation = bool(
+        checkpoint_report.get("validation_action_starvation_detected", False)
+        or (predicted_hold >= 1.0 - 1.0e-12 and oracle_hold < 1.0 - 1.0e-12)
+    )
+    decision_improved = bool(
+        checkpoint_report.get("fine_tuning_improved_decision_metrics_over_epoch0", False)
+    )
+    passed = bool(decision_improved and not action_starvation and decision_accuracy > 0.0)
+    return {
+        "passed": passed,
+        "fine_tuning_improved_decision_metrics_over_epoch0": decision_improved,
+        "validation_action_starvation_detected": action_starvation,
+        "validation_predicted_hold_fraction": predicted_hold,
+        "validation_oracle_hold_optimal_fraction": oracle_hold,
+        "validation_hold_aware_decision_accuracy": decision_accuracy,
     }
 
 
@@ -277,6 +303,7 @@ def main() -> None:
     ).lower():
         raise RuntimeError("learning pipeline changed supervisory-control lineage")
 
+    deployability = _validation_deployability(checkpoint_report)
     summary = {
         "contract": PIPELINE_CONTRACT,
         "complete": True,
@@ -296,6 +323,9 @@ def main() -> None:
         "policy_return_admission_sha256": sha256_file(admission),
         "validation_selected_epoch": checkpoint_report.get("validation_selected_epoch"),
         "fine_tuning_improved_over_epoch0": checkpoint_report.get("fine_tuning_improved_over_epoch0"),
+        "fine_tuning_improved_decision_metrics_over_epoch0": checkpoint_report.get(
+            "fine_tuning_improved_decision_metrics_over_epoch0"
+        ),
         "validation_baseline_metrics": checkpoint_report.get("validation_baseline_metrics", {}),
         "validation_metrics": checkpoint_report.get("validation_metrics", {}),
         "selection_rule": checkpoint_report.get("selection_rule"),
@@ -303,17 +333,24 @@ def main() -> None:
         "normalized_residual_conformal_upper": admission_payload.get(
             "normalized_residual_conformal_upper"
         ),
-        "ready_for_pi1_development": True,
+        "validation_deployability_gate": deployability,
+        "ready_for_pi1_development": bool(deployability["passed"]),
         "ready_for_policy_lock": False,
         "next_stage": (
             "RUN_ROLE_DISJOINT_PI1_DEVELOPMENT_AND_OPERATIONAL_COMPARATORS; "
             "IF_PI1_SHIFTS_STATE_ACTION_DISTRIBUTION, COLLECT_ROLE_DISJOINT_Q_PI1_BEFORE_POLICY_LOCK"
+            if deployability["passed"]
+            else "STOP_BEFORE_PI1; CRITIC_DECISION_GENERALIZATION_OR_ACTION_STARVATION_REMAINS"
         ),
     }
     summary_path = out / "POLICY_RETURN_LEARNING_PIPELINE.json"
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     summary["pipeline_summary_sha256"] = sha256_file(summary_path)
     print(json.dumps(summary, indent=2, sort_keys=True))
+    if not deployability["passed"]:
+        raise RuntimeError(
+            "policy-return critic failed validation deployability gate; do not start pi1 Development"
+        )
 
 
 if __name__ == "__main__":
