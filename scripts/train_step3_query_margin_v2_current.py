@@ -3,8 +3,8 @@
 This is intentionally a zero-SWMM DEVELOPMENT workflow. The train/validation/calibration NPZ files
 must come from ``build_step3_development_bank_current.py``. The pretrained Step2 network is frozen:
 Step3 learns only the query adapter, including its candidate-rank adjustment and selection-consistent
-HOLD margin. Validation selects the adapter epoch using decision metrics rather than MAE. The final
-10% calibration split is evaluated only after the selected checkpoint passes the validation gate.
+HOLD margin. Validation selects the adapter epoch using decision metrics rather than MAE. Before that
+validation gate passes, only non-truth metadata are read from the final 10% calibration split.
 """
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ from build_step3_development_bank_current import STEP3_DEVELOPMENT_BANK_CONTRACT
 
 
 STEP3_V15_TRAINING_CONTRACT = (
-    "PROJECT7_STEP3_ACCURACY_FIRST_LATENT_TRAINING_V2_SELECTION_CONSISTENT_FROZEN_STEP2"
+    "PROJECT7_STEP3_ACCURACY_FIRST_LATENT_TRAINING_V3_SELECTION_CONSISTENT_FROZEN_STEP2_SEALED_CAL"
 )
 MARGIN_EPOCHS = 60
 MARGIN_LR = 3.0e-4
@@ -68,12 +68,22 @@ DEVELOPMENT_ACCEPTANCE = {
 }
 
 
-def _assert_development_dataset(path: str | Path, expected_split: str) -> None:
-    data = np.load(path, allow_pickle=False)
-    if str(np.asarray(data["development_bank_contract"]).reshape(-1)[0]) != STEP3_DEVELOPMENT_BANK_CONTRACT:
-        raise ValueError("V15 requires the current 8:1:1 development bank")
-    if str(np.asarray(data["development_split"]).reshape(-1)[0]) != expected_split:
-        raise ValueError(f"V15 dataset is not the expected {expected_split} split")
+def _development_metadata(path: str | Path, expected_split: str) -> dict[str, Any]:
+    """Read lineage/split metadata without touching true policy-return labels."""
+    with np.load(path, allow_pickle=False) as data:
+        if str(np.asarray(data["development_bank_contract"]).reshape(-1)[0]) != STEP3_DEVELOPMENT_BANK_CONTRACT:
+            raise ValueError("V15 requires the current 8:1:1 development bank")
+        if str(np.asarray(data["development_split"]).reshape(-1)[0]) != expected_split:
+            raise ValueError(f"V15 dataset is not the expected {expected_split} split")
+        groups = {str(value) for value in np.asarray(data["rainfall_group"]).reshape(-1).tolist()}
+        continuation = str(np.asarray(data["continuation_policy_sha256"]).reshape(-1)[0]).lower()
+        mask_sha = str(np.asarray(data["supervisory_mask_sha256"]).reshape(-1)[0]).lower()
+    return {
+        "groups": groups,
+        "continuation_policy_sha256": continuation,
+        "supervisory_mask_sha256": mask_sha,
+        "sha256": sha256_file(path),
+    }
 
 
 def _model_state_sha256(model: torch.nn.Module) -> str:
@@ -129,8 +139,8 @@ def _adapter_loss(
     scale: float,
     hold_positive_weight: float,
 ) -> torch.Tensor:
-    # Critical alignment: the numeric margin authorizes the candidate actually selected by the rank
-    # branch, so it must be supervised against that candidate's exact return, not oracle min(truth).
+    # The numeric margin authorizes the candidate actually selected by the rank branch, so supervise
+    # it against that candidate's exact return rather than the oracle minimum from another candidate.
     selected_truth = _selected_truth(output, truth)
     hold_target = (selected_truth >= 0.0).to(dtype=truth.dtype)
     class_weight = 1.0 + hold_target * (float(hold_positive_weight) - 1.0)
@@ -371,28 +381,35 @@ def main() -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
-    for path, split in (
-        (args.train_dataset, "train"),
-        (args.validation_dataset, "validation"),
-        (args.calibration_dataset, "calibration"),
-    ):
-        _assert_development_dataset(path, split)
-    train = _load_dataset(args.train_dataset, role="policy_return_train")
-    validation = _load_dataset(args.validation_dataset, role="policy_return_validation")
-    calibration = _load_dataset(args.calibration_dataset, role="policy_return_calibration")
-    train_groups = set(train["groups"].tolist())
-    validation_groups = set(validation["groups"].tolist())
-    calibration_groups = set(calibration["groups"].tolist())
+
+    train_meta = _development_metadata(args.train_dataset, "train")
+    validation_meta = _development_metadata(args.validation_dataset, "validation")
+    calibration_meta = _development_metadata(args.calibration_dataset, "calibration")
+    train_groups = set(train_meta["groups"])
+    validation_groups = set(validation_meta["groups"])
+    calibration_groups = set(calibration_meta["groups"])
     if train_groups & validation_groups or train_groups & calibration_groups or validation_groups & calibration_groups:
         raise ValueError("V15 8:1:1 rainfall-group splits overlap")
-    if not (train["continuation_policy_sha256"] == validation["continuation_policy_sha256"] == calibration["continuation_policy_sha256"]):
+    if not (
+        train_meta["continuation_policy_sha256"]
+        == validation_meta["continuation_policy_sha256"]
+        == calibration_meta["continuation_policy_sha256"]
+    ):
         raise ValueError("V15 development bank mixes continuation lineage")
-    if not (train["supervisory_mask_sha256"] == validation["supervisory_mask_sha256"] == calibration["supervisory_mask_sha256"]):
+    if not (
+        train_meta["supervisory_mask_sha256"]
+        == validation_meta["supervisory_mask_sha256"]
+        == calibration_meta["supervisory_mask_sha256"]
+    ):
         raise ValueError("V15 development bank mixes supervisory-mask lineage")
+
+    # Load truth-bearing arrays only for Train/Validation before model selection.
+    train = _load_dataset(args.train_dataset, role="policy_return_train")
+    validation = _load_dataset(args.validation_dataset, role="policy_return_validation")
 
     graph = _load_graph(args.graph)
     control, mask = load_native_supervisory_control(args.supervisory_control, actuator_ids=graph.actuator_ids)
-    if str(control["supervisory_mask_sha256"]).lower() != train["supervisory_mask_sha256"]:
+    if str(control["supervisory_mask_sha256"]).lower() != train_meta["supervisory_mask_sha256"]:
         raise ValueError("V15 supervisory-control artifact differs from truth lineage")
     rank_model, normalization, _base = load_direct_tfv_runtime_checkpoint(args.base_step2, graph=graph, device=device)
     freeze_step2_for_step3(rank_model)
@@ -487,7 +504,10 @@ def main() -> None:
     )
     validation_pass = _accepted(validation_metrics)
     calibration_metrics: dict[str, Any] | None = None
+    calibration_truth_loaded = False
     if validation_pass:
+        calibration = _load_dataset(args.calibration_dataset, role="policy_return_calibration")
+        calibration_truth_loaded = True
         calibration_metrics = _evaluate(
             rank_model, adapter, calibration,
             graph=graph, normalization=normalization, mask=mask, device=device, scale=scale,
@@ -509,12 +529,12 @@ def main() -> None:
         "step2_retrained": False,
         "graph_sha256": sha256_file(args.graph),
         "supervisory_control_sha256": sha256_file(args.supervisory_control),
-        "supervisory_mask_sha256": train["supervisory_mask_sha256"],
+        "supervisory_mask_sha256": train_meta["supervisory_mask_sha256"],
         "supervisory_control_dimension": 82,
         "model_action_channel_count": 109,
-        "train_dataset_sha256": train["sha256"],
-        "validation_dataset_sha256": validation["sha256"],
-        "calibration_dataset_sha256": calibration["sha256"],
+        "train_dataset_sha256": train_meta["sha256"],
+        "validation_dataset_sha256": validation_meta["sha256"],
+        "calibration_dataset_sha256": calibration_meta["sha256"],
         "train_group_count": len(train_groups),
         "validation_group_count": len(validation_groups),
         "calibration_group_count": len(calibration_groups),
@@ -527,7 +547,8 @@ def main() -> None:
         "margin_epochs_max": MARGIN_EPOCHS,
         "margin_training_history": history,
         "validation_metrics": validation_metrics,
-        "calibration_evaluated_only_after_validation_pass": True,
+        "calibration_truth_loaded_only_after_validation_pass": True,
+        "calibration_truth_loaded": calibration_truth_loaded,
         "calibration_raw_metrics": calibration_metrics,
         "development_acceptance": DEVELOPMENT_ACCEPTANCE,
         "development_validation_pass": validation_pass,
@@ -554,8 +575,8 @@ def main() -> None:
     print(json.dumps(report, indent=2, sort_keys=True))
     if not validation_pass:
         raise RuntimeError(
-            "V15 Step3 failed the 8:1:1 development validation gate; calibration remained unread "
-            "and no new truth may be generated"
+            "V15 Step3 failed the 8:1:1 development validation gate; calibration truth remained "
+            "sealed and no new truth may be generated"
         )
 
 
