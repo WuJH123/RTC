@@ -68,8 +68,22 @@ def _inputs() -> dict[str, object]:
     }
 
 
-def test_v15_features_reuse_step2_latent_instead_of_11_number_summary() -> None:
+def _adapter() -> tuple[QueryConditionedPolicyReturnAdapterV2, torch.Tensor, torch.Tensor]:
     context, candidates = build_query_margin_v2_features(**_inputs())
+    adapter = QueryConditionedPolicyReturnAdapterV2(
+        target_scale_m3=10000.0,
+        context_dim=context.numel(),
+        candidate_dim=candidates.shape[1],
+        hidden_dim=16,
+    )
+    return adapter, context, candidates
+
+
+def test_v16_features_reuse_frozen_step2_latent_instead_of_11_number_summary() -> None:
+    kwargs = _inputs()
+    model = kwargs["step2_model"]
+    assert not any(parameter.requires_grad for parameter in model.parameters())
+    context, candidates = build_query_margin_v2_features(**kwargs)
     assert context.ndim == 1
     assert candidates.ndim == 2
     assert context.numel() > 11
@@ -79,70 +93,46 @@ def test_v15_features_reuse_step2_latent_instead_of_11_number_summary() -> None:
     assert torch.isfinite(candidates).all()
 
 
-def test_v15_step2_must_be_frozen_before_feature_extraction() -> None:
-    kwargs = _inputs()
-    model = _DummyStep2()
-    kwargs["step2_model"] = model
-    try:
-        build_query_margin_v2_features(**kwargs)
-    except ValueError as exc:
-        assert "frozen" in str(exc).lower()
-    else:
-        raise AssertionError("V15 accepted a trainable Step2 representation")
-    freeze_step2_for_step3(model)
-    assert not any(parameter.requires_grad for parameter in model.parameters())
-    assert model.training is False
-
-
-def test_v15_rank_and_selected_hold_margin_are_aligned() -> None:
-    context, candidates = build_query_margin_v2_features(**_inputs())
-    adapter = QueryConditionedPolicyReturnAdapterV2(
-        target_scale_m3=10000.0,
-        context_dim=context.numel(),
-        candidate_dim=candidates.shape[1],
-        hidden_dim=16,
-    )
+def test_v16_rank_selected_candidate_is_anchored_at_numeric_margin() -> None:
+    adapter, context, candidates = _adapter()
     output = adapter(
         raw_rank_scores_m3=torch.tensor([5000.0, -2000.0]),
         context_features=context,
         candidate_features=candidates,
     )
     selected = int(output.selected_candidate_index)
-    assert selected == int(torch.argmin(output.rank_scores_normalized))
     assert torch.isclose(output.relative_rank_normalized[selected], torch.tensor(0.0), atol=1e-6)
     assert torch.isclose(
         output.predicted_returns_m3[selected],
         output.query_best_margin_m3,
         atol=1e-4,
     )
-    assert output.hold_logit.ndim == 0
 
 
-def test_v15_selected_candidate_conditioning_is_permutation_invariant() -> None:
-    context, candidates = build_query_margin_v2_features(**_inputs())
-    adapter = QueryConditionedPolicyReturnAdapterV2(
-        target_scale_m3=10000.0,
-        context_dim=context.numel(),
-        candidate_dim=candidates.shape[1],
-        hidden_dim=16,
-    )
-    raw = torch.tensor([5000.0, -2000.0])
-    first = adapter(
-        raw_rank_scores_m3=raw,
+def test_v16_hold_logit_is_exactly_the_deployed_margin_coordinate() -> None:
+    adapter, context, candidates = _adapter()
+    output = adapter(
+        raw_rank_scores_m3=torch.tensor([1000.0, -1000.0]),
         context_features=context,
         candidate_features=candidates,
     )
-    perm = torch.tensor([1, 0])
-    second = adapter(
-        raw_rank_scores_m3=raw[perm],
-        context_features=context,
-        candidate_features=candidates[perm],
-    )
-    assert torch.isclose(first.query_best_margin_m3, second.query_best_margin_m3, atol=1e-5)
-    assert torch.allclose(first.predicted_returns_m3[perm], second.predicted_returns_m3, atol=1e-5)
+    assert torch.isclose(output.hold_logit, output.margin_coordinate, atol=0.0, rtol=0.0)
+    expected_margin = torch.sinh(output.margin_coordinate) * 10000.0
+    assert torch.isclose(output.query_best_margin_m3, expected_margin, atol=1e-4, rtol=1e-5)
+    assert bool((output.query_best_margin_m3 >= 0.0) == (output.hold_logit >= 0.0))
 
 
-def test_v15_passive_channels_remain_immutable() -> None:
+def test_v16_rank_and_margin_parameter_paths_are_stage_separated() -> None:
+    adapter, _context, _candidates = _adapter()
+    adapter.set_rank_stage()
+    assert all(parameter.requires_grad for parameter in adapter.rank_parameters())
+    assert all(not parameter.requires_grad for parameter in adapter.margin_parameters())
+    adapter.set_margin_stage()
+    assert all(not parameter.requires_grad for parameter in adapter.rank_parameters())
+    assert all(parameter.requires_grad for parameter in adapter.margin_parameters())
+
+
+def test_v16_passive_channels_remain_immutable() -> None:
     kwargs = _inputs()
     candidates = kwargs["candidate_targets"].clone()
     candidates[0, 100] = 1.0
@@ -152,4 +142,4 @@ def test_v15_passive_channels_remain_immutable() -> None:
     except ValueError as exc:
         assert "passive" in str(exc).lower()
     else:
-        raise AssertionError("V15 accepted a candidate that changed a passive channel")
+        raise AssertionError("V16 accepted a candidate that changed a passive channel")

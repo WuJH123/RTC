@@ -1,25 +1,25 @@
 """Accuracy-first Step3 query-margin representation using frozen Step2 latent context.
 
-V14 separated candidate ranking from the query-level HOLD margin, but its margin target was the
-*oracle* best candidate even when the learned rank branch selected a different candidate. That
-creates a dangerous inconsistency: a negative oracle-best margin can authorize execution of a
-mis-ranked harmful candidate. V15 therefore keeps the useful rank/HOLD decomposition while making
-it selection-consistent:
+V14/V15 established that candidate ranking is learnable but the ACTION/HOLD margin can collapse to
+EXECUTE-ALL. V16 keeps the useful rank/HOLD decomposition while making the deployed numeric margin
+itself carry the HOLD/ACTION boundary:
 
-    selected_i   = argmin_i learned_rank_i
-    margin_q     = return of selected_i versus HOLD
-    return_hat_i = margin_q + relative_rank_i
+    selected_i      = argmin_i learned_rank_i
+    z_q             = shared signed margin coordinate
+    margin_q [m3]   = target_scale * sinh(z_q)
+    hold_logit      = z_q                         (same scalar, not an auxiliary independent head)
+    return_hat_i    = margin_q + target_scale * relative_rank_i
 
-The margin head is explicitly conditioned on the candidate embedding selected by the rank branch,
-in addition to permutation-invariant set summaries. The base Step2 network is frozen and reused only
-as a causal representation. ``hold_logit`` remains an auxiliary training signal and never directly
-controls ACTION/HOLD online.
+The asinh/sinh parameterization preserves the exact zero boundary and return sign while compressing
+large-magnitude TFV-return targets during training. Rank and margin use separate small encoders so
+margin fitting cannot perturb a rank branch that has already learned the candidate ordering. The base
+Step2 network remains frozen and is used only as a causal representation.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
 import numpy as np
 import torch
@@ -30,13 +30,13 @@ from .direct_tfv_policy_return_portfolio_admission import CURRENT_THREE_FAMILY_S
 
 
 DIRECT_TFV_QUERY_MARGIN_V2_CONTRACT = (
-    "PROJECT7_STEP3_QUERY_MARGIN_LATENT_CONTEXT_V3_SELECTION_CONSISTENT_THREE_FAMILY_82CONTROL_109REP"
+    "PROJECT7_STEP3_QUERY_MARGIN_LATENT_CONTEXT_V4_SHARED_BOUNDARY_THREE_FAMILY_82CONTROL_109REP"
 )
 DIRECT_TFV_QUERY_MARGIN_V2_FEATURE_CONTRACT = (
-    "FROZEN_STEP2_STATE_RAIN_CHANGED_FACILITY_LATENT_SELECTED_CANDIDATE_MARGIN_AUX_HOLD_V2"
+    "FROZEN_STEP2_STATE_RAIN_CHANGED_FACILITY_LATENT_SELECTED_CANDIDATE_SHARED_MARGIN_V3"
 )
 DIRECT_TFV_QUERY_MARGIN_V2_CHECKPOINT_CONTRACT = (
-    "PROJECT7_STEP3_QUERY_MARGIN_LATENT_CHECKPOINT_V3_SELECTION_CONSISTENT"
+    "PROJECT7_STEP3_QUERY_MARGIN_LATENT_CHECKPOINT_V4_SHARED_BOUNDARY"
 )
 QUERY_MARGIN_V2_HIDDEN_DIM = 64
 
@@ -46,6 +46,7 @@ class QueryMarginV2Output:
     predicted_returns_m3: torch.Tensor
     query_best_margin_m3: torch.Tensor
     hold_logit: torch.Tensor
+    margin_coordinate: torch.Tensor
     rank_scores_normalized: torch.Tensor
     relative_rank_normalized: torch.Tensor
     selected_candidate_index: torch.Tensor
@@ -96,10 +97,10 @@ def _legacy_candidate_features(
     target = candidate_targets
     mask = torch.as_tensor(supervisory_mask, dtype=torch.bool, device=target.device).reshape(-1)
     if tuple(mask.shape) != (109,) or int(mask.sum()) != 82:
-        raise ValueError("V15 query margin requires the frozen 82/109 supervisory mask")
+        raise ValueError("V16 query margin requires the frozen 82/109 supervisory mask")
     passive = ~mask
     if bool(torch.any(torch.abs(target[:, passive] - active_target[None, passive]) > 1.0e-7)):
-        raise ValueError("V15 candidate changed a passive model channel")
+        raise ValueError("V16 candidate changed a passive model channel")
     delta = target - active_target[None]
     active_delta = delta[:, mask]
     changed = torch.count_nonzero(torch.abs(active_delta) > 1.0e-7, dim=1).to(target.dtype)
@@ -111,7 +112,7 @@ def _legacy_candidate_features(
     allowed = tuple(CURRENT_THREE_FAMILY_SOURCES)
     for row, source in enumerate(candidate_sources):
         if str(source) not in allowed:
-            raise ValueError(f"V15 received non-current candidate family: {source}")
+            raise ValueError(f"V16 received non-current candidate family: {source}")
         family[row, allowed.index(str(source))] = 1.0
     return torch.cat(
         (
@@ -144,23 +145,23 @@ def build_query_margin_v2_features(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Build rich causal features without updating the Step2 representation."""
     if current_state.ndim != 2:
-        raise ValueError("V15 current_state must be [node,state_feature]")
+        raise ValueError("V16 current_state must be [node,state_feature]")
     if rainfall_scenarios.ndim != 4:
-        raise ValueError("V15 rainfall_scenarios must be [scenario,H,node,rain_feature]")
+        raise ValueError("V16 rainfall_scenarios must be [scenario,H,node,rain_feature]")
     if tuple(previous_actuator_flow.reshape(-1).shape) != (109,):
-        raise ValueError("V15 previous_actuator_flow must contain 109 channels")
+        raise ValueError("V16 previous_actuator_flow must contain 109 channels")
     if tuple(active_target.shape) != (109,):
-        raise ValueError("V15 active_target must be [109]")
+        raise ValueError("V16 active_target must be [109]")
     if candidate_targets.ndim != 2 or tuple(candidate_targets.shape[1:]) != (109,):
-        raise ValueError("V15 candidate targets must be [K,109]")
+        raise ValueError("V16 candidate targets must be [K,109]")
     if not 1 <= int(candidate_targets.shape[0]) <= 3:
-        raise ValueError("V15 requires 1--3 current portfolio candidates")
+        raise ValueError("V16 requires 1--3 current portfolio candidates")
     if len(candidate_sources) != int(candidate_targets.shape[0]):
-        raise ValueError("V15 candidate source count is not aligned")
+        raise ValueError("V16 candidate source count is not aligned")
     if not math.isfinite(float(target_scale_m3)) or float(target_scale_m3) <= 0.0:
-        raise ValueError("V15 target scale must be finite and positive")
+        raise ValueError("V16 target scale must be finite and positive")
     if any(parameter.requires_grad for parameter in step2_model.parameters()):
-        raise ValueError("V15 feature extraction requires a frozen Step2 model")
+        raise ValueError("V16 feature extraction requires a frozen Step2 model")
 
     device = current_state.device
     dtype = current_state.dtype
@@ -226,19 +227,26 @@ def build_query_margin_v2_features(
         delta_latent = candidate_latent - reference_latent
         changed = mask & (torch.abs(candidate - active_target) > 1.0e-7)
         if not bool(changed.any()):
-            raise ValueError("V15 candidate has no changed supervisory facility")
+            raise ValueError("V16 candidate has no changed supervisory facility")
         selected = delta_latent[:, changed, :]
         latent_mean = selected.mean(dim=(0, 1))
         latent_rms = torch.sqrt(torch.mean(torch.square(selected), dim=(0, 1)).clamp_min(0.0))
         latent_features.append(torch.cat((latent_mean, latent_rms), dim=0))
     candidate_features = torch.cat((legacy, torch.stack(latent_features)), dim=1)
     if not bool(torch.isfinite(query_context).all()) or not bool(torch.isfinite(candidate_features).all()):
-        raise RuntimeError("V15 latent features contain non-finite values")
+        raise RuntimeError("V16 latent features contain non-finite values")
     return query_context, candidate_features
 
 
+def _parameters(modules: Iterable[nn.Module]) -> list[nn.Parameter]:
+    values: list[nn.Parameter] = []
+    for module in modules:
+        values.extend(list(module.parameters()))
+    return values
+
+
 class QueryConditionedPolicyReturnAdapterV2(nn.Module):
-    """Permutation-invariant rank adapter with a selection-consistent numeric HOLD margin."""
+    """Two-stage rank-then-margin adapter with one shared numeric/decision boundary scalar."""
 
     def __init__(
         self,
@@ -250,23 +258,56 @@ class QueryConditionedPolicyReturnAdapterV2(nn.Module):
     ) -> None:
         super().__init__()
         if min(int(context_dim), int(candidate_dim), int(hidden_dim)) <= 0:
-            raise ValueError("V15 adapter dimensions must be positive")
+            raise ValueError("V16 adapter dimensions must be positive")
         self.context_dim = int(context_dim)
         self.candidate_dim = int(candidate_dim)
         self.register_buffer("target_scale_m3", torch.tensor(float(target_scale_m3), dtype=torch.float32))
         h = int(hidden_dim)
-        self.context_encoder = nn.Sequential(
+
+        # Ranking path. It is trained first, then frozen before margin fitting.
+        self.rank_context_encoder = nn.Sequential(
             nn.Linear(self.context_dim, h), nn.SiLU(), nn.LayerNorm(h), nn.Linear(h, h), nn.SiLU()
         )
-        self.candidate_encoder = nn.Sequential(
+        self.rank_candidate_encoder = nn.Sequential(
             nn.Linear(self.candidate_dim + 1, h), nn.SiLU(), nn.LayerNorm(h), nn.Linear(h, h), nn.SiLU()
         )
         self.rank_adjustment = nn.Sequential(nn.Linear(2 * h, h), nn.SiLU(), nn.Linear(h, 1))
+
+        # Margin path is deliberately independent so its gradients cannot destroy learned ranking.
+        self.margin_context_encoder = nn.Sequential(
+            nn.Linear(self.context_dim, h), nn.SiLU(), nn.LayerNorm(h), nn.Linear(h, h), nn.SiLU()
+        )
+        self.margin_candidate_encoder = nn.Sequential(
+            nn.Linear(self.candidate_dim + 1, h), nn.SiLU(), nn.LayerNorm(h), nn.Linear(h, h), nn.SiLU()
+        )
         joint_dim = 4 * h
-        self.margin_head = nn.Sequential(
+        self.margin_coordinate_head = nn.Sequential(
             nn.Linear(joint_dim, h), nn.SiLU(), nn.Linear(h, h // 2), nn.SiLU(), nn.Linear(h // 2, 1)
         )
-        self.hold_head = nn.Sequential(nn.Linear(joint_dim, h // 2), nn.SiLU(), nn.Linear(h // 2, 1))
+
+    def rank_parameters(self) -> list[nn.Parameter]:
+        return _parameters(
+            (self.rank_context_encoder, self.rank_candidate_encoder, self.rank_adjustment)
+        )
+
+    def margin_parameters(self) -> list[nn.Parameter]:
+        return _parameters(
+            (self.margin_context_encoder, self.margin_candidate_encoder, self.margin_coordinate_head)
+        )
+
+    def set_rank_stage(self) -> None:
+        """Train only the Step3 rank branch."""
+        for parameter in self.rank_parameters():
+            parameter.requires_grad_(True)
+        for parameter in self.margin_parameters():
+            parameter.requires_grad_(False)
+
+    def set_margin_stage(self) -> None:
+        """Freeze rank and train only the selected-candidate margin branch."""
+        for parameter in self.rank_parameters():
+            parameter.requires_grad_(False)
+        for parameter in self.margin_parameters():
+            parameter.requires_grad_(True)
 
     def forward(
         self,
@@ -277,32 +318,47 @@ class QueryConditionedPolicyReturnAdapterV2(nn.Module):
     ) -> QueryMarginV2Output:
         raw = raw_rank_scores_m3.reshape(-1)
         if tuple(context_features.shape) != (self.context_dim,):
-            raise ValueError("V15 context feature width drifted")
+            raise ValueError("V16 context feature width drifted")
         if candidate_features.ndim != 2 or tuple(candidate_features.shape) != (
             int(raw.numel()),
             self.candidate_dim,
         ):
-            raise ValueError("V15 candidate feature shape drifted")
+            raise ValueError("V16 candidate feature shape drifted")
         scale = self.target_scale_m3.to(dtype=raw.dtype, device=raw.device).clamp_min(1.0)
         raw_norm = raw / scale
-        context = self.context_encoder(context_features)
-        candidates = self.candidate_encoder(torch.cat((candidate_features, raw_norm[:, None]), dim=1))
+
+        rank_context = self.rank_context_encoder(context_features)
+        rank_candidates = self.rank_candidate_encoder(
+            torch.cat((candidate_features, raw_norm[:, None]), dim=1)
+        )
         rank = raw_norm + self.rank_adjustment(
-            torch.cat((candidates, context[None].expand(candidates.shape[0], -1)), dim=1)
+            torch.cat(
+                (rank_candidates, rank_context[None].expand(rank_candidates.shape[0], -1)),
+                dim=1,
+            )
         ).squeeze(-1)
         relative = rank - torch.min(rank)
         selected_index = torch.argmin(rank.detach())
-        selected_candidate = candidates[selected_index]
-        pooled_mean = candidates.mean(dim=0)
-        pooled_max = candidates.amax(dim=0)
-        joint = torch.cat((context, selected_candidate, pooled_mean, pooled_max), dim=0)
-        margin = self.margin_head(joint).reshape(()) * scale
-        hold_logit = self.hold_head(joint).reshape(())
+
+        margin_context = self.margin_context_encoder(context_features)
+        margin_candidates = self.margin_candidate_encoder(
+            torch.cat((candidate_features, raw_norm[:, None]), dim=1)
+        )
+        selected_candidate = margin_candidates[selected_index]
+        pooled_mean = margin_candidates.mean(dim=0)
+        pooled_max = margin_candidates.amax(dim=0)
+        joint = torch.cat((margin_context, selected_candidate, pooled_mean, pooled_max), dim=0)
+        coordinate = self.margin_coordinate_head(joint).reshape(())
+
+        # One zero-preserving scalar controls both numeric return and HOLD/ACTION sign.
+        margin = torch.sinh(coordinate) * scale
+        hold_logit = coordinate
         predicted = margin + relative * scale
         return QueryMarginV2Output(
             predicted_returns_m3=predicted,
             query_best_margin_m3=margin,
             hold_logit=hold_logit,
+            margin_coordinate=coordinate,
             rank_scores_normalized=rank,
             relative_rank_normalized=relative,
             selected_candidate_index=selected_index,
