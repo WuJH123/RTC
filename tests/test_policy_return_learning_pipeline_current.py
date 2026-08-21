@@ -65,6 +65,52 @@ def test_pipeline_refuses_lineage_and_noncurrent_family_drift() -> None:
         module._audit_roles(train, [bad_family], calibration)
 
 
+def test_pipeline_deployability_rejects_all_hold_action_starvation() -> None:
+    module = _module()
+    starved = module._validation_deployability(
+        {
+            "fine_tuning_improved_decision_metrics_over_epoch0": True,
+            "validation_action_starvation_detected": True,
+            "validation_metrics": {
+                "predicted_hold_fraction": 1.0,
+                "oracle_hold_optimal_fraction": 0.25,
+                "hold_aware_decision_accuracy": 0.0,
+            },
+        }
+    )
+    assert starved["passed"] is False
+    assert starved["validation_action_starvation_detected"] is True
+
+    deployable = module._validation_deployability(
+        {
+            "fine_tuning_improved_decision_metrics_over_epoch0": True,
+            "validation_action_starvation_detected": False,
+            "validation_metrics": {
+                "predicted_hold_fraction": 0.25,
+                "oracle_hold_optimal_fraction": 0.25,
+                "hold_aware_decision_accuracy": 0.5,
+            },
+        }
+    )
+    assert deployable["passed"] is True
+
+
+def test_pipeline_rejects_mae_only_fine_tuning() -> None:
+    module = _module()
+    verdict = module._validation_deployability(
+        {
+            "fine_tuning_improved_over_epoch0": True,
+            "fine_tuning_improved_decision_metrics_over_epoch0": False,
+            "validation_metrics": {
+                "predicted_hold_fraction": 0.3,
+                "oracle_hold_optimal_fraction": 0.3,
+                "hold_aware_decision_accuracy": 0.5,
+            },
+        }
+    )
+    assert verdict["passed"] is False
+
+
 def test_pipeline_is_no_swmm_and_keeps_policy_lock_closed() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
     for required in (
@@ -75,7 +121,7 @@ def test_pipeline_is_no_swmm_and_keeps_policy_lock_closed() -> None:
     ):
         assert required in text
     assert '"swmm_called_by_pipeline": False' in text
-    assert '"ready_for_pi1_development": True' in text
+    assert '"ready_for_pi1_development": bool(deployability["passed"])' in text
     assert '"ready_for_policy_lock": False' in text
     assert 'abs(float(args.coverage) - 0.90)' in text
     assert "run_policy_direct_tfv_policy_return_development.py" not in text
