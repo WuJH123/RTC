@@ -136,7 +136,7 @@ def test_runtime_ranks_before_conformal_and_keeps_policy_lock_closed() -> None:
     assert text.index("selected_index = int(np.argmin(relative))") < text.index(
         "upper = score + margin"
     )
-    assert "conformal uncertainty is deliberately not used to rerank" in text
+    assert "Conformal uncertainty is deliberately not used to rerank" in text
 
     runner = RUNNER.read_text(encoding="utf-8")
     assert '"ready_for_policy_lock": False' in runner
@@ -145,10 +145,7 @@ def test_runtime_ranks_before_conformal_and_keeps_policy_lock_closed() -> None:
         "rtc.direct_tfv_policy_return_query_margin",
         fromlist=["DIRECT_TFV_QUERY_MARGIN_CONTRACT"],
     )
-    assert (
-        DIRECT_TFV_QUERY_MARGIN_CONTRACT
-        in module.DIRECT_TFV_QUERY_MARGIN_CONTRACT
-    )
+    assert DIRECT_TFV_QUERY_MARGIN_CONTRACT in module.DIRECT_TFV_QUERY_MARGIN_CONTRACT
 
 
 def test_calibration_scorer_is_query_joint_not_row_independent() -> None:
