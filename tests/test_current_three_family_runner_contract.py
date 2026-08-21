@@ -51,3 +51,16 @@ def test_current_runners_keep_gradient_cli_knobs_compatibility_only() -> None:
         assert 'p.add_argument("--projected-gradient-step-fraction"' in text
         assert "compatib" in text.lower()
         assert "unexpectedly enabled projected" in text.lower()
+
+
+def test_policy_return_runner_stamps_baseline_comparison_lineage() -> None:
+    text = _text(POLICY_RETURN_RUNNER)
+    for required in (
+        '"source_inp_sha256": _sha(source_inp_path)',
+        '"controller_config_sha256": _sha(controller_config_path)',
+        '"runtime_inp_sha256": _sha(runtime_inp)',
+        '"prepared_event_clock": clock',
+        '"swmm_engine_version"',
+    ):
+        assert required in text
+    assert "Proposed Development metadata lacks required baseline-comparison lineage" in text
