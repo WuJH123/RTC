@@ -109,7 +109,6 @@ def main() -> None:
     p.add_argument("--device", default="cuda")
     p.add_argument("--decision-runtime-budget-seconds", type=float, default=180.0)
     p.add_argument("--probe-chunk-size", type=int, default=24)
-    # Backward-compatible launch knobs only; they must remain scientifically inert in current pi1.
     p.add_argument("--projected-gradient-steps", type=int, default=6)
     p.add_argument("--projected-gradient-step-fraction", type=float, default=0.25)
     args = p.parse_args()
@@ -127,6 +126,8 @@ def main() -> None:
     step2_path = practical_asset_path(assets, "step2")
     supervisory_control_path = practical_asset_path(assets, "supervisory_control")
     sequence_support_path = practical_asset_path(assets, "sequence_support")
+    source_inp_path = Path(args.inp).resolve()
+    controller_config_path = Path(config_path).resolve()
 
     _require_step1_lineage(
         step1_path=step1_path,
@@ -165,9 +166,9 @@ def main() -> None:
     if admission.get("projected_gradient_online") not in (False, None):
         raise ValueError("current Development admission unexpectedly enables projected gradient")
 
-    cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
+    cfg = json.loads(controller_config_path.read_text(encoding="utf-8"))
     project_contract = validate_project7_runtime_config(cfg)
-    clock = inspect_prepared_event_clock(args.inp)
+    clock = inspect_prepared_event_clock(source_inp_path)
     if abs(float(clock["effective_warmup_minutes"]) - EFFECTIVE_WARMUP_MINUTES) > 1e-6:
         raise ValueError("Practical event violates the common warm-up clock")
 
@@ -190,7 +191,7 @@ def main() -> None:
     _require_current_three_family_lineage(lineage, mask)
 
     runtime_inp = _controls_disabled_runtime(
-        source_inp=Path(args.inp).resolve(),
+        source_inp=source_inp_path,
         cache_dir=Path(args.out_dir).resolve() / "_runtime_inp",
         swmm_threads=int(cfg.get("swmm_threads", 1)),
     )
@@ -242,6 +243,12 @@ def main() -> None:
             "sequence_support_sha256": _sha(sequence_support_path),
             "asset_manifest_path": str(Path(args.asset_manifest).resolve()),
             "asset_manifest_sha256": _sha(args.asset_manifest),
+            "source_inp_path": str(source_inp_path),
+            "source_inp_sha256": _sha(source_inp_path),
+            "controller_config_path": str(controller_config_path),
+            "controller_config_sha256": _sha(controller_config_path),
+            "runtime_inp_path": str(Path(runtime_inp).resolve()),
+            "runtime_inp_sha256": _sha(runtime_inp),
             "legacy_v12_admission_required_online": False,
             "generic_d3_floor_controls_execution": False,
             "step1_retrained_for_control_mask": False,
@@ -255,6 +262,16 @@ def main() -> None:
             "runtime_factory_lineage": lineage,
         }
     )
+    for required_lineage in (
+        "source_inp_sha256",
+        "controller_config_sha256",
+        "swmm_engine_version",
+        "prepared_event_clock",
+    ):
+        if metadata.get(required_lineage) in (None, ""):
+            raise RuntimeError(
+                f"Proposed Development metadata lacks required baseline-comparison lineage {required_lineage}"
+            )
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(
         json.dumps(
@@ -273,6 +290,8 @@ def main() -> None:
                 "projected_gradient_role": "DEVELOPMENT_ABLATION_ONLY",
                 "target_write_readback_passed": True,
                 "flow_routing_error_pct": result.flow_routing_error_pct,
+                "source_inp_sha256": metadata["source_inp_sha256"],
+                "controller_config_sha256": metadata["controller_config_sha256"],
             },
             indent=2,
         )
