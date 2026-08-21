@@ -1,13 +1,19 @@
 """Accuracy-first Step3 query-margin representation using frozen Step2 latent context.
 
-V14 compressed a full hydraulic state, rainfall field and managed-flow state into only 11 global
-summary numbers. That was sufficient for some candidate ranking signal but the HOLD margin collapsed
-to execute-all. V15 keeps the rank/HOLD decomposition and reuses the already-trained Step2 latent
-representation instead of retraining Step1/Step2 or generating more truth.
+V14 separated candidate ranking from the query-level HOLD margin, but its margin target was the
+*oracle* best candidate even when the learned rank branch selected a different candidate. That
+creates a dangerous inconsistency: a negative oracle-best margin can authorize execution of a
+mis-ranked harmful candidate. V15 therefore keeps the useful rank/HOLD decomposition while making
+it selection-consistent:
 
-The deployed numeric margin remains the only ACTION/HOLD score. ``hold_logit`` is an auxiliary
-training signal used to force the representation to learn the HOLD boundary; it is never a direct
-online control rule.
+    selected_i   = argmin_i learned_rank_i
+    margin_q     = return of selected_i versus HOLD
+    return_hat_i = margin_q + relative_rank_i
+
+The margin head is explicitly conditioned on the candidate embedding selected by the rank branch,
+in addition to permutation-invariant set summaries. The base Step2 network is frozen and reused only
+as a causal representation. ``hold_logit`` remains an auxiliary training signal and never directly
+controls ACTION/HOLD online.
 """
 from __future__ import annotations
 
@@ -24,13 +30,13 @@ from .direct_tfv_policy_return_portfolio_admission import CURRENT_THREE_FAMILY_S
 
 
 DIRECT_TFV_QUERY_MARGIN_V2_CONTRACT = (
-    "PROJECT7_STEP3_QUERY_MARGIN_LATENT_CONTEXT_V2_THREE_FAMILY_82CONTROL_109REP"
+    "PROJECT7_STEP3_QUERY_MARGIN_LATENT_CONTEXT_V3_SELECTION_CONSISTENT_THREE_FAMILY_82CONTROL_109REP"
 )
 DIRECT_TFV_QUERY_MARGIN_V2_FEATURE_CONTRACT = (
-    "FROZEN_STEP2_STATE_RAIN_AND_CHANGED_FACILITY_LATENT_WITH_AUX_HOLD_V1"
+    "FROZEN_STEP2_STATE_RAIN_CHANGED_FACILITY_LATENT_SELECTED_CANDIDATE_MARGIN_AUX_HOLD_V2"
 )
 DIRECT_TFV_QUERY_MARGIN_V2_CHECKPOINT_CONTRACT = (
-    "PROJECT7_STEP3_QUERY_MARGIN_LATENT_CHECKPOINT_V2"
+    "PROJECT7_STEP3_QUERY_MARGIN_LATENT_CHECKPOINT_V3_SELECTION_CONSISTENT"
 )
 QUERY_MARGIN_V2_HIDDEN_DIM = 64
 
@@ -42,6 +48,15 @@ class QueryMarginV2Output:
     hold_logit: torch.Tensor
     rank_scores_normalized: torch.Tensor
     relative_rank_normalized: torch.Tensor
+    selected_candidate_index: torch.Tensor
+
+
+def freeze_step2_for_step3(step2_model: torch.nn.Module) -> torch.nn.Module:
+    """Freeze the pretrained Step2 representation before any Step3 optimization."""
+    for parameter in step2_model.parameters():
+        parameter.requires_grad_(False)
+    step2_model.eval()
+    return step2_model
 
 
 def _tensor(value: Any, *, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
@@ -144,6 +159,8 @@ def build_query_margin_v2_features(
         raise ValueError("V15 candidate source count is not aligned")
     if not math.isfinite(float(target_scale_m3)) or float(target_scale_m3) <= 0.0:
         raise ValueError("V15 target scale must be finite and positive")
+    if any(parameter.requires_grad for parameter in step2_model.parameters()):
+        raise ValueError("V15 feature extraction requires a frozen Step2 model")
 
     device = current_state.device
     dtype = current_state.dtype
@@ -221,7 +238,7 @@ def build_query_margin_v2_features(
 
 
 class QueryConditionedPolicyReturnAdapterV2(nn.Module):
-    """Permutation-invariant rank/margin adapter with an auxiliary HOLD classifier."""
+    """Permutation-invariant rank adapter with a selection-consistent numeric HOLD margin."""
 
     def __init__(
         self,
@@ -245,7 +262,7 @@ class QueryConditionedPolicyReturnAdapterV2(nn.Module):
             nn.Linear(self.candidate_dim + 1, h), nn.SiLU(), nn.LayerNorm(h), nn.Linear(h, h), nn.SiLU()
         )
         self.rank_adjustment = nn.Sequential(nn.Linear(2 * h, h), nn.SiLU(), nn.Linear(h, 1))
-        joint_dim = 3 * h
+        joint_dim = 4 * h
         self.margin_head = nn.Sequential(
             nn.Linear(joint_dim, h), nn.SiLU(), nn.Linear(h, h // 2), nn.SiLU(), nn.Linear(h // 2, 1)
         )
@@ -274,9 +291,11 @@ class QueryConditionedPolicyReturnAdapterV2(nn.Module):
             torch.cat((candidates, context[None].expand(candidates.shape[0], -1)), dim=1)
         ).squeeze(-1)
         relative = rank - torch.min(rank)
+        selected_index = torch.argmin(rank.detach())
+        selected_candidate = candidates[selected_index]
         pooled_mean = candidates.mean(dim=0)
         pooled_max = candidates.amax(dim=0)
-        joint = torch.cat((context, pooled_mean, pooled_max), dim=0)
+        joint = torch.cat((context, selected_candidate, pooled_mean, pooled_max), dim=0)
         margin = self.margin_head(joint).reshape(()) * scale
         hold_logit = self.hold_head(joint).reshape(())
         predicted = margin + relative * scale
@@ -286,6 +305,7 @@ class QueryConditionedPolicyReturnAdapterV2(nn.Module):
             hold_logit=hold_logit,
             rank_scores_normalized=rank,
             relative_rank_normalized=relative,
+            selected_candidate_index=selected_index,
         )
 
 
@@ -297,4 +317,5 @@ __all__ = [
     "QueryConditionedPolicyReturnAdapterV2",
     "QueryMarginV2Output",
     "build_query_margin_v2_features",
+    "freeze_step2_for_step3",
 ]
