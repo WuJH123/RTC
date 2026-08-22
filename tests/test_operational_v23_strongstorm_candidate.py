@@ -8,7 +8,6 @@ import torch
 
 from rtc.direct_tfv_policy_return_portfolio_v23 import (
     V23_HYDRAULIC_CANDIDATE_CONTRACT,
-    V23_PORTFOLIO_CONTRACT,
     stress_adaptive_hydraulic_target_v23,
 )
 
@@ -106,7 +105,7 @@ def test_v23_runtime_and_benchmark_are_explicitly_development_only() -> None:
     benchmark = (root / "scripts" / "run_project7_operational_benchmark5_v23_development.py").read_text(
         encoding="utf-8"
     )
-    assert V23_PORTFOLIO_CONTRACT in runtime
+    assert "V23_PORTFOLIO_CONTRACT" in runtime
     assert '"candidate_generator_matches_v21_training": False' in runtime
     assert '"boundary_is_distribution_matched_to_v23_candidates": False' in runtime
     assert '"ready_for_policy_lock": False' in runtime
