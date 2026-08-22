@@ -1,8 +1,8 @@
 """Create the immutable Project7 V23 Policy Lock after Formal validation.
 
-This tool never trains a model or runs SWMM.  It validates the frozen Formal protocol, preregistered
+This tool never trains a model or runs SWMM. It validates the frozen Formal protocol, preregistered
 18/6/6 split, model-acceptance evidence and six-event Development-Validation evidence, then hashes the
-complete policy surface.  Final remains sealed at lock creation.
+complete policy/execution surface. Final remains sealed at lock creation.
 """
 from __future__ import annotations
 
@@ -14,10 +14,7 @@ import subprocess
 from typing import Any
 
 from rtc.direct_tfv_policy_return import sha256_file
-from rtc.project7_v23_formal_reuse import (
-    V23_FORMAL_PROTOCOL_CONTRACT,
-    validate_frozen_split,
-)
+from rtc.project7_v23_formal_reuse import V23_FORMAL_PROTOCOL_CONTRACT, validate_frozen_split
 
 
 POLICY_LOCK_CONTRACT = "PROJECT7_V23_POLICY_LOCK_V1"
@@ -44,18 +41,12 @@ def _git_head(repository_root: Path) -> str:
         cwd=repository_root,
         text=True,
     ).splitlines()
-    policy_dirty = [
-        line
-        for line in status
-        if not any(
-            doc in line
-            for doc in (
-                "docs/EDGE_FEATURE_NORMALIZATION_V44.json",
-                "docs/STEP2_EDGE_HYDRAULIC_LINEAGE_AUDIT_V44.json",
-                "docs/STEP2_EDGE_HYDRAULIC_LINEAGE_AUDIT_V44.md",
-            )
-        )
-    ]
+    allowed_docs = (
+        "docs/EDGE_FEATURE_NORMALIZATION_V44.json",
+        "docs/STEP2_EDGE_HYDRAULIC_LINEAGE_AUDIT_V44.json",
+        "docs/STEP2_EDGE_HYDRAULIC_LINEAGE_AUDIT_V44.md",
+    )
+    policy_dirty = [line for line in status if not any(doc in line for doc in allowed_docs)]
     if policy_dirty:
         raise RuntimeError(f"policy-relevant working tree is dirty: {policy_dirty[:5]}")
     return value
@@ -69,7 +60,12 @@ def _source_tree_digest(repository_root: Path) -> str:
         "src/rtc/direct_tfv_policy_return_selected_boundary_v21.py",
         "src/rtc/direct_tfv_policy_return_query_margin_v17.py",
         "src/rtc/project7_v23_formal_reuse.py",
+        "src/rtc/baselines.py",
+        "src/rtc/rule_baselines.py",
+        "src/rtc/production_guard.py",
         "scripts/run_policy_direct_tfv_operational_v23_development.py",
+        "scripts/run_policy_direct_tfv_v23_locked_current.py",
+        "scripts/run_project7_v23_formal_final_current.py",
     )
     digest = hashlib.sha256()
     for relative in paths:
@@ -127,8 +123,11 @@ def main() -> None:
     if protocol.get("calibration_role_removed") is not True:
         raise RuntimeError("Policy Lock refuses a reintroduced calibration role")
     roles = validate_frozen_split(split)
+
     if acceptance.get("contract") != MODEL_ACCEPTANCE_EVIDENCE_CONTRACT:
         raise ValueError("wrong model-acceptance evidence contract")
+    if acceptance.get("accepted_for_policy_lock") is not True:
+        raise RuntimeError("model-acceptance evidence did not authorize Policy Lock")
     if acceptance.get("final_truth_opened") is not False:
         raise RuntimeError("model acceptance evidence accessed Final")
     if acceptance.get("step1_accepted") is not True or acceptance.get("step2_accepted") is not True:
@@ -138,6 +137,7 @@ def main() -> None:
     disposition = str(acceptance.get("step3_disposition", ""))
     allowed_dispositions = {
         "EXACT_MATCH_MINIMAL_RETRAIN_VALIDATED",
+        "EXACT_MATCH_CURRENT_V15_V21_VALIDATED_NO_RETRAIN",
         "FROZEN_V15_V21_FIXED_POLICY_NO_RETRAIN",
     }
     if disposition not in allowed_dispositions:
