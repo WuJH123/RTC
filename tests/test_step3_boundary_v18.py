@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 import sys
 
@@ -12,10 +13,13 @@ from rtc.direct_tfv_policy_return_query_margin_v18 import (
     build_boundary_feature_parts_v18,
 )
 
-_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
-from train_step3_query_margin_v18_current import _auc_hold, _choose_threshold
+
+def _trainer_helpers():
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    module = importlib.import_module("train_step3_query_margin_v18_current")
+    return module._auc_hold, module._choose_threshold
 
 
 def test_v18_boundary_features_preserve_query_and_selected_candidate_signal() -> None:
@@ -37,14 +41,15 @@ def test_v18_boundary_features_preserve_query_and_selected_candidate_signal() ->
 
 
 def test_v18_train_oof_threshold_is_not_hard_coded_to_zero() -> None:
+    auc_hold, choose_threshold = _trainer_helpers()
     scores = np.asarray([-3.0, -2.0, -1.0, 0.2, 0.4, 0.6])
     returns = np.asarray([-10.0, -8.0, -6.0, 2.0, 4.0, 5.0])
-    threshold, metrics = _choose_threshold(scores, returns)
+    threshold, metrics = choose_threshold(scores, returns)
     assert threshold != 0.0
     assert metrics["fb"] == 0.0
     assert metrics["fr"] == 0.0
     assert metrics["collapse"] is False
-    assert _auc_hold(scores, returns) == 1.0
+    assert auc_hold(scores, returns) == 1.0
 
 
 def test_v18_calibrator_uses_frozen_threshold_not_action_quota() -> None:
