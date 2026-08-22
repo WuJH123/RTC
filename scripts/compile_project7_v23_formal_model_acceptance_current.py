@@ -1,9 +1,9 @@
 """Compile Project7 V23 Formal model-acceptance evidence from pre-existing evaluations.
 
-The command enforces MODEL_ACCEPTANCE_CONTRACT_V4 exactly; it never lowers thresholds.  In
-FIXED_POLICY_NO_RETRAIN mode, V23-specific Step3 retraining metrics are not fabricated from mismatched
-truth and the frozen V15/V21 policy is recorded as the Step3 disposition.  In exact-match retraining
-mode, the preregistered D2/D3 candidate-ranking thresholds are mandatory.
+The command enforces MODEL_ACCEPTANCE_CONTRACT_V4 exactly; thresholds are never relaxed. In
+FIXED_POLICY_NO_RETRAIN mode, mismatched V23 truth is never fabricated. In exact-match mode the current
+V15/V21 Step3 may be retained when it already meets the preregistered ranking thresholds; retraining is
+recorded only when it actually occurred and the retrained model independently passes those thresholds.
 """
 from __future__ import annotations
 
@@ -36,6 +36,11 @@ def main() -> None:
     parser.add_argument("--d2-tfv-top1-hit-rate", type=float)
     parser.add_argument("--d3-tfv-rank-correlation", type=float)
     parser.add_argument("--d3-tfv-top1-hit-rate", type=float)
+    parser.add_argument(
+        "--step3-retrained",
+        action="store_true",
+        help="Set only when Step3 was actually refit using the fully authorised exact-matched Train role.",
+    )
     parser.add_argument("--source-evidence", action="append", default=[])
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
@@ -49,6 +54,8 @@ def main() -> None:
     mode = str(protocol.get("formal_mode", ""))
     if mode not in {"EXACT_MATCH_RETRAIN_ALLOWED", "FIXED_POLICY_NO_RETRAIN"}:
         raise ValueError(f"unsupported Formal mode: {mode}")
+    if mode == "FIXED_POLICY_NO_RETRAIN" and args.step3_retrained:
+        raise ValueError("fixed-policy mode forbids Step3 retraining")
 
     step1_threshold = float(contract["step1"]["minimum"]["unobserved_depth_nse"])
     step2_threshold = float(contract["step2"]["minimum"]["tfv_exact_truth_rank_correlation"])
@@ -65,9 +72,14 @@ def main() -> None:
     if mode == "EXACT_MATCH_RETRAIN_ALLOWED":
         missing = [key for key, value in metrics.items() if value is None]
         if missing:
-            raise ValueError(f"exact-match retraining mode requires candidate-ranking metrics: {missing}")
+            raise ValueError(f"exact-match mode requires candidate-ranking metrics: {missing}")
         ranking_pass = all(float(metrics[key]) >= float(ranking[key]) for key in metrics)
-        disposition = "EXACT_MATCH_MINIMAL_RETRAIN_VALIDATED" if ranking_pass else "RANK_ACCEPTANCE_FAIL"
+        if ranking_pass and args.step3_retrained:
+            disposition = "EXACT_MATCH_MINIMAL_RETRAIN_VALIDATED"
+        elif ranking_pass:
+            disposition = "EXACT_MATCH_CURRENT_V15_V21_VALIDATED_NO_RETRAIN"
+        else:
+            disposition = "RANK_ACCEPTANCE_FAIL"
     else:
         ranking_pass = None
         disposition = "FROZEN_V15_V21_FIXED_POLICY_NO_RETRAIN"
@@ -76,6 +88,11 @@ def main() -> None:
     for path in evidence_files:
         if not path.is_file():
             raise FileNotFoundError(path)
+    accepted_dispositions = {
+        "EXACT_MATCH_MINIMAL_RETRAIN_VALIDATED",
+        "EXACT_MATCH_CURRENT_V15_V21_VALIDATED_NO_RETRAIN",
+        "FROZEN_V15_V21_FIXED_POLICY_NO_RETRAIN",
+    }
     payload = {
         "contract": CONTRACT,
         "model_acceptance_contract": MODEL_CONTRACT,
@@ -93,6 +110,7 @@ def main() -> None:
         "candidate_ranking_metrics": metrics,
         "candidate_ranking_thresholds": ranking,
         "candidate_ranking_accepted": ranking_pass,
+        "step3_retrained": bool(args.step3_retrained),
         "step3_disposition": disposition,
         "gradient_acceptance_role": "DEVELOPMENT_ABLATION_ONLY_NOT_PRODUCTION_GATE",
         "hard_thresholds_lowered_after_results": False,
@@ -101,13 +119,7 @@ def main() -> None:
         "source_evidence_sha256": [sha256_file(path) for path in evidence_files],
         "final_truth_opened": False,
         "accepted_for_policy_lock": bool(
-            step1_pass
-            and step2_pass
-            and disposition
-            in {
-                "EXACT_MATCH_MINIMAL_RETRAIN_VALIDATED",
-                "FROZEN_V15_V21_FIXED_POLICY_NO_RETRAIN",
-            }
+            step1_pass and step2_pass and disposition in accepted_dispositions
         ),
     }
     destination = Path(args.out).resolve()
