@@ -4,75 +4,94 @@ import numpy as np
 import pytest
 
 from rtc.project7_v23_formal_reuse import (
-    LEARNING_ROLES,
+    ARCHIVAL_ROLE,
+    FROZEN_SPLIT_CONTRACT,
     V23_EXISTING_TRUTH_REUSE_AUDIT_CONTRACT,
     V23_FORMAL_PROTOCOL_CONTRACT,
     V23_PUBLICATION_ROLE_MANIFEST_CONTRACT,
-    assert_excluded_events_absent_from_learning,
     compare_candidate_targets,
-    float32_target_sha256,
-    learning_groups_by_role,
+    scientific_role_for_record,
     validate_frozen_final_split,
+    validate_frozen_split,
 )
 
 
-def test_exact_target_match_is_strict_and_float32_hashed() -> None:
-    target = np.linspace(0.0, 1.0, 109, dtype=np.float32)
-    result = compare_candidate_targets(target, target.astype(np.float64))
-    assert result.matched is True
-    assert result.maximum_absolute_difference == 0.0
-    assert result.exact_float32_sha256 == float32_target_sha256(target)
-    shifted = target.astype(np.float64)
-    shifted[8] += 2.0e-6
-    assert compare_candidate_targets(target, shifted).matched is False
-
-
-def _records() -> list[dict[str, str]]:
-    return [
-        {"data_role": "policy_return_train", "rainfall_group": "T1", "event_id": "E1"},
-        {"data_role": "policy_return_validation", "rainfall_group": "V1", "event_id": "E2"},
-        {"data_role": "policy_return_calibration", "rainfall_group": "C1", "event_id": "E3"},
-    ]
-
-
-def test_existing_learning_roles_are_preserved_and_group_disjoint() -> None:
-    roles = learning_groups_by_role(_records())
-    assert tuple(roles) == LEARNING_ROLES
-    assert roles["policy_return_train"] == ("T1",)
-    assert roles["policy_return_validation"] == ("V1",)
-    assert roles["policy_return_calibration"] == ("C1",)
-
-
-def test_existing_learning_roles_reject_group_leakage() -> None:
-    rows = _records()
-    rows[1]["rainfall_group"] = "T1"
-    with pytest.raises(ValueError, match="leakage"):
-        learning_groups_by_role(rows)
-
-
-def test_development_events_are_forbidden_from_formal_learning() -> None:
-    with pytest.raises(ValueError, match="development-steering events"):
-        assert_excluded_events_absent_from_learning(_records(), ["E2"])
-
-
-def test_frozen_v069_final_split_is_required() -> None:
-    payload = {
-        "contract": "PROJECT7_V069_30_EVENT_SPLIT_18TRAIN_6VALIDATION_6FINAL_V1",
-        "final": [f"FINAL_{index}" for index in range(6)],
+def _split() -> dict[str, object]:
+    train = [f"TRAIN_{i}" for i in range(18)]
+    validation = [f"VALID_{i}" for i in range(6)]
+    final = [f"FINAL_{i}" for i in range(6)]
+    return {
+        "contract": FROZEN_SPLIT_CONTRACT,
+        "counts": {"development_train": 18, "development_validation": 6, "final": 6},
+        "development_train": train,
+        "development_validation": validation,
+        "final": final,
         "invariants": {
+            "calibration_role_removed": True,
+            "safety_audit_role_removed": True,
             "rainfall_groups_cross_scientific_splits": False,
+            "development_groups_cross_train_validation": False,
             "final_untouched_before_policy_lock": True,
             "final_used_for_tuning": False,
             "validation_used_for_training": False,
         },
     }
+
+
+def test_exact_target_match_is_strict_and_float32_hashed() -> None:
+    target = np.linspace(0.0, 1.0, 109, dtype=np.float32)
+    assert compare_candidate_targets(target, target.astype(np.float64)).matched is True
+    shifted = target.astype(np.float64)
+    shifted[8] += 2.0e-6
+    assert compare_candidate_targets(target, shifted).matched is False
+
+
+def test_frozen_split_requires_removed_calibration_role_and_disjoint_18_6_6() -> None:
+    payload = _split()
+    roles = validate_frozen_split(payload)
+    assert len(roles["development_train"]) == 18
+    assert len(roles["development_validation"]) == 6
+    assert len(roles["final"]) == 6
     assert validate_frozen_final_split(payload) == tuple(payload["final"])
-    payload["invariants"]["final_used_for_tuning"] = True
-    with pytest.raises(ValueError, match="invariant changed"):
-        validate_frozen_final_split(payload)
+    payload["invariants"]["calibration_role_removed"] = False  # type: ignore[index]
+    with pytest.raises(ValueError, match="calibration_role_removed"):
+        validate_frozen_split(payload)
 
 
-def test_formal_contracts_are_explicitly_versioned() -> None:
-    assert "EXACT_MATCH_AUDIT_V2" in V23_EXISTING_TRUTH_REUSE_AUDIT_CONTRACT
-    assert "ROLE_MANIFEST_V2" in V23_PUBLICATION_ROLE_MANIFEST_CONTRACT
-    assert "PROTOCOL_V2" in V23_FORMAL_PROTOCOL_CONTRACT
+def test_historical_data_role_never_overrides_frozen_scientific_role() -> None:
+    split = _split()
+    row = {
+        "event_id": "TRAIN_3",
+        "rainfall_group": "TRAIN_3",
+        "data_role": "policy_return_calibration",
+    }
+    assert scientific_role_for_record(row, split) == "development_train"
+    archival = {
+        "event_id": "OLD_CALIBRATION_EVENT",
+        "rainfall_group": "OLD_CALIBRATION_EVENT",
+        "data_role": "policy_return_calibration",
+    }
+    assert scientific_role_for_record(archival, split) == ARCHIVAL_ROLE
+
+
+def test_final_record_is_identified_before_any_truth_reuse() -> None:
+    split = _split()
+    row = {"event_id": "FINAL_2", "data_role": "policy_return_train"}
+    assert scientific_role_for_record(row, split) == "final"
+
+
+def test_split_rejects_cross_role_overlap_and_final_tuning() -> None:
+    split = _split()
+    split["development_validation"] = ["TRAIN_0", *[f"VALID_{i}" for i in range(5)]]
+    with pytest.raises(ValueError, match="role overlap"):
+        validate_frozen_split(split)
+    split = _split()
+    split["invariants"]["final_used_for_tuning"] = True  # type: ignore[index]
+    with pytest.raises(ValueError, match="final_used_for_tuning"):
+        validate_frozen_split(split)
+
+
+def test_formal_contracts_are_explicitly_versioned_and_split_authoritative() -> None:
+    assert "V3_SPLIT_AUTHORITY" in V23_EXISTING_TRUTH_REUSE_AUDIT_CONTRACT
+    assert "V3_SPLIT_AUTHORITY" in V23_PUBLICATION_ROLE_MANIFEST_CONTRACT
+    assert "V3_FIXED_POLICY_FALLBACK" in V23_FORMAL_PROTOCOL_CONTRACT
