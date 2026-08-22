@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
 import numpy as np
 import torch
 
@@ -8,7 +11,11 @@ from rtc.direct_tfv_policy_return_query_margin_v18 import (
     LinearBoundaryCalibratorV18,
     build_boundary_feature_parts_v18,
 )
-from scripts.train_step3_query_margin_v18_current import _auc_hold, _choose_threshold
+
+_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+from train_step3_query_margin_v18_current import _auc_hold, _choose_threshold
 
 
 def test_v18_boundary_features_preserve_query_and_selected_candidate_signal() -> None:
@@ -57,8 +64,16 @@ def test_v18_calibrator_uses_frozen_threshold_not_action_quota() -> None:
         magnitude_bias=1.0,
         target_scale_m3=1_000.0,
     )
-    action_parts = type("Parts", (), {"dense": torch.tensor([0.0, 0.0]), "explicit": torch.tensor([0.0])})()
-    hold_parts = type("Parts", (), {"dense": torch.tensor([1.0, 0.0]), "explicit": torch.tensor([0.0])})()
+    action_parts = type(
+        "Parts",
+        (),
+        {"dense": torch.tensor([0.0, 0.0]), "explicit": torch.tensor([0.0])},
+    )()
+    hold_parts = type(
+        "Parts",
+        (),
+        {"dense": torch.tensor([1.0, 0.0]), "explicit": torch.tensor([0.0])},
+    )()
     action = calibrator.predict(
         parts=action_parts,
         relative_rank_normalized=torch.tensor([0.0, 1.0]),
