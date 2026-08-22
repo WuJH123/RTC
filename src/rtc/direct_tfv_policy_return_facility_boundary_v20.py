@@ -7,9 +7,9 @@ hydraulic state and changed-facility action latent, discarding which supervisory
 and the local upstream/downstream hydraulic context in which those changes were applied.
 
 V20 keeps the validated V15 rank frozen and learns only candidate-vs-HOLD sign/magnitude from a
-facility-resolved counterfactual signature. Every feature is multiplied by the candidate-minus-HOLD
-action effect; therefore an exact HOLD action maps to the all-zero design. The boundary model has no
-intercept and uses the physical zero threshold, so candidate==HOLD implies score==0 exactly.
+facility-resolved counterfactual signature. Every feature is action-gated and therefore tends
+continuously to zero as candidate approaches HOLD. The boundary model has no intercept and uses the
+physical zero threshold, so candidate==HOLD implies score==0 exactly.
 """
 from __future__ import annotations
 
@@ -216,8 +216,8 @@ def build_facility_boundary_parts_v20(
     main_abs = torch.abs(main_active).sum()
     weighted_main_signed = torch.sum(facility_effect * signed_weight)
     weighted_main_abs = torch.sum(facility_effect * absolute_weight)
-    weighted_flow_signed = torch.sum(flow_norm * signed_weight)
-    weighted_flow_abs = torch.sum(flow_norm * absolute_weight)
+    weighted_flow_signed = torch.sum(flow_norm * signed_weight) * rms
+    weighted_flow_abs = torch.sum(flow_norm * absolute_weight) * rms
     weighted_activity = torch.sum(activity * absolute_weight)
     family = torch.zeros(len(allowed), dtype=dtype, device=device)
     family[allowed.index(str(candidate_source))] = rms
@@ -234,7 +234,7 @@ def build_facility_boundary_parts_v20(
                     main_abs,
                     weighted_main_signed,
                     weighted_main_abs,
-                    changed_fraction,
+                    changed_fraction * rms,
                     mean_abs,
                     max_abs,
                     rms,
@@ -259,7 +259,7 @@ def build_facility_boundary_parts_v20(
             _weighted_pair(embedding, signed_weight, absolute_weight),
         ),
         dim=0,
-    )
+    ) * rms
     feature = torch.cat((scalar, local), dim=0)
     if not bool(torch.isfinite(feature).all()):
         raise RuntimeError("V20 facility-resolved feature contains non-finite values")
