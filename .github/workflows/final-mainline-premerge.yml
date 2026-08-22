@@ -34,6 +34,9 @@ jobs:
           python scripts/lint_current_surface.py
           python -m ruff check \
             scripts/audit_direct_tfv_policy_return_mechanism_panel_current.py \
+            src/rtc/direct_tfv_policy_return_selected_boundary_v21.py \
+            scripts/train_step3_selected_boundary_v21_current.py \
+            tests/test_step3_selected_boundary_v21.py \
             tests/test_direct_tfv_policy_return_hold_aware_metrics.py \
             tests/test_native_supervisory_control.py \
             --select E4,E7,E9,F
@@ -47,6 +50,7 @@ jobs:
             tests/test_direct_tfv_policy_return_portfolio.py \
             tests/test_direct_tfv_hybrid_gradient_portfolio.py \
             tests/test_direct_tfv_policy_return_hold_aware_metrics.py \
+            tests/test_step3_selected_boundary_v21.py \
             tests/test_native_supervisory_control.py \
             tests/test_direct_tfv_runtime_adapter.py \
             tests/test_practical_rtc_assets.py \
@@ -70,6 +74,7 @@ jobs:
           python scripts/score_direct_tfv_policy_return_calibration_current.py --help >/dev/null
           python scripts/calibrate_direct_tfv_policy_return_portfolio_admission_current.py --help >/dev/null
           python scripts/run_policy_direct_tfv_policy_return_development.py --help >/dev/null
+          python scripts/train_step3_selected_boundary_v21_current.py --help >/dev/null
           python scripts/run_six_baselines_development_current.py --help >/dev/null
           python scripts/compare_direct_tfv_baselines_current.py --help >/dev/null
           python scripts/add_pfv_to_direct_tfv_comparison_current.py --help >/dev/null
