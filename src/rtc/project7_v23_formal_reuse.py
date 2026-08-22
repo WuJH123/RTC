@@ -1,29 +1,31 @@
 """Publication-facing reuse contracts for Project7 V23 without new empirical truth.
 
-This module deliberately does *not* manufacture labels.  It provides fail-closed helpers for
-reusing already completed authoritative policy-return records when, and only when, the exact V23
-candidate executed at the same frozen query is numerically identical to the recorded candidate.
-Formal roles are assigned by rainfall group rather than decision row.
+This module deliberately does *not* manufacture labels or repartition already frozen evidence.
+Completed policy-return records keep their original train/validation/calibration rainfall-group roles.
+The closed-loop Final cohort remains the separately preregistered Project7 v0.6.9 Final split.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-from typing import Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 
 
 V23_EXISTING_TRUTH_REUSE_AUDIT_CONTRACT = (
-    "PROJECT7_V23_EXISTING_AUTHORITATIVE_TRUTH_EXACT_MATCH_AUDIT_V1"
+    "PROJECT7_V23_EXISTING_AUTHORITATIVE_TRUTH_EXACT_MATCH_AUDIT_V2_PREREGISTERED_ROLES"
 )
 V23_PUBLICATION_ROLE_MANIFEST_CONTRACT = (
-    "PROJECT7_V23_PUBLICATION_EXISTING_DATA_ROLE_MANIFEST_V1"
+    "PROJECT7_V23_PUBLICATION_EXISTING_DATA_ROLE_MANIFEST_V2_PRESERVE_SOURCE_ROLES"
 )
-V23_FORMAL_PROTOCOL_CONTRACT = "PROJECT7_V23_FORMAL_REUSE_ONLY_PROTOCOL_V1"
+V23_FORMAL_PROTOCOL_CONTRACT = "PROJECT7_V23_FORMAL_REUSE_ONLY_PROTOCOL_V2_PREREGISTERED_FINAL"
 
-PUBLICATION_ROLES = ("train", "validation", "calibration", "final_test")
-DEFAULT_ROLE_FRACTIONS = (0.70, 0.10, 0.10, 0.10)
+LEARNING_ROLES = (
+    "policy_return_train",
+    "policy_return_validation",
+    "policy_return_calibration",
+)
 
 
 @dataclass(frozen=True)
@@ -62,84 +64,91 @@ def compare_candidate_targets(
     )
 
 
-def deterministic_publication_split(
-    groups: Sequence[str],
-    *,
-    seed: int = 42,
-    fractions: Sequence[float] = DEFAULT_ROLE_FRACTIONS,
-) -> dict[str, tuple[str, ...]]:
-    """Split complete rainfall groups into publication roles without row-level leakage."""
-    unique = sorted({str(value) for value in groups if str(value)})
-    if len(unique) < 40:
-        raise ValueError("publication role split requires at least 40 complete rainfall groups")
-    values = tuple(float(value) for value in fractions)
-    if len(values) != 4 or any(value <= 0.0 for value in values):
-        raise ValueError("publication role fractions must contain four positive values")
-    if abs(sum(values) - 1.0) > 1.0e-9:
-        raise ValueError("publication role fractions must sum to one")
-    ordered = sorted(
-        unique,
-        key=lambda value: hashlib.sha256(f"{int(seed)}|{value}".encode("utf-8")).hexdigest(),
-    )
-    total = len(ordered)
-    counts = [int(np.floor(total * value)) for value in values]
-    for index in range(total - sum(counts)):
-        counts[index % len(counts)] += 1
-    if min(counts) <= 0:
-        raise ValueError("publication role split produced an empty role")
-    result: dict[str, tuple[str, ...]] = {}
-    offset = 0
-    for role, count in zip(PUBLICATION_ROLES, counts, strict=True):
-        result[role] = tuple(sorted(ordered[offset : offset + count]))
-        offset += count
-    assert offset == total
-    validate_role_disjointness(result)
+def learning_groups_by_role(records: Sequence[Mapping[str, Any]]) -> dict[str, tuple[str, ...]]:
+    grouped: dict[str, set[str]] = {role: set() for role in LEARNING_ROLES}
+    for row in records:
+        role = str(row.get("data_role", ""))
+        if role not in grouped:
+            raise ValueError(f"unexpected existing learning role: {role}")
+        group = str(row.get("rainfall_group", ""))
+        if not group:
+            raise ValueError("existing learning record lacks rainfall_group")
+        grouped[role].add(group)
+    result = {role: tuple(sorted(values)) for role, values in grouped.items()}
+    validate_learning_role_disjointness(result)
     return result
 
 
-def validate_role_disjointness(roles: Mapping[str, Iterable[str]]) -> None:
+def validate_learning_role_disjointness(roles: Mapping[str, Iterable[str]]) -> None:
     seen: set[str] = set()
-    for role in PUBLICATION_ROLES:
+    for role in LEARNING_ROLES:
         current = {str(value) for value in roles.get(role, ())}
         if not current:
-            raise ValueError(f"publication role is empty: {role}")
+            raise ValueError(f"existing learning role is empty: {role}")
         overlap = seen & current
         if overlap:
             raise ValueError(
-                f"rainfall-group leakage across publication roles: {sorted(overlap)[:5]}"
+                f"rainfall-group leakage across existing learning roles: {sorted(overlap)[:5]}"
             )
         seen.update(current)
 
 
-def assert_excluded_events_absent(
-    event_ids_by_group: Mapping[str, Iterable[str]],
-    roles: Mapping[str, Iterable[str]],
+def assert_excluded_events_absent_from_learning(
+    records: Sequence[Mapping[str, Any]],
     excluded_event_ids: Iterable[str],
 ) -> None:
     excluded = {str(value) for value in excluded_event_ids if str(value)}
-    if not excluded:
-        return
-    for role in PUBLICATION_ROLES:
-        for group in roles.get(role, ()):
-            events = {str(value) for value in event_ids_by_group.get(str(group), ())}
-            collision = events & excluded
-            if collision:
-                raise ValueError(
-                    f"development-steering event leaked into publication role {role}: "
-                    f"{sorted(collision)}"
-                )
+    collisions = sorted(
+        {
+            str(row.get("event_id"))
+            for row in records
+            if str(row.get("event_id")) in excluded
+        }
+    )
+    if collisions:
+        raise ValueError(
+            "development-steering events leaked into formal learning evidence: "
+            f"{collisions}"
+        )
+
+
+def validate_frozen_final_split(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    if str(payload.get("contract", "")) != "PROJECT7_V069_30_EVENT_SPLIT_18TRAIN_6VALIDATION_6FINAL_V1":
+        raise ValueError("V23 formal protocol requires the frozen Project7 v0.6.9 split contract")
+    invariants = payload.get("invariants")
+    if not isinstance(invariants, Mapping):
+        raise ValueError("frozen Project7 split lacks invariants")
+    required = (
+        "rainfall_groups_cross_scientific_splits",
+        "final_untouched_before_policy_lock",
+        "final_used_for_tuning",
+        "validation_used_for_training",
+    )
+    expected = {
+        "rainfall_groups_cross_scientific_splits": False,
+        "final_untouched_before_policy_lock": True,
+        "final_used_for_tuning": False,
+        "validation_used_for_training": False,
+    }
+    for key in required:
+        if invariants.get(key) is not expected[key]:
+            raise ValueError(f"frozen Project7 split invariant changed: {key}")
+    final = tuple(str(value) for value in payload.get("final", ()))
+    if len(final) != 6 or len(set(final)) != 6:
+        raise ValueError("frozen Project7 split must contain exactly six unique Final events")
+    return final
 
 
 __all__ = [
-    "DEFAULT_ROLE_FRACTIONS",
     "ExactTargetMatch",
-    "PUBLICATION_ROLES",
+    "LEARNING_ROLES",
     "V23_EXISTING_TRUTH_REUSE_AUDIT_CONTRACT",
     "V23_FORMAL_PROTOCOL_CONTRACT",
     "V23_PUBLICATION_ROLE_MANIFEST_CONTRACT",
-    "assert_excluded_events_absent",
+    "assert_excluded_events_absent_from_learning",
     "compare_candidate_targets",
-    "deterministic_publication_split",
     "float32_target_sha256",
-    "validate_role_disjointness",
+    "learning_groups_by_role",
+    "validate_frozen_final_split",
+    "validate_learning_role_disjointness",
 ]
