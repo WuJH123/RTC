@@ -138,6 +138,22 @@ def main() -> None:
                 native_controls_template=native,
                 policy_lock_sha256="PRELOCK_VALIDATION_NO_POLICY_LOCK",
             )
+            # The shared low-level executor is also used by Final, so restore the correct pre-lock
+            # scientific identity before persisting Validation evidence.
+            meta.update(
+                {
+                    "formal_final_comparator": False,
+                    "formal_development_validation_comparator": True,
+                    "formal_evidence": False,
+                    "development_only": True,
+                    "policy_lock_sha256": None,
+                    "final_result_used_for_training": False,
+                    "final_result_used_for_tuning": False,
+                }
+            )
+            Path(meta_path).write_text(
+                json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
             baselines[strategy] = {
                 "metadata": meta,
                 "metadata_path": str(meta_path),
