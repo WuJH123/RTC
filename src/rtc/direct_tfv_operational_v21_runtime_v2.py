@@ -16,7 +16,6 @@ from pathlib import Path
 import time
 from typing import Any
 
-import numpy as np
 import torch
 
 from .checkpoint_direct_tfv import load_direct_tfv_runtime_checkpoint
