@@ -454,6 +454,7 @@ def build_operational_v23_controller(
         "candidate_generator_matches_v21_training": False,
         "candidate_distribution_changed_after_v21_training": True,
         "candidate_change_scope": "TYPE_AWARE_HYDRAULIC_PRESSURE_TARGET_ONLY",
+        "v21_training_portfolio_contract": DIRECT_TFV_POLICY_RETURN_PORTFOLIO_CONTRACT,
         "v23_portfolio_contract": V23_PORTFOLIO_CONTRACT,
         "v23_hydraulic_candidate_contract": V23_HYDRAULIC_CANDIDATE_CONTRACT,
         "three_family_cardinality_preserved": True,
