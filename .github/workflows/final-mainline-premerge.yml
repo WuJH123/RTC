@@ -39,11 +39,13 @@ jobs:
             tests/test_step3_selected_boundary_v21.py \
             src/rtc/operational_benchmark_v1.py \
             src/rtc/direct_tfv_operational_v21_runtime.py \
+            src/rtc/direct_tfv_operational_v21_runtime_v2.py \
             scripts/freeze_project7_operational_benchmark5_current.py \
             scripts/build_project7_operational_baseline_cache_current.py \
             scripts/run_policy_direct_tfv_operational_v21_development.py \
             scripts/run_project7_operational_benchmark5_current.py \
             tests/test_operational_benchmark_v1.py \
+            tests/test_operational_v21_runtime_v2.py \
             tests/test_direct_tfv_policy_return_hold_aware_metrics.py \
             tests/test_native_supervisory_control.py \
             --select E4,E7,E9,F
@@ -59,6 +61,7 @@ jobs:
             tests/test_direct_tfv_policy_return_hold_aware_metrics.py \
             tests/test_step3_selected_boundary_v21.py \
             tests/test_operational_benchmark_v1.py \
+            tests/test_operational_v21_runtime_v2.py \
             tests/test_native_supervisory_control.py \
             tests/test_direct_tfv_runtime_adapter.py \
             tests/test_practical_rtc_assets.py \

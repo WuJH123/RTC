@@ -15,7 +15,10 @@ from pathlib import Path
 import torch
 
 from rtc.closed_loop import run_authoritative_closed_loop
-from rtc.direct_tfv_operational_v21_runtime import OPERATIONAL_V21_RUNTIME_CONTRACT, build_operational_v21_controller
+from rtc.direct_tfv_operational_v21_runtime_v2 import (
+    OPERATIONAL_V21_RUNTIME_CONTRACT,
+    build_operational_v21_controller,
+)
 from rtc.event_clock import inspect_prepared_event_clock
 from rtc.execution_audit_v127 import audit_target_write_readback_v127
 from rtc.practical_rtc_assets import load_practical_rtc_asset_manifest, practical_asset_path
