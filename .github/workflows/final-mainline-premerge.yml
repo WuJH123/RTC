@@ -45,6 +45,10 @@ jobs:
             src/rtc/project7_v23_formal_reuse.py \
             scripts/audit_project7_v23_existing_truth_reuse_current.py \
             scripts/freeze_project7_v23_formal_existing_data_protocol_current.py \
+            scripts/create_project7_v23_policy_lock_current.py \
+            scripts/freeze_project7_v23_final_event_manifest_current.py \
+            scripts/run_policy_direct_tfv_v23_locked_current.py \
+            scripts/run_project7_v23_formal_final_current.py \
             scripts/freeze_project7_operational_benchmark5_current.py \
             scripts/build_project7_operational_baseline_cache_current.py \
             scripts/run_policy_direct_tfv_operational_v21_development.py \
@@ -99,6 +103,10 @@ jobs:
           python scripts/train_step3_selected_boundary_v21_current.py --help >/dev/null
           python scripts/audit_project7_v23_existing_truth_reuse_current.py --help >/dev/null
           python scripts/freeze_project7_v23_formal_existing_data_protocol_current.py --help >/dev/null
+          python scripts/create_project7_v23_policy_lock_current.py --help >/dev/null
+          python scripts/freeze_project7_v23_final_event_manifest_current.py --help >/dev/null
+          python scripts/run_policy_direct_tfv_v23_locked_current.py --help >/dev/null
+          python scripts/run_project7_v23_formal_final_current.py --help >/dev/null
           python scripts/freeze_project7_operational_benchmark5_current.py --help >/dev/null
           python scripts/build_project7_operational_baseline_cache_current.py --help >/dev/null
           python scripts/run_policy_direct_tfv_operational_v21_development.py --help >/dev/null
