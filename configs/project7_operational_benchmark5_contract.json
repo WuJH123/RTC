@@ -1,0 +1,20 @@
+{
+  "contract": "PROJECT7_OPERATIONAL_DEVELOPMENT_BENCHMARK5_V1",
+  "purpose": "Prioritize an executable real-time drainage controller and authoritative closed-loop TFV improvement while Step3 remains under development.",
+  "event_count": 5,
+  "event_selection": "frozen_before_iterative_proposed_comparison; forcing-only or explicit Development selection; never Proposed-performance-selected",
+  "competitive_baselines": ["no_control", "internal_rtc", "auto_rbc", "efd"],
+  "baseline_execution": "run_once_then_immutable_cache",
+  "iterative_execution": "rerun_Proposed_only",
+  "primary_development_metric": "authoritative_SWMM_system_wide_TFV",
+  "secondary_safety_metric": "Priority8_PFV_proposed_le_100_plus_1p05_times_PFV_no_control",
+  "global_peak_role": "report_only",
+  "engineering_execution_required": true,
+  "causal_online_information_only": true,
+  "online_swmm_candidate_search": false,
+  "offline_step3_accuracy_is_diagnostic_not_the_sole_development_gate": true,
+  "operational_development_lane_may_run_failed_step3_checkpoint": true,
+  "operational_development_lane_formal_evidence": false,
+  "formal_policy_lock_gates_unchanged": true,
+  "ready_for_policy_lock": false
+}
