@@ -142,11 +142,10 @@ def build_facility_boundary_parts_v20(
     dtype = current_state.dtype
     device = current_state.device
     if float(action_mass.detach().cpu()) <= 1.0e-9:
-        # Width depends only on frozen input/model dimensions; construct once with zero-valued blocks.
         state_width = int(current_state.shape[-1])
         rain_width = int(rainfall_scenarios.shape[-1])
         embed_width = int(step2_model.actuator_embedding.embedding_dim)
-        scalar_width = 17 + len(allowed)
+        scalar_width = 18 + len(allowed)
         local_width = 4 * state_width + 4 * rain_width + 2 * embed_width
         return FacilityBoundaryPartsV20(
             feature=torch.zeros(scalar_width + local_width, dtype=dtype, device=device)
