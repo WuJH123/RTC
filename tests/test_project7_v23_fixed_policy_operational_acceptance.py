@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -14,6 +15,15 @@ from rtc.project7_publication_statistics import (
 
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def _load_policy_lock_module():
+    path = REPO / "scripts" / "create_project7_v23_policy_lock_current.py"
+    spec = importlib.util.spec_from_file_location("project7_policy_lock_test_module", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_operational_acceptance_retains_failed_step2_but_allows_fixed_policy_validation(
@@ -65,6 +75,17 @@ def test_operational_acceptance_retains_failed_step2_but_allows_fixed_policy_val
     assert payload["step2_standalone_surrogate_claim_allowed"] is False
     assert payload["accepted_for_operational_validation"] is True
     assert payload["step3_disposition"] == "FROZEN_V15_V21_FIXED_POLICY_NO_RETRAIN"
+
+    policy_lock = _load_policy_lock_module()
+    basis, disposition, step2_pass, step2_gate, restrictions = policy_lock._validate_acceptance(
+        payload,
+        protocol_mode="FIXED_POLICY_NO_RETRAIN",
+    )
+    assert basis == "FIXED_POLICY_END_TO_END_OPERATIONAL"
+    assert disposition == "FROZEN_V15_V21_FIXED_POLICY_NO_RETRAIN"
+    assert step2_pass is False
+    assert step2_gate is False
+    assert "DO_NOT_CLAIM_STEP2_STANDALONE_TFV_RANKING_ACCEPTANCE" in restrictions
 
 
 def test_exact_final6_bootstrap_is_deterministic_and_sign_test_is_exact() -> None:
