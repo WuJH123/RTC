@@ -1,11 +1,10 @@
 """Compile publication-grade fixed-policy operational acceptance for Project7 V23.
 
-This command does not overwrite or reinterpret the preregistered MODEL_ACCEPTANCE_CONTRACT_V4.
-Instead it records the legacy component diagnostics exactly as observed and, only for an already-frozen
-FIXED_POLICY_NO_RETRAIN controller with Final still sealed, determines whether the policy may proceed
-to independent end-to-end Development-Validation. Step1 remains a structural hard gate. Step2's legacy
-standalone TFV-ranking result remains mandatory and is reported as PASS/FAIL, but it is not a Policy-Lock
-hard gate for this fixed-policy end-to-end research claim.
+This command keeps MODEL_ACCEPTANCE_CONTRACT_V4 unchanged.  It records the legacy Step2 component
+result exactly as observed, but now requires that result to be bound to the same frozen Direct-TFV V5
+Step2 checkpoint used by V23, V15 and V21.  Step1 remains a structural hard gate.  A failed standalone
+Step2 ranking diagnostic is retained as a paper limitation, not relabelled as a pass and not used as a
+Policy-Lock gate for the already-frozen end-to-end controller.
 """
 from __future__ import annotations
 
@@ -16,9 +15,14 @@ from pathlib import Path
 from typing import Any
 
 from rtc.direct_tfv_policy_return import sha256_file
+from rtc.project7_v23_step2_lineage import (
+    V23_STEP2_CHECKPOINT_SHA256,
+    validate_v23_step2_component_diagnostic,
+    validate_v23_step2_lineage_evidence,
+)
 
 
-CONTRACT = "PROJECT7_V23_FIXED_POLICY_OPERATIONAL_ACCEPTANCE_EVIDENCE_V1"
+CONTRACT = "PROJECT7_V23_FIXED_POLICY_OPERATIONAL_ACCEPTANCE_EVIDENCE_V2_STEP2_LINEAGE_BOUND"
 OPERATIONAL_CONTRACT = "PROJECT7_V23_FIXED_POLICY_OPERATIONAL_ACCEPTANCE_CONTRACT_V1"
 LEGACY_MODEL_CONTRACT = "MODEL_ACCEPTANCE_CONTRACT_V4_DIMENSIONLESS_PREREGISTERED"
 REQUIRED_MODE = "FIXED_POLICY_NO_RETRAIN"
@@ -39,9 +43,8 @@ def main() -> None:
     parser.add_argument("--legacy-model-acceptance-contract", required=True)
     parser.add_argument("--formal-protocol", required=True)
     parser.add_argument("--step1-unobserved-depth-nse", type=float, required=True)
-    parser.add_argument("--step2-tfv-exact-truth-rank-correlation", type=float, required=True)
-    parser.add_argument("--step2-query-balanced-top1", type=float)
-    parser.add_argument("--step2-mean-selected-regret-m3", type=float)
+    parser.add_argument("--step2-lineage-evidence", required=True)
+    parser.add_argument("--step2-component-diagnostic", required=True)
     parser.add_argument("--source-evidence", action="append", default=[])
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
@@ -49,9 +52,13 @@ def main() -> None:
     operational_path = Path(args.operational_acceptance_contract).resolve()
     legacy_path = Path(args.legacy_model_acceptance_contract).resolve()
     protocol_path = Path(args.formal_protocol).resolve()
+    lineage_path = Path(args.step2_lineage_evidence).resolve()
+    diagnostic_path = Path(args.step2_component_diagnostic).resolve()
     operational = _json(operational_path)
     legacy = _json(legacy_path)
     protocol = _json(protocol_path)
+    lineage = _json(lineage_path)
+    diagnostic = _json(diagnostic_path)
 
     if operational.get("contract") != OPERATIONAL_CONTRACT:
         raise ValueError("wrong fixed-policy operational acceptance contract")
@@ -66,8 +73,17 @@ def main() -> None:
     if protocol.get("final_can_tune_any_model_threshold_or_candidate") is not False:
         raise RuntimeError("Final tuning firewall was weakened")
 
+    validate_v23_step2_lineage_evidence(lineage)
+    validate_v23_step2_component_diagnostic(diagnostic)
+    if str(diagnostic.get("step2_lineage_evidence_sha256", "")).lower() != sha256_file(
+        lineage_path
+    ).lower():
+        raise RuntimeError("Step2 component diagnostic was compiled from another lineage audit")
+    if str(diagnostic.get("step2_checkpoint_sha256", "")).lower() != V23_STEP2_CHECKPOINT_SHA256:
+        raise RuntimeError("Formal Step2 diagnostic is not for the V23 V5 checkpoint")
+
     step1_value = float(args.step1_unobserved_depth_nse)
-    step2_value = float(args.step2_tfv_exact_truth_rank_correlation)
+    step2_value = float(diagnostic["tfv_exact_truth_rank_correlation"])
     if not math.isfinite(step1_value) or not math.isfinite(step2_value):
         raise ValueError("acceptance metrics must be finite")
     step1_threshold = float(operational["step1"]["minimum"])
@@ -80,14 +96,13 @@ def main() -> None:
         if not path.is_file():
             raise FileNotFoundError(path)
 
-    step3_disposition = REQUIRED_STEP3_DISPOSITION
-    paper_claim_restrictions = []
+    paper_claim_restrictions: list[str] = []
     if not legacy_step2_pass:
         paper_claim_restrictions.extend(
             [
                 "DO_NOT_CLAIM_STEP2_STANDALONE_TFV_RANKING_ACCEPTANCE",
                 "DO_NOT_CLAIM_STEP2_AS_AN_INDEPENDENT_HIGH_ACCURACY_TFV_SURROGATE",
-                "REPORT_LEGACY_STEP2_V4_FAILURE_AND_NUMERIC_DIAGNOSTICS",
+                "REPORT_LEGACY_STEP2_V4_FAILURE_AND_V5_BOUND_NUMERIC_DIAGNOSTICS",
                 "LIMIT_PRIMARY_EFFICACY_CLAIM_TO_POLICY_LOCKED_END_TO_END_CLOSED_LOOP_SWMM",
             ]
         )
@@ -104,16 +119,24 @@ def main() -> None:
         "step1_unobserved_depth_nse": step1_value,
         "step1_threshold": step1_threshold,
         "step1_accepted": step1_pass,
+        "step2_runtime_lineage_accepted": True,
+        "step2_checkpoint_sha256": V23_STEP2_CHECKPOINT_SHA256,
+        "step2_checkpoint_path": str(lineage["step2_checkpoint_path"]),
+        "step2_lineage_evidence_path": str(lineage_path),
+        "step2_lineage_evidence_sha256": sha256_file(lineage_path),
+        "step2_component_diagnostic_path": str(diagnostic_path),
+        "step2_component_diagnostic_sha256": sha256_file(diagnostic_path),
         "step2_tfv_exact_truth_rank_correlation": step2_value,
         "step2_legacy_threshold": legacy_step2_threshold,
         "step2_legacy_component_accepted": legacy_step2_pass,
         "step2_required_for_policy_lock": False,
         "step2_failure_retained_as_publication_limitation": bool(not legacy_step2_pass),
         "step2_standalone_surrogate_claim_allowed": bool(legacy_step2_pass),
-        "step2_query_balanced_top1": args.step2_query_balanced_top1,
-        "step2_mean_selected_regret_m3": args.step2_mean_selected_regret_m3,
+        "step2_query_balanced_top1": diagnostic.get("query_balanced_top1"),
+        "step2_mean_selected_regret_m3": diagnostic.get("mean_selected_regret_m3"),
+        "step2_retrained": False,
         "step3_retrained": False,
-        "step3_disposition": step3_disposition,
+        "step3_disposition": REQUIRED_STEP3_DISPOSITION,
         "policy_parameters_changed_after_component_diagnostic_failure": False,
         "hard_thresholds_lowered_after_results": False,
         "legacy_step2_threshold_relabelled_or_lowered": False,
