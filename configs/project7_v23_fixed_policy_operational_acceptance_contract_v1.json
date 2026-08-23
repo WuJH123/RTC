@@ -1,0 +1,66 @@
+{
+  "contract": "PROJECT7_V23_FIXED_POLICY_OPERATIONAL_ACCEPTANCE_CONTRACT_V1",
+  "purpose": "Authorize publication-grade end-to-end evaluation of the already-frozen V23+V15+V21 RTC policy without erasing the preregistered MODEL_ACCEPTANCE_CONTRACT_V4 component diagnostics. This amendment is only valid for FIXED_POLICY_NO_RETRAIN after a clean pre-lock split has been frozen and before any active Final hydraulic outcome is opened.",
+  "research_estimand": "CLOSED_LOOP_SYSTEM_WIDE_TFV_UNDER_AUTHORITATIVE_SWMM",
+  "policy_mode_required": "FIXED_POLICY_NO_RETRAIN",
+  "step1": {
+    "hard_gate": true,
+    "metric": "unobserved_depth_nse",
+    "minimum": 0.70,
+    "claim": "Sparse causal sensing can reconstruct unobserved hydraulic state with preregistered minimum skill."
+  },
+  "step2": {
+    "hard_gate_for_policy_lock": false,
+    "legacy_component_contract": "MODEL_ACCEPTANCE_CONTRACT_V4_DIMENSIONLESS_PREREGISTERED",
+    "legacy_metric": "tfv_exact_truth_rank_correlation",
+    "legacy_minimum": 0.70,
+    "mandatory_diagnostic": true,
+    "failure_must_be_retained": true,
+    "standalone_surrogate_superiority_claim_allowed_if_legacy_gate_fails": false,
+    "paper_role": "REPORT_COMPONENT_LIMITATION_AND_RETAIN_AS_FROZEN_INTERNAL_REPRESENTATION_ONLY"
+  },
+  "step3": {
+    "disposition_required": "FROZEN_V15_V21_FIXED_POLICY_NO_RETRAIN",
+    "retraining_allowed": false,
+    "candidate_or_threshold_tuning_allowed": false,
+    "standalone_component_metrics": "REPORT_DIAGNOSTIC_ONLY_IN_FIXED_POLICY_MODE"
+  },
+  "prelock_operational_validation": {
+    "event_count": 6,
+    "statistical_unit": "RAINFALL_EVENT",
+    "hard_gates": [
+      "PFV_SAFETY_ALL_EVENTS",
+      "ENGINEERING_EXECUTION_ALL_EVENTS",
+      "FINAL_REMAINS_SEALED",
+      "NO_POLICY_MUTATION"
+    ],
+    "tfv_role": "PRIMARY_EFFECT_ESTIMATE_NOT_A_TUNING_GATE",
+    "competitive_comparators": [
+      "no_control",
+      "internal_rtc",
+      "auto_rbc",
+      "efd"
+    ]
+  },
+  "policy_lock": {
+    "allowed_only_after_validation_hard_gates_pass": true,
+    "step2_legacy_failure_blocks_lock": false,
+    "step2_legacy_failure_must_be_embedded_in_lock": true,
+    "final_opened_before_lock_allowed": false
+  },
+  "final": {
+    "primary_metric": "SYSTEM_WIDE_TFV_M3",
+    "secondary_safety_metric": "PRIORITY8_PFV_M3",
+    "pfv_contract": "PFV_PROPOSED <= 100_M3 + 1.05 * PFV_NO_CONTROL",
+    "global_peak_role": "REPORT_ONLY",
+    "must_run_complete_locked_panel_regardless_of_relative_tfv_performance": true,
+    "final_can_tune_policy": false,
+    "final_results_used_for_training": false
+  },
+  "transparency": {
+    "protocol_amendment_after_legacy_component_failure": true,
+    "legacy_step2_failure_not_relabelled_as_pass": true,
+    "hard_thresholds_lowered_after_results": false,
+    "reason": "The preregistered V4 Step2 standalone TFV-ranking threshold tests a component-level surrogate claim. The publication research question is the end-to-end fixed RTC policy's closed-loop TFV/PFV/engineering performance. In FIXED_POLICY_NO_RETRAIN mode, the policy cannot be repaired or tuned using the active Validation/Final cohorts, so the scientifically appropriate action is to report the Step2 component failure transparently and evaluate the already-frozen policy end-to-end on independent events rather than block all evaluation or manufacture new truth."
+  }
+}
