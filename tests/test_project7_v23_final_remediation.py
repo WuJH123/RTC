@@ -122,7 +122,14 @@ def test_reblind_selector_prefers_still_clean_source_final_without_using_perform
 
 
 def test_reblind_selector_fails_only_when_clean_duration_diversity_is_below_six() -> None:
-    candidates = [_candidate(f"SAFE_{duration}", 20, duration) for duration in (120, 135, 195, 240, 360)]
+    candidates = [
+        _candidate("SAFE_120_A", 5, 120),
+        _candidate("SAFE_120_B", 10, 120),
+        _candidate("SAFE_135", 20, 135),
+        _candidate("SAFE_195", 20, 195),
+        _candidate("SAFE_240", 20, 240),
+        _candidate("SAFE_360", 20, 360),
+    ]
     with pytest.raises(ValueError, match="duration diversity"):
         select_reblind_final(candidates, protected_validation_events=[], original_final_events=[])
 
