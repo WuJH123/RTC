@@ -11,10 +11,19 @@
   },
   "step2": {
     "hard_gate_for_policy_lock": false,
+    "runtime_lineage_hard_gate": true,
+    "required_checkpoint_sha256": "3a05704812a07a914d0ce9d8d026f6c84a4dbed646743f95d27726b29c3a544a",
+    "required_run_directory": "direct_tfv_core_v5_dev_20260817_144117",
+    "required_checkpoint_basename": "step2_direct_tfv_value_dev.pt",
+    "required_v15_checkpoint_sha256": "faef4de0ee0c8bfccd7d6156fc0057ac5ea6226c7564076278cbfe124f43556e",
+    "required_v21_checkpoint_sha256": "89f2c26439a0ca94b9417ba3f625d04d8a9b1782521a32a602770d9b0957aa5a",
+    "retraining_allowed_in_current_fixed_policy_formal": false,
     "legacy_component_contract": "MODEL_ACCEPTANCE_CONTRACT_V4_DIMENSIONLESS_PREREGISTERED",
     "legacy_metric": "tfv_exact_truth_rank_correlation",
     "legacy_minimum": 0.70,
     "mandatory_diagnostic": true,
+    "diagnostic_must_be_bound_to_required_checkpoint": true,
+    "metrics_from_other_step2_versions_are_archival_only": true,
     "failure_must_be_retained": true,
     "standalone_surrogate_superiority_claim_allowed_if_legacy_gate_fails": false,
     "paper_role": "REPORT_COMPONENT_LIMITATION_AND_RETAIN_AS_FROZEN_INTERNAL_REPRESENTATION_ONLY"
@@ -44,6 +53,7 @@
   },
   "policy_lock": {
     "allowed_only_after_validation_hard_gates_pass": true,
+    "step2_runtime_lineage_must_pass": true,
     "step2_legacy_failure_blocks_lock": false,
     "step2_legacy_failure_must_be_embedded_in_lock": true,
     "final_opened_before_lock_allowed": false
@@ -61,6 +71,6 @@
     "protocol_amendment_after_legacy_component_failure": true,
     "legacy_step2_failure_not_relabelled_as_pass": true,
     "hard_thresholds_lowered_after_results": false,
-    "reason": "The preregistered V4 Step2 standalone TFV-ranking threshold tests a component-level surrogate claim. The publication research question is the end-to-end fixed RTC policy's closed-loop TFV/PFV/engineering performance. In FIXED_POLICY_NO_RETRAIN mode, the policy cannot be repaired or tuned using the active Validation/Final cohorts, so the scientifically appropriate action is to report the Step2 component failure transparently and evaluate the already-frozen policy end-to-end on independent events rather than block all evaluation or manufacture new truth."
+    "reason": "The preregistered V4 Step2 standalone TFV-ranking threshold tests a component-level surrogate claim. The publication research question is the end-to-end fixed RTC policy's closed-loop TFV/PFV/engineering performance. In FIXED_POLICY_NO_RETRAIN mode, the policy cannot be repaired or tuned using active Validation/Final cohorts. The Formal diagnostic must nevertheless be provenance-bound to the exact V5 Step2 used by V23/V15/V21; historical metrics from another Step2 version cannot be substituted."
   }
 }
