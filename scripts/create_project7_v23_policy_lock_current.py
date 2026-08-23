@@ -1,13 +1,8 @@
 """Create the immutable Project7 V23 Policy Lock after Formal validation.
 
-This tool never trains a model or runs SWMM. It validates the frozen Formal protocol, active scientific
-split, model/operational acceptance evidence and six-event Development-Validation evidence, then hashes
-the complete policy/execution surface. Final remains sealed at lock creation.
-
-Two acceptance paths are supported. The legacy component-strict path keeps MODEL_ACCEPTANCE_CONTRACT_V4
-unchanged. The fixed-policy operational path is valid only for FIXED_POLICY_NO_RETRAIN and preserves a
-failed legacy Step2 standalone ranking result as an explicit paper limitation rather than relabelling it
-as a pass. In both paths, Formal Validation PFV safety and engineering execution remain mandatory.
+The fixed-policy path permits a failed legacy Step2 standalone diagnostic only when the evidence is
+explicitly bound to the exact V5 Step2 checkpoint used by V23/V15/V21.  This tool never trains a model
+or runs SWMM; Final remains sealed at lock creation.
 """
 from __future__ import annotations
 
@@ -20,12 +15,13 @@ from typing import Any
 
 from rtc.direct_tfv_policy_return import sha256_file
 from rtc.project7_v23_formal_reuse import V23_FORMAL_PROTOCOL_CONTRACT, validate_frozen_split
+from rtc.project7_v23_step2_lineage import V23_STEP2_CHECKPOINT_SHA256
 
 
 POLICY_LOCK_CONTRACT = "PROJECT7_V23_POLICY_LOCK_V1"
 MODEL_ACCEPTANCE_EVIDENCE_CONTRACT = "PROJECT7_V23_FORMAL_MODEL_ACCEPTANCE_EVIDENCE_V1"
 OPERATIONAL_ACCEPTANCE_EVIDENCE_CONTRACT = (
-    "PROJECT7_V23_FIXED_POLICY_OPERATIONAL_ACCEPTANCE_EVIDENCE_V1"
+    "PROJECT7_V23_FIXED_POLICY_OPERATIONAL_ACCEPTANCE_EVIDENCE_V2_STEP2_LINEAGE_BOUND"
 )
 VALIDATION_EVIDENCE_CONTRACT = "PROJECT7_V23_FORMAL_DEVELOPMENT_VALIDATION_EVIDENCE_V1"
 
@@ -68,12 +64,15 @@ def _source_tree_digest(repository_root: Path) -> str:
         "src/rtc/direct_tfv_policy_return_selected_boundary_v21.py",
         "src/rtc/direct_tfv_policy_return_query_margin_v17.py",
         "src/rtc/project7_v23_formal_reuse.py",
+        "src/rtc/project7_v23_step2_lineage.py",
         "src/rtc/baselines.py",
         "src/rtc/rule_baselines.py",
         "src/rtc/production_guard.py",
         "scripts/run_policy_direct_tfv_operational_v23_development.py",
         "scripts/run_policy_direct_tfv_v23_locked_current.py",
         "scripts/run_project7_v23_formal_final_current.py",
+        "scripts/audit_project7_v23_step2_lineage_current.py",
+        "scripts/compile_project7_v23_step2_v5_component_diagnostic_current.py",
         "scripts/compile_project7_v23_fixed_policy_operational_acceptance_current.py",
         "configs/project7_v23_fixed_policy_operational_acceptance_contract_v1.json",
     )
@@ -106,20 +105,14 @@ def _validate_acceptance(
         if acceptance.get("step1_accepted") is not True or acceptance.get("step2_accepted") is not True:
             raise RuntimeError("legacy path requires Step1/Step2 preregistered acceptance")
         disposition = str(acceptance.get("step3_disposition", ""))
-        allowed_dispositions = {
+        allowed = {
             "EXACT_MATCH_MINIMAL_RETRAIN_VALIDATED",
             "EXACT_MATCH_CURRENT_V15_V21_VALIDATED_NO_RETRAIN",
             "FROZEN_V15_V21_FIXED_POLICY_NO_RETRAIN",
         }
-        if disposition not in allowed_dispositions:
+        if disposition not in allowed:
             raise RuntimeError(f"unsupported Step3 Formal disposition: {disposition}")
-        return (
-            "LEGACY_COMPONENT_STRICT_V4",
-            disposition,
-            True,
-            True,
-            [],
-        )
+        return "LEGACY_COMPONENT_STRICT_V4", disposition, True, True, []
 
     if contract != OPERATIONAL_ACCEPTANCE_EVIDENCE_CONTRACT:
         raise ValueError("unsupported model/operational acceptance evidence contract")
@@ -129,6 +122,12 @@ def _validate_acceptance(
         raise RuntimeError("operational acceptance did not authorize validation/lock candidacy")
     if acceptance.get("step1_accepted") is not True:
         raise RuntimeError("Step1 structural acceptance remains mandatory")
+    if acceptance.get("step2_runtime_lineage_accepted") is not True:
+        raise RuntimeError("Policy Lock requires V23 Step2 runtime-lineage evidence")
+    if str(acceptance.get("step2_checkpoint_sha256", "")).lower() != V23_STEP2_CHECKPOINT_SHA256:
+        raise RuntimeError("Policy Lock refuses Step2 evidence from another checkpoint")
+    if acceptance.get("step2_retrained") is not False:
+        raise RuntimeError("fixed V23 Policy Lock refuses Step2 retraining")
     if acceptance.get("step2_required_for_policy_lock") is not False:
         raise RuntimeError("operational acceptance unexpectedly made legacy Step2 a lock gate")
     if acceptance.get("policy_parameters_changed_after_component_diagnostic_failure") is not False:
@@ -149,13 +148,7 @@ def _validate_acceptance(
         if acceptance.get("step2_standalone_surrogate_claim_allowed") is not False:
             raise RuntimeError("failed legacy Step2 cannot support a standalone surrogate claim")
     restrictions = [str(value) for value in acceptance.get("paper_claim_restrictions", ())]
-    return (
-        "FIXED_POLICY_END_TO_END_OPERATIONAL",
-        disposition,
-        step2_legacy_pass,
-        False,
-        restrictions,
-    )
+    return "FIXED_POLICY_END_TO_END_OPERATIONAL", disposition, step2_legacy_pass, False, restrictions
 
 
 def main() -> None:
@@ -203,9 +196,8 @@ def main() -> None:
         raise RuntimeError("Policy Lock refuses a reintroduced calibration role")
     roles = validate_frozen_split(split)
     protocol_mode = str(protocol.get("formal_mode", ""))
-
-    acceptance_basis, disposition, step2_legacy_pass, step2_lock_gate, claim_restrictions = (
-        _validate_acceptance(acceptance, protocol_mode=protocol_mode)
+    acceptance_basis, disposition, step2_pass, step2_gate, restrictions = _validate_acceptance(
+        acceptance, protocol_mode=protocol_mode
     )
 
     if validation.get("contract") != VALIDATION_EVIDENCE_CONTRACT:
@@ -228,9 +220,11 @@ def main() -> None:
         "formal_mode": protocol_mode,
         "acceptance_basis": acceptance_basis,
         "step3_disposition": disposition,
-        "step2_legacy_component_accepted": step2_legacy_pass,
-        "step2_required_for_policy_lock": step2_lock_gate,
-        "paper_claim_restrictions": claim_restrictions,
+        "step2_checkpoint_sha256": acceptance.get("step2_checkpoint_sha256"),
+        "step2_runtime_lineage_accepted": acceptance.get("step2_runtime_lineage_accepted"),
+        "step2_legacy_component_accepted": step2_pass,
+        "step2_required_for_policy_lock": step2_gate,
+        "paper_claim_restrictions": restrictions,
         "repository_head_sha": head,
         "policy_source_tree_sha256": _source_tree_digest(repository_root),
         "formal_protocol_path": str(protocol_path),
@@ -271,23 +265,18 @@ def main() -> None:
         raise FileExistsError(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(
-        json.dumps(
-            {
-                "policy_lock_path": str(destination),
-                "policy_lock_sha256": sha256_file(destination),
-                "repository_head_sha": head,
-                "formal_mode": lock["formal_mode"],
-                "acceptance_basis": acceptance_basis,
-                "step2_legacy_component_accepted": step2_legacy_pass,
-                "step3_disposition": disposition,
-                "final_event_ids": lock["final_event_ids"],
-                "ready_for_final": True,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    print(json.dumps({
+        "policy_lock_path": str(destination),
+        "policy_lock_sha256": sha256_file(destination),
+        "repository_head_sha": head,
+        "formal_mode": protocol_mode,
+        "acceptance_basis": acceptance_basis,
+        "step2_checkpoint_sha256": lock["step2_checkpoint_sha256"],
+        "step2_legacy_component_accepted": step2_pass,
+        "step3_disposition": disposition,
+        "final_event_ids": lock["final_event_ids"],
+        "ready_for_final": True,
+    }, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":
