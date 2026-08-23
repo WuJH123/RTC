@@ -1,9 +1,15 @@
 """Fail-closed governance for Project7 V23 Final-cohort contamination remediation.
 
-This module never opens hydraulic outcomes and never changes controller parameters.  It supports a
+This module never opens hydraulic outcomes and never changes controller parameters. It supports a
 single scientifically defensible remediation: quarantine any preregistered Final event that had
 pre-lock exposure, then freeze a replacement Final cohort from already prepared events that have no
-recorded model/development exposure.  Selection uses forcing descriptors only.
+recorded model/development exposure. Selection uses forcing descriptors only.
+
+The superseded v0.6.9 Final design used six fixed duration cells (60/120/180/240/300/360 min). Once
+pre-lock contamination makes that cohort unusable, publication independence is the hard requirement;
+reproducing those exact duration cells is not. The remediation therefore requires six distinct clean
+duration strata and, when more than six are available, chooses six duration quantiles deterministically.
+No hydraulic or controller-performance quantity can enter selection.
 """
 from __future__ import annotations
 
@@ -16,9 +22,9 @@ from typing import Any, Iterable, Mapping, Sequence
 ORIGINAL_SPLIT_CONTRACT = "PROJECT7_V069_30_EVENT_SPLIT_18TRAIN_6VALIDATION_6FINAL_V1"
 FINAL_EXPOSURE_LEDGER_CONTRACT = "PROJECT7_V23_FINAL_PRELOCK_EXPOSURE_LEDGER_V1"
 REMEDIATED_SPLIT_CONTRACT = (
-    "PROJECT7_V069R1_CONTAMINATION_REMEDIATED_FIXED_POLICY_SPLIT_V1"
+    "PROJECT7_V069R2_CONTAMINATION_REMEDIATED_FORCING_DIVERSITY_FIXED_POLICY_SPLIT_V1"
 )
-TARGET_DURATIONS_MINUTES = (60, 120, 180, 240, 300, 360)
+FINAL_COHORT_SIZE = 6
 
 
 @dataclass(frozen=True)
@@ -75,6 +81,29 @@ def validate_exposure_ledger(payload: Mapping[str, Any]) -> tuple[FinalCandidate
     return tuple(result)
 
 
+def _duration_quantile_strata(durations: Sequence[int]) -> tuple[int, ...]:
+    """Choose six deterministic duration strata without using hydraulic outcomes.
+
+    If exactly six distinct clean durations exist, all are retained. If more exist, six approximately
+    equally spaced order-statistic positions are selected across the clean duration support. This is a
+    forcing-only coverage rule and does not attempt to recreate the contaminated source-Final cells.
+    """
+    unique = tuple(sorted(set(int(value) for value in durations)))
+    if len(unique) < FINAL_COHORT_SIZE:
+        raise ValueError(
+            "insufficient untouched prepared duration diversity for reblind Final; "
+            f"need {FINAL_COHORT_SIZE} distinct durations, found {len(unique)}: {list(unique)}"
+        )
+    if len(unique) == FINAL_COHORT_SIZE:
+        return unique
+    last = len(unique) - 1
+    indices = tuple(round(index * last / (FINAL_COHORT_SIZE - 1)) for index in range(FINAL_COHORT_SIZE))
+    selected = tuple(unique[index] for index in indices)
+    if len(set(selected)) != FINAL_COHORT_SIZE:
+        raise RuntimeError("duration-quantile selector did not produce six distinct strata")
+    return selected
+
+
 def select_reblind_final(
     candidates: Sequence[FinalCandidate],
     *,
@@ -83,32 +112,36 @@ def select_reblind_final(
 ) -> tuple[FinalCandidate, ...]:
     """Select six unexposed events using only forcing descriptors and provenance status.
 
-    The final cohort keeps one event at each of the six frozen durations.  Within a duration, the
-    deterministic tie-break first prefers a still-clean member of the original Final cohort, then a
-    return period not yet represented, then the least-used return period, then event_id.  No hydraulic
-    or controller metric is accepted by this function.
+    The Final cohort uses six distinct duration strata chosen deterministically from the clean prepared
+    pool. Within each selected duration, the tie-break first prefers a still-clean member of the source
+    Final cohort, then return-period diversity, then least-used return period, then event_id. No
+    hydraulic, TFV, PFV, peak, controller, or model-performance metric is accepted by this function.
     """
     protected = {normalise_event_id(value) for value in protected_validation_events}
     original_final = {normalise_event_id(value) for value in original_final_events}
-    by_duration: dict[int, list[FinalCandidate]] = {value: [] for value in TARGET_DURATIONS_MINUTES}
-    for candidate in candidates:
-        if candidate.exposed_prelock or candidate.event_id in protected:
-            continue
+    eligible = [
+        candidate
+        for candidate in candidates
+        if not candidate.exposed_prelock and candidate.event_id not in protected
+    ]
+    if len(eligible) < FINAL_COHORT_SIZE:
+        raise ValueError(
+            "insufficient untouched prepared events for reblind Final; "
+            f"need {FINAL_COHORT_SIZE}, found {len(eligible)}"
+        )
+    selected_durations = _duration_quantile_strata(
+        [candidate.duration_minutes for candidate in eligible]
+    )
+    by_duration: dict[int, list[FinalCandidate]] = {value: [] for value in selected_durations}
+    for candidate in eligible:
         if candidate.duration_minutes in by_duration:
             by_duration[candidate.duration_minutes].append(candidate)
-    missing = [duration for duration, rows in by_duration.items() if not rows]
-    if missing:
-        raise ValueError(
-            "insufficient untouched prepared events for a six-duration reblind Final cohort; "
-            f"missing durations={missing}"
-        )
 
     selected: list[FinalCandidate] = []
     rp_counts: Counter[int] = Counter()
-    for duration in TARGET_DURATIONS_MINUTES:
-        rows = by_duration[duration]
+    for duration in selected_durations:
         rows = sorted(
-            rows,
+            by_duration[duration],
             key=lambda row: (
                 0 if row.event_id in original_final else 1,
                 0 if rp_counts[row.return_period_year] == 0 else 1,
@@ -117,11 +150,15 @@ def select_reblind_final(
                 row.event_id,
             ),
         )
+        if not rows:
+            raise RuntimeError(f"selected clean duration stratum unexpectedly empty: {duration}")
         chosen = rows[0]
         selected.append(chosen)
         rp_counts[chosen.return_period_year] += 1
-    if len({row.event_id for row in selected}) != 6:
-        raise ValueError("reblind Final selector produced duplicate events")
+    if len(selected) != FINAL_COHORT_SIZE or len({row.event_id for row in selected}) != FINAL_COHORT_SIZE:
+        raise ValueError("reblind Final selector did not produce six unique events")
+    if len({row.duration_minutes for row in selected}) != FINAL_COHORT_SIZE:
+        raise ValueError("reblind Final selector did not preserve six distinct duration strata")
     return tuple(selected)
 
 
@@ -149,6 +186,7 @@ def validate_remediated_split(payload: Mapping[str, Any]) -> dict[str, tuple[str
         "controller_performance_used": False,
         "forcing_descriptors_used": ["return_period_year", "duration_minutes"],
         "prelock_exposure_status_used": True,
+        "source_duration_cells_required": False,
     }
     for key, expected in required_basis.items():
         if basis.get(key) != expected:
@@ -169,13 +207,27 @@ def validate_remediated_split(payload: Mapping[str, Any]) -> dict[str, tuple[str
         counts.get("development_validation", -1)
     ) != 6:
         raise ValueError("remediated split must preserve six Development-Validation events")
-    if len(roles["final"]) != 6 or int(counts.get("final", -1)) != 6:
+    if len(roles["final"]) != FINAL_COHORT_SIZE or int(counts.get("final", -1)) != FINAL_COHORT_SIZE:
         raise ValueError("remediated split must contain exactly six Final events")
     if len(roles["development_train"]) != int(counts.get("development_train", -1)):
         raise ValueError("remediated development_train count mismatch")
     for role, values in roles.items():
         if len(values) != len(set(values)):
             raise ValueError(f"remediated split contains duplicate {role} events")
+
+    final_descriptors = payload.get("final_forcing_descriptors")
+    if not isinstance(final_descriptors, list) or len(final_descriptors) != FINAL_COHORT_SIZE:
+        raise ValueError("remediated split requires six Final forcing descriptors")
+    descriptor_ids = {str(row.get("event_id", "")) for row in final_descriptors if isinstance(row, Mapping)}
+    descriptor_durations = {
+        int(row["duration_minutes"])
+        for row in final_descriptors
+        if isinstance(row, Mapping) and "duration_minutes" in row
+    }
+    if descriptor_ids != set(roles["final"]):
+        raise ValueError("Final forcing descriptors do not match remediated Final IDs")
+    if len(descriptor_durations) != FINAL_COHORT_SIZE:
+        raise ValueError("remediated Final must span six distinct clean duration strata")
 
     quarantine = tuple(str(value) for value in payload.get("quarantined_prelock_exposed_final", ()))
     if not quarantine or len(quarantine) != int(counts.get("quarantined_final", -1)):
@@ -206,11 +258,11 @@ def validate_remediated_split(payload: Mapping[str, Any]) -> dict[str, tuple[str
 
 
 __all__ = [
+    "FINAL_COHORT_SIZE",
     "FINAL_EXPOSURE_LEDGER_CONTRACT",
     "FinalCandidate",
     "ORIGINAL_SPLIT_CONTRACT",
     "REMEDIATED_SPLIT_CONTRACT",
-    "TARGET_DURATIONS_MINUTES",
     "normalise_event_id",
     "select_reblind_final",
     "validate_exposure_ledger",
