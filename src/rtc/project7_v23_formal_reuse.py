@@ -2,8 +2,10 @@
 
 The original v0.6.9 18/6/6 forcing-only split remains immutable provenance. If its Final cohort is
 shown to have pre-lock historical exposure, publication Final authority may move only to the explicit
-V069R1 contamination-remediated fixed-policy split. Historical rows are never deleted/relabelled and
-no helper here manufactures labels or opens Final hydraulic evidence.
+contamination-remediated fixed-policy successor split. The successor preserves six independent,
+exposure-free forcing strata without requiring the contaminated source-Final duration cells to be
+recreated. Historical rows are never deleted/relabelled and no helper here manufactures labels or
+opens Final hydraulic evidence.
 """
 from __future__ import annotations
 
@@ -107,7 +109,7 @@ def _validate_original_frozen_split(payload: Mapping[str, Any]) -> dict[str, tup
 
 
 def validate_frozen_split(payload: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
-    """Validate either the original frozen split or explicit V069R1 contamination remediation."""
+    """Validate either the original frozen split or its explicit contamination remediation."""
     contract = str(payload.get("contract", ""))
     if contract == FROZEN_SPLIT_CONTRACT:
         return _validate_original_frozen_split(payload)
