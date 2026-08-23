@@ -25,6 +25,8 @@ def _candidate(event_id: str, rp: int, duration: int, *, exposed: bool = False) 
 
 
 def _remediated() -> dict[str, object]:
+    finals = [f"FINAL_NEW_{i}" for i in range(6)]
+    durations = [120, 135, 195, 240, 255, 360]
     return {
         "contract": REMEDIATED_SPLIT_CONTRACT,
         "source_split_contract": ORIGINAL_SPLIT_CONTRACT,
@@ -38,10 +40,20 @@ def _remediated() -> dict[str, object]:
             "controller_performance_used": False,
             "forcing_descriptors_used": ["return_period_year", "duration_minutes"],
             "prelock_exposure_status_used": True,
+            "source_duration_cells_required": False,
         },
         "development_train": [f"TRAIN_{i}" for i in range(13)],
         "development_validation": [f"VALID_{i}" for i in range(6)],
-        "final": [f"FINAL_NEW_{i}" for i in range(6)],
+        "final": finals,
+        "final_forcing_descriptors": [
+            {
+                "event_id": event_id,
+                "return_period_year": 20,
+                "duration_minutes": duration,
+                "prepared_inp_sha256": "a" * 64,
+            }
+            for event_id, duration in zip(finals, durations, strict=True)
+        ],
         "quarantined_prelock_exposed_final": [f"FINAL_OLD_{i}" for i in range(5)],
         "counts": {
             "development_train": 13,
@@ -62,25 +74,41 @@ def _remediated() -> dict[str, object]:
     }
 
 
-def test_reblind_selector_excludes_exposed_and_validation_and_covers_six_durations() -> None:
+def test_reblind_selector_excludes_exposed_and_validation_and_uses_six_clean_durations() -> None:
+    clean_durations = (120, 135, 195, 240, 255, 360)
     candidates = []
-    for duration in (60, 120, 180, 240, 300, 360):
+    for duration in clean_durations:
         candidates.append(_candidate(f"SAFE_{duration}", 20, duration))
         candidates.append(_candidate(f"EXPOSED_{duration}", 5, duration, exposed=True))
         candidates.append(_candidate(f"VALID_{duration}", 10, duration))
     selected = select_reblind_final(
         candidates,
-        protected_validation_events=[f"VALID_{duration}" for duration in (60, 120, 180, 240, 300, 360)],
+        protected_validation_events=[f"VALID_{duration}" for duration in clean_durations],
         original_final_events=[],
     )
-    assert [row.duration_minutes for row in selected] == [60, 120, 180, 240, 300, 360]
+    assert [row.duration_minutes for row in selected] == list(clean_durations)
     assert all(row.event_id.startswith("SAFE_") for row in selected)
 
 
+def test_reblind_selector_uses_duration_quantiles_when_more_than_six_clean_strata_exist() -> None:
+    durations = (90, 120, 135, 180, 195, 240, 255, 300, 360)
+    candidates = [_candidate(f"SAFE_{duration}", 20, duration) for duration in durations]
+    selected = select_reblind_final(
+        candidates,
+        protected_validation_events=[],
+        original_final_events=[],
+    )
+    assert len(selected) == 6
+    assert len({row.duration_minutes for row in selected}) == 6
+    assert selected[0].duration_minutes == min(durations)
+    assert selected[-1].duration_minutes == max(durations)
+
+
 def test_reblind_selector_prefers_still_clean_source_final_without_using_performance() -> None:
+    durations = (120, 135, 195, 240, 255, 360)
     candidates = []
     original = []
-    for duration in (60, 120, 180, 240, 300, 360):
+    for duration in durations:
         candidates.append(_candidate(f"OTHER_{duration}", 5, duration))
         clean = _candidate(f"ORIGINAL_FINAL_{duration}", 100, duration)
         candidates.append(clean)
@@ -93,9 +121,16 @@ def test_reblind_selector_prefers_still_clean_source_final_without_using_perform
     assert [row.event_id for row in selected] == original
 
 
-def test_reblind_selector_fails_when_a_duration_has_no_clean_candidate() -> None:
-    candidates = [_candidate(f"SAFE_{duration}", 20, duration) for duration in (60, 120, 180, 240, 300)]
-    with pytest.raises(ValueError, match="missing durations"):
+def test_reblind_selector_fails_only_when_clean_duration_diversity_is_below_six() -> None:
+    candidates = [
+        _candidate("SAFE_120_A", 5, 120),
+        _candidate("SAFE_120_B", 10, 120),
+        _candidate("SAFE_135", 20, 135),
+        _candidate("SAFE_195", 20, 195),
+        _candidate("SAFE_240", 20, 240),
+        _candidate("SAFE_360", 20, 360),
+    ]
+    with pytest.raises(ValueError, match="duration diversity"):
         select_reblind_final(candidates, protected_validation_events=[], original_final_events=[])
 
 
@@ -111,8 +146,15 @@ def test_remediated_split_is_fixed_policy_only_and_supported_by_formal_validator
         validate_remediated_split(payload)
 
 
+def test_remediated_split_requires_six_distinct_final_durations() -> None:
+    payload = _remediated()
+    payload["final_forcing_descriptors"][1]["duration_minutes"] = 120  # type: ignore[index]
+    with pytest.raises(ValueError, match="six distinct clean duration strata"):
+        validate_remediated_split(payload)
+
+
 def test_quarantined_source_final_cannot_reenter_any_scientific_role() -> None:
     payload = _remediated()
     payload["final"] = ["FINAL_OLD_0", *[f"FINAL_NEW_{i}" for i in range(5)]]
-    with pytest.raises(ValueError, match="quarantined"):
+    with pytest.raises(ValueError, match="descriptors|quarantined"):
         validate_remediated_split(payload)
