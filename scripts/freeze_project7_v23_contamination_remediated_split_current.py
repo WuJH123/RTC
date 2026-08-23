@@ -3,6 +3,11 @@
 The original v0.6.9 split is never edited. Pre-lock-exposed source-Final events are quarantined, and a
 replacement Final6 is selected from already-prepared, exposure-free events using forcing descriptors
 only. The resulting protocol is permanently FIXED_POLICY_NO_RETRAIN.
+
+The superseded source split used fixed 60/120/180/240/300/360-minute Final cells. The remediated split
+does not require those contaminated cells to be recreated. Instead it spans six distinct untouched
+duration strata from the available prepared-event support, selected deterministically without opening
+hydraulic or controller outcomes.
 """
 from __future__ import annotations
 
@@ -104,6 +109,14 @@ def main() -> None:
     superseded_unassigned = tuple(
         value for value in clean_original_final if value not in set(selected_ids)
     )
+    eligible_clean = [
+        row
+        for row in candidates
+        if not row.exposed_prelock and row.event_id not in set(validation)
+    ]
+    eligible_durations = sorted({row.duration_minutes for row in eligible_clean})
+    selected_durations = [row.duration_minutes for row in selected]
+
     payload: dict[str, Any] = {
         "contract": REMEDIATED_SPLIT_CONTRACT,
         "source_split_contract": str(original.get("contract")),
@@ -126,9 +139,19 @@ def main() -> None:
             "controller_performance_used": False,
             "forcing_descriptors_used": ["return_period_year", "duration_minutes"],
             "prelock_exposure_status_used": True,
-            "duration_design": "one untouched prepared event at each of 60,120,180,240,300,360 minutes",
-            "tie_break": "prefer still-clean source-Final; then new return-period coverage; then least-used return period; then event_id",
+            "source_duration_cells_required": False,
+            "duration_design": (
+                "six distinct exposure-free duration strata from the eligible prepared-event support; "
+                "if more than six strata exist, use deterministic equally spaced duration order-statistic positions"
+            ),
+            "tie_break": (
+                "within selected duration prefer still-clean source-Final; then new return-period "
+                "coverage; then least-used return period; then event_id"
+            ),
         },
+        "eligible_clean_event_count": len(eligible_clean),
+        "eligible_clean_duration_minutes": eligible_durations,
+        "selected_final_duration_minutes": selected_durations,
         "development_train": list(development_train),
         "development_validation": list(validation),
         "final": list(selected_ids),
@@ -193,6 +216,8 @@ def main() -> None:
                 "remediated_split_path": str(destination),
                 "remediated_split_sha256": _sha(destination),
                 "quarantined_final": list(contaminated),
+                "eligible_clean_duration_minutes": eligible_durations,
+                "selected_final_duration_minutes": selected_durations,
                 "reblind_final": list(selected_ids),
                 "formal_mode": "FIXED_POLICY_NO_RETRAIN",
                 "hydraulic_outcomes_opened_during_selection": False,
