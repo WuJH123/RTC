@@ -1,9 +1,9 @@
-"""Publication-facing Project7 V23 Formal reuse contracts.
+"""Publication-facing Project7 V23 Formal reuse and split-authority contracts.
 
-The authoritative scientific roles come only from the preregistered Project7 v0.6.9 forcing-only
-18/6/6 split. Historical policy-return ``data_role`` values are provenance only: the old calibration
-role is explicitly archival because the frozen scientific split removed calibration and safety-audit
-roles. No helper in this module manufactures labels, repartitions events, or opens Final evidence.
+The original v0.6.9 18/6/6 forcing-only split remains immutable provenance. If its Final cohort is
+shown to have pre-lock historical exposure, publication Final authority may move only to the explicit
+V069R1 contamination-remediated fixed-policy split. Historical rows are never deleted/relabelled and
+no helper here manufactures labels or opens Final hydraulic evidence.
 """
 from __future__ import annotations
 
@@ -14,15 +14,20 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from .project7_v23_final_remediation import (
+    REMEDIATED_SPLIT_CONTRACT,
+    validate_remediated_split,
+)
+
 
 FROZEN_SPLIT_CONTRACT = "PROJECT7_V069_30_EVENT_SPLIT_18TRAIN_6VALIDATION_6FINAL_V1"
 V23_EXISTING_TRUTH_REUSE_AUDIT_CONTRACT = (
-    "PROJECT7_V23_EXISTING_AUTHORITATIVE_TRUTH_EXACT_MATCH_AUDIT_V3_SPLIT_AUTHORITY"
+    "PROJECT7_V23_EXISTING_AUTHORITATIVE_TRUTH_EXACT_MATCH_AUDIT_V4_CONTAMINATION_REMEDIATION"
 )
 V23_PUBLICATION_ROLE_MANIFEST_CONTRACT = (
-    "PROJECT7_V23_PUBLICATION_ROLE_MANIFEST_V3_SPLIT_AUTHORITY"
+    "PROJECT7_V23_PUBLICATION_ROLE_MANIFEST_V4_CONTAMINATION_REMEDIATION"
 )
-V23_FORMAL_PROTOCOL_CONTRACT = "PROJECT7_V23_FORMAL_PROTOCOL_V3_FIXED_POLICY_FALLBACK"
+V23_FORMAL_PROTOCOL_CONTRACT = "PROJECT7_V23_FORMAL_PROTOCOL_V4_REBLIND_FIXED_POLICY_CAPABLE"
 
 SCIENTIFIC_ROLES = ("development_train", "development_validation", "final")
 FORMAL_LEARNING_ROLES = ("development_train", "development_validation")
@@ -65,9 +70,7 @@ def compare_candidate_targets(
     )
 
 
-def validate_frozen_split(payload: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
-    if str(payload.get("contract", "")) != FROZEN_SPLIT_CONTRACT:
-        raise ValueError("V23 Formal requires the frozen Project7 v0.6.9 split contract")
+def _validate_original_frozen_split(payload: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
     counts = payload.get("counts")
     invariants = payload.get("invariants")
     if not isinstance(counts, Mapping) or not isinstance(invariants, Mapping):
@@ -103,6 +106,18 @@ def validate_frozen_split(payload: Mapping[str, Any]) -> dict[str, tuple[str, ..
     return roles
 
 
+def validate_frozen_split(payload: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
+    """Validate either the original frozen split or explicit V069R1 contamination remediation."""
+    contract = str(payload.get("contract", ""))
+    if contract == FROZEN_SPLIT_CONTRACT:
+        return _validate_original_frozen_split(payload)
+    if contract == REMEDIATED_SPLIT_CONTRACT:
+        return validate_remediated_split(payload)
+    raise ValueError(
+        "V23 Formal requires either the original v0.6.9 split or its explicit contamination-remediated successor"
+    )
+
+
 def validate_frozen_final_split(payload: Mapping[str, Any]) -> tuple[str, ...]:
     return validate_frozen_split(payload)["final"]
 
@@ -118,7 +133,7 @@ def scientific_role_for_record(
     row: Mapping[str, Any],
     split_payload: Mapping[str, Any],
 ) -> str:
-    """Map a historical record to the frozen scientific role without trusting its old data_role."""
+    """Map a historical record to the active frozen scientific role, never its old data_role."""
     roles = validate_frozen_split(split_payload)
     identities = {
         _normalise_record_identity(row.get("event_id")),
