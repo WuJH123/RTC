@@ -1,6 +1,6 @@
-"""Freeze the six prepared Project7 Development-Validation event INPs.
+"""Freeze the active six-event Project7 Development-Validation prepared-INP manifest.
 
-Pass exactly six ``--event EVENT_ID=PATH`` pairs. IDs must equal the preregistered Validation cohort.
+The active Formal split may be the original v0.6.9 split or its contamination-remediated successor.
 Only path/hash/common-clock metadata are recorded; no SWMM run is started.
 """
 from __future__ import annotations
@@ -70,7 +70,8 @@ def main() -> None:
         "event_count": 6,
         "event_ids": list(roles["development_validation"]),
         "events": events,
-        "selection_basis": "FROZEN_PROJECT7_V069_FORCING_ONLY_SPLIT",
+        "source_split_contract": str(split.get("contract", "")),
+        "selection_basis": "ACTIVE_FROZEN_SPLIT_DEVELOPMENT_VALIDATION",
         "final_truth_opened": False,
         "new_rainfall_generated": False,
         "new_training_data_generated": False,

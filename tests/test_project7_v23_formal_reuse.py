@@ -91,7 +91,7 @@ def test_split_rejects_cross_role_overlap_and_final_tuning() -> None:
         validate_frozen_split(split)
 
 
-def test_formal_contracts_are_explicitly_versioned_and_split_authoritative() -> None:
-    assert "V3_SPLIT_AUTHORITY" in V23_EXISTING_TRUTH_REUSE_AUDIT_CONTRACT
-    assert "V3_SPLIT_AUTHORITY" in V23_PUBLICATION_ROLE_MANIFEST_CONTRACT
-    assert "V3_FIXED_POLICY_FALLBACK" in V23_FORMAL_PROTOCOL_CONTRACT
+def test_formal_contracts_are_explicitly_versioned_and_remediation_capable() -> None:
+    assert "V4_CONTAMINATION_REMEDIATION" in V23_EXISTING_TRUTH_REUSE_AUDIT_CONTRACT
+    assert "V4_CONTAMINATION_REMEDIATION" in V23_PUBLICATION_ROLE_MANIFEST_CONTRACT
+    assert "V4_REBLIND_FIXED_POLICY_CAPABLE" in V23_FORMAL_PROTOCOL_CONTRACT
