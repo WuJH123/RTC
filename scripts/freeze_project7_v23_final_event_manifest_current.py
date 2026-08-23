@@ -1,7 +1,7 @@
-"""Freeze the six prepared Project7 Final event INPs without opening any hydraulic outcome.
+"""Freeze six prepared Project7 Final event INPs without opening hydraulic outcomes.
 
-Pass exactly six ``--event EVENT_ID=PATH`` pairs. Event IDs must equal the preregistered Final cohort.
-The command records immutable INP hashes and common-clock metadata only; it never starts SWMM.
+Pass exactly six ``--event EVENT_ID=PATH`` pairs. IDs must equal the active frozen Final authority,
+which may be the original v0.6.9 cohort or its explicit contamination-remediated successor.
 """
 from __future__ import annotations
 
@@ -71,7 +71,8 @@ def main() -> None:
         "final_event_count": 6,
         "event_ids": list(roles["final"]),
         "events": events,
-        "selection_basis": "FROZEN_PROJECT7_V069_FORCING_ONLY_SPLIT",
+        "source_split_contract": str(split.get("contract", "")),
+        "selection_basis": "ACTIVE_FROZEN_SPLIT_FORCING_ONLY_FINAL_AUTHORITY",
         "hydraulic_outcomes_opened": False,
         "proposed_performance_used_for_selection": False,
         "new_rainfall_generated": False,
@@ -88,6 +89,7 @@ def main() -> None:
             {
                 "final_manifest_path": str(destination),
                 "final_manifest_sha256": sha256_file(destination),
+                "source_split_contract": payload["source_split_contract"],
                 "event_ids": payload["event_ids"],
                 "hydraulic_outcomes_opened": False,
             },
