@@ -8,9 +8,17 @@ import sys
 
 import pytest
 
+from rtc.direct_tfv_policy_return import sha256_file
 from rtc.project7_publication_statistics import (
     exact_bootstrap_mean_ci,
     exact_two_sided_sign_test_pvalue,
+)
+from rtc.project7_v23_step2_lineage import (
+    V23_STEP2_CHECKPOINT_SHA256,
+    V23_STEP2_COMPONENT_DIAGNOSTIC_CONTRACT,
+    V23_STEP2_LINEAGE_EVIDENCE_CONTRACT,
+    V23_V15_CHECKPOINT_SHA256,
+    V23_V21_CHECKPOINT_SHA256,
 )
 
 
@@ -26,7 +34,53 @@ def _load_policy_lock_module():
     return module
 
 
-def test_operational_acceptance_retains_failed_step2_but_allows_fixed_policy_validation(
+def _write_lineage(tmp_path: Path) -> Path:
+    path = tmp_path / "step2_lineage.json"
+    path.write_text(
+        json.dumps(
+            {
+                "contract": V23_STEP2_LINEAGE_EVIDENCE_CONTRACT,
+                "lineage_pass": True,
+                "step2_checkpoint_path": str(tmp_path / "step2_direct_tfv_value_dev.pt"),
+                "step2_checkpoint_sha256": V23_STEP2_CHECKPOINT_SHA256,
+                "asset_manifest_step2_sha256": V23_STEP2_CHECKPOINT_SHA256,
+                "v15_checkpoint_sha256": V23_V15_CHECKPOINT_SHA256,
+                "v15_base_step2_sha256": V23_STEP2_CHECKPOINT_SHA256,
+                "v21_checkpoint_sha256": V23_V21_CHECKPOINT_SHA256,
+                "v21_base_step2_sha256": V23_STEP2_CHECKPOINT_SHA256,
+                "v21_rank_source_checkpoint_sha256": V23_V15_CHECKPOINT_SHA256,
+                "step2_retrained_for_formal": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_diagnostic(tmp_path: Path, lineage: Path) -> Path:
+    path = tmp_path / "step2_v5_diagnostic.json"
+    path.write_text(
+        json.dumps(
+            {
+                "contract": V23_STEP2_COMPONENT_DIAGNOSTIC_CONTRACT,
+                "metric_role": "LEGACY_COMPONENT_DIAGNOSTIC_NOT_POLICY_LOCK_HARD_GATE",
+                "step2_checkpoint_sha256": V23_STEP2_CHECKPOINT_SHA256,
+                "step2_lineage_evidence_sha256": sha256_file(lineage),
+                "tfv_exact_truth_rank_correlation": -0.272494,
+                "query_balanced_top1": 0.311111,
+                "mean_selected_regret_m3": 56366.11,
+                "new_swmm_truth_generated": False,
+                "step2_retrained": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_operational_acceptance_retains_failed_v5_step2_but_allows_fixed_policy_validation(
     tmp_path: Path,
 ) -> None:
     protocol = tmp_path / "protocol.json"
@@ -41,7 +95,9 @@ def test_operational_acceptance_retains_failed_step2_but_allows_fixed_policy_val
         ),
         encoding="utf-8",
     )
-    evidence = tmp_path / "step2_evidence.json"
+    lineage = _write_lineage(tmp_path)
+    diagnostic = _write_diagnostic(tmp_path, lineage)
+    evidence = tmp_path / "source_evidence.json"
     evidence.write_text("{}\n", encoding="utf-8")
     out = tmp_path / "acceptance.json"
     command = [
@@ -55,12 +111,10 @@ def test_operational_acceptance_retains_failed_step2_but_allows_fixed_policy_val
         str(protocol),
         "--step1-unobserved-depth-nse",
         "0.9243753",
-        "--step2-tfv-exact-truth-rank-correlation",
-        "-0.272494",
-        "--step2-query-balanced-top1",
-        "0.311111",
-        "--step2-mean-selected-regret-m3",
-        "56366.11",
+        "--step2-lineage-evidence",
+        str(lineage),
+        "--step2-component-diagnostic",
+        str(diagnostic),
         "--source-evidence",
         str(evidence),
         "--out",
@@ -69,6 +123,8 @@ def test_operational_acceptance_retains_failed_step2_but_allows_fixed_policy_val
     subprocess.run(command, check=True, cwd=REPO)
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["step1_accepted"] is True
+    assert payload["step2_runtime_lineage_accepted"] is True
+    assert payload["step2_checkpoint_sha256"] == V23_STEP2_CHECKPOINT_SHA256
     assert payload["step2_legacy_component_accepted"] is False
     assert payload["step2_required_for_policy_lock"] is False
     assert payload["step2_failure_retained_as_publication_limitation"] is True
@@ -86,6 +142,32 @@ def test_operational_acceptance_retains_failed_step2_but_allows_fixed_policy_val
     assert step2_pass is False
     assert step2_gate is False
     assert "DO_NOT_CLAIM_STEP2_STANDALONE_TFV_RANKING_ACCEPTANCE" in restrictions
+
+
+def test_policy_lock_rejects_operational_acceptance_from_another_step2() -> None:
+    policy_lock = _load_policy_lock_module()
+    payload = {
+        "contract": "PROJECT7_V23_FIXED_POLICY_OPERATIONAL_ACCEPTANCE_EVIDENCE_V2_STEP2_LINEAGE_BOUND",
+        "final_truth_opened": False,
+        "hard_thresholds_lowered_after_results": False,
+        "formal_mode": "FIXED_POLICY_NO_RETRAIN",
+        "accepted_for_policy_lock_candidate": True,
+        "step1_accepted": True,
+        "step2_runtime_lineage_accepted": True,
+        "step2_checkpoint_sha256": "0" * 64,
+        "step2_retrained": False,
+        "step2_required_for_policy_lock": False,
+        "policy_parameters_changed_after_component_diagnostic_failure": False,
+        "legacy_step2_threshold_relabelled_or_lowered": False,
+        "step3_retrained": False,
+        "step3_disposition": "FROZEN_V15_V21_FIXED_POLICY_NO_RETRAIN",
+        "step2_legacy_component_accepted": False,
+        "step2_failure_retained_as_publication_limitation": True,
+        "step2_standalone_surrogate_claim_allowed": False,
+        "paper_claim_restrictions": [],
+    }
+    with pytest.raises(RuntimeError, match="another checkpoint"):
+        policy_lock._validate_acceptance(payload, protocol_mode="FIXED_POLICY_NO_RETRAIN")
 
 
 def test_exact_final6_bootstrap_is_deterministic_and_sign_test_is_exact() -> None:

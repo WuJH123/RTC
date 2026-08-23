@@ -43,10 +43,13 @@ jobs:
             src/rtc/direct_tfv_policy_return_portfolio_v23.py \
             src/rtc/direct_tfv_operational_v23_runtime.py \
             src/rtc/project7_v23_formal_reuse.py \
+            src/rtc/project7_v23_step2_lineage.py \
             src/rtc/project7_publication_statistics.py \
             scripts/audit_project7_v23_existing_truth_reuse_current.py \
             scripts/freeze_project7_v23_formal_existing_data_protocol_current.py \
             scripts/compile_project7_v23_formal_model_acceptance_current.py \
+            scripts/audit_project7_v23_step2_lineage_current.py \
+            scripts/compile_project7_v23_step2_v5_component_diagnostic_current.py \
             scripts/compile_project7_v23_fixed_policy_operational_acceptance_current.py \
             scripts/freeze_project7_v23_validation_event_manifest_current.py \
             scripts/run_project7_v23_formal_validation_current.py \
@@ -112,6 +115,8 @@ jobs:
           python scripts/audit_project7_v23_existing_truth_reuse_current.py --help >/dev/null
           python scripts/freeze_project7_v23_formal_existing_data_protocol_current.py --help >/dev/null
           python scripts/compile_project7_v23_formal_model_acceptance_current.py --help >/dev/null
+          python scripts/audit_project7_v23_step2_lineage_current.py --help >/dev/null
+          python scripts/compile_project7_v23_step2_v5_component_diagnostic_current.py --help >/dev/null
           python scripts/compile_project7_v23_fixed_policy_operational_acceptance_current.py --help >/dev/null
           python scripts/freeze_project7_v23_validation_event_manifest_current.py --help >/dev/null
           python scripts/run_project7_v23_formal_validation_current.py --help >/dev/null
