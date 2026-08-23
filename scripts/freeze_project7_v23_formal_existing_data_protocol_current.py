@@ -1,12 +1,8 @@
-"""Freeze the Project7 V23 publication protocol after the existing-truth audit.
+"""Freeze the Project7 V23 publication protocol after existing-truth/contamination audit.
 
-The protocol is valid in either of two preregistered scientific modes:
-1) EXACT_MATCH_RETRAIN_ALLOWED, only when the complete frozen 18 Train + 6 Validation roles are
-   distribution-matched to V23; or
-2) FIXED_POLICY_NO_RETRAIN, which freezes the development-selected V23+V15+V21 controller without
-   reusing mismatched labels.
-
-The old calibration role stays removed. Final remains sealed until a separate Policy Lock is created.
+The protocol can use the original v0.6.9 split only when its Final cohort is still clean, or the
+explicit V069R1 contamination-remediated split. Remediation is permanently FIXED_POLICY_NO_RETRAIN;
+contaminated historical rows remain quarantined provenance and never become publication Final.
 """
 from __future__ import annotations
 
@@ -16,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from rtc.direct_tfv_policy_return import sha256_file
+from rtc.project7_v23_final_remediation import REMEDIATED_SPLIT_CONTRACT
 from rtc.project7_v23_formal_reuse import (
     V23_EXISTING_TRUTH_REUSE_AUDIT_CONTRACT,
     V23_FORMAL_PROTOCOL_CONTRACT,
@@ -57,7 +54,7 @@ def main() -> None:
     if audit.get("contract") != V23_EXISTING_TRUTH_REUSE_AUDIT_CONTRACT:
         raise ValueError("wrong V23 existing-truth audit contract")
     if audit.get("final_truth_contamination") is not False:
-        raise RuntimeError("Final truth contamination blocks a clean V23 Formal protocol")
+        raise RuntimeError("active Formal split still has pre-lock Final contamination")
     if audit.get("fixed_policy_formal_evaluation_allowed") is not True:
         raise RuntimeError("existing-truth audit did not authorize any clean Formal evaluation path")
     mode = str(audit.get("recommended_formal_mode", ""))
@@ -67,6 +64,9 @@ def main() -> None:
         raise RuntimeError("audit mode/retraining permission mismatch")
 
     roles = validate_frozen_split(split)
+    remediated = str(split.get("contract", "")) == REMEDIATED_SPLIT_CONTRACT
+    if remediated and mode != "FIXED_POLICY_NO_RETRAIN":
+        raise RuntimeError("contamination-remediated split is fixed-policy only")
     if acceptance.get("contract") != MODEL_ACCEPTANCE_CONTRACT:
         raise ValueError("V23 Formal protocol requires frozen MODEL_ACCEPTANCE_CONTRACT_V4")
     instruction = str(acceptance.get("instruction", ""))
@@ -77,13 +77,18 @@ def main() -> None:
 
     role_manifest = {
         "contract": V23_PUBLICATION_ROLE_MANIFEST_CONTRACT,
-        "scientific_role_authority": "configs/project7_v069_split_contract.json",
+        "scientific_role_authority_contract": str(split.get("contract")),
+        "scientific_role_authority_path": str(split_path),
+        "source_split_is_contamination_remediated": remediated,
         "development_train_event_ids": list(roles["development_train"]),
         "development_validation_event_ids": list(roles["development_validation"]),
         "final_event_ids": list(roles["final"]),
         "development_train_count": len(roles["development_train"]),
         "development_validation_count": len(roles["development_validation"]),
         "final_count": len(roles["final"]),
+        "quarantined_prelock_exposed_source_final": list(
+            split.get("quarantined_prelock_exposed_final", ())
+        ),
         "calibration_role_removed": True,
         "safety_audit_role_removed": True,
         "historical_policy_return_calibration_records": "ARCHIVAL_ONLY_NOT_FORMAL_LEARNING",
@@ -100,8 +105,18 @@ def main() -> None:
         "formal_mode_reason": (
             "complete existing V23-exact Train/Validation truth permits optional minimal retraining"
             if mode == "EXACT_MATCH_RETRAIN_ALLOWED"
-            else "existing truth is not fully V23-distribution-matched; freeze the development-selected controller rather than fabricate/relabel training truth"
+            else (
+                "source Final contamination was quarantined and a forcing-only untouched replacement Final was frozen; current V23+V15+V21 must remain fixed"
+                if remediated
+                else "existing truth is not fully V23-distribution-matched; freeze the development-selected controller rather than fabricate/relabel training truth"
+            )
         ),
+        "source_split_contract": str(split.get("contract")),
+        "source_split_is_contamination_remediated": remediated,
+        "source_contaminated_final_quarantined": bool(
+            split.get("quarantined_prelock_exposed_final")
+        ),
+        "contaminated_records_deleted_or_relabeled": False,
         "existing_data_only_for_any_retraining": True,
         "new_rainfall_for_training_allowed": False,
         "new_policy_return_truth_allowed": False,
@@ -167,6 +182,8 @@ def main() -> None:
         json.dumps(
             {
                 "formal_mode": mode,
+                "source_split_contract": str(split.get("contract")),
+                "source_split_is_contamination_remediated": remediated,
                 "formal_protocol_path": str(protocol_path),
                 "formal_protocol_sha256": sha256_file(protocol_path),
                 "publication_role_manifest_path": str(roles_path),
