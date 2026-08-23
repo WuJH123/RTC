@@ -42,6 +42,16 @@ jobs:
             src/rtc/direct_tfv_operational_v21_runtime_v2.py \
             src/rtc/direct_tfv_policy_return_portfolio_v23.py \
             src/rtc/direct_tfv_operational_v23_runtime.py \
+            src/rtc/project7_v23_formal_reuse.py \
+            scripts/audit_project7_v23_existing_truth_reuse_current.py \
+            scripts/freeze_project7_v23_formal_existing_data_protocol_current.py \
+            scripts/compile_project7_v23_formal_model_acceptance_current.py \
+            scripts/freeze_project7_v23_validation_event_manifest_current.py \
+            scripts/run_project7_v23_formal_validation_current.py \
+            scripts/create_project7_v23_policy_lock_current.py \
+            scripts/freeze_project7_v23_final_event_manifest_current.py \
+            scripts/run_policy_direct_tfv_v23_locked_current.py \
+            scripts/run_project7_v23_formal_final_current.py \
             scripts/freeze_project7_operational_benchmark5_current.py \
             scripts/build_project7_operational_baseline_cache_current.py \
             scripts/run_policy_direct_tfv_operational_v21_development.py \
@@ -51,6 +61,7 @@ jobs:
             tests/test_operational_benchmark_v1.py \
             tests/test_operational_v21_runtime_v2.py \
             tests/test_operational_v23_strongstorm_candidate.py \
+            tests/test_project7_v23_formal_reuse.py \
             tests/test_direct_tfv_policy_return_hold_aware_metrics.py \
             tests/test_native_supervisory_control.py \
             --select E4,E7,E9,F
@@ -68,6 +79,7 @@ jobs:
             tests/test_operational_benchmark_v1.py \
             tests/test_operational_v21_runtime_v2.py \
             tests/test_operational_v23_strongstorm_candidate.py \
+            tests/test_project7_v23_formal_reuse.py \
             tests/test_native_supervisory_control.py \
             tests/test_direct_tfv_runtime_adapter.py \
             tests/test_practical_rtc_assets.py \
@@ -92,6 +104,15 @@ jobs:
           python scripts/calibrate_direct_tfv_policy_return_portfolio_admission_current.py --help >/dev/null
           python scripts/run_policy_direct_tfv_policy_return_development.py --help >/dev/null
           python scripts/train_step3_selected_boundary_v21_current.py --help >/dev/null
+          python scripts/audit_project7_v23_existing_truth_reuse_current.py --help >/dev/null
+          python scripts/freeze_project7_v23_formal_existing_data_protocol_current.py --help >/dev/null
+          python scripts/compile_project7_v23_formal_model_acceptance_current.py --help >/dev/null
+          python scripts/freeze_project7_v23_validation_event_manifest_current.py --help >/dev/null
+          python scripts/run_project7_v23_formal_validation_current.py --help >/dev/null
+          python scripts/create_project7_v23_policy_lock_current.py --help >/dev/null
+          python scripts/freeze_project7_v23_final_event_manifest_current.py --help >/dev/null
+          python scripts/run_policy_direct_tfv_v23_locked_current.py --help >/dev/null
+          python scripts/run_project7_v23_formal_final_current.py --help >/dev/null
           python scripts/freeze_project7_operational_benchmark5_current.py --help >/dev/null
           python scripts/build_project7_operational_baseline_cache_current.py --help >/dev/null
           python scripts/run_policy_direct_tfv_operational_v21_development.py --help >/dev/null
