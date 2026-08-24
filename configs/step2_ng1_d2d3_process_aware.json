@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_STEP2_NG1_D2_PRESERVED_PROCESS_AWARE_INTERACTION_V1",
+  "contract": "PROJECT7_STEP2_NG1_D2_PRESERVED_ACTIVE_PAIR_SELECTION_V2",
   "development_only": true,
   "seed": 42,
   "new_swmm_runs": 0,
@@ -17,8 +17,11 @@
   },
   "architecture": {
     "main": "V5 facility main effect",
-    "interaction": "state-conditioned complete 109-actuator pair value",
-    "pair_count": 5886,
+    "interaction": "state-conditioned changed-changed actuator pair value",
+    "pair_universe_count": 5886,
+    "pair_activity_rule": "both actuators changed relative to reference",
+    "pair_aggregation": "sqrt_active_pair_count_normalized_sum",
+    "pair_physics_features": "Train-independent standardized absolute differences",
     "hidden_dim": 96,
     "actuator_embedding_dim": 16,
     "horizon_steps": 72,
@@ -41,10 +44,13 @@
       "rank_weight": 0.35,
       "sign_weight": 0.25,
       "selection_regret_weight": 0.25,
+      "oracle_best_margin_weight": 0.25,
       "interaction_l1_weight": 0.01,
-      "density_strata": "TrainFit action metadata q50/q75/q90"
+      "density_strata": "TrainFit action metadata q50/q75/q90 with global-bin weights",
+      "selection_temperature": "TrainFit median positive best-vs-rest regret gap"
     }
   },
+  "hypothesis": "NG1-R1 improved global D3 rank/pairwise/sign but worsened Top1/regret because sparse joint-action signal was diluted across all 5886 pairs and the selection loss was too smooth. R2 restricts interaction to changed-changed pairs and adds best-relative regret geometry supervision.",
   "firewall": {
     "validation_accessed": false,
     "final_accessed": false,
