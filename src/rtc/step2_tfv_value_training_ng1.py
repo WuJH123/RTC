@@ -1,4 +1,10 @@
-"""Training utilities for the isolated NG1-R2 Step2 Development candidate."""
+"""Training utilities for the isolated NG1-R3 Step2 Development candidate.
+
+R3 deliberately restores the R1 loss/weighting semantics so that the only
+scientific change relative to R1 is the adaptive-connectivity interaction
+representation.  This avoids confounding representation changes with R2's
+selection-temperature, best-margin, and global-density revisions.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -26,7 +32,7 @@ from .step2_tfv_value_training import (
 from .step2_tfv_value_training_v4 import _single_facility_ids
 
 
-NG1_TRAINING_CONTRACT = "PROJECT7_STEP2_NG1_ACTIVE_PAIR_BEST_MARGIN_TRAINING_V2"
+NG1_TRAINING_CONTRACT = "PROJECT7_STEP2_NG1_ADAPTIVE_CONNECTIVITY_R1_LOSS_TRAINING_V3"
 
 
 @dataclass(frozen=True)
@@ -41,7 +47,6 @@ class NG1TrainingDesign:
     rank_weight: float = 0.35
     sign_weight: float = 0.25
     regret_weight: float = 0.25
-    best_margin_weight: float = 0.25
     interaction_l1_weight: float = 0.01
     grad_clip: float = 5.0
     practical_zero_m3: float = 1.0
@@ -58,7 +63,6 @@ class NG1TrainingDesign:
             self.rank_weight,
             self.sign_weight,
             self.regret_weight,
-            self.best_margin_weight,
             self.interaction_l1_weight,
             self.grad_clip,
             self.practical_zero_m3,
@@ -125,24 +129,6 @@ def _soft_selection_regret(
     return (probabilities * regret / scale.clamp_min(1.0)).sum()
 
 
-def ng1_oracle_best_margin_loss(
-    prediction: torch.Tensor,
-    truth: torch.Tensor,
-    scale: torch.Tensor,
-) -> torch.Tensor:
-    """Match best-vs-rest regret geometry so global ranking gains transfer to top-choice quality."""
-    if prediction.ndim != 1 or truth.ndim != 1 or prediction.shape != truth.shape:
-        raise ValueError("oracle-best margin loss requires matching 1-D prediction/truth")
-    if prediction.numel() <= 1:
-        return prediction.new_zeros(())
-    best = torch.argmin(truth)
-    true_margin = (truth - truth[best]) / scale.clamp_min(1.0)
-    predicted_margin = (prediction - prediction[best]) / scale.clamp_min(1.0)
-    mask = torch.ones_like(truth, dtype=torch.bool)
-    mask[best] = False
-    return F.smooth_l1_loss(predicted_margin[mask], true_margin[mask])
-
-
 def ng1_d2_group_loss(
     model: NG1ProcessAwareDirectTFVValueModel,
     batch: Any,
@@ -164,7 +150,10 @@ def ng1_d2_group_loss(
     )
     if branch_weights is not None:
         per_branch = per_branch * branch_weights.to(per_branch)
-    facility_losses = [per_branch[facility_ids == value].mean() for value in torch.unique(facility_ids)]
+    facility_losses = [
+        per_branch[facility_ids == value].mean()
+        for value in torch.unique(facility_ids)
+    ]
     regression = torch.stack(facility_losses).mean()
     ranking = _pairwise_ranking_loss(
         _with_hold_zero(output.total_delta_tfv_m3),
@@ -194,7 +183,6 @@ def ng1_d3_group_loss(
     rank_weight: float = 0.35,
     sign_weight: float = 0.25,
     regret_weight: float = 0.25,
-    best_margin_weight: float = 0.25,
     interaction_l1_weight: float = 0.01,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     output = _forward_candidates(model, batch, indices, graph_tensors=graph_tensors)
@@ -222,14 +210,12 @@ def ng1_d3_group_loss(
     ranking = _pairwise_ranking_loss(prediction, truth, scale_m3=scale_m3)
     sign = _sign_loss(final_prediction, truth_candidates, scale_m3, 1.0)
     regret = _soft_selection_regret(prediction, truth, tau_m3, scale_m3)
-    best_margin = ng1_oracle_best_margin_loss(prediction, truth, scale_m3)
     interaction_l1 = torch.mean(torch.abs(output.interaction_residual_m3 / scale))
     loss = (
         regression
         + float(rank_weight) * ranking
         + float(sign_weight) * sign
         + float(regret_weight) * regret
-        + float(best_margin_weight) * best_margin
         + float(interaction_l1_weight) * interaction_l1
     )
     return loss, {
@@ -239,7 +225,6 @@ def ng1_d3_group_loss(
         "ranking": float(ranking.detach().cpu()),
         "sign": float(sign.detach().cpu()),
         "selection_regret": float(regret.detach().cpu()),
-        "oracle_best_margin": float(best_margin.detach().cpu()),
         "interaction_l1": float(interaction_l1.detach().cpu()),
         "branches": float(indices.numel()),
     }
@@ -251,8 +236,12 @@ def _extract_values(cache: Any, names: Sequence[str]) -> np.ndarray:
         entry = cache.entry(name)
         ref = int(entry.reference_index)
         candidates = [int(index) for index in entry.indices if int(index) != ref]
-        reference = float(np.asarray(entry.arrays["exact_node_flood_volume_m3"][ref], dtype=np.float64).sum())
-        candidate = np.asarray(entry.arrays["exact_node_flood_volume_m3"][candidates], dtype=np.float64).sum(axis=1)
+        reference = float(
+            np.asarray(entry.arrays["exact_node_flood_volume_m3"][ref], dtype=np.float64).sum()
+        )
+        candidate = np.asarray(
+            entry.arrays["exact_node_flood_volume_m3"][candidates], dtype=np.float64
+        ).sum(axis=1)
         values.extend((candidate - reference).tolist())
     result = np.asarray(values, dtype=np.float64)
     if result.size == 0 or not np.isfinite(result).all():
@@ -260,7 +249,7 @@ def _extract_values(cache: Any, names: Sequence[str]) -> np.ndarray:
     return result
 
 
-def _changed_counts(cache: Any, names: Sequence[str]) -> np.ndarray:
+def _density_contract(cache: Any, names: Sequence[str]) -> dict[str, Any]:
     counts: list[int] = []
     for name in names:
         entry = cache.entry(name)
@@ -270,72 +259,47 @@ def _changed_counts(cache: Any, names: Sequence[str]) -> np.ndarray:
             if int(index) == ref:
                 continue
             candidate = np.asarray(entry.arrays["settings"][int(index)], dtype=np.float64)
-            counts.append(int(np.any(np.abs(candidate - reference) > 1.0e-7, axis=0).sum()))
-    values = np.asarray(counts, dtype=np.int64)
+            counts.append(
+                int(np.any(np.abs(candidate - reference) > 1.0e-7, axis=0).sum())
+            )
+    values = np.asarray(counts, dtype=np.float64)
     if values.size == 0:
         raise ValueError("NG1 D3 density contract requires non-empty candidates")
-    return values
-
-
-def _density_bin_numpy(values: np.ndarray, q50: float, q75: float, q90: float) -> np.ndarray:
-    return np.where(values <= q50, 0, np.where(values <= q75, 1, np.where(values <= q90, 2, 3))).astype(np.int64)
-
-
-def _density_contract(cache: Any, names: Sequence[str]) -> dict[str, Any]:
-    values = _changed_counts(cache, names)
-    q50, q75, q90 = (float(np.quantile(values.astype(np.float64), q)) for q in (0.50, 0.75, 0.90))
-    bins = _density_bin_numpy(values, q50, q75, q90)
-    bin_counts = [int(np.sum(bins == index)) for index in range(4)]
+    quantiles = [float(np.quantile(values, q)) for q in (0.50, 0.75, 0.90)]
     return {
-        "contract": "PROJECT7_STEP2_NG1_D3_GLOBAL_DENSITY_STRATA_TRAIN_FIT_V2",
-        "q50": q50,
-        "q75": q75,
-        "q90": q90,
+        "contract": "PROJECT7_STEP2_NG1_D3_DENSITY_STRATA_TRAIN_FIT_V1",
+        "q50": quantiles[0],
+        "q75": quantiles[1],
+        "q90": quantiles[2],
         "count": int(values.size),
-        "global_bin_counts": bin_counts,
     }
 
 
 def _density_weights(counts: torch.Tensor, contract: Mapping[str, Any]) -> torch.Tensor:
-    q50, q75, q90 = (float(contract[key]) for key in ("q50", "q75", "q90"))
+    q50, q75, q90 = (
+        float(contract[key]) for key in ("q50", "q75", "q90")
+    )
     bins = torch.where(
         counts.to(torch.float32) <= q50,
         0,
         torch.where(counts <= q75, 1, torch.where(counts <= q90, 2, 3)),
     )
-    global_counts = tuple(int(value) for value in contract["global_bin_counts"])
-    weights = torch.empty_like(counts, dtype=torch.float32)
-    for value in range(4):
+    weights = torch.ones_like(counts, dtype=torch.float32)
+    for value in torch.unique(bins):
         mask = bins == value
-        if bool(mask.any()):
-            denominator = max(global_counts[value], 1)
-            weights[mask] = 1.0 / float(denominator)
+        weights[mask] = 1.0 / float(mask.sum())
     return weights * (float(weights.numel()) / weights.sum().clamp_min(1.0e-12))
 
 
-def _batch_weights(batch: Any, indices: torch.Tensor, contract: Mapping[str, Any]) -> torch.Tensor:
+def _batch_weights(
+    batch: Any, indices: torch.Tensor, contract: Mapping[str, Any]
+) -> torch.Tensor:
     candidate = batch.candidate_settings[0].index_select(0, indices)
     reference = batch.reference_settings[0][None]
-    counts = torch.any(torch.abs(candidate - reference) > 1.0e-7, dim=1).sum(dim=1)
+    counts = torch.any(
+        torch.abs(candidate - reference) > 1.0e-7, dim=1
+    ).sum(dim=1)
     return _density_weights(counts, contract)
-
-
-def _selection_temperature_m3(cache: Any, names: Sequence[str]) -> float:
-    """TrainFit-only decision temperature from best-vs-rest regret gaps, not global |delta TFV|."""
-    gaps: list[float] = []
-    for name in names:
-        entry = cache.entry(name)
-        ref = int(entry.reference_index)
-        candidates = [int(index) for index in entry.indices if int(index) != ref]
-        reference = float(np.asarray(entry.arrays["exact_node_flood_volume_m3"][ref], dtype=np.float64).sum())
-        candidate = np.asarray(entry.arrays["exact_node_flood_volume_m3"][candidates], dtype=np.float64).sum(axis=1)
-        truth = np.concatenate((np.asarray([0.0]), candidate - reference))
-        regret = truth - float(np.min(truth))
-        gaps.extend(regret[regret > 1.0].tolist())
-    values = np.asarray(gaps, dtype=np.float64)
-    if values.size == 0 or not np.isfinite(values).all():
-        raise ValueError("NG1 selection temperature requires positive TrainFit best-vs-rest gaps")
-    return max(1.0, float(np.median(values)))
 
 
 def _run_stage(
@@ -358,21 +322,37 @@ def _run_stage(
     parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
     if not parameters:
         raise RuntimeError(f"NG1 {stage} stage has no trainable parameters")
-    optimizer = torch.optim.AdamW(parameters, lr=float(learning_rate), weight_decay=float(design.weight_decay))
+    optimizer = torch.optim.AdamW(
+        parameters,
+        lr=float(learning_rate),
+        weight_decay=float(design.weight_decay),
+    )
     static = _graph_tensors(graph, device)
     history: list[dict[str, float | int | str]] = []
     model.train()
     for epoch in range(1, int(epochs) + 1):
         records: list[dict[str, float]] = []
-        for name in _epoch_group_order({"D2" if stage == "main" else "D3": names}, epoch=epoch, seed=design.seed):
+        for name in _epoch_group_order(
+            {"D2" if stage == "main" else "D3": names},
+            epoch=epoch,
+            seed=design.seed,
+        ):
             _, group_name = name
             batch = cache.batch(group_name, normalization, device)
-            mode = "single" if stage == "main" else ("joint" if stage == "joint" else "all")
+            mode = "single" if stage == "main" else (
+                "joint" if stage == "joint" else "all"
+            )
             indices = _branch_indices(batch, mode=mode)
             if int(indices.numel()) == 0:
                 continue
             if stage == "main":
-                truth = batch.true_delta_tfv_m3[0].index_select(0, indices).detach().cpu().numpy()
+                truth = (
+                    batch.true_delta_tfv_m3[0]
+                    .index_select(0, indices)
+                    .detach()
+                    .cpu()
+                    .numpy()
+                )
                 weights = d2_magnitude_weights(truth, strata or {}).copy()
                 result = ng1_d2_group_loss(
                     model,
@@ -397,7 +377,6 @@ def _run_stage(
                     rank_weight=design.rank_weight,
                     sign_weight=design.sign_weight,
                     regret_weight=design.regret_weight,
-                    best_margin_weight=design.best_margin_weight,
                     interaction_l1_weight=design.interaction_l1_weight,
                 )
             loss, metrics = result
@@ -414,7 +393,10 @@ def _run_stage(
                 "stage": stage,
                 "epoch": epoch,
                 "groups": len(records),
-                **{key: float(np.mean([row[key] for row in records])) for key in keys},
+                **{
+                    key: float(np.mean([row[key] for row in records]))
+                    for key in keys
+                },
             }
         )
     return history
@@ -438,8 +420,13 @@ def train_ng1_model(
     d2_values = _extract_values(source_cache, fit_d2_names)
     strata = d2_magnitude_strata(d2_values)
     density = _density_contract(source_cache, fit_d3_names)
-    tau = _selection_temperature_m3(source_cache, fit_d3_names)
-    scale = torch.as_tensor(float(target_scale_m3), dtype=torch.float32, device=device)
+    tau = max(
+        1.0,
+        float(np.quantile(np.abs(_extract_values(source_cache, fit_d3_names)), 0.75)),
+    )
+    scale = torch.as_tensor(
+        float(target_scale_m3), dtype=torch.float32, device=device
+    )
     tau_tensor = torch.as_tensor(tau, dtype=torch.float32, device=device)
 
     for parameter in model.parameters():
@@ -460,7 +447,9 @@ def train_ng1_model(
         density_contract=density,
         strata=strata,
     )
-    main_state_dict = {name: value.detach().clone() for name, value in model.state_dict().items()}
+    main_state_dict = {
+        name: value.detach().clone() for name, value in model.state_dict().items()
+    }
     main_hash_before_d3 = ng1_main_parameter_sha256(model)
     freeze_ng1_main(model)
     joint_history = _run_stage(
@@ -501,10 +490,12 @@ def train_ng1_model(
         "main_state_dict": main_state_dict,
         "joint": joint_history,
         "control": control_history,
-        "d2_magnitude_strata": {key: value for key, value in strata.items() if key != "masks"},
+        "d2_magnitude_strata": {
+            key: value for key, value in strata.items() if key != "masks"
+        },
         "d3_density_strata": density,
         "d3_tau_m3": tau,
-        "d3_tau_definition": "TrainFit median positive best-vs-rest regret gap",
+        "d3_tau_definition": "TrainFit q75 absolute delta TFV (R1 semantics)",
         "main_parameter_sha256_before_d3": main_hash_before_d3,
         "main_parameter_sha256_after_d3": main_hash_after_d3,
         "main_frozen_after_main": True,
@@ -519,6 +510,5 @@ __all__ = [
     "ng1_d3_group_loss",
     "ng1_interaction_parameter_sha256",
     "ng1_main_parameter_sha256",
-    "ng1_oracle_best_margin_loss",
     "train_ng1_model",
 ]
