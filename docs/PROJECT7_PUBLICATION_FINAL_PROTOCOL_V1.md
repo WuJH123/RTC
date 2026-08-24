@@ -3,8 +3,8 @@
 ## Research objective
 
 Project7 targets an engineering-deployable learning-assisted real-time controller for a large urban
-drainage network under sparse causal sensing.  The primary control objective is to reduce system-wide
-Total Flood Volume (TFV).  Priority8 flooding is a pre-registered non-inferiority safety outcome:
+drainage network under sparse causal sensing. The primary control objective is to reduce system-wide
+Total Flood Volume (TFV). Priority8 flooding is a pre-registered non-inferiority safety outcome:
 
 `PFV_proposed <= 100 m3 + 1.05 * PFV_no_control`.
 
@@ -12,33 +12,33 @@ Global Peak is reported only and is not optimized or gated.
 
 ## Final scientific disposition after V6/V7
 
-The bounded V6 and V7 Step2 follow-ups were rejected on the existing Development holdout.  V6 modestly
-improved single-facility D2 metrics but degraded D3 joint-action quality.  V7 reduced D3 selected regret
-but still regressed D3 rank/pairwise and increased harmful selection.  Therefore no V8 architecture
-search is scientifically authorized for the publication controller.  The frozen Direct-TFV V5
+The bounded V6 and V7 Step2 follow-ups were rejected on the existing Development holdout. V6 modestly
+improved single-facility D2 metrics but degraded D3 joint-action quality. V7 reduced D3 selected regret
+but still regressed D3 rank/pairwise and increased harmful selection. Therefore no V8 architecture
+search is scientifically authorized for the publication controller. The frozen Direct-TFV V5
 checkpoint remains the publication Step2 and its failed standalone exact-TFV diagnostic must be
 reported as a component limitation.
 
 ## Step 1 — sparse causal state reconstruction
 
 Purpose: reconstruct the network hydraulic state from sparse causal sensor observations for online
-control.  The publication-facing acceptance metric is unobserved-node depth NSE with the frozen
-minimum 0.70.  The accepted evidence value is approximately 0.9244.  Step1 is frozen and is not
+control. The publication-facing acceptance metric is unobserved-node depth NSE with the frozen
+minimum 0.70. The accepted evidence value is approximately 0.9244. Step1 is frozen and is not
 retrained during publication evaluation.
 
 ## Step 2 — causal action-conditioned TFV representation
 
 Purpose: provide a causal, action-conditioned representation of candidate-minus-reference system-wide
-TFV response for downstream ranking and HOLD decisions.  The publication controller uses Direct-TFV
+TFV response for downstream ranking and HOLD decisions. The publication controller uses Direct-TFV
 V5, SHA256 `3a05704812a07a914d0ce9d8d026f6c84a4dbed646743f95d27726b29c3a544a`.
 
 Step2 is not described as an independently accurate TFV surrogate because its standalone Formal
-ranking criterion failed.  The paper must distinguish component-level surrogate accuracy from
+ranking criterion failed. The paper must distinguish component-level surrogate accuracy from
 end-to-end closed-loop controller efficacy.
 
 ## Step 3 — finite-candidate receding-horizon learning-assisted RTC
 
-Step3 is not continuous gradient MPC.  Historical L-BFGS-B is archival and projected-gradient H10 is a
+Step3 is not continuous gradient MPC. Historical L-BFGS-B is archival and projected-gradient H10 is a
 Development ablation only because prior gradient-fidelity and candidate-truth audits did not justify
 production use.
 
@@ -59,9 +59,20 @@ The candidate families remain exactly:
 - `STEP2_H10_PROBE_SCALE_1.00`;
 - `TYPE_AWARE_HYDRAULIC_PRESSURE`.
 
-The online objective is system-wide TFV only.  PFV is not converted into an unvalidated learned online
+The online objective is system-wide TFV only. PFV is not converted into an unvalidated learned online
 penalty; instead the frozen Priority8 non-inferiority envelope is a hard end-to-end Validation/Final
 safety requirement under authoritative SWMM.
+
+### Frozen V21/V23 candidate-distribution limitation
+
+V23 changed the target produced by the hydraulic candidate family relative to the candidate
+distribution on which the frozen V21 selected-candidate/HOLD boundary was originally trained. Hence
+candidate-distribution exact match is false and the paper must report this as a component-level
+limitation. No post-hoc boundary calibration is permitted after observing Formal outcomes. The fixed
+V23 policy is retained for publication only because the complete unchanged controller subsequently
+passed independent pre-lock Validation safety/engineering gates, was then Policy-Locked, and was
+finally evaluated without tuning. This end-to-end evidence supports claims about the locked controller;
+it does not retroactively establish distribution-matched V21 boundary calibration.
 
 ## Engineering contract
 
@@ -81,15 +92,19 @@ The publication mode is `FIXED_POLICY_NO_RETRAIN`:
 
 Development/acceptance -> independent Validation -> Policy Lock -> complete Final comparison.
 
-Competitive baselines are No-control, Internal native SWMM RTC, Auto-RBC and EFD.  Rainfall event is
-the independent statistical unit.  Report event-balanced mean and median TFV reduction, aggregate
-volume reduction, event wins, bootstrap intervals and exact sign tests.  Final outcomes never train or
+Competitive baselines are No-control, Internal native SWMM RTC, Auto-RBC and EFD. Rainfall event is
+the independent statistical unit. Report event-balanced mean and median TFV reduction, aggregate
+volume reduction, event wins, bootstrap intervals and exact sign tests. Final outcomes never train or
 tune the controller.
+
+The final evidence compiler additionally reports ACTION/HOLD counts and solver latency from the
+immutable decision logs so that the real-time sequential nature of the controller is auditable against
+the 600-s decision interval.
 
 ## Claim boundaries
 
 The paper may claim an engineering-executable, sparse-sensing, causal, receding-horizon learning-assisted
-RTC framework when supported by locked end-to-end SWMM evidence.  It must not claim continuous-gradient
+RTC framework when supported by locked end-to-end SWMM evidence. It must not claim continuous-gradient
 MPC, a global control optimum, Step2 standalone high-accuracy TFV prediction, Global Peak optimization,
-or universal superiority over every comparator.  Comparator-specific claims must follow the locked
-Final event statistics.
+distribution-matched V21 boundary calibration, or universal superiority over every comparator.
+Comparator-specific claims must follow the locked Final event statistics.
