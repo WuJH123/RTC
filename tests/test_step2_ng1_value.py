@@ -93,44 +93,45 @@ def test_complete_pair_graph_is_deterministic_and_label_free() -> None:
 def test_ng1_exact_zero_and_single_facility_interaction_gate() -> None:
     values = _inputs()
     model, state, rainfall, reference, previous_flow, up, down, physics = values
-    zero = _forward(model, state, rainfall, reference, reference.clone(), previous_flow, up, down, physics)
-    assert torch.equal(zero.interaction_residual_m3, torch.zeros_like(zero.interaction_residual_m3))
+    zero = _forward(
+        model, state, rainfall, reference, reference.clone(), previous_flow, up, down, physics
+    )
+    assert torch.equal(
+        zero.interaction_residual_m3, torch.zeros_like(zero.interaction_residual_m3)
+    )
     assert torch.equal(zero.total_delta_tfv_m3, torch.zeros_like(zero.total_delta_tfv_m3))
 
     single = reference.clone()
     single[:, :, 17] += 0.15
-    output = _forward(model, state, rainfall, reference, single, previous_flow, up, down, physics)
-    assert torch.equal(output.interaction_residual_m3, torch.zeros_like(output.interaction_residual_m3))
-    assert torch.equal(output.total_delta_tfv_m3, output.facility_main_effect_m3.sum(dim=-1))
+    output = _forward(
+        model, state, rainfall, reference, single, previous_flow, up, down, physics
+    )
+    assert torch.equal(
+        output.interaction_residual_m3,
+        torch.zeros_like(output.interaction_residual_m3),
+    )
+    assert torch.equal(
+        output.total_delta_tfv_m3, output.facility_main_effect_m3.sum(dim=-1)
+    )
 
 
-def test_active_pair_pool_uses_changed_changed_pairs_only() -> None:
+def test_adaptive_connectivity_keeps_changed_to_context_pairs() -> None:
     values = _inputs()
     model = values[0]
-    h = model.design.hidden_dim
-    latent = torch.zeros(1, 109, h)
-    for layer in model.pair_interaction_head:
-        if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.zeros_(layer.weight)
-            torch.nn.init.zeros_(layer.bias)
-    for layer in model.pair_value_head:
-        if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.zeros_(layer.weight)
-            torch.nn.init.zeros_(layer.bias)
-    model.pair_value_head[-1].bias.data.fill_(1.0)
-
     changed_one = torch.zeros(1, 109, dtype=torch.bool)
     changed_one[:, 5] = True
-    assert torch.equal(model._active_pair_value(latent, changed_one), torch.zeros(1))
+    mask_one = model._pair_activity_mask(changed_one)
+    assert int(mask_one.sum()) == 108
 
     changed_two = changed_one.clone()
     changed_two[:, 17] = True
-    torch.testing.assert_close(model._active_pair_value(latent, changed_two), torch.ones(1))
+    mask_two = model._pair_activity_mask(changed_two)
+    assert int(mask_two.sum()) == 215
 
     changed_three = changed_two.clone()
     changed_three[:, 31] = True
-    expected = torch.tensor([3.0 / np.sqrt(3.0)], dtype=torch.float32)
-    torch.testing.assert_close(model._active_pair_value(latent, changed_three), expected)
+    mask_three = model._pair_activity_mask(changed_three)
+    assert int(mask_three.sum()) == 321
 
 
 def test_ng1_candidate_reference_swap_is_exactly_antisymmetric() -> None:
@@ -139,13 +140,23 @@ def test_ng1_candidate_reference_swap_is_exactly_antisymmetric() -> None:
     candidate = reference.clone()
     candidate[:, :24, 5] += 0.15
     candidate[:, 20:50, 17] -= 0.10
-    forward = _forward(model, state, rainfall, reference, candidate, previous_flow, up, down, physics)
-    reverse = _forward(model, state, rainfall, candidate, reference, previous_flow, up, down, physics)
-    torch.testing.assert_close(
-        forward.interaction_residual_m3, -reverse.interaction_residual_m3, rtol=0.0, atol=0.0
+    forward = _forward(
+        model, state, rainfall, reference, candidate, previous_flow, up, down, physics
+    )
+    reverse = _forward(
+        model, state, rainfall, candidate, reference, previous_flow, up, down, physics
     )
     torch.testing.assert_close(
-        forward.total_delta_tfv_m3, -reverse.total_delta_tfv_m3, rtol=0.0, atol=0.0
+        forward.interaction_residual_m3,
+        -reverse.interaction_residual_m3,
+        rtol=0.0,
+        atol=0.0,
+    )
+    torch.testing.assert_close(
+        forward.total_delta_tfv_m3,
+        -reverse.total_delta_tfv_m3,
+        rtol=0.0,
+        atol=0.0,
     )
 
 
