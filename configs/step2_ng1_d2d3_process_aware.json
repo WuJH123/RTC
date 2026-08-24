@@ -1,0 +1,56 @@
+{
+  "contract": "PROJECT7_STEP2_NG1_D2_PRESERVED_PROCESS_AWARE_INTERACTION_V1",
+  "development_only": true,
+  "seed": 42,
+  "new_swmm_runs": 0,
+  "data": {
+    "fit_d2": 112,
+    "fit_d3": 112,
+    "hold_d2": 32,
+    "hold_d3": 32,
+    "rainfall_fit_groups": 14,
+    "rainfall_holdout_groups": 4,
+    "rainfall_group_overlap": 0,
+    "d4_fit": 33,
+    "d4_audit": 15,
+    "d4_role": "diagnostic_only"
+  },
+  "architecture": {
+    "main": "V5 facility main effect",
+    "interaction": "state-conditioned complete 109-actuator pair value",
+    "pair_count": 5886,
+    "hidden_dim": 96,
+    "actuator_embedding_dim": 16,
+    "horizon_steps": 72,
+    "free_control_blocks": 12,
+    "interaction_single_facility_gate": "exact_zero",
+    "candidate_reference_swap": "exact_antisymmetry",
+    "d2_main_trainfit_only": true,
+    "d3_main_parameters_frozen": true
+  },
+  "loss": {
+    "d2": {
+      "regression": "SmoothL1",
+      "rank_weight": 0.35,
+      "sign_weight": 0.25,
+      "magnitude_partition": "q33/q67 TrainFit D2 only",
+      "facility_balanced": true
+    },
+    "d3": {
+      "regression": "final_and_residual_SmoothL1",
+      "rank_weight": 0.35,
+      "sign_weight": 0.25,
+      "selection_regret_weight": 0.25,
+      "interaction_l1_weight": 0.01,
+      "density_strata": "TrainFit action metadata q50/q75/q90"
+    }
+  },
+  "firewall": {
+    "validation_accessed": false,
+    "final_accessed": false,
+    "formal_used_for_tuning": false,
+    "policy_lock_accessed": false,
+    "publication_controller_changed": false,
+    "runtime_promoted": false
+  }
+}
