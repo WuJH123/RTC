@@ -21,6 +21,9 @@ EXPECTED_CANDIDATES = (
     "STEP2_H10_PROBE_SCALE_1.00",
     "TYPE_AWARE_HYDRAULIC_PRESSURE",
 )
+EXPECTED_DISTRIBUTION_SHIFT_DISPOSITION = (
+    "RETAIN_FIXED_POLICY_ONLY_BECAUSE_END_TO_END_VALIDATION_PRECEDED_POLICY_LOCK"
+)
 
 
 def _lower(value: object) -> str:
@@ -78,11 +81,21 @@ def validate_publication_controller_contract(payload: Mapping[str, Any]) -> None
         raise RuntimeError("publication candidate family contract changed")
     if int(step3.get("production_candidate_family_count_max", -1)) != 3:
         raise RuntimeError("publication candidate cardinality changed")
+    if step3.get("v21_boundary_candidate_distribution_exact_match") is not False:
+        raise RuntimeError("publication contract must retain the V21/V23 candidate-distribution mismatch")
+    if step3.get("distribution_shift_disposition") != EXPECTED_DISTRIBUTION_SHIFT_DISPOSITION:
+        raise RuntimeError("publication Step3 distribution-shift disposition changed")
+    if step3.get("distribution_shift_must_be_reported_as_component_limitation") is not True:
+        raise RuntimeError("publication contract hides the V23 boundary distribution-shift limitation")
 
     engineering = payload.get("engineering")
     if not isinstance(engineering, Mapping):
         raise ValueError("publication contract lacks engineering controls")
-    if (engineering.get("model_action_channels"), engineering.get("supervisory_controls"), engineering.get("passive_reference_channels")) != (109, 82, 27):
+    if (
+        engineering.get("model_action_channels"),
+        engineering.get("supervisory_controls"),
+        engineering.get("passive_reference_channels"),
+    ) != (109, 82, 27):
         raise RuntimeError("109/82/27 action-control contract changed")
     if float(engineering.get("max_setting_delta_per_update", float("nan"))) != 0.5:
         raise RuntimeError("command slew contract changed")
@@ -100,6 +113,12 @@ def validate_publication_controller_contract(payload: Mapping[str, Any]) -> None
         raise RuntimeError("Final results cannot train the publication policy")
     if formal.get("final_results_used_for_tuning") is not False:
         raise RuntimeError("Final results cannot tune the publication policy")
+
+    boundaries = payload.get("claim_boundaries")
+    if not isinstance(boundaries, Mapping):
+        raise ValueError("publication contract lacks claim boundaries")
+    if boundaries.get("must_report_v23_boundary_candidate_distribution_shift") is not True:
+        raise RuntimeError("publication claims hide the V23/V21 candidate-distribution shift")
 
 
 def validate_publication_policy_lock(lock: Mapping[str, Any]) -> None:
@@ -133,6 +152,7 @@ def validate_publication_validation(validation: Mapping[str, Any]) -> None:
 
 
 __all__ = [
+    "EXPECTED_DISTRIBUTION_SHIFT_DISPOSITION",
     "EXPECTED_FINAL_RUN_CONTRACT",
     "EXPECTED_PFV_CONTRACT",
     "EXPECTED_POLICY_LOCK_CONTRACT",
