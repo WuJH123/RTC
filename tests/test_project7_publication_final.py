@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from rtc.project7_publication_final import (
+    EXPECTED_DISTRIBUTION_SHIFT_DISPOSITION,
     EXPECTED_PFV_CONTRACT,
     EXPECTED_STEP2_SHA256,
     PUBLICATION_FINAL_CONTRACT,
@@ -33,6 +34,9 @@ def test_publication_controller_contract_is_frozen_and_valid() -> None:
     assert payload["step2"]["checkpoint_sha256"] == EXPECTED_STEP2_SHA256
     assert payload["step2"]["development_followups"]["v8_allowed"] is False
     assert payload["step3"]["continuous_gradient_mpc"] is False
+    assert payload["step3"]["v21_boundary_candidate_distribution_exact_match"] is False
+    assert payload["step3"]["distribution_shift_disposition"] == EXPECTED_DISTRIBUTION_SHIFT_DISPOSITION
+    assert payload["step3"]["distribution_shift_must_be_reported_as_component_limitation"] is True
     assert payload["research_goal"]["priority8_safety_contract"] == EXPECTED_PFV_CONTRACT
 
 
@@ -47,6 +51,13 @@ def test_publication_contract_rejects_gradient_mpc_claim() -> None:
     payload = _controller()
     payload["step3"]["continuous_gradient_mpc"] = True
     with pytest.raises(RuntimeError, match="continuous gradient MPC"):
+        validate_publication_controller_contract(payload)
+
+
+def test_publication_contract_rejects_hiding_boundary_distribution_shift() -> None:
+    payload = _controller()
+    payload["step3"]["distribution_shift_must_be_reported_as_component_limitation"] = False
+    with pytest.raises(RuntimeError, match="distribution-shift limitation"):
         validate_publication_controller_contract(payload)
 
 
