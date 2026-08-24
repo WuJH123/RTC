@@ -1,41 +1,51 @@
-# Project7 Step2 historical-retrain V6 (Development only)
+# Project7 Step2 historical-retrain branch
 
-This branch tests one bounded hypothesis using **existing Development truth only**. It does not replace
-V23, does not relabel old Formal evidence, and does not authorize Validation/Final access.
+This Draft branch is a bounded existing-data Step2 mechanism study. It does not replace the frozen V23/V5 policy or alter existing Formal evidence.
 
-## Hypothesis
+## V6 result: preservation alone is insufficient
 
-Historical V4.1/V4.2 showed that the single-facility response pathway could rank actions well, while
-joint-action training/generalization remained the persistent failure mode. The current Direct-TFV V5
-trainer deliberately lets JOINT and CONTROL update the shared facility representation. This experiment
-asks whether preserving the MAIN single-facility backbone and training only the interaction head after
-MAIN improves internal-holdout D3 decision quality without sacrificing D2.
+V6 tested whether protecting the MAIN single-facility value backbone during JOINT/CONTROL would recover generalization. The result was informative but negative overall:
 
-## What changes
+- D2 rank +0.021334;
+- D2 pairwise +0.008219;
+- D2 Top1 +0.125000;
+- D2 selected regret -1203.895 m3;
+- D3 rank -0.038060;
+- D3 pairwise -0.012875;
+- D3 selected regret +637.624 m3;
+- D3 harmful selection increased from 1/32 to 3/32.
 
-- V5 model architecture: unchanged.
-- Exact authoritative SWMM delta-TFV target: unchanged.
-- Causal state/rainfall inputs: unchanged.
-- 109 actuators, H360 prediction, H120 free search: unchanged.
-- Deterministic existing-data split: unchanged.
-- MAIN: unchanged, all model parameters trainable.
-- JOINT: only `interaction_head` trainable.
-- CONTROL: only `interaction_head` trainable.
+Thus `MAIN forgetting alone` is falsified as the primary blocker. The current bottleneck is joint-action cross-state representation/generalization.
 
-## What must remain frozen
+## V7: single bounded follow-up
 
-`src/rtc/project7_v23_step2_lineage.py`, the V23 V5 checkpoint, V15 rank checkpoint, V21 boundary
-checkpoint, existing Policy Lock and all existing Formal evidence remain untouched.
+V7 changes only the joint residual while keeping the current Direct-TFV main-value pathway, exact SWMM delta-TFV targets, causal inputs, canonical split, seed 42, losses, epochs, learning rates and target scale unchanged.
 
-## Required order
+Historically supported mechanisms ported from V4.1 are:
 
-1. Run unit tests and current lint.
-2. Reproduce/read the frozen V5 DEV report.
-3. Run `scripts/run_step2_tfv_value_historical_retrain_v6.py --profile dev ...` using exactly the same
-   graph, caches, causal rainfall store and causal state store as the V5 DEV run.
-4. Run `scripts/compare_step2_historical_retrain_v6.py` on the V5 and candidate reports.
-5. If the comparator exits 2, stop and reject this arm.
-6. If it passes, retrain/recalibrate downstream Step3 on Development data before any closed-loop claim.
-7. Only a newly frozen end-to-end policy may later enter a new Formal protocol.
+- active-aware latent pooling;
+- actuator-identity-weighted signed action moment;
+- elementwise second-order latent pair moment;
+- signed / absolute / quadratic action moments;
+- explicit candidate/reference antisymmetrization;
+- exact zero interaction for HOLD and single-facility D2 actions.
 
-The standalone `rank >= 0.70` value is retained as a diagnostic, not a sufficient promotion rule.
+JOINT and CONTROL may train only the new `historical_interaction_head`; the MAIN backbone remains protected after MAIN.
+
+The experiment contract is `configs/step2_historical_interaction_v7_experiment.json` and the executable handoff is `docs/STEP2_HISTORICAL_INTERACTION_V7_CODEX_HANDOFF.md`.
+
+## Scientific firewall
+
+Until the V7 existing-data offline gate passes:
+
+- new SWMM = 0;
+- Validation access = forbidden;
+- Final access = forbidden;
+- old Formal outcomes may not be used for tuning;
+- V23/V5/V15/V21/Policy Lock remain unchanged;
+- no seed/epoch/LR/grid tuning;
+- no V8 architecture search.
+
+If V7 fails the preregistered V5-vs-V7 gate, the branch must stop with `EXISTING_DATA_STEP2_ARCHITECTURE_FOLLOWUP_NOT_JUSTIFIED`.
+
+If V7 passes, downstream Step3 still must be retrained/recalibrated on Development-only data with a new Step2 SHA-bound lineage before any closed-loop or new Formal evaluation.
