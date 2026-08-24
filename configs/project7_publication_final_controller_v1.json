@@ -1,0 +1,100 @@
+{
+  "contract": "PROJECT7_PUBLICATION_FINAL_CONTROLLER_V1",
+  "purpose": "Freeze the publication-facing Project7 controller after V6/V7 Step2 development was rejected, without changing the validated V23 control law.",
+  "research_goal": {
+    "sensing": "SPARSE_CAUSAL_SENSING",
+    "deployment": "ENGINEERING_EXECUTABLE_10_MIN_REAL_TIME_CONTROL",
+    "primary_outcome": "SYSTEM_WIDE_TOTAL_FLOOD_VOLUME_M3",
+    "priority8_safety_role": "PRE_REGISTERED_NONINFERIORITY_SAFETY",
+    "priority8_safety_contract": "PFV_PROPOSED <= 100_M3 + 1.05 * PFV_NO_CONTROL",
+    "global_peak_role": "REPORT_ONLY"
+  },
+  "step1": {
+    "role": "CAUSAL_SPARSE_SENSOR_FULL_NETWORK_STATE_RECONSTRUCTION",
+    "training_status": "FROZEN",
+    "primary_acceptance_metric": "UNOBSERVED_NODE_DEPTH_NSE",
+    "minimum": 0.70,
+    "known_formal_value": 0.924375,
+    "paper_claim": "STATE_RECONSTRUCTION_ACCEPTED"
+  },
+  "step2": {
+    "role": "CAUSAL_ACTION_CONDITIONED_DELTA_TFV_REPRESENTATION",
+    "checkpoint_family": "DIRECT_TFV_V5",
+    "checkpoint_sha256": "3a05704812a07a914d0ce9d8d026f6c84a4dbed646743f95d27726b29c3a544a",
+    "training_status": "FROZEN_NO_RETRAIN",
+    "standalone_exact_tfv_rank_threshold": 0.70,
+    "standalone_exact_tfv_rank_accepted": false,
+    "standalone_surrogate_superiority_claim_allowed": false,
+    "development_followups": {
+      "v6_main_preservation": "REJECTED_EXISTING_DATA_GATE",
+      "v7_action_identity_interaction": "REJECTED_EXISTING_DATA_GATE",
+      "v8_allowed": false
+    },
+    "publication_role": "INTERNAL_CAUSAL_REPRESENTATION_WITH_TRANSPARENT_STANDALONE_LIMITATION"
+  },
+  "step3": {
+    "role": "FINITE_CANDIDATE_RECEDING_POLICY_RETURN_CONTROL",
+    "continuous_gradient_mpc": false,
+    "historical_lbfgsb_role": "ARCHIVAL_ONLY",
+    "projected_gradient_role": "DEVELOPMENT_ABLATION_ONLY",
+    "decision_interval_seconds": 600,
+    "observation_interval_seconds": 300,
+    "prediction_context_minutes": 360,
+    "execute_first_move_minutes": 10,
+    "online_objective": "MINIMIZE_SYSTEM_WIDE_TFV_WITHIN_ENGINEERING_FEASIBLE_CANDIDATES",
+    "policy_return_sign": "A_PI_LT_0_MEANS_ACTION_BENEFICIAL",
+    "admission": "SELECT_BEST_CANDIDATE_THEN_ACTION_IF_FROZEN_BOUNDARY_PREDICTS_BENEFIT_ELSE_HOLD",
+    "candidate_families": [
+      "STEP2_H10_PROBE_SCALE_0.50",
+      "STEP2_H10_PROBE_SCALE_1.00",
+      "TYPE_AWARE_HYDRAULIC_PRESSURE"
+    ],
+    "production_candidate_family_count_max": 3,
+    "v21_boundary_candidate_distribution_exact_match": false,
+    "distribution_shift_disposition": "RETAIN_FIXED_POLICY_ONLY_BECAUSE_END_TO_END_VALIDATION_PRECEDED_POLICY_LOCK",
+    "distribution_shift_must_be_reported_as_component_limitation": true
+  },
+  "engineering": {
+    "model_action_channels": 109,
+    "supervisory_controls": 82,
+    "passive_reference_channels": 27,
+    "setting_bounds": [0.0, 1.0],
+    "max_setting_delta_per_update": 0.5,
+    "support_quantile": "q95",
+    "target_write_readback_required": true,
+    "continuity_guard_required": true,
+    "online_swmm_candidate_search": false
+  },
+  "formal": {
+    "mode": "FIXED_POLICY_NO_RETRAIN",
+    "validation_before_policy_lock": true,
+    "policy_lock_required": true,
+    "final_can_tune_policy": false,
+    "final_results_used_for_training": false,
+    "final_results_used_for_tuning": false,
+    "competitive_comparators": [
+      "no_control",
+      "internal_rtc",
+      "auto_rbc",
+      "efd"
+    ],
+    "statistical_unit": "RAINFALL_EVENT",
+    "primary_reporting": [
+      "EVENT_BALANCED_TFV_REDUCTION",
+      "MEDIAN_TFV_REDUCTION",
+      "AGGREGATE_VOLUME_TFV_REDUCTION",
+      "EVENT_WINS",
+      "BOOTSTRAP_CI"
+    ]
+  },
+  "claim_boundaries": {
+    "do_not_claim_continuous_gradient_mpc": true,
+    "do_not_claim_global_optimum": true,
+    "do_not_claim_step2_standalone_high_accuracy_surrogate": true,
+    "do_not_claim_global_peak_optimization": true,
+    "do_not_claim_universal_superiority_over_all_baselines": true,
+    "must_report_v23_boundary_candidate_distribution_shift": true,
+    "allow_claim_engineering_executable_sparse_sensing_closed_loop_rtc": true,
+    "allow_claim_tfv_improvement_only_when_supported_by_locked_final_statistics": true
+  }
+}
