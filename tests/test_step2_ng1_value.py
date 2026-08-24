@@ -85,6 +85,7 @@ def test_complete_pair_graph_is_deterministic_and_label_free() -> None:
     assert np.array_equal(first["pair_indices"], second["pair_indices"])
     assert np.array_equal(first["pair_features"], second["pair_features"])
     assert first["sha256"] == second["sha256"]
+    assert first["physics_features_standardized"] is True
     assert "truth" not in first
     assert "tfv" not in first
 
@@ -103,6 +104,35 @@ def test_ng1_exact_zero_and_single_facility_interaction_gate() -> None:
     assert torch.equal(output.total_delta_tfv_m3, output.facility_main_effect_m3.sum(dim=-1))
 
 
+def test_active_pair_pool_uses_changed_changed_pairs_only() -> None:
+    values = _inputs()
+    model = values[0]
+    h = model.design.hidden_dim
+    latent = torch.zeros(1, 109, h)
+    for layer in model.pair_interaction_head:
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.zeros_(layer.weight)
+            torch.nn.init.zeros_(layer.bias)
+    for layer in model.pair_value_head:
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.zeros_(layer.weight)
+            torch.nn.init.zeros_(layer.bias)
+    model.pair_value_head[-1].bias.data.fill_(1.0)
+
+    changed_one = torch.zeros(1, 109, dtype=torch.bool)
+    changed_one[:, 5] = True
+    assert torch.equal(model._active_pair_value(latent, changed_one), torch.zeros(1))
+
+    changed_two = changed_one.clone()
+    changed_two[:, 17] = True
+    torch.testing.assert_close(model._active_pair_value(latent, changed_two), torch.ones(1))
+
+    changed_three = changed_two.clone()
+    changed_three[:, 31] = True
+    expected = torch.tensor([3.0 / np.sqrt(3.0)], dtype=torch.float32)
+    torch.testing.assert_close(model._active_pair_value(latent, changed_three), expected)
+
+
 def test_ng1_candidate_reference_swap_is_exactly_antisymmetric() -> None:
     values = _inputs()
     model, state, rainfall, reference, previous_flow, up, down, physics = values
@@ -111,8 +141,12 @@ def test_ng1_candidate_reference_swap_is_exactly_antisymmetric() -> None:
     candidate[:, 20:50, 17] -= 0.10
     forward = _forward(model, state, rainfall, reference, candidate, previous_flow, up, down, physics)
     reverse = _forward(model, state, rainfall, candidate, reference, previous_flow, up, down, physics)
-    torch.testing.assert_close(forward.interaction_residual_m3, -reverse.interaction_residual_m3, rtol=0.0, atol=0.0)
-    torch.testing.assert_close(forward.total_delta_tfv_m3, -reverse.total_delta_tfv_m3, rtol=0.0, atol=0.0)
+    torch.testing.assert_close(
+        forward.interaction_residual_m3, -reverse.interaction_residual_m3, rtol=0.0, atol=0.0
+    )
+    torch.testing.assert_close(
+        forward.total_delta_tfv_m3, -reverse.total_delta_tfv_m3, rtol=0.0, atol=0.0
+    )
 
 
 def test_d2_magnitude_partition_is_mutually_exclusive_complete_and_mean_weight_one() -> None:
