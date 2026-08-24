@@ -1,5 +1,5 @@
 {
-  "contract": "PROJECT7_STEP2_NG1_D2_PRESERVED_ACTIVE_PAIR_SELECTION_V2",
+  "contract": "PROJECT7_STEP2_NG1_D2_PRESERVED_ADAPTIVE_CONNECTIVITY_V3",
   "development_only": true,
   "seed": 42,
   "new_swmm_runs": 0,
@@ -17,10 +17,11 @@
   },
   "architecture": {
     "main": "V5 facility main effect",
-    "interaction": "state-conditioned changed-changed actuator pair value",
+    "interaction": "state- and action-conditioned adaptive actuator-pair connectivity",
     "pair_universe_count": 5886,
-    "pair_activity_rule": "both actuators changed relative to reference",
-    "pair_aggregation": "sqrt_active_pair_count_normalized_sum",
+    "pair_eligibility_rule": "at least one actuator changed relative to reference",
+    "pair_weighting": "learned masked attention from pair latent, action magnitude, changed indicators, topology and physics",
+    "density_context": "log1p eligible-pair count plus mean changed-actuator magnitude",
     "pair_physics_features": "Train-independent standardized absolute differences",
     "hidden_dim": 96,
     "actuator_embedding_dim": 16,
@@ -44,13 +45,18 @@
       "rank_weight": 0.35,
       "sign_weight": 0.25,
       "selection_regret_weight": 0.25,
-      "oracle_best_margin_weight": 0.25,
       "interaction_l1_weight": 0.01,
-      "density_strata": "TrainFit action metadata q50/q75/q90 with global-bin weights",
-      "selection_temperature": "TrainFit median positive best-vs-rest regret gap"
+      "density_strata": "R1 TrainFit q50/q75/q90 with per-query balancing",
+      "selection_temperature": "R1 TrainFit q75 absolute delta TFV"
     }
   },
-  "hypothesis": "NG1-R1 improved global D3 rank/pairwise/sign but worsened Top1/regret because sparse joint-action signal was diluted across all 5886 pairs and the selection loss was too smooth. R2 restricts interaction to changed-changed pairs and adds best-relative regret geometry supervision.",
+  "hypothesis": "R1 improved D3 global rank/pairwise/sign while R2's changed-changed hard mask worsened both global ranking and selection tail. R3 tests whether regulation propagation requires changed-to-context interactions: all pairs touching at least one changed actuator remain eligible, but learned adaptive connectivity replaces R1's uniform 5886-pair mean. R1 loss semantics are restored so the representation hypothesis is isolated.",
+  "replication_policy": {
+    "seed42_is_hypothesis_test": true,
+    "additional_seeds_before_seed42_pass": false,
+    "if_seed42_pareto_pass_then_fixed_seeds": [42, 2026, 3407],
+    "best_seed_selection_forbidden": true
+  },
   "firewall": {
     "validation_accessed": false,
     "final_accessed": false,
