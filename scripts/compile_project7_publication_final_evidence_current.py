@@ -3,14 +3,18 @@
 This is an evidence compiler, not a trainer and not a SWMM runner.  It binds the frozen controller
 contract, Step2 lineage/limitation, Formal Validation6, Policy Lock, Final6 comparison and event-level
 statistics into one fail-closed paper-reporting artifact.  Comparator claims are classified from the
-locked Final6 bootstrap intervals; no universal-superiority claim is manufactured.
+locked Final6 bootstrap intervals; no universal-superiority claim is manufactured.  The compiler also
+reads the immutable Proposed decision logs to report ACTION/HOLD behavior and real-time decision
+latency, because a publication-facing RTC claim must demonstrate actual sequential operation.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
+import statistics as py_statistics
 from typing import Any
 
 from rtc.project7_publication_final import (
@@ -27,6 +31,7 @@ STEP2_LINEAGE_CONTRACT = "PROJECT7_V23_FROZEN_STEP2_V5_LINEAGE_EVIDENCE_V1"
 STEP2_DIAGNOSTIC_CONTRACT = "PROJECT7_V23_STEP2_V5_COMPONENT_DIAGNOSTIC_V1"
 FINAL_PACKAGE_CONTRACT = "PROJECT7_PUBLICATION_FINAL_EVIDENCE_PACKAGE_V1"
 BASELINES = ("no_control", "internal_rtc", "auto_rbc", "efd")
+REAL_TIME_BUDGET_SECONDS = 600.0
 
 
 def _json(path: str | Path) -> dict[str, Any]:
@@ -62,6 +67,120 @@ def _claim_status(row: dict[str, Any]) -> str:
     return "NO_DIRECTION"
 
 
+def _p95(values: list[float]) -> float:
+    if not values:
+        raise ValueError("cannot compute p95 of an empty decision-latency sample")
+    ordered = sorted(values)
+    index = max(0, min(len(ordered) - 1, math.ceil(0.95 * len(ordered)) - 1))
+    return float(ordered[index])
+
+
+def _decision_log_for_metadata(metadata_path: Path) -> Path:
+    candidate = metadata_path.with_name(metadata_path.stem + ".decisions.jsonl")
+    if not candidate.is_file():
+        raise FileNotFoundError(candidate)
+    return candidate
+
+
+def _decision_telemetry(final: dict[str, Any]) -> dict[str, Any]:
+    events = final.get("event_results")
+    if not isinstance(events, list) or len(events) != 6:
+        raise ValueError("Final6 event_results are required for RTC telemetry")
+    per_event: list[dict[str, Any]] = []
+    all_latencies: list[float] = []
+    action_total = hold_total = decision_total = 0
+    for event in events:
+        if not isinstance(event, dict):
+            raise ValueError("Final6 event row is not a mapping")
+        metadata_path = Path(str(event["proposed_metadata_path"])).resolve()
+        decision_path = _decision_log_for_metadata(metadata_path)
+        action_count = hold_count = 0
+        latencies: list[float] = []
+        changed_counts: list[int] = []
+        with decision_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                diagnostics = row.get("diagnostics")
+                if not isinstance(diagnostics, dict):
+                    raise ValueError(f"decision diagnostics missing: {decision_path}")
+                action_class = str(diagnostics.get("calibrated_runtime_action_class", ""))
+                if action_class == "ACTION":
+                    action_count += 1
+                elif action_class == "HOLD":
+                    hold_count += 1
+                else:
+                    raise RuntimeError(
+                        f"unclassified publication decision {action_class!r}: {decision_path}"
+                    )
+                latency = float(diagnostics.get("solver_elapsed_seconds", float("nan")))
+                if not math.isfinite(latency) or latency < 0.0:
+                    raise RuntimeError(f"invalid solver_elapsed_seconds in {decision_path}")
+                latencies.append(latency)
+                changed_counts.append(int(diagnostics.get("first_move_changed_facility_count", 0)))
+        expected = int(event.get("decisions", 0))
+        if len(latencies) != expected:
+            raise RuntimeError(
+                f"decision-log count differs from Final comparison for {event.get('event_id')}: "
+                f"log={len(latencies)}, expected={expected}"
+            )
+        if action_count + hold_count != expected:
+            raise RuntimeError("ACTION/HOLD counts do not cover every publication decision")
+        within_budget = sum(value < REAL_TIME_BUDGET_SECONDS for value in latencies)
+        per_event.append(
+            {
+                "event_id": str(event["event_id"]),
+                "decision_log_path": str(decision_path),
+                "decision_log_sha256": _sha(decision_path),
+                "decisions": expected,
+                "action_count": action_count,
+                "hold_count": hold_count,
+                "action_fraction": action_count / expected if expected else 0.0,
+                "solver_elapsed_seconds_median": py_statistics.median(latencies),
+                "solver_elapsed_seconds_p95": _p95(latencies),
+                "solver_elapsed_seconds_max": max(latencies),
+                "decisions_within_600s": within_budget,
+                "all_decisions_within_600s": bool(within_budget == expected),
+                "changed_facilities_per_action_mean": (
+                    py_statistics.mean(
+                        count for count, row_class in zip(
+                            changed_counts,
+                            [
+                                json.loads(line)["diagnostics"].get(
+                                    "calibrated_runtime_action_class", ""
+                                )
+                                for line in decision_path.read_text(encoding="utf-8").splitlines()
+                                if line.strip()
+                            ],
+                        )
+                        if row_class == "ACTION"
+                    )
+                    if action_count
+                    else 0.0
+                ),
+            }
+        )
+        action_total += action_count
+        hold_total += hold_count
+        decision_total += expected
+        all_latencies.extend(latencies)
+    return {
+        "event_results": per_event,
+        "decision_count": decision_total,
+        "action_count": action_total,
+        "hold_count": hold_total,
+        "action_fraction": action_total / decision_total if decision_total else 0.0,
+        "solver_elapsed_seconds_median": py_statistics.median(all_latencies),
+        "solver_elapsed_seconds_p95": _p95(all_latencies),
+        "solver_elapsed_seconds_max": max(all_latencies),
+        "all_decisions_within_600s": bool(
+            all(value < REAL_TIME_BUDGET_SECONDS for value in all_latencies)
+        ),
+        "real_time_budget_seconds": REAL_TIME_BUDGET_SECONDS,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--controller-contract", required=True)
@@ -93,7 +212,7 @@ def main() -> None:
     validation = _json(paths["validation_evidence"])
     lock = _json(paths["policy_lock"])
     final = _json(paths["final_comparison"])
-    statistics = _json(paths["publication_statistics"])
+    publication_stats = _json(paths["publication_statistics"])
 
     validate_publication_controller_contract(controller)
     validate_publication_validation(validation)
@@ -123,19 +242,19 @@ def main() -> None:
     if final.get("final_results_used_for_tuning") is not False:
         raise RuntimeError("Final6 was used for tuning")
 
-    if statistics.get("contract") != PUBLICATION_STATISTICS_CONTRACT:
+    if publication_stats.get("contract") != PUBLICATION_STATISTICS_CONTRACT:
         raise ValueError("wrong publication statistics contract")
-    if statistics.get("statistical_unit") != "RAINFALL_EVENT":
+    if publication_stats.get("statistical_unit") != "RAINFALL_EVENT":
         raise RuntimeError("publication statistics changed the independent statistical unit")
-    if int(statistics.get("event_count", 0)) != 6:
+    if int(publication_stats.get("event_count", 0)) != 6:
         raise RuntimeError("publication statistics do not match Final6")
     if _sha(paths["final_comparison"]).lower() != str(
-        statistics.get("source_final_comparison_sha256", "")
+        publication_stats.get("source_final_comparison_sha256", "")
     ).lower():
         raise RuntimeError("publication statistics are not derived from the supplied Final6 evidence")
 
     claims: dict[str, Any] = {}
-    comparison_rows = statistics.get("comparisons")
+    comparison_rows = publication_stats.get("comparisons")
     if not isinstance(comparison_rows, dict):
         raise ValueError("publication statistics lack comparator rows")
     for baseline in BASELINES:
@@ -159,6 +278,7 @@ def main() -> None:
             "exact_two_sided_sign_test_pvalue": row.get("exact_two_sided_sign_test_pvalue"),
         }
 
+    rtc_telemetry = _decision_telemetry(final)
     payload = {
         "contract": FINAL_PACKAGE_CONTRACT,
         "controller_contract": PUBLICATION_FINAL_CONTRACT,
@@ -184,6 +304,7 @@ def main() -> None:
             "engineering_all_events_pass": True,
             "ready_for_paper_reporting": True,
         },
+        "closed_loop_rtc_telemetry": rtc_telemetry,
         "comparator_claims": claims,
         "claim_boundaries": controller["claim_boundaries"],
         "paper_interpretation": {
@@ -194,6 +315,8 @@ def main() -> None:
             "global_peak_is_report_only": True,
             "universal_baseline_superiority_claim_allowed": False,
             "continuous_gradient_mpc_claim_allowed": False,
+            "sequential_rtc_operation_reported": True,
+            "decision_latency_reported_against_600s_budget": True,
         },
         "source_paths": {key: str(path) for key, path in paths.items()},
         "source_sha256": {key: _sha(path) for key, path in paths.items()},
