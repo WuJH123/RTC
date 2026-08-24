@@ -2,20 +2,25 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import numpy as np
 import torch
 
-from rtc.step2_tfv_value_ng1 import NG1ProcessAwareDirectTFVValueModel, build_control_interaction_graph
+from rtc.step2_tfv_value_ng1 import (
+    NG1ProcessAwareDirectTFVValueModel,
+    build_control_interaction_graph,
+)
 from rtc.step2_tfv_value_training_ng1 import (
     freeze_ng1_main,
     ng1_d3_group_loss,
     ng1_main_parameter_sha256,
-    ng1_oracle_best_margin_loss,
 )
 from tests.test_step2_ng1_value import _graph
 
 
-def _batch() -> tuple[NG1ProcessAwareDirectTFVValueModel, SimpleNamespace, dict[str, torch.Tensor]]:
+def _batch() -> tuple[
+    NG1ProcessAwareDirectTFVValueModel,
+    SimpleNamespace,
+    dict[str, torch.Tensor],
+]:
     torch.manual_seed(19)
     graph = _graph()
     model = NG1ProcessAwareDirectTFVValueModel(
@@ -64,7 +69,8 @@ def test_d3_optimizer_step_cannot_change_frozen_main_parameters() -> None:
     )
     assert torch.isfinite(loss)
     assert metrics["branches"] == 3.0
-    assert "oracle_best_margin" in metrics
+    assert "selection_regret" in metrics
+    assert "oracle_best_margin" not in metrics
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
@@ -73,14 +79,4 @@ def test_d3_optimizer_step_cannot_change_frozen_main_parameters() -> None:
         not p.requires_grad
         for name, p in model.named_parameters()
         if name not in model.interaction_parameter_names()
-    )
-
-
-def test_oracle_best_margin_penalizes_wrong_top_choice_more() -> None:
-    truth = torch.tensor([0.0, -2000.0, -500.0, 1000.0])
-    correct = torch.tensor([0.0, -1800.0, -400.0, 900.0])
-    wrong = torch.tensor([0.0, -300.0, -1900.0, 900.0])
-    scale = torch.tensor(5000.0)
-    assert ng1_oracle_best_margin_loss(correct, truth, scale) < ng1_oracle_best_margin_loss(
-        wrong, truth, scale
     )
