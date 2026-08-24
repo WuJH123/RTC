@@ -1,0 +1,7 @@
+{
+  "branch": "agent/step2-historical-retrain-v6",
+  "base_main": "f7eb9bfc91967528dfd218d620f4c427f186f913",
+  "web_patch_complete": true,
+  "local_execution_pending": true,
+  "formal_untouched": true
+}
