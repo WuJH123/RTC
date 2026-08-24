@@ -100,7 +100,9 @@ class HistoricalInteractionTFVValueModelV7(DirectFacilityTFVValueModel):
 
         action_abs = activity.mean(dim=-1, keepdim=True)
         action_signed = signed_action.mean(dim=-1, keepdim=True)
-        action_square = torch.mean(torch.square(delta_blocks_by_facility), dim=(1, 2)).unsqueeze(-1)
+        action_square = torch.mean(
+            torch.square(delta_blocks_by_facility), dim=(1, 2)
+        ).unsqueeze(-1)
         return torch.cat(
             (
                 active_pooled,
@@ -146,12 +148,16 @@ class HistoricalInteractionTFVValueModelV7(DirectFacilityTFVValueModel):
         )
 
         activity = torch.mean(torch.abs(action_delta), dim=-1)
+        active_count = activity.detach().gt(1.0e-7).sum(dim=-1)
         total_activity = activity.sum(dim=-1)
         pair_mass = 0.5 * (
             torch.square(total_activity) - torch.sum(torch.square(activity), dim=-1)
         )
         pair_mass = pair_mass.clamp_min(0.0)
         pair_gate = pair_mass / (pair_mass + 0.05)
+        # The hard cardinality gate is structural rather than learned: a genuine one-facility D2
+        # perturbation must have exactly zero joint residual even under floating-point roundoff.
+        pair_gate = pair_gate * active_count.ge(2).to(pair_gate.dtype)
         return directed * self.target_scale_m3 * pair_gate
 
     def forward(
