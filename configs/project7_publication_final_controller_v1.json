@@ -49,7 +49,10 @@
       "STEP2_H10_PROBE_SCALE_1.00",
       "TYPE_AWARE_HYDRAULIC_PRESSURE"
     ],
-    "production_candidate_family_count_max": 3
+    "production_candidate_family_count_max": 3,
+    "v21_boundary_candidate_distribution_exact_match": false,
+    "distribution_shift_disposition": "RETAIN_FIXED_POLICY_ONLY_BECAUSE_END_TO_END_VALIDATION_PRECEDED_POLICY_LOCK",
+    "distribution_shift_must_be_reported_as_component_limitation": true
   },
   "engineering": {
     "model_action_channels": 109,
@@ -90,6 +93,7 @@
     "do_not_claim_step2_standalone_high_accuracy_surrogate": true,
     "do_not_claim_global_peak_optimization": true,
     "do_not_claim_universal_superiority_over_all_baselines": true,
+    "must_report_v23_boundary_candidate_distribution_shift": true,
     "allow_claim_engineering_executable_sparse_sensing_closed_loop_rtc": true,
     "allow_claim_tfv_improvement_only_when_supported_by_locked_final_statistics": true
   }
