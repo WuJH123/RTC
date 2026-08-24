@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from rtc.step2_tfv_value import DirectFacilityTFVValueModel, DirectTFVValueDesign
@@ -8,6 +12,24 @@ from rtc.step2_tfv_value_training_historical_v6 import (
     HISTORICAL_UPDATE_POLICY,
     _set_trainable_historical,
 )
+
+
+def test_historical_retrain_wrapper_runs_from_repo_root() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_step2_tfv_value_historical_retrain_v6.py",
+            "--help",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "usage:" in completed.stdout.lower()
 
 
 def _model() -> DirectFacilityTFVValueModel:

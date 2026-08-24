@@ -6,6 +6,12 @@ runtime and Formal lineage are not modified.
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import scripts.run_step2_tfv_value_core_current as core
 
 from rtc.step2_tfv_value_training_historical_v6 import (
