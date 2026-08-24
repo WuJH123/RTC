@@ -1,0 +1,42 @@
+{
+  "contract": "PROJECT7_DIRECT_TFV_HISTORICAL_ACTION_IDENTITY_INTERACTION_EXPERIMENT_V7",
+  "status": "DEVELOPMENT_ONLY_SINGLE_BOUNDED_FOLLOWUP_AFTER_V6_FAIL",
+  "base_main_sha256": "f7eb9bfc91967528dfd218d620f4c427f186f913",
+  "baseline_step2_sha256": "3a05704812a07a914d0ce9d8d026f6c84a4dbed646743f95d27726b29c3a544a",
+  "v6_step2_sha256": "34d32c52ab6f136cc7f2438748e57c8af9d87659bef873423cc82a6077c73812",
+  "hypothesis": "V6 proved that preserving the MAIN single-facility backbone helps D2 but does not generalize to D3. A joint residual conditioned explicitly on active facility identity, signed action difference, active-aware latent pooling and second-order pair moments can improve D3 decision quality without degrading the preserved D2 main effect.",
+  "only_scientific_change": "JOINT_ACTION_INTERACTION_REPRESENTATION",
+  "frozen": {
+    "existing_swmm_truth_only": true,
+    "same_canonical_split": true,
+    "same_seed": 42,
+    "same_main_architecture": true,
+    "same_loss": true,
+    "same_epochs": true,
+    "same_learning_rates": true,
+    "same_target_scale": true,
+    "validation_accessed": false,
+    "final_accessed": false,
+    "formal_used_for_tuning": false,
+    "new_swmm_allowed_before_offline_gate": false
+  },
+  "structural_requirements": {
+    "candidate_equals_reference_delta_tfv_exact_zero": true,
+    "single_facility_interaction_exact_zero": true,
+    "candidate_reference_antisymmetry": true,
+    "main_backbone_preserved_after_main": true,
+    "joint_control_trainable_scope": "historical_interaction_head_only"
+  },
+  "offline_gate_vs_v5": {
+    "d2_rank_not_lower": true,
+    "d2_pairwise_not_lower": true,
+    "d2_harmful_fraction_not_higher": true,
+    "d3_pairwise_strictly_higher": true,
+    "d3_sign_not_lower": true,
+    "d3_selected_regret_strictly_lower": true,
+    "d3_harmful_fraction_not_higher": true,
+    "d3_rank_ge_0_70": "diagnostic_only"
+  },
+  "if_fail": "STOP_EXISTING_DATA_STEP2_ARCHITECTURE_FOLLOWUP_NOT_JUSTIFIED",
+  "if_pass": "RETRAIN_RECALIBRATE_STEP3_ON_DEVELOPMENT_ONLY_BEFORE_ANY_CLOSED_LOOP_OR_FORMAL"
+}
