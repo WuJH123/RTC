@@ -1,0 +1,64 @@
+{
+  "contract": "PROJECT7_STEP2_HISTORICAL_RETRAIN_V6_EXPERIMENT_V1",
+  "development_only": true,
+  "purpose": "Test whether preserving the MAIN single-facility Direct-TFV backbone during JOINT/CONTROL improves existing-data internal-holdout decision skill without regressing D2.",
+  "baseline": {
+    "training_contract": "PROJECT7_DIRECT_TFV_CORE_TRAINING_V5",
+    "checkpoint_sha256": "3a05704812a07a914d0ce9d8d026f6c84a4dbed646743f95d27726b29c3a544a"
+  },
+  "candidate": {
+    "training_contract": "PROJECT7_DIRECT_TFV_HISTORICAL_PRESERVE_MAIN_RETRAIN_V6",
+    "update_policy": "MAIN_ALL_THEN_INTERACTION_ONLY",
+    "seed": 42,
+    "reuse_existing_authoritative_truth_only": true,
+    "reuse_current_deterministic_rainfall_split": true,
+    "reuse_current_model_architecture": true,
+    "reuse_current_loss_definitions": true
+  },
+  "canonical_group_counts": {
+    "fit_d2": 112,
+    "fit_d3": 112,
+    "hold_d2": 32,
+    "hold_d3": 32,
+    "d4_fit": 33,
+    "d4_audit": 15
+  },
+  "primary_comparison": [
+    "internal_holdout_d2.rank",
+    "internal_holdout_d2.pairwise",
+    "internal_holdout_d2.sign",
+    "internal_holdout_d2.selected_regret_m3",
+    "internal_holdout_d2.selected_harmful_fraction",
+    "internal_holdout_d3.rank",
+    "internal_holdout_d3.pairwise",
+    "internal_holdout_d3.sign",
+    "internal_holdout_d3.selected_regret_m3",
+    "internal_holdout_d3.selected_harmful_fraction"
+  ],
+  "promotion_gate": {
+    "d2_rank_must_not_regress": true,
+    "d2_pairwise_must_not_regress": true,
+    "d2_selected_harmful_fraction_must_not_increase": true,
+    "d3_pairwise_must_improve": true,
+    "d3_sign_must_not_regress": true,
+    "d3_selected_regret_m3_must_improve": true,
+    "d3_selected_harmful_fraction_must_not_increase": true,
+    "standalone_exact_truth_rank_target": 0.70,
+    "rank_target_is_not_sufficient_alone": true
+  },
+  "if_candidate_passes": {
+    "retrain_or_recalibrate_downstream_step3_required": true,
+    "new_policy_lineage_required": true,
+    "new_policy_lock_required_before_formal": true,
+    "old_v23_formal_evidence_may_not_be_relabelled": true
+  },
+  "forbidden_during_this_experiment": [
+    "access Validation hydraulic outcomes",
+    "access Final hydraulic outcomes",
+    "modify frozen V23 Step2 checkpoint constants",
+    "modify V23 V15 or V21 checkpoint constants",
+    "reuse old V23 Formal outcomes for hyperparameter selection",
+    "generate new SWMM truth before existing-data offline gate passes",
+    "merge candidate into main before external review"
+  ]
+}
