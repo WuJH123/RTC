@@ -1,9 +1,9 @@
 """Development-only NG1 Direct-TFV value model.
 
-NG1 keeps the current V5 facility main-value path intact and adds a separate,
-process-aware interaction value.  The interaction path is never used for a
-single changed facility, so the D2 single-facility backbone is an exact
-structural submodel rather than a loss-weighting preference.
+NG1-R2 keeps the frozen D2 facility main-value path and represents D3 interaction only through
+pairs of actuators that are simultaneously changed relative to the reference action. This prevents
+the interaction branch from re-learning single-facility effects through changed-unchanged pairs and
+avoids dilution of sparse joint-action signals across all 5,886 possible actuator pairs.
 """
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ from torch import nn
 from .step2_tfv_value import DirectFacilityTFVValueModel, DirectTFVValueDesign
 
 
-NG1_CONTRACT = "PROJECT7_STEP2_NG1_D2_PRESERVED_PROCESS_AWARE_INTERACTION_V1"
-NG1_GRAPH_CONTRACT = "PROJECT7_STEP2_NG1_COMPLETE_109_ACTUATOR_PAIR_GRAPH_V1"
+NG1_CONTRACT = "PROJECT7_STEP2_NG1_D2_PRESERVED_ACTIVE_PAIR_SELECTION_V2"
+NG1_GRAPH_CONTRACT = "PROJECT7_STEP2_NG1_COMPLETE_109_ACTUATOR_PAIR_GRAPH_V2_NORMALIZED_PHYSICS"
 
 
 def _shortest_paths(edge_index: np.ndarray, node_count: int) -> np.ndarray:
@@ -52,11 +52,7 @@ def _shortest_paths(edge_index: np.ndarray, node_count: int) -> np.ndarray:
 
 
 def build_control_interaction_graph(graph: Any) -> dict[str, Any]:
-    """Build a complete deterministic actuator-pair relation graph.
-
-    Only graph topology and frozen actuator physics are used.  No SWMM outcome,
-    candidate return, or split label is accepted by this function.
-    """
+    """Build a complete deterministic, label-independent actuator-pair relation graph."""
     actuator_ids = tuple(str(value) for value in graph.actuator_ids)
     if len(actuator_ids) != 109 or len(set(actuator_ids)) != 109:
         raise ValueError("NG1 requires 109 unique actuator IDs")
@@ -79,7 +75,7 @@ def build_control_interaction_graph(graph: Any) -> dict[str, Any]:
         "downstream_to_other_upstream",
         "other_downstream_to_upstream",
         "endpoint_shortest_path_normalized",
-        *(f"physics_abs_difference_{index}" for index in range(physics.shape[1])),
+        *(f"physics_abs_difference_standardized_{index}" for index in range(physics.shape[1])),
     )
     indices: list[tuple[int, int]] = []
     features: list[list[float]] = []
@@ -101,7 +97,7 @@ def build_control_interaction_graph(graph: Any) -> dict[str, Any]:
                 float(endpoint_distance / max_distance),
             ]
             relation.extend(
-                np.abs(physics[left] - physics[right]).astype(np.float64).tolist()
+                (np.abs(physics[left] - physics[right]) / physics_scale).astype(np.float64).tolist()
             )
             indices.append((left, right))
             features.append(relation)
@@ -120,6 +116,7 @@ def build_control_interaction_graph(graph: Any) -> dict[str, Any]:
         "pair_indices": pair_indices.tolist(),
         "pair_features": pair_features.astype(np.float64).tolist(),
         "label_independent": True,
+        "physics_features_standardized": True,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     return {
@@ -178,7 +175,7 @@ def d2_magnitude_weights(values_m3: np.ndarray | list[float], strata: dict[str, 
 
 
 class NG1ProcessAwareDirectTFVValueModel(DirectFacilityTFVValueModel):
-    """V5 main path plus a separate complete-pair process-aware interaction path."""
+    """Frozen D2 main path plus changed-pair-only process-aware D3 interaction."""
 
     contract = NG1_CONTRACT
 
@@ -208,13 +205,7 @@ class NG1ProcessAwareDirectTFVValueModel(DirectFacilityTFVValueModel):
         self.interaction_graph_sha256 = str(interaction_graph["sha256"])
 
         h = int(design.hidden_dim)
-        common_dim = (
-            2 * self.state_dim
-            + self.actuator_physics_dim
-            + design.actuator_embedding_dim
-            + 1
-            + 2 * h
-        )
+        common_dim = 2 * self.state_dim + self.actuator_physics_dim + design.actuator_embedding_dim + 1 + 2 * h
         joint_input = h + common_dim + design.action_blocks + 2 * h
         relation_dim = int(pair_features.shape[1])
         self.joint_context_encoder = nn.Sequential(
@@ -229,14 +220,14 @@ class NG1ProcessAwareDirectTFVValueModel(DirectFacilityTFVValueModel):
             nn.Linear(h, h),
             nn.SiLU(),
         )
-        self.interaction_value_head = nn.Sequential(
-            nn.Linear(h + 2 * h, h // 2),
+        self.pair_value_head = nn.Sequential(
+            nn.Linear(h, h // 2),
             nn.SiLU(),
             nn.Linear(h // 2, 1),
         )
 
     def interaction_parameter_names(self) -> tuple[str, ...]:
-        prefixes = ("joint_context_encoder.", "pair_interaction_head.", "interaction_value_head.")
+        prefixes = ("joint_context_encoder.", "pair_interaction_head.", "pair_value_head.")
         return tuple(name for name, _ in self.named_parameters() if name.startswith(prefixes))
 
     def main_parameter_names(self) -> tuple[str, ...]:
@@ -264,38 +255,52 @@ class NG1ProcessAwareDirectTFVValueModel(DirectFacilityTFVValueModel):
         )
         return self.joint_context_encoder(context)
 
-    def _process_interaction_value(
-        self,
-        joint_latent: torch.Tensor,
-        *,
-        state_context: torch.Tensor,
-        rainfall_context: torch.Tensor,
-    ) -> torch.Tensor:
-        left = joint_latent.index_select(1, self.pair_indices[:, 0])
-        right = joint_latent.index_select(1, self.pair_indices[:, 1])
+    def _active_pair_value(self, joint_latent: torch.Tensor, changed: torch.Tensor) -> torch.Tensor:
+        left_index = self.pair_indices[:, 0]
+        right_index = self.pair_indices[:, 1]
+        left = joint_latent.index_select(1, left_index)
+        right = joint_latent.index_select(1, right_index)
         relation = self.pair_relation_features[None].expand(joint_latent.shape[0], -1, -1)
         pair_hidden = self.pair_interaction_head(torch.cat((left, right, relation), dim=-1))
-        pooled = pair_hidden.mean(dim=1)
-        return self.interaction_value_head(torch.cat((pooled, state_context, rainfall_context), dim=-1)).squeeze(-1)
+        pair_value = self.pair_value_head(pair_hidden).squeeze(-1)
+        active = changed.index_select(1, left_index) & changed.index_select(1, right_index)
+        active_float = active.to(dtype=pair_value.dtype)
+        active_count = active_float.sum(dim=1)
+        pooled = (pair_value * active_float).sum(dim=1) / torch.sqrt(active_count.clamp_min(1.0))
+        return pooled * (active_count > 0).to(dtype=pair_value.dtype)
 
-    def forward(self, *, current_state: torch.Tensor, rainfall: torch.Tensor,
-                reference_settings: torch.Tensor, candidate_settings: torch.Tensor,
-                previous_actuator_flow: torch.Tensor, actuator_upstream: torch.Tensor,
-                actuator_downstream: torch.Tensor, actuator_physics: torch.Tensor):
+    def forward(
+        self,
+        *,
+        current_state: torch.Tensor,
+        rainfall: torch.Tensor,
+        reference_settings: torch.Tensor,
+        candidate_settings: torch.Tensor,
+        previous_actuator_flow: torch.Tensor,
+        actuator_upstream: torch.Tensor,
+        actuator_downstream: torch.Tensor,
+        actuator_physics: torch.Tensor,
+    ):
         self._validate_inputs(
-            current_state=current_state, rainfall=rainfall,
-            reference_settings=reference_settings, candidate_settings=candidate_settings,
+            current_state=current_state,
+            rainfall=rainfall,
+            reference_settings=reference_settings,
+            candidate_settings=candidate_settings,
             previous_actuator_flow=previous_actuator_flow,
-            actuator_upstream=actuator_upstream, actuator_downstream=actuator_downstream,
+            actuator_upstream=actuator_upstream,
+            actuator_downstream=actuator_downstream,
             actuator_physics=actuator_physics,
         )
         global_state = torch.cat((current_state.mean(dim=1), current_state.amax(dim=1)), dim=-1)
         state_context = self.global_state_encoder(global_state)
         rainfall_context = self.rainfall_encoder(self._rainfall_summary(rainfall))
         common = self._facility_context(
-            current_state=current_state, previous_actuator_flow=previous_actuator_flow,
-            actuator_upstream=actuator_upstream, actuator_downstream=actuator_downstream,
-            actuator_physics=actuator_physics, state_context=state_context,
+            current_state=current_state,
+            previous_actuator_flow=previous_actuator_flow,
+            actuator_upstream=actuator_upstream,
+            actuator_downstream=actuator_downstream,
+            actuator_physics=actuator_physics,
+            state_context=state_context,
             rainfall_context=rainfall_context,
         )
         reference_latent = self._sequence_latent(common, reference_settings)
@@ -304,13 +309,17 @@ class NG1ProcessAwareDirectTFVValueModel(DirectFacilityTFVValueModel):
         candidate_main = self.facility_head(candidate_latent).squeeze(-1)
         facility_effect = (candidate_main - reference_main) * self.target_scale_m3
 
-        reference_joint = self._joint_latent(common, reference_latent, reference_settings, state_context, rainfall_context)
-        candidate_joint = self._joint_latent(common, candidate_latent, candidate_settings, state_context, rainfall_context)
-        reference_value = self._process_interaction_value(reference_joint, state_context=state_context, rainfall_context=rainfall_context)
-        candidate_value = self._process_interaction_value(candidate_joint, state_context=state_context, rainfall_context=rainfall_context)
         changed = torch.any(torch.abs(candidate_settings - reference_settings) > 1.0e-7, dim=1)
-        pair_gate = (changed.sum(dim=-1) > 1).to(dtype=facility_effect.dtype)
-        interaction = (candidate_value - reference_value) * self.target_scale_m3 * pair_gate
+        reference_joint = self._joint_latent(
+            common, reference_latent, reference_settings, state_context, rainfall_context
+        )
+        candidate_joint = self._joint_latent(
+            common, candidate_latent, candidate_settings, state_context, rainfall_context
+        )
+        reference_value = self._active_pair_value(reference_joint, changed)
+        candidate_value = self._active_pair_value(candidate_joint, changed)
+        interaction = (candidate_value - reference_value) * self.target_scale_m3
+
         blocks_ref = self._control_blocks(reference_settings)
         blocks_cand = self._control_blocks(candidate_settings)
         activity = torch.mean(torch.abs(blocks_cand - blocks_ref).transpose(1, 2), dim=-1)
