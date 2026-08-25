@@ -320,6 +320,27 @@ class DirectTFVAuthoritativeController(V122TorchMPCController):
                     "h10_probe_count": result.h10_probe_count,
                 }
             )
+            if str(getattr(result, "policy_mode_contract", "")).startswith(
+                "PROJECT7_OPERATIONAL_DEVELOPMENT_V25_"
+            ):
+                diagnostics.update(
+                    {
+                        "tfv_value_available": bool(getattr(result, "tfv_value_available", False)),
+                        "tfv_value_prediction_m3": getattr(result, "tfv_value_prediction_m3", None),
+                        "tfv_value_upper_bound_m3": getattr(result, "tfv_value_upper_bound_m3", None),
+                        "tfv_value_admission_passed": bool(
+                            getattr(result, "tfv_value_admission_passed", False)
+                        ),
+                        "engineering_feasible": bool(getattr(result, "engineering_feasible", False)),
+                        "passive_channels_unchanged": bool(
+                            getattr(result, "passive_channels_unchanged", False)
+                        ),
+                        "sequence_support_valid": bool(getattr(result, "sequence_support_valid", False)),
+                        "tfv_value_gate_reason": str(
+                            getattr(result, "tfv_value_gate_reason", "UNKNOWN")
+                        ),
+                    }
+                )
         source = str(action.source)
         if source == "MPC_V122" and result is not None:
             source = "MPC_DIRECT_TFV_RECEDING" if result.candidate_valid else "LATCH_PREVIOUS_TARGET_DIRECT_TFV"

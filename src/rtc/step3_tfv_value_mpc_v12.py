@@ -101,6 +101,16 @@ class DirectTFVMPCResultV12:
     first_move_refiner_elapsed_seconds: float = 0.0
     first_move_refiner_steps: int = 0
     first_move_refinement_gain_m3: float = 0.0
+    # Optional V25 value-gate telemetry.  Defaults preserve every historical V12/V21/V23/V24
+    # constructor and are only serialized by the V25 policy contract.
+    tfv_value_available: bool = False
+    tfv_value_prediction_m3: float | None = None
+    tfv_value_upper_bound_m3: float | None = None
+    tfv_value_admission_passed: bool = False
+    engineering_feasible: bool = True
+    passive_channels_unchanged: bool = True
+    sequence_support_valid: bool = True
+    tfv_value_gate_reason: str = "NOT_A_V25_RESULT"
 
 
 class DirectTFVPolicyReturnPortfolioMPCV12(DirectTFVRecedingMPCV4):

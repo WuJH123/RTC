@@ -1,0 +1,19 @@
+{
+  "contract": "PROJECT7_OPERATIONAL_DEVELOPMENT_V25_VALUE_GATED_STEP3_V1",
+  "development_only": true,
+  "formal_evidence": false,
+  "estimand": "TFV_H120_CANDIDATE_H10_PLUS_FROZEN_CAUSAL_CONTINUATION_MINUS_HOLD_H10_PLUS_IDENTICAL_CONTINUATION_V1",
+  "candidate_portfolio_built_once_per_decision": true,
+  "candidate_selection": "FROZEN_V15_RANK",
+  "value_gate": "predicted_delta_tfv_h120_m3 + calibrated_one_sided_error_margin_m3 < 0",
+  "unknown_value_action": "FAIL_CLOSED_TO_HOLD",
+  "hydraulic_stress_direct_action_authorization": false,
+  "hydraulic_candidate_same_rank_and_value_gate": true,
+  "one_sided_error_quantile": 0.9,
+  "ridge": 1.0,
+  "oof_folds": 6,
+  "oof_group_disjoint": true,
+  "pfv_role": "FROZEN_SAFETY_CONDITION_ONLY",
+  "global_peak_role": "REPORT_ONLY",
+  "ready_for_policy_lock": false
+}
