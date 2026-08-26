@@ -1,9 +1,9 @@
 """Inventory every reusable Project7 full exact-return candidate asset under a study tree.
 
-Unlike the first V26 inventory, this scanner is format- and version-agnostic: JSONL, JSON and NPZ
-historical assets are visible, and path names such as ``final``/``formal`` or old data roles do not
-exclude a semantically valid record.  Statistical use is decided later by the new leakage-group
-Train/Validation/Test split.
+JSONL, JSON and NPZ historical assets are visible. Path names and old data roles do not exclude a
+semantically valid record. Statistical use is decided later by the new Train/Validation/Test split.
+Damaged unrelated files are reported as parse failures and do not abort discovery of the remaining
+historical SWMM truth.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from collections import Counter
 import json
 from pathlib import Path
 from typing import Any
+import zipfile
 
 from rtc.project7_v26_historical_supervision import (
     HISTORICAL_SUPERVISION_CONTRACT,
@@ -22,7 +23,7 @@ from rtc.project7_v26_historical_supervision import (
 )
 
 
-INVENTORY_CONTRACT = "PROJECT7_STEP3_V26_EXACT_RETURN_HISTORY_INVENTORY_V2"
+INVENTORY_CONTRACT = "PROJECT7_STEP3_V26_EXACT_RETURN_HISTORY_INVENTORY_V3"
 
 
 def _report(path: Path) -> dict[str, Any] | None:
@@ -38,6 +39,7 @@ def _report(path: Path) -> dict[str, Any] | None:
     context_refs = 0
     embedded = 0
     exact = 0
+    derived_copies = 0
     for record in records:
         row = record.row
         if exact_truth(row) is not None:
@@ -58,6 +60,8 @@ def _report(path: Path) -> dict[str, Any] | None:
             context_refs += 1
         if record.embedded_context is not None:
             embedded += 1
+        if row.get("historical_supervision_contract"):
+            derived_copies += 1
     return {
         "path": str(path.resolve()),
         "sha256": sha256_file(path),
@@ -69,6 +73,7 @@ def _report(path: Path) -> dict[str, Any] | None:
         "direct_target_row_count": target_direct,
         "context_reference_row_count": context_refs,
         "embedded_context_row_count": embedded,
+        "prior_canonical_copy_row_count": derived_copies,
         "candidate_source_counts": dict(sorted(sources.items())),
         "original_data_role_counts": dict(sorted(roles.items())),
         "reusable_candidate_learning_source": exact > 0,
@@ -95,7 +100,7 @@ def main() -> None:
         scanned_by_format[path.suffix.lower().lstrip(".")] += 1
         try:
             report = _report(path)
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError, zipfile.BadZipFile) as exc:
             failures.append({"path": str(path), "error": str(exc)})
             continue
         if report is not None:
@@ -106,8 +111,10 @@ def main() -> None:
     role_totals: Counter[str] = Counter()
     format_totals: Counter[str] = Counter()
     raw_rows = 0
+    prior_copy_rows = 0
     for item in reusable:
         raw_rows += int(item["candidate_exact_return_row_count"])
+        prior_copy_rows += int(item["prior_canonical_copy_row_count"])
         format_totals[str(item["format"])] += int(item["candidate_exact_return_row_count"])
         source_totals.update(item["candidate_source_counts"])
         role_totals.update(item["original_data_role_counts"])
@@ -121,6 +128,7 @@ def main() -> None:
         "candidate_asset_count": len(reports),
         "reusable_candidate_learning_file_count": len(reusable),
         "candidate_exact_return_rows_before_canonicalization_and_dedup": raw_rows,
+        "prior_canonical_copy_rows_before_dedup": prior_copy_rows,
         "candidate_exact_return_rows_by_format": dict(sorted(format_totals.items())),
         "candidate_source_totals_before_cross_file_dedup": dict(sorted(source_totals.items())),
         "original_role_totals_before_cross_file_dedup": dict(sorted(role_totals.items())),
@@ -133,6 +141,8 @@ def main() -> None:
             "step1_step2_prior_exposure_is_not_an_exclusion": True,
             "formal_final_benchmark_path_names_are_not_exclusion_rules": True,
             "full_exact_return_semantics_are_required": True,
+            "prior_canonical_copy_is_inventory_visible_but_not_a_new_swmm_observation": True,
+            "damaged_unrelated_asset_does_not_abort_inventory": True,
             "train_validation_test_split_is_applied_after_canonical_dedup": True,
             "inventory_is_read_only": True,
             "new_swmm_truth_generated": False,
