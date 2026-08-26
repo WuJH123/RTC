@@ -1,0 +1,40 @@
+{
+  "contract": "PROJECT7_STEP3_V25R2_EXACT_POLICY_RETURN_DEVELOPMENT_V1",
+  "development_only": true,
+  "formal_evidence": false,
+  "primary_objective": "SYSTEM_WIDE_TFV",
+  "action_interval_seconds": 600,
+  "observation_interval_seconds": 300,
+  "execute_first_h10_only": true,
+  "candidate_set": [
+    "STEP2_H10_PROBE_SCALE_0.50",
+    "STEP2_H10_PROBE_SCALE_1.00",
+    "TYPE_AWARE_HYDRAULIC_PRESSURE"
+  ],
+  "value_estimand": "SYSTEM_WIDE_TFV_CANDIDATE_H10_PLUS_FROZEN_CAUSAL_CONTINUATION_MINUS_HOLD_H10_PLUS_IDENTICAL_CONTINUATION_V1",
+  "truth_field": "true_policy_return_delta_tfv_m3",
+  "h120_window_role": "DIAGNOSTIC_ONLY",
+  "stress_blend_role": "DIAGNOSTIC_ONLY_NOT_ACTION_AUTHORIZATION",
+  "unknown_value_action": "HOLD",
+  "action_admission": "ONE_SIDED_UCB_STRICTLY_NEGATIVE",
+  "oof": {
+    "rainfall_group_disjoint": true,
+    "folds": 6,
+    "auc_minimum": 0.60,
+    "harmful_admitted_action_count_maximum": 0,
+    "beneficial_action_precision_minimum": 0.50,
+    "collapse_forbidden": true
+  },
+  "reuse_existing_v25_matched_truth": true,
+  "new_swmm_before_v25r2_oof_gate": 0,
+  "validation_access_forbidden": true,
+  "final_access_forbidden": true,
+  "policy_lock_forbidden": true,
+  "benchmark5_allowed_only_if_train_oof_supported": true,
+  "baseline_cache_must_be_reused": true,
+  "v24_unconditional_stress_escape_forbidden": true,
+  "step1_retrain_forbidden": true,
+  "step2_retrain_forbidden": true,
+  "v15_rank_retrain_forbidden": true,
+  "notes": "V25 V1 incorrectly promoted the H120 diagnostic window to the value-gate supervision target. V25R2 restores the paper-facing exact receding policy-return estimand without generating additional SWMM truth."
+}
