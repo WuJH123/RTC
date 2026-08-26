@@ -1,0 +1,56 @@
+{
+  "contract": "PROJECT7_STEP3_V26_HYDRAULIC_VALUE_DEVELOPMENT_CONSENSUS_V1",
+  "development_only": true,
+  "formal_evidence": false,
+  "objective": "MINIMIZE_SYSTEM_WIDE_CUMULATIVE_TFV_EXACT_POLICY_RETURN",
+  "online_reference": "HOLD_DELTA_TFV_EQUALS_ZERO",
+  "candidate_portfolio": "CURRENT_V23_THREE_FAMILY_ENGINEERING_FEASIBLE_PORTFOLIO",
+  "candidate_selection": "ARGMIN_PREDICTED_EXACT_RETURN_OVER_ALL_CANDIDATES_PLUS_HOLD",
+  "feature_contract": "PROJECT7_STEP3_V26_V20_PLUS_AUTO_RBC_HYDRAULIC_ACTION_CONDITIONED_EXACT_RETURN_V1",
+  "hydraulic_knowledge": {
+    "role": "FEATURES_AND_EXISTING_HYDRAULIC_CANDIDATE_NOT_HARD_ACTION_RULE",
+    "signals": [
+      "upstream_filling",
+      "downstream_congestion_and_headroom",
+      "actuator_type_aware_release_direction",
+      "local_flooding",
+      "rainfall_loading",
+      "action_magnitude"
+    ]
+  },
+  "data": {
+    "reuse_valid_historical_exact_return_truth": true,
+    "previous_version_visibility_excludes_training": false,
+    "split": "RAINFALL_GROUP_DISJOINT_TRAIN_VALIDATION_TEST",
+    "default_train_fraction": 0.7,
+    "default_validation_fraction": 0.15,
+    "test_fraction": 0.15,
+    "truth_field": "true_policy_return_delta_tfv_m3",
+    "h120_role": "DIAGNOSTIC_ONLY"
+  },
+  "removed_from_runtime_blocking": [
+    "OOF_AUC_THRESHOLD",
+    "ZERO_HARMFUL_ACTION_REQUIREMENT",
+    "BENEFICIAL_PRECISION_THRESHOLD",
+    "ONE_SIDED_UCB_ADMISSION",
+    "V21_SELECTED_BOUNDARY_ADMISSION"
+  ],
+  "preserved_engineering_constraints": [
+    "82_OF_109_SUPERVISORY_MASK",
+    "PASSIVE_CHANNELS_UNCHANGED",
+    "Q95_SEQUENCE_SUPPORT",
+    "MAX_SETTING_DELTA_PER_UPDATE_0.5",
+    "TARGET_WRITE_READBACK",
+    "CAUSAL_INPUTS_ONLY"
+  ],
+  "development_evaluation": {
+    "benchmark": "OPERATIONAL_BENCHMARK5",
+    "reuse_baseline_cache": true,
+    "rerun_only_proposed": true,
+    "primary_metric": "TFV",
+    "pfv_safety": "PROPOSED_PFV_LE_100_PLUS_1.05_TIMES_NO_CONTROL",
+    "global_peak": "REPORT_ONLY",
+    "offline_metrics_are_reporting_not_runtime_permission": true
+  },
+  "ready_for_policy_lock": false
+}
