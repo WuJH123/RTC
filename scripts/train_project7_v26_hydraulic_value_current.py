@@ -25,7 +25,7 @@ from rtc.direct_tfv_v26_value_model import (
 from rtc.practical_rtc_assets import load_practical_rtc_asset_manifest, practical_asset_path
 
 
-V26_TRAINING_CONTRACT = "PROJECT7_STEP3_V26_TRAIN_VALIDATION_TEST_EXACT_RETURN_TRAINING_V1"
+V26_TRAINING_CONTRACT = "PROJECT7_STEP3_V26_TRAIN_VALIDATION_TEST_EXACT_RETURN_TRAINING_V2"
 
 
 def _sha(path: str | Path) -> str:
@@ -70,15 +70,14 @@ def _context(path: Path, *, device: torch.device) -> dict[str, torch.Tensor]:
 
 
 def _decision_unit(row: dict[str, Any]) -> str:
-    """Identify one causal state at which multiple candidate actions are compared."""
-    raw = "|".join(
-        (
-            str(row["rainfall_group"]),
-            str(row["query_set_id"]),
-            str(row["context_npz_sha256"]),
-        )
-    )
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    """Identify one canonical causal state independent of an old version's query identifier."""
+    context = str(
+        row.get("causal_context_fingerprint_sha256", row.get("context_npz_sha256", ""))
+    ).strip().lower()
+    leakage_group = str(row.get("leakage_group_id", row.get("rainfall_group", ""))).strip().lower()
+    if not context or not leakage_group:
+        raise ValueError("V26 decision unit requires canonical context and leakage-group identities")
+    return hashlib.sha256(f"{leakage_group}|{context}".encode("utf-8")).hexdigest()
 
 
 def main() -> None:
@@ -104,6 +103,9 @@ def main() -> None:
         raise ValueError("V26 dataset records SHA mismatch")
     if int(manifest.get("record_count", -1)) != len(rows):
         raise ValueError("V26 dataset manifest record count mismatch")
+    leakage_audit = manifest.get("leakage_audit")
+    if not isinstance(leakage_audit, dict) or leakage_audit.get("passed") is not True:
+        raise ValueError("V26 dataset manifest does not contain a passed leakage audit")
     if set(str(row.get("split", "")) for row in rows) != {"train", "validation", "test"}:
         raise ValueError("V26 dataset must contain Train/Validation/Test")
 
@@ -111,7 +113,11 @@ def main() -> None:
         split: {str(row["rainfall_group"]) for row in rows if str(row["split"]) == split}
         for split in ("train", "validation", "test")
     }
-    if groups_by_split["train"] & groups_by_split["validation"] or groups_by_split["train"] & groups_by_split["test"] or groups_by_split["validation"] & groups_by_split["test"]:
+    if (
+        groups_by_split["train"] & groups_by_split["validation"]
+        or groups_by_split["train"] & groups_by_split["test"]
+        or groups_by_split["validation"] & groups_by_split["test"]
+    ):
         raise ValueError("V26 rainfall groups leak across Train/Validation/Test")
 
     assets = load_practical_rtc_asset_manifest(args.asset_manifest)
@@ -213,7 +219,7 @@ def main() -> None:
         "feature_contract": V26_HYDRAULIC_FEATURE_CONTRACT,
         "truth_field": "true_policy_return_delta_tfv_m3",
         "split_contract": str(manifest["contract"]),
-        "decision_unit_contract": "SHA256_RAINFALL_GROUP_QUERY_CONTEXT_SHA",
+        "decision_unit_contract": "SHA256_LEAKAGE_GROUP_CANONICAL_CAUSAL_CONTEXT",
         "v23_portfolio_contract": str(parent_lineage["v23_portfolio_contract"]),
         "v23_hydraulic_candidate_contract": str(parent_lineage["v23_hydraulic_candidate_contract"]),
         "v15_rank_checkpoint_sha256_parent_compatibility_only": _sha(args.v15_rank_checkpoint),
@@ -264,6 +270,9 @@ def main() -> None:
         "checkpoint": str(checkpoint_path),
         "checkpoint_sha256": _sha(checkpoint_path),
         "context_sha_failures": int(context_sha_failures),
+        "leakage_audit_passed": True,
+        "test_used_for_training_or_model_selection": False,
+        "old_query_set_id_controls_decision_grouping": False,
         "scientific_metrics_block_runtime": False,
         "runtime_selection_rule": "MIN_PREDICTED_EXACT_RETURN_ACROSS_CANDIDATES_AND_HOLD_ZERO",
         "development_only": True,
