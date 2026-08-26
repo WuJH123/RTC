@@ -69,6 +69,18 @@ def _context(path: Path, *, device: torch.device) -> dict[str, torch.Tensor]:
     return {"state": state2, "rain": rain, "active": active, "flow": flow}
 
 
+def _decision_unit(row: dict[str, Any]) -> str:
+    """Identify one causal state at which multiple candidate actions are compared."""
+    raw = "|".join(
+        (
+            str(row["rainfall_group"]),
+            str(row["query_set_id"]),
+            str(row["context_npz_sha256"]),
+        )
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--asset-manifest", required=True)
@@ -125,7 +137,7 @@ def main() -> None:
     features: list[np.ndarray] = []
     truth: list[float] = []
     splits: list[str] = []
-    query_ids: list[str] = []
+    decision_units: list[str] = []
     sources: list[str] = []
     stress: list[float] = []
     context_sha_failures = 0
@@ -158,7 +170,7 @@ def main() -> None:
         features.append(built.feature.detach().cpu().numpy().astype(np.float64))
         truth.append(float(row["true_policy_return_delta_tfv_m3"]))
         splits.append(str(row["split"]))
-        query_ids.append(str(row["query_set_id"]))
+        decision_units.append(_decision_unit(row))
         sources.append(str(row["candidate_source"]))
         stress.append(float(built.network_stress_q75))
 
@@ -176,19 +188,17 @@ def main() -> None:
         y[train],
         x[validation],
         y[validation],
-        [query_ids[index] for index in np.flatnonzero(validation)],
+        [decision_units[index] for index in np.flatnonzero(validation)],
     )
     predictions = model.predict_numpy(x)
     split_reports: dict[str, Any] = {}
     for split, mask in (("train", train), ("validation", validation), ("test", test)):
+        local_units = [decision_units[index] for index in np.flatnonzero(mask)]
         split_reports[split] = {
             "candidate_metrics": candidate_metrics(predictions[mask], y[mask]),
-            "decision_metrics": decision_metrics(
-                predictions[mask],
-                y[mask],
-                [query_ids[index] for index in np.flatnonzero(mask)],
-            ),
+            "decision_metrics": decision_metrics(predictions[mask], y[mask], local_units),
             "record_count": int(mask.sum()),
+            "decision_unit_count": len(set(local_units)),
             "rainfall_group_count": len(groups_by_split[split]),
         }
 
@@ -203,6 +213,7 @@ def main() -> None:
         "feature_contract": V26_HYDRAULIC_FEATURE_CONTRACT,
         "truth_field": "true_policy_return_delta_tfv_m3",
         "split_contract": str(manifest["contract"]),
+        "decision_unit_contract": "SHA256_RAINFALL_GROUP_QUERY_CONTEXT_SHA",
         "v23_portfolio_contract": str(parent_lineage["v23_portfolio_contract"]),
         "v23_hydraulic_candidate_contract": str(parent_lineage["v23_hydraulic_candidate_contract"]),
         "v15_rank_checkpoint_sha256_parent_compatibility_only": _sha(args.v15_rank_checkpoint),
@@ -239,6 +250,7 @@ def main() -> None:
         "dataset_records": str(records_path),
         "feature_width": int(x.shape[1]),
         "record_count": int(len(rows)),
+        "decision_unit_count": len(set(decision_units)),
         "candidate_source_counts": source_counts,
         "split_reports": split_reports,
         "validation_model_selection": training_report,
