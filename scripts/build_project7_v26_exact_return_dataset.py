@@ -141,6 +141,15 @@ def _backfill_missing_context_references(
         row["context_npz"] = context
         if context_sha:
             row["context_npz_sha256"] = context_sha
+        target_value = row.get("candidate_target")
+        if target_value is None:
+            target_value = row.get("candidate_first_target")
+        try:
+            target = np.asarray(target_value, dtype=np.float32).reshape(-1)
+        except (TypeError, ValueError):
+            target = np.asarray([], dtype=np.float32)
+        if target.shape == (109,) and np.isfinite(target).all():
+            record.embedded_target = target.copy()
         repaired += 1
     return repaired
 
