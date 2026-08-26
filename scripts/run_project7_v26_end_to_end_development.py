@@ -1,7 +1,8 @@
 """Run the complete Project7 V26 Development flow with one command.
 
 Stages are deliberately simple and sequential:
-  1. consolidate existing exact-return truth and freeze Train/Validation/Test;
+  0. inventory reusable historical candidate-vs-HOLD exact-return JSONL when --study-root is used;
+  1. consolidate exact-return truth and freeze Train/Validation/Test;
   2. train/select the V26 action-conditioned value model and report Test metrics;
   3. run all five Proposed Benchmark5 events while reusing immutable baselines.
 
@@ -22,9 +23,53 @@ def _run(command: list[str]) -> None:
     subprocess.run(command, check=True)
 
 
+def _historical_sources(
+    *,
+    scripts: Path,
+    root: Path,
+    study_root: str | None,
+    explicit_records: list[str],
+) -> tuple[list[Path], Path | None]:
+    """Return deduplicated candidate-truth sources, optionally discovered by the read-only inventory."""
+
+    selected = [Path(value).resolve() for value in explicit_records]
+    inventory_path: Path | None = None
+    if study_root is not None:
+        inventory_path = root / "V26_EXACT_RETURN_HISTORY_INVENTORY.json"
+        _run(
+            [
+                sys.executable,
+                str(scripts / "audit_project7_v26_exact_return_inventory.py"),
+                "--root", str(Path(study_root).resolve()),
+                "--out", str(inventory_path),
+            ]
+        )
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        reusable = inventory.get("reusable_files")
+        if not isinstance(reusable, list):
+            raise ValueError("V26 inventory lacks reusable_files")
+        selected.extend(Path(str(value)).resolve() for value in reusable)
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for path in selected:
+        if path in seen:
+            continue
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        seen.add(path)
+        deduped.append(path)
+    if not deduped:
+        raise ValueError("V26 requires --study-root and/or at least one --records-jsonl source")
+    return deduped, inventory_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--records-jsonl", action="append", required=True)
+    parser.add_argument(
+        "--study-root",
+        help="Optional Project7 study tree to inventory automatically for reusable exact-return JSONL",
+    )
+    parser.add_argument("--records-jsonl", action="append", default=[])
     parser.add_argument("--context-records", action="append", default=[])
     parser.add_argument("--asset-manifest", required=True)
     parser.add_argument("--v15-rank-checkpoint", required=True)
@@ -50,12 +95,18 @@ def main() -> None:
     model_dir = root / "model"
     benchmark_dir = root / "benchmark5"
 
+    records, inventory_path = _historical_sources(
+        scripts=scripts,
+        root=root,
+        study_root=args.study_root,
+        explicit_records=list(args.records_jsonl),
+    )
     build = [
         sys.executable,
         str(scripts / "build_project7_v26_exact_return_dataset.py"),
     ]
-    for value in args.records_jsonl:
-        build.extend(("--records-jsonl", str(Path(value).resolve())))
+    for path in records:
+        build.extend(("--records-jsonl", str(path)))
     for value in args.context_records:
         build.extend(("--context-records", str(Path(value).resolve())))
     build.extend(
@@ -86,7 +137,7 @@ def main() -> None:
     )
 
     value_checkpoint = model_dir / "V26_HYDRAULIC_EXACT_RETURN_VALUE_MODEL.pt"
-    # Deliberately do not inspect AUC/sign/harmful-action metrics here.  Benchmark5 is the next
+    # Deliberately do not inspect AUC/sign/harmful-action metrics here. Benchmark5 is the next
     # scientific experiment, not a privilege granted by an offline gate.
     _run(
         [
@@ -108,8 +159,11 @@ def main() -> None:
     )
 
     summary = {
-        "contract": "PROJECT7_V26_END_TO_END_DEVELOPMENT_WORKFLOW_V1",
+        "contract": "PROJECT7_V26_END_TO_END_DEVELOPMENT_WORKFLOW_V2",
         "completed": True,
+        "historical_inventory": str(inventory_path) if inventory_path is not None else None,
+        "candidate_truth_source_count": len(records),
+        "candidate_truth_sources": [str(path) for path in records],
         "dataset_manifest": str(dataset_manifest),
         "dataset_records": str(dataset_records),
         "value_model_report": str(model_dir / "V26_HYDRAULIC_EXACT_RETURN_VALUE_MODEL_REPORT.json"),
