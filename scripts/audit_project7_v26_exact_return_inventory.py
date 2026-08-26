@@ -67,7 +67,7 @@ def _classify(path: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
             "final",
             "blind",
             "policy_lock",
-            "policyl","
+            "policy-lock",
             "operational_benchmark",
         )
     )
