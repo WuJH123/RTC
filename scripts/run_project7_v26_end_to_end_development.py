@@ -2,13 +2,14 @@
 
 Stages are deliberately simple and sequential:
   0. inventory reusable historical candidate-vs-HOLD exact-return JSONL/JSON/NPZ assets;
-  1. canonicalize/deduplicate them and freeze a new leakage-safe Train/Validation/Test split;
+  1. recover/canonicalize/adjudicate them and freeze a leakage-safe Train/Validation/Test split;
   2. train/select the V26 action-conditioned value model and report Test metrics;
   3. run all five Proposed Benchmark5 events while reusing immutable baselines.
 
 No offline model-quality statistic can short-circuit Stage 3. Only an actual program/data-lineage or
 engineering-execution failure stops the workflow. Historical role/version exposure is provenance,
-not a training exclusion rule.
+not a training exclusion rule. Genuinely ambiguous individual truth keys may be quarantined by the
+dataset builder without discarding unrelated valid SWMM supervision.
 """
 from __future__ import annotations
 
@@ -155,20 +156,32 @@ def main() -> None:
     if inventory_path is not None:
         inventory_payload = json.loads(inventory_path.read_text(encoding="utf-8"))
     summary = {
-        "contract": "PROJECT7_V26_END_TO_END_DEVELOPMENT_WORKFLOW_V3",
+        "contract": "PROJECT7_V26_END_TO_END_DEVELOPMENT_WORKFLOW_V4",
         "completed": True,
         "historical_inventory": str(inventory_path) if inventory_path is not None else None,
         "inventory_candidate_exact_rows_before_dedup": (
             inventory_payload.get("candidate_exact_return_rows_before_canonicalization_and_dedup")
             if inventory_payload else None
         ),
+        "inventory_prior_canonical_copy_rows": (
+            inventory_payload.get("prior_canonical_copy_rows_before_dedup")
+            if inventory_payload else None
+        ),
         "dataset_record_count_after_dedup": int(dataset_payload["record_count"]),
-        "dataset_independent_leakage_group_count": int(dataset_payload["independent_leakage_group_count"]),
+        "dataset_independent_leakage_group_count": int(
+            dataset_payload["independent_leakage_group_count"]
+        ),
         "dataset_split_record_counts": dataset_payload["split_record_counts"],
         "dataset_rejected_counts": dataset_payload["rejected_counts"],
+        "dataset_context_recovery": dataset_payload.get("context_recovery"),
+        "dataset_adjudication": dataset_payload.get("adjudication"),
+        "dataset_leakage_audit": dataset_payload.get("leakage_audit"),
         "dataset_manifest": str(dataset_manifest),
         "dataset_records": str(dataset_records),
-        "value_model_report": str(model_dir / "V26_HYDRAULIC_EXACT_RETURN_VALUE_MODEL_REPORT.json"),
+        "dataset_adjudication_report": dataset_payload.get("adjudication_report"),
+        "value_model_report": str(
+            model_dir / "V26_HYDRAULIC_EXACT_RETURN_VALUE_MODEL_REPORT.json"
+        ),
         "value_checkpoint": str(value_checkpoint),
         "benchmark_root": str(benchmark_dir),
         "old_roles_or_prior_versions_excluded": False,
@@ -180,7 +193,10 @@ def main() -> None:
         "ready_for_policy_lock": False,
     }
     summary_path = root / "V26_END_TO_END_SUMMARY.json"
-    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary_path.write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     print(json.dumps({"summary": str(summary_path), **summary}, indent=2, sort_keys=True))
 
 
