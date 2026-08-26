@@ -1,9 +1,10 @@
-"""Canonicalize all reusable Project7 full exact-return truth into Train/Validation/Test.
+"""Canonicalize reusable Project7 full exact-return truth into Train/Validation/Test.
 
-The builder deliberately ignores historical role/version visibility when deciding statistical use.
-It reconstructs causal state/action rows from JSONL, JSON and legacy compiled NPZ banks, deduplicates
-identical state-action-return evidence, builds connected leakage groups from rainfall/event/context
-identities, and then performs one fresh deterministic Train/Validation/Test split.
+Historical Train/Validation/Calibration roles and prior Step3 visibility are provenance only. The
+builder reconstructs causal state/action rows from JSONL, JSON and NPZ, recovers missing causal
+contexts from same-query peers, removes re-serialized copies of the same SWMM observation, quarantines
+only genuinely ambiguous independent truth conflicts, and then makes one deterministic leakage-group
+Train/Validation/Test split.
 """
 from __future__ import annotations
 
@@ -20,16 +21,18 @@ from rtc.project7_v26_historical_supervision import (
     ContextResolver,
     EXACT_TRUTH_FIELD,
     HISTORICAL_SUPERVISION_CONTRACT,
-    canonical_dedup_key,
+    HistoricalCandidateRecord,
+    adjudicate_canonical_duplicates,
     canonicalize_record,
     deterministic_split,
     leakage_components,
     read_candidate_records,
+    recover_missing_contexts,
     sha256_file,
 )
 
 
-V26_DATASET_CONTRACT = "PROJECT7_STEP3_V26_EXACT_RETURN_TRAIN_VALIDATION_TEST_V2"
+V26_DATASET_CONTRACT = "PROJECT7_STEP3_V26_EXACT_RETURN_TRAIN_VALIDATION_TEST_V3"
 
 
 def _source_paths(args: argparse.Namespace) -> list[Path]:
@@ -94,64 +97,32 @@ def _leakage_audit(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _read_context_reference_rows(path: Path) -> list[dict[str, Any]]:
-    """Read provenance-only query/context references without requiring an exact-return label."""
+def _read_context_reference_records(path: Path) -> list[HistoricalCandidateRecord]:
+    """Read provenance-only context rows; exact-return labels are not required."""
     if path.suffix.lower() == ".jsonl":
-        values = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        values = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
     elif path.suffix.lower() == ".json":
         payload = json.loads(path.read_text(encoding="utf-8"))
         values = payload if isinstance(payload, list) else [payload]
     else:
         return []
-    return [value for value in values if isinstance(value, dict)]
+    return [
+        HistoricalCandidateRecord(dict(value), path, index)
+        for index, value in enumerate(values)
+        if isinstance(value, dict)
+    ]
 
 
-def _backfill_missing_context_references(
-    records: list[Any], *, context_record_paths: list[Path]
-) -> int:
-    """Recover missing context paths by exact query id without borrowing another action target."""
-    by_query: defaultdict[str, set[tuple[str, str]]] = defaultdict(set)
-    for record in records:
-        row = record.row
-        query = str(row.get("query_set_id", "")).strip()
-        context = str(row.get("context_npz", "")).strip()
-        if query and context:
-            by_query[query].add((context, str(row.get("context_npz_sha256", "")).strip()))
-    for path in context_record_paths:
-        for row in _read_context_reference_rows(path):
-            query = str(row.get("query_set_id", "")).strip()
-            context = str(row.get("context_npz", "")).strip()
-            if query and context:
-                by_query[query].add((context, str(row.get("context_npz_sha256", "")).strip()))
-
-    repaired = 0
-    for record in records:
-        row = record.row
-        # A peer context can reconstruct causal state only when this row already carries its own
-        # candidate target. Otherwise borrowing a peer NPZ could silently borrow the peer action too.
-        if row.get("context_npz") or (
-            row.get("candidate_target") is None and row.get("candidate_first_target") is None
-        ):
-            continue
-        query = str(row.get("query_set_id", "")).strip()
-        references = by_query.get(query, set())
-        if len(references) != 1:
-            continue
-        context, context_sha = next(iter(references))
-        row["context_npz"] = context
-        if context_sha:
-            row["context_npz_sha256"] = context_sha
-        target_value = row.get("candidate_target")
-        if target_value is None:
-            target_value = row.get("candidate_first_target")
-        try:
-            target = np.asarray(target_value, dtype=np.float32).reshape(-1)
-        except (TypeError, ValueError):
-            target = np.asarray([], dtype=np.float32)
-        if target.shape == (109,) and np.isfinite(target).all():
-            record.embedded_target = target.copy()
-        repaired += 1
-    return repaired
+def _adjudication_public_summary(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in report.items()
+        if key not in {"resolved_derived_disagreements", "unresolved_conflicts"}
+    }
 
 
 def main() -> None:
@@ -163,13 +134,16 @@ def main() -> None:
         default=[],
         help="Backward-compatible alias for --asset; old role/version is provenance only",
     )
-    parser.add_argument("--inventory", help="Inventory JSON produced by audit_project7_v26_exact_return_inventory.py")
+    parser.add_argument(
+        "--inventory",
+        help="Inventory JSON produced by audit_project7_v26_exact_return_inventory.py",
+    )
     parser.add_argument("--study-root", help="Root used to repair stale historical context paths")
     parser.add_argument(
         "--context-records",
         action="append",
         default=[],
-        help="Optional historical JSON/JSONL rows used only to recover query-to-context references",
+        help="Optional historical JSON/JSONL rows used only to recover causal context references",
     )
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--seed", type=int, default=42)
@@ -179,23 +153,30 @@ def main() -> None:
 
     source_paths = _source_paths(args)
     resolver = ContextResolver(study_root=args.study_root)
-    canonical: list[CanonicalCandidateRecord] = []
-    rejected: Counter[str] = Counter()
     raw_record_count = 0
     records_by_source: Counter[str] = Counter()
-    all_historical = []
+    all_historical: list[HistoricalCandidateRecord] = []
     for path in source_paths:
         historical = read_candidate_records(path)
         raw_record_count += len(historical)
         records_by_source[str(path)] += len(historical)
         all_historical.extend(historical)
+
     context_reference_paths = [Path(value).resolve() for value in args.context_records]
+    reference_records: list[HistoricalCandidateRecord] = []
     for path in context_reference_paths:
         if not path.is_file():
             raise FileNotFoundError(path)
-    repaired_context_reference_count = _backfill_missing_context_references(
-        all_historical, context_record_paths=context_reference_paths
+        reference_records.extend(_read_context_reference_records(path))
+
+    context_recovery = recover_missing_contexts(
+        all_historical,
+        resolver=resolver,
+        references=reference_records,
     )
+
+    canonical: list[CanonicalCandidateRecord] = []
+    rejected: Counter[str] = Counter()
     for record in all_historical:
         converted, reason = canonicalize_record(record, resolver=resolver)
         if converted is None:
@@ -205,22 +186,10 @@ def main() -> None:
     if not canonical:
         raise ValueError("no reusable full exact-return records survived canonicalization")
 
-    deduped: dict[tuple[str, str, str], CanonicalCandidateRecord] = {}
-    duplicate_count = 0
-    duplicate_origins: Counter[str] = Counter()
-    for record in canonical:
-        key = canonical_dedup_key(record)
-        previous = deduped.get(key)
-        if previous is None:
-            deduped[key] = record
-            continue
-        if abs(
-            float(previous.row[EXACT_TRUTH_FIELD]) - float(record.row[EXACT_TRUTH_FIELD])
-        ) > 1.0e-6:
-            raise ValueError(f"conflicting exact SWMM truth for identical state/action/continuation: {key}")
-        duplicate_count += 1
-        duplicate_origins[record.row["historical_source_format"]] += 1
-    records = list(deduped.values())
+    adjudication = adjudicate_canonical_duplicates(canonical)
+    records = adjudication.records
+    if not records:
+        raise ValueError("no exact-return records remain after provenance adjudication")
 
     components = leakage_components(records)
     split_by_component = deterministic_split(
@@ -235,6 +204,12 @@ def main() -> None:
         raise FileExistsError(f"V26 dataset output is not empty: {out_dir}")
     context_dir = out_dir / "contexts"
     context_dir.mkdir(parents=True, exist_ok=True)
+
+    adjudication_path = out_dir / "V26_EXACT_RETURN_ADJUDICATION.json"
+    adjudication_path.write_text(
+        json.dumps(adjudication.report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
     rows: list[dict[str, Any]] = []
     for index, record in enumerate(records):
@@ -256,9 +231,9 @@ def main() -> None:
         key=lambda row: (
             str(row["split"]),
             str(row["leakage_group_id"]),
-            str(row["query_set_id"]),
             str(row["causal_context_fingerprint_sha256"]),
             str(row["candidate_first_target_sha256"]),
+            str(row["query_set_id"]),
         ),
     )
     records_path = out_dir / "V26_EXACT_RETURN_RECORDS.jsonl"
@@ -273,6 +248,7 @@ def main() -> None:
     source_counts: Counter[str] = Counter()
     format_counts: Counter[str] = Counter()
     role_counts: Counter[str] = Counter()
+    independent_counts: Counter[str] = Counter()
     for row in ordered_rows:
         split = str(row["split"])
         split_counts[split] += 1
@@ -281,6 +257,11 @@ def main() -> None:
         source_counts[str(row["candidate_source"])] += 1
         format_counts[str(row["historical_source_format"])] += 1
         role_counts[str(row.get("historical_original_data_role", ""))] += 1
+        independent_counts[
+            "independent"
+            if row.get("historical_truth_is_independent_observation") is True
+            else "derived_recovery_only"
+        ] += 1
 
     manifest = {
         "contract": V26_DATASET_CONTRACT,
@@ -288,6 +269,8 @@ def main() -> None:
         "records_jsonl": str(records_path),
         "records_sha256": sha256_file(records_path),
         "context_dir": str(context_dir),
+        "adjudication_report": str(adjudication_path),
+        "adjudication_report_sha256": sha256_file(adjudication_path),
         "seed": int(args.seed),
         "split_strategy": "DETERMINISTIC_CONNECTED_RAINFALL_EVENT_CONTEXT_GROUP_TRAIN_VALIDATION_TEST",
         "split_unit": "CONNECTED_RAINFALL_EVENT_CONTEXT_LEAKAGE_GROUP",
@@ -295,26 +278,32 @@ def main() -> None:
         "validation_fraction_requested": float(args.validation_fraction),
         "raw_candidate_record_count": raw_record_count,
         "eligible_before_exact_dedup": len(canonical),
-        "exact_duplicate_count": duplicate_count,
         "record_count": len(ordered_rows),
         "independent_leakage_group_count": len(set(components.values())),
-        "unique_causal_context_count": len({row["causal_context_fingerprint_sha256"] for row in ordered_rows}),
+        "unique_causal_context_count": len(
+            {row["causal_context_fingerprint_sha256"] for row in ordered_rows}
+        ),
         "split_record_counts": dict(sorted(split_counts.items())),
         "split_group_counts": {key: len(value) for key, value in sorted(split_groups.items())},
         "split_context_counts": {key: len(value) for key, value in sorted(split_contexts.items())},
         "candidate_source_counts": dict(sorted(source_counts.items())),
         "historical_source_format_counts": dict(sorted(format_counts.items())),
         "historical_original_role_counts": dict(sorted(role_counts.items())),
-        "duplicate_origin_format_counts": dict(sorted(duplicate_origins.items())),
+        "truth_observation_counts": dict(sorted(independent_counts.items())),
         "rejected_counts": dict(sorted(rejected.items())),
+        "context_recovery": context_recovery,
+        "repaired_context_reference_count": int(context_recovery["repaired"]),
+        "adjudication": _adjudication_public_summary(adjudication.report),
         "source_assets": [str(path) for path in source_paths],
         "context_reference_assets": [str(path) for path in context_reference_paths],
-        "repaired_context_reference_count": repaired_context_reference_count,
         "source_asset_sha256": {str(path): sha256_file(path) for path in source_paths},
         "source_raw_record_counts": dict(sorted(records_by_source.items())),
         "leakage_audit": audit,
         "truth_field": EXACT_TRUTH_FIELD,
         "truth_semantics": "AUTHORITATIVE_FULL_CANDIDATE_MINUS_HOLD_POLICY_RETURN_TFV_M3",
+        "derived_dataset_copy_counts_as_new_swmm_observation": False,
+        "unresolved_independent_truth_conflicts_are_quarantined": True,
+        "any_single_conflict_aborts_entire_dataset": False,
         "h120_or_step2_targets_promoted_to_full_return": False,
         "old_roles_control_statistical_use": False,
         "previous_version_visibility_excludes_training": False,
