@@ -5,6 +5,10 @@ explicit hydraulic quantities distilled from the successful Auto-RBC logic: upst
 downstream congestion/headroom, actuator release direction, flooding, rainfall loading and action
 magnitude.  These quantities are *features*, not hard control rules.  The learned exact-return model
 therefore remains free to contradict the rule baseline when the data support doing so.
+
+Historical exact-return actions are reusable even when their old candidate-family label is no longer
+one of the current online proposal names.  For those rows V26 keeps every state/action hydraulic
+feature and simply zeros V20's three family-indicator coordinates instead of inventing a new family.
 """
 from __future__ import annotations
 
@@ -17,10 +21,11 @@ import torch
 from .actuator_release_semantics import graph_release_setting_signs
 from .direct_tfv_policy_return_facility_boundary_v20 import build_facility_boundary_parts_v20
 from .direct_tfv_policy_return_portfolio import _node_feature, _rain_level
+from .direct_tfv_policy_return_portfolio_admission import CURRENT_THREE_FAMILY_SOURCES
 
 
 V26_HYDRAULIC_FEATURE_CONTRACT = (
-    "PROJECT7_STEP3_V26_V20_PLUS_AUTO_RBC_HYDRAULIC_ACTION_CONDITIONED_EXACT_RETURN_V1"
+    "PROJECT7_STEP3_V26_V20_PLUS_AUTO_RBC_HYDRAULIC_ACTION_CONDITIONED_EXACT_RETURN_V2"
 )
 
 
@@ -51,6 +56,49 @@ def _weighted_mean(values: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
     return torch.sum(values * weights) / denom
 
 
+def _v20_base_feature(
+    *,
+    step2_model: torch.nn.Module,
+    normalization: Any,
+    graph: Any,
+    current_state: torch.Tensor,
+    rainfall_scenarios: torch.Tensor,
+    previous_actuator_flow: torch.Tensor,
+    active_target: torch.Tensor,
+    candidate_target: torch.Tensor,
+    candidate_source: str,
+    supervisory_mask: np.ndarray | torch.Tensor,
+    target_scale_m3: float,
+) -> torch.Tensor:
+    """Reuse V20 mechanics while making obsolete family names source-agnostic.
+
+    V20 encodes the current three family names only in scalar coordinates 18:21. Historical actions
+    with other labels still have valid 109-D action/state supervision, so V26 evaluates the same
+    mechanics with a placeholder current family and then clears those three indicator coordinates.
+    No historical label is reclassified as a current online family.
+    """
+    source = str(candidate_source)
+    allowed = tuple(CURRENT_THREE_FAMILY_SOURCES)
+    known = source in allowed
+    base = build_facility_boundary_parts_v20(
+        step2_model=step2_model,
+        normalization=normalization,
+        graph=graph,
+        current_state=current_state,
+        rainfall_scenarios=rainfall_scenarios,
+        previous_actuator_flow=previous_actuator_flow,
+        active_target=active_target,
+        candidate_target=candidate_target,
+        candidate_source=source if known else allowed[0],
+        supervisory_mask=supervisory_mask,
+        target_scale_m3=float(target_scale_m3),
+    ).feature
+    if not known:
+        base = base.clone()
+        base[18 : 18 + len(allowed)] = 0.0
+    return base
+
+
 def build_v26_hydraulic_feature(
     *,
     step2_model: torch.nn.Module,
@@ -77,7 +125,7 @@ def build_v26_hydraulic_feature(
     if bool(torch.any(torch.abs(candidate_target[passive] - active_target[passive]) > 1.0e-7)):
         raise ValueError("V26 candidate changed a passive/reference-only channel")
 
-    base = build_facility_boundary_parts_v20(
+    base = _v20_base_feature(
         step2_model=step2_model,
         normalization=normalization,
         graph=graph,
@@ -89,7 +137,7 @@ def build_v26_hydraulic_feature(
         candidate_source=str(candidate_source),
         supervisory_mask=mask,
         target_scale_m3=float(target_scale_m3),
-    ).feature
+    )
 
     dtype = state.dtype
     device = state.device
@@ -165,9 +213,6 @@ def build_v26_hydraulic_feature(
     rms_delta = torch.sqrt(torch.mean(torch.square(delta[mask])).clamp_min(0.0))
     mean_abs_delta = torch.mean(abs_delta[mask])
 
-    # Explicit interactions encode the core Auto-RBC mechanism without imposing its thresholds:
-    # release more when upstream is full and downstream has headroom; retain when downstream is
-    # congested.  The regression is free to learn either sign and magnitude from exact return truth.
     hydraulic = torch.stack(
         (
             mean_up,
