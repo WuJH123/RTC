@@ -1,13 +1,14 @@
 """Run the complete Project7 V26 Development flow with one command.
 
 Stages are deliberately simple and sequential:
-  0. inventory reusable historical candidate-vs-HOLD exact-return JSONL when --study-root is used;
-  1. consolidate exact-return truth and freeze Train/Validation/Test;
+  0. inventory reusable historical candidate-vs-HOLD exact-return JSONL/JSON/NPZ assets;
+  1. canonicalize/deduplicate them and freeze a new leakage-safe Train/Validation/Test split;
   2. train/select the V26 action-conditioned value model and report Test metrics;
   3. run all five Proposed Benchmark5 events while reusing immutable baselines.
 
-No offline model-quality statistic can short-circuit Stage 3.  Only an actual program/data-lineage or
-engineering-execution failure stops the workflow.
+No offline model-quality statistic can short-circuit Stage 3. Only an actual program/data-lineage or
+engineering-execution failure stops the workflow. Historical role/version exposure is provenance,
+not a training exclusion rule.
 """
 from __future__ import annotations
 
@@ -23,54 +24,30 @@ def _run(command: list[str]) -> None:
     subprocess.run(command, check=True)
 
 
-def _historical_sources(
-    *,
-    scripts: Path,
-    root: Path,
-    study_root: str | None,
-    explicit_records: list[str],
-) -> tuple[list[Path], Path | None]:
-    """Return deduplicated candidate-truth sources, optionally discovered by the read-only inventory."""
-
-    selected = [Path(value).resolve() for value in explicit_records]
-    inventory_path: Path | None = None
-    if study_root is not None:
-        inventory_path = root / "V26_EXACT_RETURN_HISTORY_INVENTORY.json"
-        _run(
-            [
-                sys.executable,
-                str(scripts / "audit_project7_v26_exact_return_inventory.py"),
-                "--root", str(Path(study_root).resolve()),
-                "--out", str(inventory_path),
-            ]
-        )
-        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
-        reusable = inventory.get("reusable_files")
-        if not isinstance(reusable, list):
-            raise ValueError("V26 inventory lacks reusable_files")
-        selected.extend(Path(str(value)).resolve() for value in reusable)
-    deduped: list[Path] = []
-    seen: set[Path] = set()
-    for path in selected:
-        if path in seen:
-            continue
-        if not path.is_file():
-            raise FileNotFoundError(path)
-        seen.add(path)
-        deduped.append(path)
-    if not deduped:
-        raise ValueError("V26 requires --study-root and/or at least one --records-jsonl source")
-    return deduped, inventory_path
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--study-root",
-        help="Optional Project7 study tree to inventory automatically for reusable exact-return JSONL",
+        help="Project7 study tree containing historical JSONL/JSON/NPZ exact-return assets",
     )
-    parser.add_argument("--records-jsonl", action="append", default=[])
-    parser.add_argument("--context-records", action="append", default=[])
+    parser.add_argument(
+        "--asset",
+        action="append",
+        default=[],
+        help="Additional explicit historical JSONL/JSON/NPZ asset; may be repeated",
+    )
+    parser.add_argument(
+        "--records-jsonl",
+        action="append",
+        default=[],
+        help="Backward-compatible alias for --asset",
+    )
+    parser.add_argument(
+        "--context-records",
+        action="append",
+        default=[],
+        help="Backward-compatible context-reference JSONL used to repair historical rows",
+    )
     parser.add_argument("--asset-manifest", required=True)
     parser.add_argument("--v15-rank-checkpoint", required=True)
     parser.add_argument("--v21-boundary-checkpoint", required=True)
@@ -86,6 +63,9 @@ def main() -> None:
     parser.add_argument("--validation-fraction", type=float, default=0.15)
     args = parser.parse_args()
 
+    if not args.study_root and not args.asset and not args.records_jsonl:
+        raise ValueError("V26 requires --study-root and/or at least one explicit historical asset")
+
     root = Path(args.out_root).resolve()
     if root.exists() and any(root.iterdir()):
         raise FileExistsError(f"V26 end-to-end output root is not empty: {root}")
@@ -95,18 +75,27 @@ def main() -> None:
     model_dir = root / "model"
     benchmark_dir = root / "benchmark5"
 
-    records, inventory_path = _historical_sources(
-        scripts=scripts,
-        root=root,
-        study_root=args.study_root,
-        explicit_records=list(args.records_jsonl),
-    )
+    inventory_path: Path | None = None
+    if args.study_root:
+        inventory_path = root / "V26_EXACT_RETURN_HISTORY_INVENTORY.json"
+        _run(
+            [
+                sys.executable,
+                str(scripts / "audit_project7_v26_exact_return_inventory.py"),
+                "--root", str(Path(args.study_root).resolve()),
+                "--out", str(inventory_path),
+            ]
+        )
+
     build = [
         sys.executable,
         str(scripts / "build_project7_v26_exact_return_dataset.py"),
     ]
-    for path in records:
-        build.extend(("--records-jsonl", str(path)))
+    if inventory_path is not None:
+        build.extend(("--inventory", str(inventory_path)))
+        build.extend(("--study-root", str(Path(args.study_root).resolve())))
+    for value in list(args.asset) + list(args.records_jsonl):
+        build.extend(("--asset", str(Path(value).resolve())))
     for value in args.context_records:
         build.extend(("--context-records", str(Path(value).resolve())))
     build.extend(
@@ -121,6 +110,11 @@ def main() -> None:
 
     dataset_manifest = dataset_dir / "V26_EXACT_RETURN_DATASET_MANIFEST.json"
     dataset_records = dataset_dir / "V26_EXACT_RETURN_RECORDS.jsonl"
+    dataset_payload = json.loads(dataset_manifest.read_text(encoding="utf-8"))
+    leakage = dataset_payload.get("leakage_audit", {})
+    if not isinstance(leakage, dict) or leakage.get("passed") is not True:
+        raise RuntimeError("V26 dataset leakage audit did not pass")
+
     _run(
         [
             sys.executable,
@@ -137,8 +131,7 @@ def main() -> None:
     )
 
     value_checkpoint = model_dir / "V26_HYDRAULIC_EXACT_RETURN_VALUE_MODEL.pt"
-    # Deliberately do not inspect AUC/sign/harmful-action metrics here. Benchmark5 is the next
-    # scientific experiment, not a privilege granted by an offline gate.
+    # Benchmark5 is the next experiment, not a privilege granted by an arbitrary offline score gate.
     _run(
         [
             sys.executable,
@@ -158,19 +151,31 @@ def main() -> None:
         ]
     )
 
+    inventory_payload = None
+    if inventory_path is not None:
+        inventory_payload = json.loads(inventory_path.read_text(encoding="utf-8"))
     summary = {
-        "contract": "PROJECT7_V26_END_TO_END_DEVELOPMENT_WORKFLOW_V2",
+        "contract": "PROJECT7_V26_END_TO_END_DEVELOPMENT_WORKFLOW_V3",
         "completed": True,
         "historical_inventory": str(inventory_path) if inventory_path is not None else None,
-        "candidate_truth_source_count": len(records),
-        "candidate_truth_sources": [str(path) for path in records],
+        "inventory_candidate_exact_rows_before_dedup": (
+            inventory_payload.get("candidate_exact_return_rows_before_canonicalization_and_dedup")
+            if inventory_payload else None
+        ),
+        "dataset_record_count_after_dedup": int(dataset_payload["record_count"]),
+        "dataset_independent_leakage_group_count": int(dataset_payload["independent_leakage_group_count"]),
+        "dataset_split_record_counts": dataset_payload["split_record_counts"],
+        "dataset_rejected_counts": dataset_payload["rejected_counts"],
         "dataset_manifest": str(dataset_manifest),
         "dataset_records": str(dataset_records),
         "value_model_report": str(model_dir / "V26_HYDRAULIC_EXACT_RETURN_VALUE_MODEL_REPORT.json"),
         "value_checkpoint": str(value_checkpoint),
         "benchmark_root": str(benchmark_dir),
+        "old_roles_or_prior_versions_excluded": False,
+        "step1_step2_prior_exposure_excluded": False,
         "offline_scientific_gate_between_training_and_benchmark": False,
         "baseline_rerun_requested": False,
+        "new_counterfactual_swmm_truth_generated": False,
         "development_only": True,
         "ready_for_policy_lock": False,
     }
