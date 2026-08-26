@@ -94,6 +94,57 @@ def _leakage_audit(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _read_context_reference_rows(path: Path) -> list[dict[str, Any]]:
+    """Read provenance-only query/context references without requiring an exact-return label."""
+    if path.suffix.lower() == ".jsonl":
+        values = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    elif path.suffix.lower() == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        values = payload if isinstance(payload, list) else [payload]
+    else:
+        return []
+    return [value for value in values if isinstance(value, dict)]
+
+
+def _backfill_missing_context_references(
+    records: list[Any], *, context_record_paths: list[Path]
+) -> int:
+    """Recover missing context paths by exact query id without borrowing another action target."""
+    by_query: defaultdict[str, set[tuple[str, str]]] = defaultdict(set)
+    for record in records:
+        row = record.row
+        query = str(row.get("query_set_id", "")).strip()
+        context = str(row.get("context_npz", "")).strip()
+        if query and context:
+            by_query[query].add((context, str(row.get("context_npz_sha256", "")).strip()))
+    for path in context_record_paths:
+        for row in _read_context_reference_rows(path):
+            query = str(row.get("query_set_id", "")).strip()
+            context = str(row.get("context_npz", "")).strip()
+            if query and context:
+                by_query[query].add((context, str(row.get("context_npz_sha256", "")).strip()))
+
+    repaired = 0
+    for record in records:
+        row = record.row
+        # A peer context can reconstruct causal state only when this row already carries its own
+        # candidate target. Otherwise borrowing a peer NPZ could silently borrow the peer action too.
+        if row.get("context_npz") or (
+            row.get("candidate_target") is None and row.get("candidate_first_target") is None
+        ):
+            continue
+        query = str(row.get("query_set_id", "")).strip()
+        references = by_query.get(query, set())
+        if len(references) != 1:
+            continue
+        context, context_sha = next(iter(references))
+        row["context_npz"] = context
+        if context_sha:
+            row["context_npz_sha256"] = context_sha
+        repaired += 1
+    return repaired
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--asset", action="append", default=[], help="Historical JSONL/JSON/NPZ asset")
@@ -105,6 +156,12 @@ def main() -> None:
     )
     parser.add_argument("--inventory", help="Inventory JSON produced by audit_project7_v26_exact_return_inventory.py")
     parser.add_argument("--study-root", help="Root used to repair stale historical context paths")
+    parser.add_argument(
+        "--context-records",
+        action="append",
+        default=[],
+        help="Optional historical JSON/JSONL rows used only to recover query-to-context references",
+    )
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train-fraction", type=float, default=0.70)
@@ -117,16 +174,25 @@ def main() -> None:
     rejected: Counter[str] = Counter()
     raw_record_count = 0
     records_by_source: Counter[str] = Counter()
+    all_historical = []
     for path in source_paths:
         historical = read_candidate_records(path)
         raw_record_count += len(historical)
         records_by_source[str(path)] += len(historical)
-        for record in historical:
-            converted, reason = canonicalize_record(record, resolver=resolver)
-            if converted is None:
-                rejected[reason] += 1
-            else:
-                canonical.append(converted)
+        all_historical.extend(historical)
+    context_reference_paths = [Path(value).resolve() for value in args.context_records]
+    for path in context_reference_paths:
+        if not path.is_file():
+            raise FileNotFoundError(path)
+    repaired_context_reference_count = _backfill_missing_context_references(
+        all_historical, context_record_paths=context_reference_paths
+    )
+    for record in all_historical:
+        converted, reason = canonicalize_record(record, resolver=resolver)
+        if converted is None:
+            rejected[reason] += 1
+        else:
+            canonical.append(converted)
     if not canonical:
         raise ValueError("no reusable full exact-return records survived canonicalization")
 
@@ -233,6 +299,8 @@ def main() -> None:
         "duplicate_origin_format_counts": dict(sorted(duplicate_origins.items())),
         "rejected_counts": dict(sorted(rejected.items())),
         "source_assets": [str(path) for path in source_paths],
+        "context_reference_assets": [str(path) for path in context_reference_paths],
+        "repaired_context_reference_count": repaired_context_reference_count,
         "source_asset_sha256": {str(path): sha256_file(path) for path in source_paths},
         "source_raw_record_counts": dict(sorted(records_by_source.items())),
         "leakage_audit": audit,
