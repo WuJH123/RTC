@@ -30,6 +30,11 @@ def _sha(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def _canonical_sha(value: object) -> bool:
+    raw = str(value or "").strip().lower()
+    return len(raw) == 64 and all(char in "0123456789abcdef" for char in raw)
+
+
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     if any(not isinstance(row, dict) for row in rows):
@@ -51,34 +56,75 @@ def _target(row: dict[str, Any]) -> np.ndarray | None:
 
 def _action_hash(row: dict[str, Any], target: np.ndarray) -> str:
     explicit = str(row.get("candidate_first_target_sha256", "")).strip().lower()
-    if len(explicit) == 64:
+    if _canonical_sha(explicit):
         return explicit
     return hashlib.sha256(np.ascontiguousarray(target, dtype=np.float64).tobytes(order="C")).hexdigest()
 
 
-def _context_index(paths: list[Path]) -> dict[str, dict[str, Any]]:
-    index: dict[str, dict[str, Any]] = {}
+def _context_index(paths: list[Path]) -> dict[str, list[dict[str, Any]]]:
+    """Collect every historical context reference; do not collapse same-query paths across versions."""
+    index: dict[str, list[dict[str, Any]]] = {}
+    seen: set[tuple[str, str, str]] = set()
     for path in paths:
         for row in _read_jsonl(path):
             query = str(row.get("query_set_id", "")).strip()
             context = str(row.get("context_npz", "")).strip()
             if not query or not context:
                 continue
-            candidate = dict(row)
-            previous = index.get(query)
-            if previous is None:
-                index[query] = candidate
+            context_sha = str(row.get("context_npz_sha256", "")).strip().lower()
+            key = (query, context, context_sha)
+            if key in seen:
                 continue
-            if str(previous.get("context_npz", "")) != context:
-                # Multiple candidate rows from the same causal query should still point to one context.
-                raise ValueError(f"context path drift within query {query}")
+            seen.add(key)
+            index.setdefault(query, []).append(dict(row))
     return index
+
+
+def _resolve_context(
+    row: dict[str, Any],
+    *,
+    context_index: dict[str, list[dict[str, Any]]],
+    query: str,
+) -> tuple[str | None, str, str]:
+    """Resolve a usable context without allowing one stale historical path to kill the dataset."""
+    direct = str(row.get("context_npz", "")).strip()
+    direct_sha = str(row.get("context_npz_sha256", "")).strip().lower()
+    if direct:
+        direct_path = Path(direct).resolve()
+        if direct_path.is_file():
+            observed_sha = _sha(direct_path)
+            if _canonical_sha(direct_sha) and observed_sha.lower() != direct_sha:
+                return None, "", "context_sha_mismatch"
+            return str(direct_path), observed_sha, "resolved"
+
+    available: list[tuple[Path, str]] = []
+    for candidate in context_index.get(query, []):
+        raw = str(candidate.get("context_npz", "")).strip()
+        if not raw:
+            continue
+        path = Path(raw).resolve()
+        if not path.is_file():
+            continue
+        observed_sha = _sha(path)
+        candidate_sha = str(candidate.get("context_npz_sha256", "")).strip().lower()
+        if _canonical_sha(candidate_sha) and candidate_sha != observed_sha.lower():
+            continue
+        if _canonical_sha(direct_sha) and direct_sha != observed_sha.lower():
+            continue
+        identity = (path, observed_sha)
+        if identity not in available:
+            available.append(identity)
+    if len(available) == 1:
+        return str(available[0][0]), available[0][1], "resolved"
+    if not available:
+        return None, "", "missing_causal_context"
+    return None, "", "ambiguous_causal_context"
 
 
 def _eligible_row(
     row: dict[str, Any],
     *,
-    context_index: dict[str, dict[str, Any]],
+    context_index: dict[str, list[dict[str, Any]]],
     source_file: Path,
 ) -> tuple[dict[str, Any] | None, str]:
     source = str(row.get("candidate_source", ""))
@@ -111,16 +157,13 @@ def _eligible_row(
         if not math.isfinite(expected) or abs(expected - truth) > 1.0e-6:
             return None, "exact_return_arithmetic_mismatch"
 
-    context = str(row.get("context_npz", "")).strip()
-    context_sha = str(row.get("context_npz_sha256", "")).strip().lower()
-    if not context:
-        context_row = context_index.get(query)
-        if context_row is None:
-            return None, "missing_causal_context"
-        context = str(context_row.get("context_npz", "")).strip()
-        context_sha = str(context_row.get("context_npz_sha256", context_sha)).strip().lower()
-    if not context:
-        return None, "missing_causal_context"
+    context, context_sha, context_reason = _resolve_context(
+        row,
+        context_index=context_index,
+        query=query,
+    )
+    if context is None:
+        return None, context_reason
 
     out = dict(row)
     out.update(
@@ -197,18 +240,23 @@ def main() -> None:
     if not eligible:
         raise ValueError("V26 found no eligible exact-return records")
 
-    # Only exact duplicate state/action records are collapsed.  Different actions from the same query
-    # are deliberately retained because candidate-level action diversity is the point of V26.
-    deduped: dict[tuple[str, str], dict[str, Any]] = {}
+    # Collapse only exact state/action duplicates. Distinct contexts and distinct actions remain
+    # training evidence even when an older Step3 version assigned them the same query_set_id.
+    deduped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     duplicate_count = 0
     for row in eligible:
-        key = (str(row["query_set_id"]), str(row["candidate_first_target_sha256"]))
+        key = (
+            str(row["rainfall_group"]),
+            str(row["query_set_id"]),
+            str(row["context_npz_sha256"]),
+            str(row["candidate_first_target_sha256"]),
+        )
         previous = deduped.get(key)
         if previous is None:
             deduped[key] = row
             continue
         if abs(float(previous["true_policy_return_delta_tfv_m3"]) - float(row["true_policy_return_delta_tfv_m3"])) > 1.0e-6:
-            raise ValueError(f"duplicate exact action has conflicting truth: {key}")
+            raise ValueError(f"duplicate exact state/action has conflicting truth: {key}")
         duplicate_count += 1
     rows = list(deduped.values())
     split_by_group = _split_groups(
@@ -227,7 +275,14 @@ def main() -> None:
     records_path = out_dir / "V26_EXACT_RETURN_RECORDS.jsonl"
     ordered_rows = sorted(
         rows,
-        key=lambda row: (str(row["split"]), str(row["rainfall_group"]), str(row["query_set_id"]), str(row["candidate_source"]), str(row["candidate_first_target_sha256"])),
+        key=lambda row: (
+            str(row["split"]),
+            str(row["rainfall_group"]),
+            str(row["query_set_id"]),
+            str(row["context_npz_sha256"]),
+            str(row["candidate_source"]),
+            str(row["candidate_first_target_sha256"]),
+        ),
     )
     records_path.write_text(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in ordered_rows),
