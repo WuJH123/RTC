@@ -121,6 +121,7 @@ class DirectTFVOperationalV27MPC(DirectTFVOperationalV23MPC):
             current_state=current_state,
             active_target=active_target,
             supervisory_mask=self.supervisory_mask,
+            first_radius=self.first_radius,
             max_changed_facilities=ceiling,
             max_delta_per_update=float(self.design.max_setting_delta_per_update),
         )
