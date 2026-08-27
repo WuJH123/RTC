@@ -1,0 +1,38 @@
+{
+  "contract": "PROJECT7_STEP3_V27R1_TELEMETRY_Q95_ABLATION_DEVELOPMENT_V1",
+  "development_only": true,
+  "formal_evidence": false,
+  "parent_v27_head": "17cb028657ef0b8054b4c97481a2dc975b064d9c",
+  "numerical_primary_v27_changed": false,
+  "changes": {
+    "portfolio_telemetry_field_propagation": "FIXED",
+    "calibrated_one_sided_admission_flag_for_v26_v27": false,
+    "q95_ablation_lane": "PHYSICAL_ONLY_FIRST_MOVE_WITH_Q95_JOINT_SEQUENCE_REPORT_ONLY"
+  },
+  "q95_ablation_preserves": [
+    "SUPERVISORY_MASK_82_OF_109",
+    "ACTUATOR_BOUNDS",
+    "FIRST_MOVE_RADIUS",
+    "CHANGED_FACILITY_CEILING",
+    "MAX_SETTING_DELTA_PER_UPDATE_0.5",
+    "TARGET_WRITE_READBACK",
+    "CAUSAL_INPUTS",
+    "FROZEN_V27_VALUE_MODEL",
+    "FROZEN_V27_CANDIDATE_GENERATOR",
+    "AUTO_RBC_SHADOW_CANDIDATE_ONLY"
+  ],
+  "q95_ablation_changes_only": "JOINT_SEQUENCE_L1_TV_Q95_CONTRACTION",
+  "q95_primary_v27_remains_reference": true,
+  "benchmark": {
+    "reuse_immutable_baselines": true,
+    "rerun_only_proposed_ablation": true,
+    "event_count": 5,
+    "primary_metric": "SYSTEM_WIDE_TFV",
+    "pfv_safety": "PFV_PROPOSED_LE_100_PLUS_1.05_TIMES_NO_CONTROL",
+    "global_peak": "REPORT_ONLY"
+  },
+  "promotion": {
+    "ready_for_policy_lock": false,
+    "ablation_result_alone_can_promote": false
+  }
+}
