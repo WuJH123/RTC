@@ -2,9 +2,8 @@
 
 The successful Auto-RBC baseline is used as a *candidate proposer*, never as an unconditional ACTION
 rule.  The proposal reproduces its upstream-filling/downstream-congestion/type-aware release logic on
-the causal reconstructed state, preserves passive channels, retains only the largest engineering-
-relevant supervisory moves, and is then scored by the same learned V27 exact-return value model as
-all other candidates.
+the causal reconstructed state and then passes through the same first-move support, bounds,
+supervisory mask and changed-facility ceiling as the learned portfolio before value scoring.
 """
 from __future__ import annotations
 
@@ -15,12 +14,12 @@ import numpy as np
 import torch
 
 from .actuator_release_semantics import release_fraction_to_setting
-from .direct_tfv_policy_return_portfolio import _node_feature
+from .direct_tfv_policy_return_portfolio import _bounded_supported_target, _node_feature
 from .rule_baselines import AUTO_RBC_CONTRACT
 
 
 V27_AUTO_RBC_SHADOW_SOURCE = "AUTO_RBC_SHADOW_TOPK"
-V27_AUTO_RBC_SHADOW_CONTRACT = "PROJECT7_V27_AUTO_RBC_CAUSAL_SHADOW_PROPOSAL_TOPK_V1"
+V27_AUTO_RBC_SHADOW_CONTRACT = "PROJECT7_V27_AUTO_RBC_CAUSAL_SHADOW_PROPOSAL_TOPK_V2"
 
 
 @dataclass(frozen=True)
@@ -39,7 +38,11 @@ def _actuator_kinds(graph: Any) -> tuple[str, ...]:
     ids = tuple(str(value) for value in getattr(graph, "actuator_ids", ()))
     if physics.ndim != 2 or physics.shape[0] != len(ids):
         raise ValueError("V27 Auto-RBC shadow graph actuator physics is not aligned")
-    columns = {kind: names.index(f"is_{kind}") for kind in ("pump", "orifice", "weir", "outlet") if f"is_{kind}" in names}
+    columns = {
+        kind: names.index(f"is_{kind}")
+        for kind in ("pump", "orifice", "weir", "outlet")
+        if f"is_{kind}" in names
+    }
     if len(columns) != 4:
         raise ValueError("V27 Auto-RBC shadow requires complete actuator type indicators")
     kinds: list[str] = []
@@ -57,6 +60,7 @@ def build_auto_rbc_shadow_proposal(
     current_state: torch.Tensor,
     active_target: torch.Tensor,
     supervisory_mask: np.ndarray | torch.Tensor,
+    first_radius: np.ndarray | torch.Tensor,
     max_changed_facilities: int,
     max_delta_per_update: float,
     low_fill: float = 0.25,
@@ -64,7 +68,6 @@ def build_auto_rbc_shadow_proposal(
     downstream_congestion_fill: float = 0.90,
     response: float = 0.60,
 ) -> AutoRBCShadowProposal:
-    """Build a causal type-aware Auto-RBC proposal on the same 109-D action representation."""
     state = current_state
     if state.ndim == 3 and int(state.shape[0]) == 1:
         state = state[0]
@@ -72,9 +75,10 @@ def build_auto_rbc_shadow_proposal(
         raise ValueError("V27 Auto-RBC shadow requires current_state [node,feature]")
     if tuple(active_target.shape) != (109,):
         raise ValueError("V27 Auto-RBC shadow active_target must be [109]")
-    mask = torch.as_tensor(supervisory_mask, dtype=torch.bool, device=active_target.device).reshape(-1)
-    if tuple(mask.shape) != (109,):
-        raise ValueError("V27 Auto-RBC shadow supervisory mask must be [109]")
+    mask_np = np.asarray(torch.as_tensor(supervisory_mask, dtype=torch.bool).cpu(), dtype=bool).reshape(-1)
+    radius_np = np.asarray(torch.as_tensor(first_radius).detach().cpu(), dtype=np.float64).reshape(-1)
+    if mask_np.shape != (109,) or radius_np.shape != (109,):
+        raise ValueError("V27 Auto-RBC shadow mask/radius must be [109]")
     if int(max_changed_facilities) <= 0:
         raise ValueError("V27 Auto-RBC shadow max_changed_facilities must be positive")
     if not 0.0 < float(max_delta_per_update) <= 1.0:
@@ -108,26 +112,27 @@ def build_auto_rbc_shadow_proposal(
     release_intent = release_drive * (1.0 - downstream_penalty)
     kinds = _actuator_kinds(graph)
     desired = torch.as_tensor(
-        [release_fraction_to_setting(kind, float(value)) for kind, value in zip(kinds, release_intent.detach().cpu(), strict=True)],
+        [
+            release_fraction_to_setting(kind, float(value))
+            for kind, value in zip(kinds, release_intent.detach().cpu(), strict=True)
+        ],
         dtype=dtype,
         device=device,
     )
-    raw = active_target + float(response) * (desired - active_target)
-    lower = active_target - float(max_delta_per_update)
-    upper = active_target + float(max_delta_per_update)
-    raw = torch.minimum(torch.maximum(raw, lower), upper).clamp(0.0, 1.0)
-    raw = torch.where(mask, raw, active_target)
-    raw_delta = torch.abs(raw - active_target)
-    raw_changed = int(torch.count_nonzero(mask & (raw_delta > 1.0e-7)).item())
+    desired = torch.where(torch.as_tensor(mask_np, dtype=torch.bool, device=device), desired, active_target)
+    raw_delta = (active_target + float(response) * (desired - active_target) - active_target).detach().cpu().numpy()
+    raw_changed = int(np.count_nonzero(mask_np & (np.abs(raw_delta) > 1.0e-7)))
 
-    target = active_target.clone()
-    supervisory_indices = torch.nonzero(mask & (raw_delta > 1.0e-7)).reshape(-1)
-    if int(supervisory_indices.numel()) > 0:
-        keep = min(int(max_changed_facilities), int(supervisory_indices.numel()))
-        local_delta = raw_delta[supervisory_indices]
-        chosen_local = torch.topk(local_delta, k=keep, largest=True).indices
-        chosen = supervisory_indices[chosen_local]
-        target[chosen] = raw[chosen]
+    projected = _bounded_supported_target(
+        active_target=active_target.detach().cpu().numpy(),
+        raw_delta=raw_delta,
+        graph=graph,
+        first_radius=radius_np,
+        max_changed_facilities=int(max_changed_facilities),
+        max_delta_per_update=float(max_delta_per_update),
+        supervisory_mask=mask_np,
+    )
+    target = torch.as_tensor(projected, dtype=dtype, device=device)
     retained = int(torch.count_nonzero(torch.abs(target - active_target) > 1.0e-7).item())
     return AutoRBCShadowProposal(
         target=target.detach(),
