@@ -6,8 +6,9 @@ from rtc.controller_direct_tfv_safe import MemorySafeDirectTFVAuthoritativeContr
 
 
 DIRECT_TFV_PORTFOLIO_TELEMETRY_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_POLICY_RETURN_PORTFOLIO_TELEMETRY_V2_ADAPTER_SAFE"
+    "PROJECT7_DIRECT_TFV_POLICY_RETURN_PORTFOLIO_TELEMETRY_V3_STRUCTURED_V27"
 )
+_V27_PREFIX = "V27_DECISION_AWARE|"
 
 
 def _runtime_policy_return_passed(result: object) -> bool:
@@ -21,18 +22,65 @@ def _runtime_policy_return_passed(result: object) -> bool:
     )
 
 
+def _v27_structured_diagnostics(message: object) -> dict[str, str | bool | int | float]:
+    """Decode the existing V27 diagnostic token into stable structured decision telemetry.
+
+    The legacy string remains untouched for backward compatibility; new logs no longer require an
+    audit script to recursively search arbitrary string-valued fields.
+    """
+    raw = str(message or "")
+    if not raw.startswith(_V27_PREFIX):
+        return {}
+    values: dict[str, str] = {}
+    for token in raw[len(_V27_PREFIX) :].split("|"):
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        values[key] = value
+
+    def as_bool(key: str) -> bool:
+        return values.get(key, "").strip().lower() == "true"
+
+    def as_int(key: str) -> int:
+        try:
+            return int(float(values[key]))
+        except (KeyError, TypeError, ValueError):
+            return 0
+
+    def as_float(key: str) -> float | None:
+        try:
+            return float(values[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    result: dict[str, str | bool | int | float] = {
+        "v27_decision_diagnostic_contract": "PROJECT7_V27_STRUCTURED_DECISION_TELEMETRY_V1",
+        "v27_report_clip_hit_candidate_count": as_int("clip_hits"),
+        "v27_raw_report_clip_hit_candidate_count": as_int("raw_clip_hits"),
+        "v27_q95_binding_candidate_count": as_int("q95_binding_candidates"),
+        "v27_raw_best_source": values.get("raw_best", ""),
+        "v27_supported_best_source": values.get("supported_best", ""),
+        "v27_q95_selection_changed": as_bool("q95_selection_changed"),
+        "v27_auto_rbc_shadow_present": as_bool("shadow_present"),
+        "v27_auto_rbc_shadow_selected": as_bool("shadow_selected"),
+        "v27_auto_rbc_shadow_duplicate": as_bool("shadow_duplicate"),
+    }
+    for source_key, target_key in (
+        ("latent_min", "v27_supported_latent_min"),
+        ("latent_max", "v27_supported_latent_max"),
+        ("raw_best_latent", "v27_raw_best_latent"),
+        ("supported_best_latent", "v27_supported_best_latent"),
+    ):
+        value = as_float(source_key)
+        if value is not None:
+            result[target_key] = value
+    return result
+
+
 class PortfolioMemorySafeDirectTFVAuthoritativeController(
     MemorySafeDirectTFVAuthoritativeController
 ):
-    """Preserve score==execute while reporting the actual portfolio selection.
-
-    Historical portfolio telemetry read ``policy_return_admission_passed`` directly from the
-    low-level Step3 result.  ``DirectTFVRuntimeMPCAdapter`` intentionally wraps that result into a
-    smaller runtime dataclass and does not carry that historical field, even though it does preserve
-    the equivalent ``admission_passed`` / ``candidate_valid`` decision.  Treat the latter as the
-    canonical runtime fallback so telemetry cannot relabel a numerically executed ACTION as HOLD.
-    This changes reporting only; the target settings have already been produced by the controller.
-    """
+    """Preserve score==execute while reporting the actual portfolio selection."""
 
     def decide(
         self, obs: CausalObservation, *, observation_already_recorded: bool = False
@@ -46,8 +94,6 @@ class PortfolioMemorySafeDirectTFVAuthoritativeController(
         selected = str(getattr(result, "policy_return_portfolio_selected_source", "HOLD"))
         passed = _runtime_policy_return_passed(result)
         policy_mode_contract = str(getattr(self._direct_mpc_adapter.inner, "policy_mode_contract", ""))
-        # V26/V27 select directly against HOLD=0.  They do not use the old calibrated one-sided
-        # admission layer; leave that fact explicit rather than inheriting the generic legacy flag.
         direct_value_without_conformal = policy_mode_contract.startswith(
             ("PROJECT7_OPERATIONAL_DEVELOPMENT_V26_", "PROJECT7_OPERATIONAL_DEVELOPMENT_V27_")
         )
@@ -71,16 +117,14 @@ class PortfolioMemorySafeDirectTFVAuthoritativeController(
                 "policy_return_admission_passed_runtime": passed,
                 "calibrated_runtime_action_class": "ACTION" if passed else "HOLD",
                 "calibrated_one_sided_admission_used": (
-                    False if direct_value_without_conformal else diagnostics.get(
-                        "calibrated_one_sided_admission_used", True
-                    )
+                    False
+                    if direct_value_without_conformal
+                    else diagnostics.get("calibrated_one_sided_admission_used", True)
                 ),
                 "runtime_policy_mode_contract": policy_mode_contract,
             }
         )
-        # The generic Direct-TFV adapter recognizes the historical L-BFGS-B source token.  Portfolio
-        # policies use richer source labels, so restore canonical ACTION/HOLD telemetry after the
-        # numerical command has already been produced.  This never changes the settings.
+        diagnostics.update(_v27_structured_diagnostics(getattr(result, "scipy_message", "")))
         source = (
             "MPC_DIRECT_TFV_RECEDING"
             if passed
@@ -93,4 +137,5 @@ __all__ = [
     "DIRECT_TFV_PORTFOLIO_TELEMETRY_CONTRACT",
     "PortfolioMemorySafeDirectTFVAuthoritativeController",
     "_runtime_policy_return_passed",
+    "_v27_structured_diagnostics",
 ]
