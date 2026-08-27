@@ -1,0 +1,70 @@
+{
+  "contract": "PROJECT7_STEP3_V27_DECISION_AWARE_RBC_SHADOW_DEVELOPMENT_V1",
+  "development_only": true,
+  "formal_evidence": false,
+  "objective": "MINIMIZE_SYSTEM_WIDE_CUMULATIVE_TFV_EXACT_POLICY_RETURN",
+  "truth_field": "true_policy_return_delta_tfv_m3",
+  "h120_role": "DIAGNOSTIC_ONLY",
+  "data": {
+    "reuse_valid_historical_exact_return_truth": true,
+    "previous_version_visibility_excludes_training": false,
+    "step1_step2_prior_exposure_excludes_training": false,
+    "split": "CONNECTED_RAINFALL_EVENT_CONTEXT_TRAIN_VALIDATION_TEST",
+    "test_used_for_training_or_model_selection": false,
+    "context_recovery": "COMPOSITE_LINEAGE_INTERSECTION",
+    "new_training_truth_swmm": 0
+  },
+  "value_learning": {
+    "model": "DECISION_AWARE_PAIRWISE_PLUS_POINTWISE_RIDGE",
+    "train_selection": "LEAKAGE_GROUP_CV",
+    "final_model_selection": "VALIDATION_DECISION_REGRET",
+    "runtime_ranking": "UNCLIPPED_LATENT_COORDINATE",
+    "reported_m3_inverse_transform": "SINH_WITH_REPORT_ONLY_CLIP",
+    "pairwise_supervision": "SAME_CAUSAL_DECISION_UNIT_EXACT_RETURN_DIFFERENCE"
+  },
+  "hydraulic_representation": {
+    "base": "V26_V20_PLUS_AUTO_RBC_AGGREGATES",
+    "extensions": [
+      "TOP3_UPSTREAM_PRESSURE",
+      "TOP3_DOWNSTREAM_CONGESTION",
+      "TOP3_PRESSURE_GRADIENT",
+      "TOP3_DOWNSTREAM_HEADROOM",
+      "TOP3_ACTION_MAGNITUDE",
+      "TOP3_POSITIVE_AND_NEGATIVE_RELEASE_ALIGNMENT",
+      "PUMP_ORIFICE_WEIR_OUTLET_TYPE_CONDITIONAL_SUMMARIES"
+    ]
+  },
+  "candidate_portfolio": {
+    "current_v23_three_families": true,
+    "auto_rbc_shadow": true,
+    "auto_rbc_shadow_role": "CANDIDATE_ONLY_NO_ACTION_PRIVILEGE",
+    "auto_rbc_shadow_projected_to_same_first_move_support": true,
+    "hold_reference_latent_value": 0.0
+  },
+  "engineering": {
+    "supervisory_mask": "82_OF_109",
+    "passive_channels_unchanged": true,
+    "max_setting_delta_per_update": 0.5,
+    "q95_joint_sequence_support_execution": true,
+    "q95_precontraction_value_counterfactual": "REPORT_ONLY",
+    "target_write_readback": true,
+    "causal_inputs_only": true
+  },
+  "removed_from_runtime_blocking": [
+    "OOF_AUC_THRESHOLD",
+    "ZERO_HARMFUL_ACTION_REQUIREMENT",
+    "BENEFICIAL_PRECISION_THRESHOLD",
+    "ONE_SIDED_UCB_ADMISSION",
+    "V21_SELECTED_BOUNDARY_ADMISSION"
+  ],
+  "benchmark": {
+    "operational_benchmark5": true,
+    "reuse_immutable_baseline_cache": true,
+    "rerun_only_proposed": true,
+    "primary_metric": "TFV",
+    "pfv_safety": "PROPOSED_PFV_LE_100_PLUS_1.05_TIMES_NO_CONTROL",
+    "global_peak": "REPORT_ONLY",
+    "offline_metrics_block_benchmark": false
+  },
+  "ready_for_policy_lock": false
+}
