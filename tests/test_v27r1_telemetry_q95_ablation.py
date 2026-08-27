@@ -4,7 +4,10 @@ from types import SimpleNamespace
 
 import torch
 
-from rtc.controller_direct_tfv_portfolio import _runtime_policy_return_passed
+from rtc.controller_direct_tfv_portfolio import (
+    _runtime_policy_return_passed,
+    _v27_structured_diagnostics,
+)
 from rtc.direct_tfv_operational_v27r1_runtime import DirectTFVOperationalV27R1PhysicalOnlyMPC
 
 
@@ -22,6 +25,24 @@ def test_runtime_portfolio_telemetry_prefers_explicit_policy_return_field() -> N
         candidate_valid=True,
     )
     assert _runtime_policy_return_passed(wrapped) is False
+
+
+def test_v27_string_diagnostics_are_exposed_as_structured_fields() -> None:
+    parsed = _v27_structured_diagnostics(
+        "V27_DECISION_AWARE|latent_min=-1.25|latent_max=2.5|clip_hits=0|raw_clip_hits=1|"
+        "q95_binding_candidates=3|raw_best=STEP2_H10_PROBE_SCALE_0.50|"
+        "supported_best=TYPE_AWARE_HYDRAULIC_PRESSURE|q95_selection_changed=true|"
+        "raw_best_latent=-0.75|supported_best_latent=0.25|shadow_present=true|"
+        "shadow_selected=false|shadow_duplicate=false"
+    )
+    assert parsed["v27_q95_binding_candidate_count"] == 3
+    assert parsed["v27_q95_selection_changed"] is True
+    assert parsed["v27_raw_best_source"] == "STEP2_H10_PROBE_SCALE_0.50"
+    assert parsed["v27_supported_best_source"] == "TYPE_AWARE_HYDRAULIC_PRESSURE"
+    assert parsed["v27_raw_best_latent"] == -0.75
+    assert parsed["v27_supported_best_latent"] == 0.25
+    assert parsed["v27_auto_rbc_shadow_present"] is True
+    assert parsed["v27_auto_rbc_shadow_selected"] is False
 
 
 def test_v27r1_physical_only_h10_keeps_raw_action_while_reporting_q95_counterfactual() -> None:
