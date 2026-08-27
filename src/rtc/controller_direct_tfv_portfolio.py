@@ -10,6 +10,17 @@ DIRECT_TFV_PORTFOLIO_TELEMETRY_CONTRACT = (
 )
 
 
+def _runtime_policy_return_passed(result: object) -> bool:
+    """Return the decision carried by the runtime wrapper without assuming a legacy field name."""
+    return bool(
+        getattr(
+            result,
+            "policy_return_admission_passed",
+            getattr(result, "admission_passed", getattr(result, "candidate_valid", False)),
+        )
+    )
+
+
 class PortfolioMemorySafeDirectTFVAuthoritativeController(
     MemorySafeDirectTFVAuthoritativeController
 ):
@@ -33,12 +44,12 @@ class PortfolioMemorySafeDirectTFVAuthoritativeController(
         diagnostics = dict(action.diagnostics or {})
         candidate_count = int(getattr(result, "policy_return_portfolio_candidate_count", 0))
         selected = str(getattr(result, "policy_return_portfolio_selected_source", "HOLD"))
-        passed = bool(
-            getattr(
-                result,
-                "policy_return_admission_passed",
-                getattr(result, "admission_passed", getattr(result, "candidate_valid", False)),
-            )
+        passed = _runtime_policy_return_passed(result)
+        policy_mode_contract = str(getattr(self._direct_mpc_adapter.inner, "policy_mode_contract", ""))
+        # V26/V27 select directly against HOLD=0.  They do not use the old calibrated one-sided
+        # admission layer; leave that fact explicit rather than inheriting the generic legacy flag.
+        direct_value_without_conformal = policy_mode_contract.startswith(
+            ("PROJECT7_OPERATIONAL_DEVELOPMENT_V26_", "PROJECT7_OPERATIONAL_DEVELOPMENT_V27_")
         )
         diagnostics.update(
             {
@@ -59,6 +70,12 @@ class PortfolioMemorySafeDirectTFVAuthoritativeController(
                 ),
                 "policy_return_admission_passed_runtime": passed,
                 "calibrated_runtime_action_class": "ACTION" if passed else "HOLD",
+                "calibrated_one_sided_admission_used": (
+                    False if direct_value_without_conformal else diagnostics.get(
+                        "calibrated_one_sided_admission_used", True
+                    )
+                ),
+                "runtime_policy_mode_contract": policy_mode_contract,
             }
         )
         # The generic Direct-TFV adapter recognizes the historical L-BFGS-B source token.  Portfolio
@@ -75,4 +92,5 @@ class PortfolioMemorySafeDirectTFVAuthoritativeController(
 __all__ = [
     "DIRECT_TFV_PORTFOLIO_TELEMETRY_CONTRACT",
     "PortfolioMemorySafeDirectTFVAuthoritativeController",
+    "_runtime_policy_return_passed",
 ]
