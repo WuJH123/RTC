@@ -38,6 +38,19 @@ def _vector(value: Any) -> np.ndarray | None:
     return out
 
 
+def _settings_vector(value: Any) -> np.ndarray | None:
+    direct = _vector(value)
+    if direct is not None:
+        return direct
+    if not isinstance(value, dict) or len(value) != 109:
+        return None
+    try:
+        out = np.asarray([float(item) for item in value.values()], dtype=np.float64)
+    except (TypeError, ValueError):
+        return None
+    return out if out.shape == (109,) and np.isfinite(out).all() else None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True)
@@ -62,24 +75,19 @@ def main() -> None:
         previous: np.ndarray | None = None
         for row in rows:
             diagnostics = row.get("diagnostics") if isinstance(row.get("diagnostics"), dict) else {}
-            command = _vector(row.get("settings"))
-            if command is None:
-                # Closed-loop JSON stores settings as an actuator-id mapping.  Preserve stable mapping
-                # order when all 109 values are present.
-                settings = row.get("settings")
-                if isinstance(settings, dict) and len(settings) == 109:
-                    try:
-                        command = np.asarray([float(value) for value in settings.values()], dtype=np.float64)
-                    except (TypeError, ValueError):
-                        command = None
+            command = _settings_vector(row.get("settings"))
             if command is None:
                 continue
-            if previous is None:
-                previous = _vector(diagnostics.get("hold_reference_settings"))
-            if previous is None:
+            # Every Direct-TFV decision already records the exact previous requested target in
+            # `hold_reference_settings`. Prefer that per-decision reference over reconstruction from
+            # the previous JSON row; the latter is retained only for old logs that lack the field.
+            reference = _vector(diagnostics.get("hold_reference_settings"))
+            if reference is None:
+                reference = previous
+            if reference is None:
                 missing_reference += 1
-                previous = command.copy()
-            delta_l1 = float(np.abs(command - previous).sum())
+                reference = command.copy()
+            delta_l1 = float(np.abs(command - reference).sum())
             actual = delta_l1 > float(args.tolerance)
             logged_class = str(diagnostics.get("calibrated_runtime_action_class", "")).upper()
             logged = logged_class == "ACTION"
@@ -113,7 +121,7 @@ def main() -> None:
     if total == 0:
         raise ValueError("no usable Direct-TFV decisions were found")
     payload = {
-        "contract": "PROJECT7_V27R1_TARGET_COMMAND_TELEMETRY_CONSISTENCY_AUDIT_V1",
+        "contract": "PROJECT7_V27R1_TARGET_COMMAND_TELEMETRY_CONSISTENCY_AUDIT_V2",
         "decision_count": total,
         "actual_action_count": actual_actions,
         "actual_hold_count": total - actual_actions,
@@ -122,10 +130,11 @@ def main() -> None:
         "action_class_mismatch_fraction": class_mismatches / total,
         "top_level_source_mismatch_count": source_mismatches,
         "top_level_source_mismatch_fraction": source_mismatches / total,
-        "missing_initial_reference_count": missing_reference,
+        "missing_reference_count": missing_reference,
         "selected_source_counts": dict(sorted(selected_sources.items())),
         "files": by_file,
         "settings_are_authoritative_for_this_audit": True,
+        "hold_reference_settings_preferred": True,
         "audit_is_reporting_only": True,
     }
     out = Path(args.out).resolve()
