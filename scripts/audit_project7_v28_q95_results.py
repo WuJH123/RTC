@@ -19,6 +19,12 @@ V28_TFV_CONTRACT = (
     "SYSTEM_WIDE_CUMULATIVE_TFV_CANDIDATE_H10_PLUS_FROZEN_CAUSAL_CONTINUATION_MINUS_"
     "HOLD_H10_PLUS_IDENTICAL_CONTINUATION_V1"
 )
+V28_STRESS_BINS = (
+    ("low_0_25", 0.0, 0.25),
+    ("moderate_0_25_0_40", 0.25, 0.40),
+    ("high_0_40_0_65", 0.40, 0.65),
+    ("strong_0_65_plus", 0.65, float("inf")),
+)
 
 
 def _sha(path: Path) -> str:
@@ -132,6 +138,7 @@ def _event_audit(
     selected_action_q95_scales: list[float] = []
     selected_q95_binding_count = 0
     residual_by_source: dict[str, list[float]] = {}
+    residual_by_stress: dict[str, list[float]] = {name: [] for name, _, _ in V28_STRESS_BINS}
     runtimes: list[float] = []
     max_changed = 0
     max_delta = 0.0
@@ -173,6 +180,11 @@ def _event_audit(
             q95_scales.append(_number(candidate.get("q95_scale")))
             residuals.append(_number(candidate.get("q27_residual_m3")))
             residual_by_source.setdefault(source, []).append(_number(candidate.get("q27_residual_m3")))
+            stress = _number(candidate.get("network_stress_q75"))
+            for name, lower, upper in V28_STRESS_BINS:
+                if lower <= stress < upper:
+                    residual_by_stress[name].append(_number(candidate.get("q27_residual_m3")))
+                    break
             q27_scores.append(_number(candidate.get("q27_score_m3")))
             q28_scores.append(_number(candidate.get("q28_score_m3")))
         selected_candidate = _selected_candidate(row)
@@ -270,6 +282,14 @@ def _event_audit(
         "mean_selected_action_q95_scale": _mean(selected_action_q95_scales),
         "residual_by_source_m3": {
             source: _mean(values) for source, values in sorted(residual_by_source.items())
+        },
+        "residual_by_stress_regime_m3": {
+            name: {
+                "candidate_count": len(values),
+                "mean_residual_m3": _mean(values),
+                "median_residual_m3": _median(values),
+            }
+            for name, values in sorted(residual_by_stress.items())
         },
         "max_support_ratio": max(support_ratios) if support_ratios else None,
         "max_changed_facilities": int(max_changed),
@@ -538,6 +558,7 @@ def main() -> None:
     source_counts: dict[str, int] = {}
     selected_source_counts: dict[str, int] = {}
     residual_source_values: dict[str, list[float]] = {}
+    residual_stress_values: dict[str, list[float]] = {}
     for event in events:
         for source, count in event["candidate_source_counts"].items():
             source_counts[source] = source_counts.get(source, 0) + int(count)
@@ -545,6 +566,9 @@ def main() -> None:
             selected_source_counts[source] = selected_source_counts.get(source, 0) + int(count)
         for source, value in event["residual_by_source_m3"].items():
             residual_source_values.setdefault(source, []).append(float(value))
+        for regime, values in event["residual_by_stress_regime_m3"].items():
+            if values["mean_residual_m3"] is not None:
+                residual_stress_values.setdefault(regime, []).append(float(values["mean_residual_m3"]))
     lineage = events[0]["metadata_lineage_checks"]
     lineage_consistent = all(event["metadata_lineage_checks"] == lineage for event in events)
     aggregates = {
@@ -589,6 +613,9 @@ def main() -> None:
         ),
         "residual_by_source_m3": {
             source: _mean(values) for source, values in sorted(residual_source_values.items())
+        },
+        "residual_by_stress_regime_m3": {
+            regime: _mean(values) for regime, values in sorted(residual_stress_values.items())
         },
         "max_changed_facilities": max(int(event["max_changed_facilities"]) for event in events),
         "max_setting_delta_per_update": max(
