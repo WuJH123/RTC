@@ -41,8 +41,8 @@ def test_v29_regime_features_are_continuous_and_exclude_event_identity() -> None
     assert "event_id" not in joined
     assert "return_period" not in joined
     assert "duration" not in joined
-    assert feature[V29_FEATURE_NAMES.index("network_stress_squared")] == 0.16
-    assert feature[V29_FEATURE_NAMES.index("q27_x_stress")] == -400.0
+    assert np.isclose(feature[V29_FEATURE_NAMES.index("network_stress_squared")], 0.16)
+    assert np.isclose(feature[V29_FEATURE_NAMES.index("q27_x_stress")], -400.0)
 
 
 def test_group_balanced_weights_give_each_group_equal_total_weight() -> None:
