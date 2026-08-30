@@ -1,0 +1,68 @@
+{
+  "contract": "PROJECT7_STEP2_NG1_D2_PRESERVED_ADAPTIVE_CONNECTIVITY_V3",
+  "development_only": true,
+  "seed": 42,
+  "new_swmm_runs": 0,
+  "data": {
+    "fit_d2": 112,
+    "fit_d3": 112,
+    "hold_d2": 32,
+    "hold_d3": 32,
+    "rainfall_fit_groups": 14,
+    "rainfall_holdout_groups": 4,
+    "rainfall_group_overlap": 0,
+    "d4_fit": 33,
+    "d4_audit": 15,
+    "d4_role": "diagnostic_only"
+  },
+  "architecture": {
+    "main": "V5 facility main effect",
+    "interaction": "state- and action-conditioned adaptive actuator-pair connectivity",
+    "pair_universe_count": 5886,
+    "pair_eligibility_rule": "at least one actuator changed relative to reference",
+    "pair_weighting": "learned masked attention from pair latent, action magnitude, changed indicators, topology and physics",
+    "density_context": "log1p eligible-pair count plus mean changed-actuator magnitude",
+    "pair_physics_features": "Train-independent standardized absolute differences",
+    "hidden_dim": 96,
+    "actuator_embedding_dim": 16,
+    "horizon_steps": 72,
+    "free_control_blocks": 12,
+    "interaction_single_facility_gate": "exact_zero",
+    "candidate_reference_swap": "exact_antisymmetry",
+    "d2_main_trainfit_only": true,
+    "d3_main_parameters_frozen": true
+  },
+  "loss": {
+    "d2": {
+      "regression": "SmoothL1",
+      "rank_weight": 0.35,
+      "sign_weight": 0.25,
+      "magnitude_partition": "q33/q67 TrainFit D2 only",
+      "facility_balanced": true
+    },
+    "d3": {
+      "regression": "final_and_residual_SmoothL1",
+      "rank_weight": 0.35,
+      "sign_weight": 0.25,
+      "selection_regret_weight": 0.25,
+      "interaction_l1_weight": 0.01,
+      "density_strata": "R1 TrainFit q50/q75/q90 with per-query balancing",
+      "selection_temperature": "R1 TrainFit q75 absolute delta TFV"
+    }
+  },
+  "hypothesis": "R1 improved D3 global rank/pairwise/sign while R2's changed-changed hard mask worsened both global ranking and selection tail. R3 tests whether regulation propagation requires changed-to-context interactions: all pairs touching at least one changed actuator remain eligible, but learned adaptive connectivity replaces R1's uniform 5886-pair mean. R1 loss semantics are restored so the representation hypothesis is isolated.",
+  "replication_policy": {
+    "seed42_is_hypothesis_test": true,
+    "additional_seeds_before_seed42_pass": false,
+    "if_seed42_pareto_pass_then_fixed_seeds": [42, 2026, 3407],
+    "best_seed_selection_forbidden": true
+  },
+  "firewall": {
+    "validation_accessed": false,
+    "final_accessed": false,
+    "formal_used_for_tuning": false,
+    "policy_lock_accessed": false,
+    "publication_controller_changed": false,
+    "runtime_promoted": false
+  }
+}
