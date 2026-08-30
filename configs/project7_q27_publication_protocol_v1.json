@@ -1,0 +1,72 @@
+{
+  "contract": "PROJECT7_Q27_POLICY_CONSISTENT_PUBLICATION_PROTOCOL_V1",
+  "purpose": "Freeze the policy-consistent Q27 controller and evaluate it once on an outcome-unexposed existing-event panel under information/action-matched comparator contracts.",
+  "research_goal": {
+    "sensing": "SPARSE_CAUSAL_SENSING_WITH_FROZEN_STEP1_RECONSTRUCTION",
+    "deployment": "ENGINEERING_EXECUTABLE_10_MIN_REAL_TIME_CONTROL",
+    "primary_endpoint": "SYSTEM_WIDE_TOTAL_FLOOD_VOLUME_M3",
+    "primary_direction": "LOWER_IS_BETTER",
+    "pfv_safety": "PFV_PROPOSED <= 1.05 * PFV_NO_CONTROL",
+    "global_peak": "REPORT_ONLY"
+  },
+  "policy": {
+    "family": "Q27_POLICY_CONSISTENT_EXACT_RETURN",
+    "target_continuation_policy_sha256": "9d070b7a47661ff0e884ddff266b1459dc6de9c5e6535e74a7b00f449bc2fb87",
+    "step1": "FROZEN",
+    "step2": "FROZEN_DIRECT_TFV_V5",
+    "q95_support_required": true,
+    "post_lock_training_or_tuning_forbidden": true
+  },
+  "event_eligibility": {
+    "existing_prepared_events_allowed": true,
+    "step1_or_step2_prior_exposure_excludes_final": false,
+    "blocking_controller_outcome_exposures": [
+      "POLICY_RETURN_SUPERVISION",
+      "MODEL_SELECTION",
+      "DEVELOPMENT_STEERING",
+      "OPENED_FORMAL_OUTCOME",
+      "PRIOR_FINAL_OUTCOME"
+    ],
+    "selection_rule": "USE_ALL_EXISTING_PREPARED_EVENTS_WITHOUT_BLOCKING_CONTROLLER_OUTCOME_EXPOSURE",
+    "if_subset_is_unavoidable": "FREEZE_BY_FORCING_METADATA_ONLY_BEFORE_ANY_POLICY_OUTCOME_IS_OPENED",
+    "new_rainfall_required": false
+  },
+  "comparators": {
+    "passive_primary_reference": "NO_CONTROL",
+    "primary_active_comparator": "MATCHED_AUTO_RBC",
+    "secondary_active_comparators": ["MATCHED_EFD", "MATCHED_INTERNAL"],
+    "external_operational_references": ["NATIVE_AUTO_RBC", "NATIVE_EFD", "NATIVE_INTERNAL"],
+    "active_comparator_information_action_parity_required": true
+  },
+  "statistics": {
+    "statistical_unit": "RAIN_EVENT",
+    "paired_reduction_definition": "100 * (BASELINE_TFV - PROPOSED_TFV) / BASELINE_TFV",
+    "report": [
+      "EVENT_WINS",
+      "EVENT_BALANCED_MEAN_REDUCTION",
+      "MEDIAN_REDUCTION",
+      "AGGREGATE_VOLUME_REDUCTION",
+      "PAIRED_BOOTSTRAP_95CI"
+    ],
+    "bootstrap_repetitions": 10000,
+    "bootstrap_seed": 20260830,
+    "superiority_claim": "PRIMARY_ACTIVE_COMPARATOR_MEAN_REDUCTION_95CI_LOWER_BOUND_GT_0",
+    "neutral_or_negative_results_must_be_reported": true
+  },
+  "runtime_evidence": {
+    "require_event_identity": true,
+    "require_runtime_continuation_sha256": true,
+    "require_runtime_prefix_sha256": true,
+    "require_runtime_causal_context_sha256": true,
+    "require_runtime_selected_action_sha256": true,
+    "training_truth_identity_match_required_on_independent_final": false,
+    "reason": "Independent Final states should not be required to match training truth rows; runtime identity is self-consistency/provenance evidence."
+  },
+  "claim_boundaries": {
+    "do_not_claim_global_optimum": true,
+    "do_not_claim_step2_standalone_high_accuracy_surrogate": true,
+    "do_not_claim_native_auto_rbc_is_information_action_matched": true,
+    "do_not_claim_universal_superiority": true,
+    "allow_closed_loop_tfv_superiority_claim_only_from_locked_final_statistics": true
+  }
+}
