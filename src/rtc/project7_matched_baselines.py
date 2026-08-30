@@ -6,13 +6,14 @@ target-latch semantics. Baseline rules therefore never receive extra SWMM node o
 
 Raw rule targets are projected through the same execution authority as Proposed: native 82-channel
 supervisory mask, first-move support radius, q95 changed-facility ceiling, 0.5 target slew and q95
-joint-sequence support. Native Internal SWMM rules are deliberately not relabelled as matched because
-they read simulator-internal states; they remain an external operational reference until a validated
-reconstructed-state rule interpreter exists.
+joint-sequence support. Native Internal rules are matched only after the narrow reconstructed-state
+interpreter has verified that every source condition and action is representable from the frozen
+graph and Step1 state contract.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import time
 from typing import Any, Literal
 
@@ -26,12 +27,18 @@ from .direct_tfv_operational_v23_runtime import (
 )
 from .direct_tfv_policy_return_portfolio import _bounded_supported_target, _node_feature
 from .direct_tfv_sequence_support import changed_facility_support_limit
+from .project7_matched_internal import (
+    MATCHED_INTERNAL_RULE_CONTRACT,
+    evaluate_reconstructed_native_controls,
+    load_reconstructed_native_controls,
+)
 from .step3_tfv_value_mpc_v12 import DirectTFVMPCResultV12
 
 MATCHED_BASELINE_CONTRACT = "PROJECT7_SPARSE_STEP1_ACTION_AUTHORITY_MATCHED_BASELINES_V1"
 MATCHED_AUTO_RBC = "matched_auto_rbc"
 MATCHED_EFD = "matched_efd"
-MATCHED_ACTIVE_BASELINES = (MATCHED_AUTO_RBC, MATCHED_EFD)
+MATCHED_INTERNAL_RTC = "matched_internal_rtc"
+MATCHED_ACTIVE_BASELINES = (MATCHED_AUTO_RBC, MATCHED_EFD, MATCHED_INTERNAL_RTC)
 
 
 @dataclass(frozen=True)
@@ -165,13 +172,24 @@ class MatchedInformationBaselineMPC(DirectTFVOperationalV23MPC):
     def __init__(
         self,
         *,
-        matched_strategy: Literal["matched_auto_rbc", "matched_efd"],
+        matched_strategy: Literal[
+            "matched_auto_rbc", "matched_efd", "matched_internal_rtc"
+        ],
+        native_controls_inp_path: str | None = None,
         **kwargs: Any,
     ) -> None:
         if matched_strategy not in MATCHED_ACTIVE_BASELINES:
             raise ValueError(f"unsupported matched baseline: {matched_strategy}")
         super().__init__(**kwargs)
         self.matched_strategy = matched_strategy
+        self.native_controls_inp_path = native_controls_inp_path
+        self.native_control_rules = ()
+        if matched_strategy == MATCHED_INTERNAL_RTC:
+            if not native_controls_inp_path:
+                raise ValueError("matched Internal RTC requires the native controls INP")
+            self.native_control_rules = load_reconstructed_native_controls(
+                native_controls_inp_path, self.graph
+            )
 
     def optimize(self, **kwargs: Any) -> DirectTFVMPCResultV12:
         started = time.perf_counter()
@@ -182,6 +200,7 @@ class MatchedInformationBaselineMPC(DirectTFVOperationalV23MPC):
         if not isinstance(current_state, torch.Tensor):
             raise ValueError("matched baseline requires reconstructed current_state")
 
+        rule_diagnostics: dict[str, Any] = {}
         if self.matched_strategy == MATCHED_AUTO_RBC:
             raw, mean_up, max_down = _raw_auto_rbc_target(
                 graph=self.graph,
@@ -189,13 +208,21 @@ class MatchedInformationBaselineMPC(DirectTFVOperationalV23MPC):
                 active_target=active_target,
             )
             mean_storage = storage_std = 0.0
-        else:
+        elif self.matched_strategy == MATCHED_EFD:
             raw, mean_storage, storage_std = _raw_efd_target(
                 graph=self.graph,
                 current_state=current_state,
                 active_target=active_target,
             )
             mean_up = max_down = 0.0
+        else:
+            raw, rule_diagnostics = evaluate_reconstructed_native_controls(
+                rules=self.native_control_rules,
+                graph=self.graph,
+                current_state=current_state,
+                active_target=active_target,
+            )
+            mean_up = max_down = mean_storage = storage_std = 0.0
 
         ceiling = int(changed_facility_support_limit(self.sequence_support, "q95"))
         raw_delta = (raw - active_target).detach().cpu().numpy()
@@ -250,7 +277,13 @@ class MatchedInformationBaselineMPC(DirectTFVOperationalV23MPC):
             if action
             else f"HOLD::{self.matched_strategy.upper()}"
         )
-        diagnostics_text = f"MATCHED_RULE|{rule_diag!r}"
+        if self.matched_strategy == MATCHED_INTERNAL_RTC:
+            diagnostics_text = (
+                "MATCHED_RULE|"
+                + json.dumps(rule_diagnostics, sort_keys=True, separators=(",", ":"))
+            )
+        else:
+            diagnostics_text = f"MATCHED_RULE|{rule_diag!r}"
         return DirectTFVMPCResultV12(
             settings=executed,
             optimized_candidate_settings=sequence,
@@ -317,7 +350,9 @@ class MatchedInformationBaselineMPC(DirectTFVOperationalV23MPC):
         )
 
 
-def build_matched_information_baseline_controller(*, matched_strategy: str, **kwargs: Any):
+def build_matched_information_baseline_controller(
+    *, matched_strategy: str, native_controls_inp_path: str | None = None, **kwargs: Any
+):
     """Reuse Proposed sparse-Step1 outer runtime and replace only the decision rule."""
     controller, graph, sensors, parent_lineage = build_operational_v23_controller(**kwargs)
     old = controller.controller._direct_mpc_adapter.inner
@@ -336,6 +371,7 @@ def build_matched_information_baseline_controller(*, matched_strategy: str, **kw
         continuation_policy_sha256=old.policy_return_parent_continuation_sha256,
         design=old.design,
         proposal_probe_chunk_size=old.proposal_probe_chunk_size,
+        native_controls_inp_path=native_controls_inp_path,
     )
     controller.controller._direct_mpc_adapter.inner = matched
     lineage = dict(parent_lineage)
@@ -353,7 +389,15 @@ def build_matched_information_baseline_controller(*, matched_strategy: str, **kw
             "same_q95_joint_sequence_support": True,
             "same_max_setting_delta_per_update": 0.5,
             "same_target_latch_semantics": True,
-            "native_internal_rtc_is_not_a_matched_comparator": True,
+            "native_internal_rtc_is_not_a_matched_comparator": (
+                matched_strategy != MATCHED_INTERNAL_RTC
+            ),
+            "matched_internal_rule_contract": (
+                MATCHED_INTERNAL_RULE_CONTRACT
+                if matched_strategy == MATCHED_INTERNAL_RTC
+                else None
+            ),
+            "native_controls_inp_path": native_controls_inp_path,
             "development_only": True,
             "formal_evidence": False,
             "ready_for_policy_lock": False,
@@ -367,6 +411,7 @@ __all__ = [
     "MATCHED_AUTO_RBC",
     "MATCHED_BASELINE_CONTRACT",
     "MATCHED_EFD",
+    "MATCHED_INTERNAL_RTC",
     "MatchedInformationBaselineMPC",
     "MatchedRuleDiagnostics",
     "build_matched_information_baseline_controller",

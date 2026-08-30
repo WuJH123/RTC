@@ -3,14 +3,20 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
 
 from rtc.project7_matched_baselines import (
     MATCHED_ACTIVE_BASELINES,
     MATCHED_AUTO_RBC,
     MATCHED_EFD,
+    MATCHED_INTERNAL_RTC,
     _raw_auto_rbc_target,
     _raw_efd_target,
+)
+from rtc.project7_matched_internal import (
+    evaluate_reconstructed_native_controls,
+    load_reconstructed_native_controls,
 )
 
 
@@ -47,7 +53,43 @@ def _state():
 
 
 def test_matched_baseline_ids_are_explicit() -> None:
-    assert MATCHED_ACTIVE_BASELINES == (MATCHED_AUTO_RBC, MATCHED_EFD)
+    assert MATCHED_ACTIVE_BASELINES == (MATCHED_AUTO_RBC, MATCHED_EFD, MATCHED_INTERNAL_RTC)
+
+
+def test_reconstructed_native_controls_use_step1_head_state(tmp_path) -> None:
+    inp = tmp_path / "controls.inp"
+    inp.write_text(
+        "[OPTIONS]\nFLOW_UNITS CMS\n"
+        "[CONTROLS]\n"
+        "RULE pump_on\nIF NODE S1 HEAD >= 2\nTHEN PUMP P1 STATUS = ON\n"
+        "RULE pump_off\nIF NODE S1 HEAD < 2\nTHEN PUMP P1 STATUS = OFF\n"
+        "RULE gate_mid\nIF NODE J2 HEAD >= 1\nAND NODE J3 HEAD < 3\n"
+        "THEN ORIFICE O1 SETTING = 0.5\n",
+        encoding="utf-8",
+    )
+    rules = load_reconstructed_native_controls(inp, _graph())
+    state = torch.zeros((3, 6), dtype=torch.float32)
+    state[:, 1] = torch.tensor([2.5, 1.5, 2.0])
+    target, diagnostics = evaluate_reconstructed_native_controls(
+        rules=rules,
+        graph=_graph(),
+        current_state=state,
+        active_target=torch.zeros(2),
+    )
+    assert torch.equal(target, torch.tensor([1.0, 0.5]))
+    assert diagnostics["state_channel"] == "head_m"
+    assert diagnostics["matched_rule_count"] == 2
+
+
+def test_reconstructed_native_controls_reject_unsupported_condition(tmp_path) -> None:
+    inp = tmp_path / "unsupported.inp"
+    inp.write_text(
+        "[OPTIONS]\nFLOW_UNITS CMS\n[CONTROLS]\n"
+        "RULE unsupported\nIF LINK L1 FLOW >= 1\nTHEN PUMP P1 STATUS = ON\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="NODE HEAD"):
+        load_reconstructed_native_controls(inp, _graph())
 
 
 def test_auto_rbc_uses_reconstructed_state_tensor() -> None:

@@ -63,9 +63,44 @@ def _prefix(row: dict[str, Any]) -> str:
     return ""
 
 
+def _runtime_action_class(diagnostics: dict[str, Any]) -> str:
+    """Return the actual executed class, preferring versioned structured telemetry.
+
+    Older V27/V28 logs can retain a stale calibrated/fallback field after the
+    runtime has already selected an action.  A versioned action-class field is
+    emitted by the runtime at the point where the executed decision is known,
+    so it has precedence.  Unknown values are not coerced into ACTION/HOLD.
+    """
+    for key in (
+        "v28_action_class",
+        "v27_action_class",
+        "action_class",
+        "calibrated_runtime_action_class",
+    ):
+        value = diagnostics.get(key)
+        if isinstance(value, str):
+            normalized = value.strip().upper()
+            if normalized in {"ACTION", "HOLD"}:
+                return normalized
+    return "UNKNOWN"
+
+
 def _runtime_action_hash(row: dict[str, Any], actuator_ids: tuple[str, ...]) -> str:
     diagnostics = row.get("diagnostics")
     if isinstance(diagnostics, dict):
+        candidate_telemetry = diagnostics.get("v28_candidate_telemetry")
+        if isinstance(candidate_telemetry, list):
+            for candidate in candidate_telemetry:
+                if not isinstance(candidate, dict) or not candidate.get("candidate_selected"):
+                    continue
+                for key in (
+                    "supported_target_sha256",
+                    "candidate_first_target_sha256",
+                    "action_sha256",
+                ):
+                    value = normalize_sha256(candidate.get(key))
+                    if value:
+                        return value
         value = normalize_sha256(diagnostics.get("runtime_selected_action_sha256"))
         if value:
             return value
@@ -138,7 +173,7 @@ def main() -> None:
             runtime_prefix = normalize_sha256(
                 diagnostics.get("runtime_recorded_prefix_action_sha256")
             )
-            action_class = str(diagnostics.get("calibrated_runtime_action_class", "UNKNOWN"))
+            action_class = _runtime_action_class(diagnostics)
             class_counts[action_class] += 1
 
             full_candidates: list[dict[str, Any]] = []

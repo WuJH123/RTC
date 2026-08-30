@@ -22,6 +22,7 @@ from rtc.project7_contract import EFFECTIVE_WARMUP_MINUTES, validate_project7_ru
 from rtc.project7_matched_baselines import (
     MATCHED_ACTIVE_BASELINES,
     MATCHED_BASELINE_CONTRACT,
+    MATCHED_INTERNAL_RTC,
     build_matched_information_baseline_controller,
 )
 
@@ -35,6 +36,10 @@ def main() -> None:
     parser.add_argument("--strategy", required=True, choices=MATCHED_ACTIVE_BASELINES)
     parser.add_argument("--asset-manifest", required=True)
     parser.add_argument("--inp", required=True)
+    parser.add_argument(
+        "--native-controls-inp",
+        help="source INP containing native [CONTROLS] rules (required for matched_internal_rtc)",
+    )
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--v15-rank-checkpoint", required=True)
@@ -56,6 +61,13 @@ def main() -> None:
     control_path = practical_asset_path(assets, "supervisory_control")
     support_path = practical_asset_path(assets, "sequence_support")
     source_inp = Path(args.inp).resolve()
+    native_controls_inp = (
+        Path(args.native_controls_inp).resolve() if args.native_controls_inp else None
+    )
+    if args.strategy == MATCHED_INTERNAL_RTC and native_controls_inp is None:
+        raise ValueError("--native-controls-inp is required for matched_internal_rtc")
+    if native_controls_inp is not None and not native_controls_inp.is_file():
+        raise FileNotFoundError(f"native controls INP does not exist: {native_controls_inp}")
     cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
     project_contract = validate_project7_runtime_config(cfg)
     clock = inspect_prepared_event_clock(source_inp)
@@ -64,6 +76,9 @@ def main() -> None:
 
     controller, _, sensors, lineage = build_matched_information_baseline_controller(
         matched_strategy=args.strategy,
+        native_controls_inp_path=(
+            str(native_controls_inp) if native_controls_inp is not None else None
+        ),
         graph_path=graph_path,
         sensors_path=sensors_path,
         config_path=config_path,
@@ -117,7 +132,19 @@ def main() -> None:
             "same_q95_joint_sequence_support": True,
             "same_max_setting_delta_per_update": 0.5,
             "same_target_latch_semantics": True,
-            "native_internal_rtc_is_external_reference_only": True,
+            "native_internal_rtc_is_external_reference_only": (
+                args.strategy != MATCHED_INTERNAL_RTC
+            ),
+            "matched_internal_rule_contract": lineage.get("matched_internal_rule_contract"),
+            "matched_internal_rule_count": len(
+                getattr(controller.controller._direct_mpc_adapter.inner, "native_control_rules", ())
+            ),
+            "native_controls_inp_path": (
+                str(native_controls_inp) if native_controls_inp is not None else None
+            ),
+            "native_controls_inp_sha256": (
+                _sha(native_controls_inp) if native_controls_inp is not None else None
+            ),
             "asset_manifest_sha256": _sha(args.asset_manifest),
             "step1_model_sha256": _sha(step1_path),
             "step2_model_sha256": _sha(step2_path),
