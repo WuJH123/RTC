@@ -54,6 +54,24 @@ def test_prepared_and_step2_exposure_do_not_block_final() -> None:
     assert report["blocked_events"] == {"B": ["DEVELOPMENT_STEERING"]}
 
 
+def test_out_of_universe_blocker_is_reported_but_not_subtracted() -> None:
+    selected, report = select_outcome_unexposed_events(
+        ["A", "B", "C", "D"],
+        [
+            {"event_id": "B", "kind": "MODEL_SELECTION"},
+            {"event_id": "OUTSIDE", "kind": "POLICY_RETURN_SUPERVISION"},
+        ],
+    )
+    assert selected == ["A", "C", "D"]
+    assert report["prepared_event_count"] == 4
+    assert report["blocking_exposure_event_count_global"] == 2
+    assert report["blocking_exposure_event_count_in_prepared"] == 1
+    assert report["blocking_exposure_event_count_outside_prepared"] == 1
+    assert report["blocking_exposure_event_ids_outside_prepared"] == ["OUTSIDE"]
+    assert report["blocking_count_for_final_set_arithmetic"] == 1
+    assert report["eligible_event_count"] == 3
+
+
 def test_paired_statistics_are_event_balanced_and_deterministic() -> None:
     proposed = [90.0, 180.0, 270.0, 360.0]
     baseline = [100.0, 200.0, 300.0, 400.0]
