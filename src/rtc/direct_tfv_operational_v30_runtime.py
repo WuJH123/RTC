@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
-from pathlib import Path
 import time
 from typing import Any
 
@@ -32,6 +31,7 @@ from .direct_tfv_operational_v27_runtime import (
     build_operational_v27_controller,
 )
 from .direct_tfv_policy_return_portfolio import score_h10_first_action_targets
+from .direct_tfv_sequence_support import changed_facility_support_limit
 from .direct_tfv_v27_auto_rbc_shadow import (
     V27_AUTO_RBC_SHADOW_CONTRACT,
     V27_AUTO_RBC_SHADOW_SOURCE,
@@ -54,6 +54,33 @@ V30_SELECTION_CONTRACT = CONSERVATIVE_SELECTOR_CONTRACT
 def _changed_target_ids(graph: Any, target: torch.Tensor, active_target: torch.Tensor) -> tuple[str, ...]:
     indices = torch.nonzero(torch.abs(target - active_target) > 1.0e-7).reshape(-1).tolist()
     return tuple(str(graph.actuator_ids[int(index)]) for index in indices)
+
+
+def _v27_best_supported_source(parent: DirectTFVMPCResultV12) -> str:
+    """Recover the exact V27 candidate-family label used to build its value feature.
+
+    V27 deliberately reports ``policy_return_portfolio_selected_source=HOLD`` when its best latent
+    score is non-negative even though ``optimized_candidate_settings`` still exposes that best
+    supported action.  V30 may rescore this unexecuted challenger, so using an invented source label
+    would silently change V27's family-indicator feature.  The V27 diagnostics contain the frozen
+    ``supported_best`` source; failure to recover/validate it is fatal rather than guessed.
+    """
+    selected = str(parent.policy_return_portfolio_selected_source)
+    if selected != "HOLD":
+        return selected
+    prefix = "supported_best="
+    matches = [
+        token[len(prefix) :]
+        for token in str(parent.scipy_message).split("|")
+        if token.startswith(prefix)
+    ]
+    if len(matches) != 1 or not matches[0]:
+        raise RuntimeError("V30 cannot recover V27 supported-best candidate source")
+    source = matches[0]
+    available = tuple(str(value) for value in parent.policy_return_portfolio_sources)
+    if source not in available:
+        raise RuntimeError("V30 recovered a V27 candidate source absent from its portfolio lineage")
+    return source
 
 
 class DirectTFVOperationalV30MPC(DirectTFVOperationalV27MPC):
@@ -116,7 +143,7 @@ class DirectTFVOperationalV30MPC(DirectTFVOperationalV27MPC):
         if not isinstance(flow, torch.Tensor) or tuple(flow.shape) != (1, 109):
             raise ValueError("operational V30 requires previous_actuator_flow [1,109]")
 
-        # Keep V27 candidate generation/ranking unchanged.  V30 changes only the final authority
+        # Keep V27 candidate generation/ranking unchanged. V30 changes only the final authority
         # granted to that learned choice relative to a same-information Auto-RBC anchor.
         parent = super().optimize(**kwargs)
         horizon = int(self.design.prediction_horizon_steps)
@@ -129,9 +156,7 @@ class DirectTFVOperationalV30MPC(DirectTFVOperationalV27MPC):
             supervisory_mask=self.supervisory_mask,
             first_radius=self.first_radius,
             max_changed_facilities=int(
-                __import__(
-                    "rtc.direct_tfv_sequence_support", fromlist=["changed_facility_support_limit"]
-                ).changed_facility_support_limit(self.sequence_support, "q95")
+                changed_facility_support_limit(self.sequence_support, "q95")
             ),
             max_delta_per_update=float(self.design.max_setting_delta_per_update),
         )
@@ -163,10 +188,9 @@ class DirectTFVOperationalV30MPC(DirectTFVOperationalV27MPC):
         )
         challenger_score: CandidateScore | None = None
         challenger_reported = 0.0
-        challenger_source = str(parent.policy_return_portfolio_selected_source)
-        if challenger_source == "HOLD":
-            challenger_source = "V27_BEST_SUPPORTED_CANDIDATE"
+        challenger_source: str | None = None
         if candidate_changed > 0 and not same_as_anchor:
+            challenger_source = _v27_best_supported_source(parent)
             challenger_score, challenger_reported = self._score_target(
                 current_state=current_state,
                 rainfall=rainfall,
@@ -242,6 +266,7 @@ class DirectTFVOperationalV30MPC(DirectTFVOperationalV27MPC):
             "selected_source": selection.selected_source,
             "parent_v27_candidate_valid": bool(parent.candidate_valid),
             "parent_v27_selected_source": str(parent.selected_source),
+            "challenger_source": challenger_source,
             "challenger_same_as_anchor": same_as_anchor,
             "challenger_latent": (
                 None if challenger_score is None else float(challenger_score.latent_score)
@@ -343,6 +368,7 @@ def build_operational_v30_controller(**kwargs: Any):
             "v30_anchor_same_sparse_step1_information": True,
             "v30_challenger_requires_dual_estimator_dominance": True,
             "v30_hold_requires_dual_estimator_consensus_when_anchor_action_exists": True,
+            "v30_candidate_source_semantics_preserved": True,
             "v30_final_outcomes_used_for_policy_selection": False,
             "development_only": True,
             "formal_evidence": False,
