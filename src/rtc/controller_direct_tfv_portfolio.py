@@ -6,7 +6,7 @@ from rtc.controller_direct_tfv_safe import MemorySafeDirectTFVAuthoritativeContr
 
 
 DIRECT_TFV_PORTFOLIO_TELEMETRY_CONTRACT = (
-    "PROJECT7_DIRECT_TFV_POLICY_RETURN_PORTFOLIO_TELEMETRY_V1"
+    "PROJECT7_DIRECT_TFV_POLICY_RETURN_PORTFOLIO_TELEMETRY_V2_CONTINUATION_LINEAGE"
 )
 
 
@@ -25,7 +25,21 @@ class PortfolioMemorySafeDirectTFVAuthoritativeController(
         diagnostics = dict(action.diagnostics or {})
         candidate_count = int(getattr(result, "policy_return_portfolio_candidate_count", 0))
         selected = str(getattr(result, "policy_return_portfolio_selected_source", "HOLD"))
-        passed = bool(getattr(result, "policy_return_admission_passed", False))
+        # Later direct-value runtimes do not necessarily copy the historical
+        # policy_return_admission_passed field into the generic adapter result.  Falling back to the
+        # generic admission/candidate validity is telemetry-only and reflects the command that was
+        # actually returned by the numerical controller.
+        passed = bool(
+            getattr(
+                result,
+                "policy_return_admission_passed",
+                getattr(result, "admission_passed", getattr(result, "candidate_valid", False)),
+            )
+        )
+        inner = self._direct_mpc_adapter.inner
+        continuation = str(
+            getattr(inner, "policy_return_parent_continuation_sha256", "")
+        ).lower()
         diagnostics.update(
             {
                 "direct_tfv_portfolio_telemetry_contract": DIRECT_TFV_PORTFOLIO_TELEMETRY_CONTRACT,
@@ -44,11 +58,13 @@ class PortfolioMemorySafeDirectTFVAuthoritativeController(
                     getattr(result, "policy_return_portfolio_upper_bounds_m3", ())
                 ),
                 "calibrated_runtime_action_class": "ACTION" if passed else "HOLD",
+                "runtime_continuation_policy_sha256": continuation,
+                "runtime_continuation_policy_sha256_present": len(continuation) == 64,
             }
         )
-        # The generic Direct-TFV adapter recognizes the historical L-BFGS-B source token.  V14 uses
+        # The generic Direct-TFV adapter recognizes the historical L-BFGS-B source token. V14 uses
         # a richer portfolio source label, so restore the canonical ACTION/HOLD source after the
-        # numerical command has already been produced.  This changes telemetry only, not settings.
+        # numerical command has already been produced. This changes telemetry only, not settings.
         source = (
             "MPC_DIRECT_TFV_RECEDING"
             if passed
