@@ -38,6 +38,61 @@ def sha256_file(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def build_locked_event_provenance(
+    rows: Sequence[Mapping[str, Any]],
+    selected_events: Sequence[str],
+    *,
+    base_dir: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Bind each locked event to its registry row and verified prepared INP."""
+    indexed: dict[str, dict[str, Any]] = {}
+    for raw_row in rows:
+        if not isinstance(raw_row, Mapping):
+            continue
+        eid = event_id(raw_row)
+        if not eid:
+            continue
+        row = dict(raw_row)
+        previous = indexed.get(eid)
+        if previous is not None and canonical_sha256(previous) != canonical_sha256(row):
+            raise ValueError(f"prepared registry has conflicting rows for event {eid}")
+        indexed[eid] = row
+
+    root = Path(base_dir).resolve() if base_dir is not None else None
+    provenance: list[dict[str, Any]] = []
+    for eid in selected_events:
+        if eid not in indexed:
+            raise ValueError(f"selected event missing from prepared registry: {eid}")
+        row = indexed[eid]
+        raw_path = str(row.get("inp_path", "")).strip()
+        if not raw_path:
+            raise ValueError(f"prepared registry lacks INP path for event {eid}")
+        inp_path = Path(raw_path)
+        if not inp_path.is_absolute() and root is not None:
+            inp_path = root / inp_path
+        inp_path = inp_path.resolve()
+        if not inp_path.is_file():
+            raise FileNotFoundError(f"prepared INP missing for event {eid}: {inp_path}")
+        actual_sha = sha256_file(inp_path)
+        recorded_sha = str(
+            row.get("prepared_inp_sha256", row.get("inp_sha256", ""))
+        ).strip().lower()
+        if recorded_sha and recorded_sha != actual_sha:
+            raise ValueError(f"INP SHA256 mismatch for event {eid}")
+        bound = dict(row)
+        bound["event_id"] = eid
+        bound["inp_path"] = str(inp_path)
+        bound["inp_sha256"] = actual_sha
+        bound["registry_inp_sha256"] = recorded_sha or actual_sha
+        bound["forcing_metadata"] = {
+            key: value
+            for key, value in row.items()
+            if key not in {"event_id", "event", "rainfall_group", "inp_path", "prepared_inp_sha256", "inp_sha256"}
+        }
+        provenance.append(bound)
+    return provenance
+
+
 def canonical_sha256(value: Any) -> str:
     raw = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
@@ -164,6 +219,7 @@ __all__ = [
     "POLICY_LOCK_CONTRACT",
     "PUBLICATION_PROTOCOL_CONTRACT",
     "STATISTICS_CONTRACT",
+    "build_locked_event_provenance",
     "bootstrap_mean_ci",
     "canonical_sha256",
     "event_id",

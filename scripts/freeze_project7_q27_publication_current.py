@@ -16,6 +16,7 @@ from typing import Any, Iterable
 from rtc.project7_q27_publication import (
     POLICY_LOCK_CONTRACT,
     PUBLICATION_PROTOCOL_CONTRACT,
+    build_locked_event_provenance,
     canonical_sha256,
     event_id,
     select_outcome_unexposed_events,
@@ -35,16 +36,20 @@ def _walk(value: Any) -> Iterable[dict[str, Any]]:
             yield from _walk(child)
 
 
-def _event_ids(path: Path) -> list[str]:
+def _prepared_rows(path: Path) -> list[dict[str, Any]]:
     if path.suffix.lower() == ".csv":
         with path.open("rt", encoding="utf-8-sig", newline="") as handle:
-            return [event_id(row) for row in csv.DictReader(handle) if event_id(row)]
+            return [dict(row) for row in csv.DictReader(handle) if event_id(row)]
     if path.suffix.lower() == ".jsonl":
         rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        return [event_id(row) for row in rows if isinstance(row, dict) and event_id(row)]
+        return [dict(row) for row in rows if isinstance(row, dict) and event_id(row)]
     if path.suffix.lower() == ".json":
-        return [event_id(row) for row in _walk(json.loads(path.read_text(encoding="utf-8")))]
+        return [dict(row) for row in _walk(json.loads(path.read_text(encoding="utf-8")))]
     raise ValueError(f"unsupported prepared registry: {path}")
+
+
+def _event_ids(path: Path) -> list[str]:
+    return [event_id(row) for row in _prepared_rows(path) if event_id(row)]
 
 
 def _git_head(repo: Path) -> str:
@@ -99,10 +104,16 @@ def main() -> None:
     exposures = ledger.get("exposures", [])
     if not isinstance(exposures, list):
         raise ValueError("outcome exposure ledger lacks exposures list")
-    prepared = _event_ids(paths["prepared_events"])
+    prepared_rows = _prepared_rows(paths["prepared_events"])
+    prepared = [event_id(row) for row in prepared_rows if event_id(row)]
     selected, selection = select_outcome_unexposed_events(prepared, exposures)
     if not selected:
         raise RuntimeError("no outcome-unexposed prepared events remain for publication Final")
+    locked_provenance = build_locked_event_provenance(
+        prepared_rows,
+        selected,
+        base_dir=paths["prepared_events"].parent,
+    )
 
     artifact_sha = {name: sha256_file(path) for name, path in paths.items()}
     panel_sha = canonical_sha256(selected)
@@ -113,6 +124,9 @@ def main() -> None:
         "locked_final_event_ids": selected,
         "locked_final_event_count": len(selected),
         "locked_final_panel_sha256": panel_sha,
+        "locked_final_event_provenance": locked_provenance,
+        "locked_final_event_provenance_sha256": canonical_sha256(locked_provenance),
+        "selected_event_provenance_complete": True,
         "selection": selection,
         "artifact_paths": {name: str(path) for name, path in paths.items()},
         "artifact_sha256": artifact_sha,

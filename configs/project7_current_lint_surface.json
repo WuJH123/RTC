@@ -163,7 +163,12 @@
     "tests/test_project7_policy_consistency.py",
     "tests/test_project7_matched_baselines.py",
     "tests/test_project7_matched_static_contract.py",
-    "tests/test_project7_runtime_truth_alignment.py"
+    "tests/test_project7_runtime_truth_alignment.py",
+    "src/rtc/project7_q27_publication.py",
+    "scripts/build_project7_q27_outcome_exposure_ledger_current.py",
+    "scripts/freeze_project7_q27_publication_current.py",
+    "scripts/compile_project7_q27_publication_statistics_current.py",
+    "tests/test_project7_q27_publication.py"
   ],
   "legacy_policy": "Historical V8-V13 scalar-decision files and the old pair-runner path are evidence/ablation only once the query-conditioned critic passes development validation and matched calibration. Current Practical execution keeps the native supervisory mask, masked q95 support and shared-HOLD multi-candidate query runner; no current path may silently route back to L-BFGS-B.",
   "non_gate_historical_debt_policy": "Do not mass-format archival code while changing the maintained Practical execution surface."

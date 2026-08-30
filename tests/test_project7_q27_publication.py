@@ -4,11 +4,42 @@ import numpy as np
 import pytest
 
 from rtc.project7_q27_publication import (
+    build_locked_event_provenance,
     bootstrap_mean_ci,
     paired_tfv_statistics,
     select_outcome_unexposed_events,
     validate_final_table_event_set,
 )
+
+
+def test_locked_event_provenance_binds_registry_inp_and_metadata(tmp_path) -> None:
+    inp = tmp_path / "event_a.inp"
+    inp.write_text("[TITLE]\nEvent A\n", encoding="utf-8")
+    from rtc.project7_q27_publication import sha256_file
+
+    row = {
+        "event_id": "A",
+        "inp_path": str(inp),
+        "prepared_inp_sha256": sha256_file(inp),
+        "rainfall_family": "chicago",
+        "return_period_year": "10",
+        "duration_minutes": "60",
+    }
+    provenance = build_locked_event_provenance([row], ["A"])
+    assert provenance[0]["event_id"] == "A"
+    assert provenance[0]["inp_sha256"] == row["prepared_inp_sha256"]
+    assert provenance[0]["forcing_metadata"]["rainfall_family"] == "chicago"
+    assert provenance[0]["duration_minutes"] == "60"
+
+
+def test_locked_event_provenance_rejects_registry_hash_mismatch(tmp_path) -> None:
+    inp = tmp_path / "event_a.inp"
+    inp.write_text("[TITLE]\nEvent A\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="INP SHA256"):
+        build_locked_event_provenance(
+            [{"event_id": "A", "inp_path": str(inp), "prepared_inp_sha256": "0" * 64}],
+            ["A"],
+        )
 
 
 def test_prepared_and_step2_exposure_do_not_block_final() -> None:
