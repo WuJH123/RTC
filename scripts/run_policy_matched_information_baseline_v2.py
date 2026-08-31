@@ -30,6 +30,26 @@ def _sha(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def _publication_lineage(lineage: dict) -> dict:
+    cleaned = dict(lineage)
+    for obsolete_flag in (
+        "development_only",
+        "formal_evidence",
+        "requires_new_policy_lock",
+        "ready_for_policy_lock",
+    ):
+        cleaned.pop(obsolete_flag, None)
+    cleaned.update(
+        {
+            "publication_candidate": True,
+            "baseline_performance_gates_proposed": False,
+            "historical_completed_outcomes_may_inform_development": True,
+            "training_evaluation_split_must_remain_disjoint": True,
+        }
+    )
+    return cleaned
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--strategy", required=True, choices=MATCHED_ACTIVE_BASELINES)
@@ -88,6 +108,7 @@ def main() -> None:
         decision_runtime_budget_seconds=float(args.decision_runtime_budget_seconds),
         proposal_probe_chunk_size=int(args.probe_chunk_size),
     )
+    lineage = _publication_lineage(lineage)
     out_dir = Path(args.out_dir).resolve()
     runtime_inp = _controls_disabled_runtime(
         source_inp=source_inp,
