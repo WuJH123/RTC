@@ -87,14 +87,24 @@ def build_locked_event_provenance(
         bound["forcing_metadata"] = {
             key: value
             for key, value in row.items()
-            if key not in {"event_id", "event", "rainfall_group", "inp_path", "prepared_inp_sha256", "inp_sha256"}
+            if key
+            not in {
+                "event_id",
+                "event",
+                "rainfall_group",
+                "inp_path",
+                "prepared_inp_sha256",
+                "inp_sha256",
+            }
         }
         provenance.append(bound)
     return provenance
 
 
 def canonical_sha256(value: Any) -> str:
-    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    raw = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -120,8 +130,22 @@ def exposure_index(exposures: Iterable[Mapping[str, Any]]) -> dict[str, set[str]
 def select_outcome_unexposed_events(
     prepared_event_ids: Sequence[str], exposures: Iterable[Mapping[str, Any]]
 ) -> tuple[list[str], dict[str, Any]]:
+    """Select every prepared event without blocking controller-outcome exposure.
+
+    Blocking IDs that are not part of the prepared-event universe are intentionally reported but
+    never subtracted from the prepared count.  This prevents stale arithmetic such as
+    ``prepared_count - global_blocking_count`` from understating the locked Final panel.
+    """
     prepared = sorted({str(value).strip() for value in prepared_event_ids if str(value).strip()})
+    prepared_set = set(prepared)
     index = exposure_index(exposures)
+    global_blocking = {
+        eid
+        for eid, kinds in index.items()
+        if kinds & BLOCKING_OUTCOME_EXPOSURES
+    }
+    blocking_in_prepared = sorted(global_blocking & prepared_set)
+    blocking_outside_prepared = sorted(global_blocking - prepared_set)
     selected: list[str] = []
     blocked: dict[str, list[str]] = {}
     for eid in prepared:
@@ -130,10 +154,18 @@ def select_outcome_unexposed_events(
             blocked[eid] = reasons
         else:
             selected.append(eid)
+    if len(selected) != len(prepared) - len(blocking_in_prepared):
+        raise RuntimeError("prepared-universe exposure set arithmetic is inconsistent")
     return selected, {
         "prepared_event_count": len(prepared),
         "eligible_event_count": len(selected),
         "blocked_event_count": len(blocked),
+        "blocking_exposure_event_count_global": len(global_blocking),
+        "blocking_exposure_event_count_in_prepared": len(blocking_in_prepared),
+        "blocking_exposure_event_count_outside_prepared": len(blocking_outside_prepared),
+        "blocking_exposure_event_ids_outside_prepared": blocking_outside_prepared,
+        "blocking_count_for_final_set_arithmetic": len(blocking_in_prepared),
+        "blocking_count_semantics": "intersection_with_prepared_event_universe",
         "blocked_events": blocked,
         "selection_used_hydraulic_or_controller_performance": False,
         "prepared_step1_step2_exposure_is_not_a_blocking_outcome": True,
@@ -201,7 +233,9 @@ def validate_final_table_event_set(rows: Sequence[Mapping[str, Any]], locked_eve
     if set(actual) != set(locked_events):
         missing = sorted(set(locked_events) - set(actual))
         extra = sorted(set(actual) - set(locked_events))
-        raise ValueError(f"final result event set differs from Policy Lock; missing={missing}, extra={extra}")
+        raise ValueError(
+            f"final result event set differs from Policy Lock; missing={missing}, extra={extra}"
+        )
 
 
 def exposure_counts(exposures: Iterable[Mapping[str, Any]]) -> dict[str, int]:
