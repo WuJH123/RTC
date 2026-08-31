@@ -85,9 +85,19 @@ def build_operational_v30_controller(**kwargs: Any):
     controller.controller._direct_mpc_adapter.inner = v30
 
     updated = dict(lineage)
+    # V27 was explicitly a Development contract. V30 is the publication-candidate implementation;
+    # inherited promotion booleans must not make otherwise valid runs unusable downstream.
+    for obsolete_flag in (
+        "development_only",
+        "formal_evidence",
+        "requires_new_policy_lock",
+        "ready_for_policy_lock",
+    ):
+        updated.pop(obsolete_flag, None)
     updated.update(
         {
             "contract": OPERATIONAL_V30_RUNTIME_CONTRACT,
+            "publication_candidate": True,
             "v30_selection_contract": V30_SELECTION_CONTRACT,
             "v30_parent_selection_contract": V27_SELECTION_CONTRACT,
             "v30_selection_semantics": "argmin_same_frozen_exact_return_value_plus_hold_zero",
