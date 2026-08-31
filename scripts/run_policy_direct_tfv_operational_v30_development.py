@@ -1,4 +1,4 @@
-"""Run one Development-only Project7 V30 conservative policy-improvement event."""
+"""Run one Project7 V30 objective-driven proposal event."""
 from __future__ import annotations
 
 import argparse
@@ -103,15 +103,15 @@ def main() -> None:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata.update(
         {
-            "strategy": "proposed_v30_development",
-            "operational_development_runtime_contract": OPERATIONAL_V30_RUNTIME_CONTRACT,
+            "strategy": "proposed_v30",
+            "operational_runtime_contract": OPERATIONAL_V30_RUNTIME_CONTRACT,
             "v30_selection_contract": V30_SELECTION_CONTRACT,
-            "development_only": True,
-            "operational_steering_only": True,
-            "formal_evidence": False,
-            "requires_new_policy_lock": True,
-            "ready_for_policy_lock": False,
-            "final_outcomes_used_for_policy_selection": False,
+            "selection_semantics": "minimum_frozen_exact_return_value_over_supported_portfolio_plus_hold",
+            "baseline_performance_used_for_action_admission": False,
+            "auto_rbc_special_authority": False,
+            "historical_completed_outcomes_may_inform_development": True,
+            "historical_outcomes_are_online_inputs": False,
+            "training_evaluation_split_must_remain_disjoint": True,
             "tfv_primary": True,
             "pfv_role": "secondary_authoritative_no_control_noninferiority_safety",
             "global_peak_role": "report_only",
@@ -119,8 +119,7 @@ def main() -> None:
             "online_swmm_candidate_search": False,
             "future_realized_rainfall_used_as_model_input": False,
             "projected_gradient_h10_enabled": False,
-            "v30_auto_rbc_anchor_same_information": True,
-            "v30_dual_estimator_override_required": True,
+            # Hashes are provenance records only.  V30 adds no new hash-based action or science gate.
             "asset_manifest_sha256": _sha(args.asset_manifest),
             "v27_value_checkpoint_sha256": _sha(args.v27_value_checkpoint),
             "v27_dataset_manifest_sha256": _sha(args.dataset_manifest),
@@ -146,16 +145,13 @@ def main() -> None:
     print(
         json.dumps(
             {
-                "strategy": "proposed_v30_development",
+                "strategy": "proposed_v30",
                 "metadata_path": str(metadata_path),
                 "decision_path": result.decision_path,
                 "node_statistics_path": result.node_statistics_path,
                 "decisions": result.decisions,
                 "flow_routing_error_pct": result.flow_routing_error_pct,
                 "target_write_readback_passed": True,
-                "development_only": True,
-                "formal_evidence": False,
-                "ready_for_policy_lock": False,
             },
             indent=2,
         )
