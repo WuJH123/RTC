@@ -1,18 +1,18 @@
 """Conservative two-estimator policy-improvement selector for Project7.
 
 The selector addresses the observed scientific failure mode in which a strong causal Auto-RBC
-candidate is present but a learned value ranker selects a different action.  Auto-RBC is treated as
-a same-information baseline anchor.  A learned challenger may replace it only when *both* frozen
-estimators used by Project7 agree that the challenger has lower TFV return than the anchor.
+candidate is present but a learned value ranker selects a different action. Auto-RBC is treated as
+a same-information baseline anchor. A learned challenger may replace it only when *both* frozen
+estimators used by Project7 agree that the challenger is beneficial versus HOLD and is better than
+the Auto-RBC anchor.
 
 This is a conservative engineering heuristic inspired by baseline-bootstrapped safe policy
-improvement; it is not a theorem that SWMM truth will improve.  Publication promotion therefore
+improvement; it is not a theorem that SWMM truth will improve. Publication promotion therefore
 still requires fresh authoritative Development evidence under the separate scientific gate.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
 
 
 CONSERVATIVE_SELECTOR_CONTRACT = (
@@ -57,11 +57,11 @@ def select_conservative_improvement(
 ) -> ConservativeSelection:
     """Select HOLD, Auto-RBC anchor, or one learned challenger.
 
-    Scores are deltas versus HOLD, so zero is the HOLD reference for both estimators.  If an Auto-RBC
-    action exists, the challenger must strictly Pareto-dominate the anchor in both estimators before
-    it can replace the anchor.  HOLD replaces an actionable anchor only if both estimators say the
-    anchor is non-beneficial.  If Auto-RBC itself produces HOLD, a challenger must beat zero in both
-    estimators.
+    Scores are deltas versus HOLD, so zero is the HOLD reference for both estimators. A learned
+    challenger is never executable merely because it beats a poor baseline action: it must first
+    strictly beat HOLD in both estimators. If an Auto-RBC action exists, it must additionally
+    strictly Pareto-dominate that anchor. HOLD replaces an actionable anchor only if both estimators
+    say the anchor is non-beneficial. One-model disagreement falls back to Auto-RBC.
     """
 
     tol = float(tolerance)
@@ -76,8 +76,12 @@ def select_conservative_improvement(
             raise ValueError("conservative selector received a non-finite score")
 
     hold = CandidateScore(source="HOLD", latent_score=0.0, base_step2_score_m3=0.0)
+    challenger_beats_hold = (
+        challenger is not None and _dominates(challenger, hold, tol)
+    )
+
     if anchor is None:
-        if challenger is not None and _dominates(challenger, hold, tol):
+        if challenger is not None and challenger_beats_hold:
             return ConservativeSelection(
                 mode="CONSENSUS_OVERRIDE_HOLD_ANCHOR",
                 selected_source=challenger.source,
@@ -95,22 +99,22 @@ def select_conservative_improvement(
             reason="no challenger has dual-estimator evidence to beat HOLD",
         )
 
-    if challenger is not None and _dominates(challenger, anchor, tol):
-        return ConservativeSelection(
-            mode="CONSENSUS_OVERRIDE_RBC",
-            selected_source=challenger.source,
-            execute_hold=False,
-            challenger_selected=True,
-            anchor_is_hold=False,
-            reason="challenger strictly Pareto-dominates Auto-RBC anchor",
-        )
-
-    # Only dual agreement may suppress the baseline anchor.  One-model disagreement falls back to
-    # the causal Auto-RBC action rather than trusting the learned selector.
+    # An unhelpful baseline action is suppressed before considering whether a challenger merely
+    # dominates that poor action. This prevents executing a learned action that is still predicted
+    # worse than HOLD by either estimator.
     if (
         float(anchor.latent_score) >= -tol
         and float(anchor.base_step2_score_m3) >= -tol
     ):
+        if challenger is not None and challenger_beats_hold and _dominates(challenger, anchor, tol):
+            return ConservativeSelection(
+                mode="CONSENSUS_OVERRIDE_NONBENEFICIAL_RBC",
+                selected_source=challenger.source,
+                execute_hold=False,
+                challenger_selected=True,
+                anchor_is_hold=False,
+                reason="challenger beats both HOLD and non-beneficial Auto-RBC in both estimators",
+            )
         return ConservativeSelection(
             mode="CONSENSUS_HOLD_OVER_RBC",
             selected_source="HOLD",
@@ -118,6 +122,20 @@ def select_conservative_improvement(
             challenger_selected=False,
             anchor_is_hold=False,
             reason="both frozen estimators rate Auto-RBC no better than HOLD",
+        )
+
+    if (
+        challenger is not None
+        and challenger_beats_hold
+        and _dominates(challenger, anchor, tol)
+    ):
+        return ConservativeSelection(
+            mode="CONSENSUS_OVERRIDE_RBC",
+            selected_source=challenger.source,
+            execute_hold=False,
+            challenger_selected=True,
+            anchor_is_hold=False,
+            reason="challenger beats HOLD and strictly Pareto-dominates Auto-RBC anchor",
         )
 
     return ConservativeSelection(
