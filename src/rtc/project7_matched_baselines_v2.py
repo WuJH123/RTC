@@ -26,7 +26,6 @@ from .direct_tfv_sequence_support import changed_facility_support_limit
 from .project7_efd_topology import EFD_TOPOLOGY_CONTRACT, EFDTopologyMap, build_efd_topology_map
 from .project7_matched_baselines import (
     MATCHED_ACTIVE_BASELINES,
-    MATCHED_AUTO_RBC,
     MATCHED_EFD,
     MATCHED_INTERNAL_RTC,
     MatchedInformationBaselineMPC,

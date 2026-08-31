@@ -20,7 +20,7 @@ from typing import Iterable
 
 import numpy as np
 
-from .inp import CONTROL_SECTIONS, discover_actuators
+from .inp import discover_actuators
 
 
 EFD_TOPOLOGY_CONTRACT = "PROJECT7_EFD_FIRST_SUPERVISORY_OUTLET_TOPOLOGY_V1"

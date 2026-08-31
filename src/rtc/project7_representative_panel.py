@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Iterable, Sequence
+from typing import Iterable
 
 import numpy as np
 import pandas as pd
@@ -111,7 +111,7 @@ def _scaled_numeric(table: pd.DataFrame) -> np.ndarray:
     columns = ["return_period_year", "duration_minutes"]
     if np.isfinite(table["rainfall_ratio"].to_numpy()).any():
         columns.append("rainfall_ratio")
-    matrix = table[columns].to_numpy(dtype=np.float64)
+    matrix = table[columns].to_numpy(dtype=np.float64, copy=True)
     for column in range(matrix.shape[1]):
         values = matrix[:, column]
         finite = np.isfinite(values)
